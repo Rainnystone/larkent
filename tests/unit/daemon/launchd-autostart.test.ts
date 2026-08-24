@@ -9,8 +9,14 @@ vi.mock('node:child_process', async (importOriginal) => ({
   spawnSync: mocks.spawnSync,
 }));
 
-const { getServiceAdapter } = await import('../../../src/daemon/service-adapter');
-const { launchAgentLabel } = await import('../../../src/daemon/paths');
+// userInfo().uid is -1 on Windows even when the test forces platform=darwin,
+// which breaks the `gui/<uid>` launchctl target regexes. Pin a POSIX uid.
+vi.mock('node:os', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('node:os')>()),
+  userInfo: () => ({ uid: 501, gid: 20, username: 'test', homedir: '/tmp', shell: null }),
+}));
+
+const { getServiceAdapter } = await import('../../../src/daemon/service-adapter');const { launchAgentLabel } = await import('../../../src/daemon/paths');
 
 const realPlatform = process.platform;
 function forcePlatform(platform: string): void {

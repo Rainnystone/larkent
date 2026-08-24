@@ -154,10 +154,58 @@ agent 遵守的身份规则（已写进它的系统提示）：聊天输出永�
 | `larkCli.identityPreset` | `user-default` | 用户身份可用（默认身份仍是 bot） |
 
 聊天内命令：`/help` `/status` `/config` `/cd <path>` `/new` `/stop`
-`/resume` `/invite group|user @x|admin @x`。
+`/resume` `/invite user @x` `/remove user @x` `/invite admin @x`
+`/remove admin @x` `/invite group` `/remove group` `/invite all group`。
 
 环境变量：`LARK_CHANNEL_HOME`（配置根目录）、`LARK_CHANNEL_KIMI_BIN`
 （覆盖 kimi 二进制路径）。
+
+## 多 profile
+
+每个 profile 是一套独立的 bot 绑定（应用 + agent + 工作目录），位于
+`~/.lark-channel/profiles/<name>/`，每个都能用 `start --profile <name>`
+跑成独立的服务。管理命令：
+
+```bash
+node bin/lark-channel-bridge.mjs profile list
+node bin/lark-channel-bridge.mjs profile create <name> --agent kimi
+node bin/lark-channel-bridge.mjs profile use <name>
+node bin/lark-channel-bridge.mjs profile export <name>                          # 导出 JSON 到 stdout
+node bin/lark-channel-bridge.mjs profile export <name> --include-secrets --yes  # 含应用密钥
+node bin/lark-channel-bridge.mjs profile remove <name>                          # 归档
+node bin/lark-channel-bridge.mjs profile remove <name> --purge --yes            # 永久删除
+```
+
+`workspaces.default` 是 profile 的默认工作目录；用户在聊天里用
+`/cd <path>` 覆盖，用 `/ws` 管理常用目录别名。
+
+## 权限
+
+kimi 的 print 模式固定走 CLI 自带的 auto 权限策略，桥层的权限配置在这里
+只是声明性的。标准键是：
+
+```json
+"permissions": { "defaultAccess": "full", "maxAccess": "full" }
+```
+
+旧版 `sandbox` 配置块仍被接受并自动迁移；新 profile 不要手写它。
+
+## lark-cli 身份策略
+
+每个 profile 有当前 profile 的 lark-cli 目录
+（`~/.lark-channel/profiles/<name>/lark-cli`）。启动时桥会把 lark-cli
+身份策略（`strict-mode off`、`default-as bot`）应用到该目录：agent 默认
+以 bot 身份行动，需要用户身份时逐次加 `--as user`。
+
+## 云文档评论
+
+云文档评论按文档权限生效：在飞书文档的评论里 @ bot，它就在那条评论
+串里回答；能否使用取决于文档本身的权限，与聊天白名单无关。
+
+## Windows
+
+Windows 下守护进程用计划任务（其他平台用 launchd/systemd）。agent
+二进制在需要时会解析到对应的 `.cmd` 垫片。
 
 ## 故障排查
 

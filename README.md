@@ -164,10 +164,61 @@ history / search / docs / sheets / tenant-asset operations.
 | `larkCli.identityPreset` | `user-default` | user identity available (bot stays the default) |
 
 In-chat commands: `/help` `/status` `/config` `/cd <path>` `/new` `/stop`
-`/resume` `/invite group|user @x|admin @x`.
+`/resume` `/invite user @x` `/remove user @x` `/invite admin @x`
+`/remove admin @x` `/invite group` `/remove group` `/invite all group`.
 
 Environment variables: `LARK_CHANNEL_HOME` (config root),
 `LARK_CHANNEL_KIMI_BIN` (override the kimi binary path).
+
+## Multiple profiles
+
+Each profile is an independent bot binding (app + agent + workspace) under
+`~/.lark-channel/profiles/<name>/`, and each can run as its own
+per-profile service via `start --profile <name>`. Manage them:
+
+```bash
+node bin/lark-channel-bridge.mjs profile list
+node bin/lark-channel-bridge.mjs profile create <name> --agent kimi
+node bin/lark-channel-bridge.mjs profile use <name>
+node bin/lark-channel-bridge.mjs profile export <name>                          # JSON to stdout
+node bin/lark-channel-bridge.mjs profile export <name> --include-secrets --yes  # incl. app secret
+node bin/lark-channel-bridge.mjs profile remove <name>                          # archive
+node bin/lark-channel-bridge.mjs profile remove <name> --purge --yes            # permanently delete
+```
+
+`workspaces.default` sets a profile's default working directory; users
+override it per chat with `/cd <path>` and manage named shortcuts with `/ws`.
+
+## Permissions
+
+Kimi's print mode always runs under the CLI's own auto permission policy, so
+the bridge-level config is declarative here. The canonical keys are:
+
+```json
+"permissions": { "defaultAccess": "full", "maxAccess": "full" }
+```
+
+The legacy `sandbox` block is still accepted and auto-migrated; don't
+hand-write it for new profiles.
+
+## lark-cli identity policy
+
+Each profile owns a profile-local lark-cli directory
+(`~/.lark-channel/profiles/<name>/lark-cli`). On startup the bridge applies
+its lark-cli identity policy there (`strict-mode off`, `default-as bot`) so
+the agent defaults to bot identity and opts into the owner's user identity
+per call with `--as user`.
+
+## Cloud-doc comments
+
+Cloud-doc comments are document-scoped: @-mention the bot in a Feishu
+document's comment thread and it answers right there; access follows the
+document's own permissions, not the chat allowlists.
+
+## Windows
+
+The daemon uses Scheduled Tasks on Windows (launchd/systemd elsewhere). Agent
+binaries resolve through their `.cmd` shims when present.
 
 ## Troubleshooting
 
