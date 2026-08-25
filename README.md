@@ -1,250 +1,251 @@
-# lark-channel-bridge (Kimi Code fork)
+# lark-channel-bridge (for Grok Bot)
 
-A bridge that connects Feishu / Lark messenger to a local **Kimi Code** CLI.
-Users DM the bot or `@`-mention it in a group; the bridge runs `kimi -p` and
-posts the agent's answer back to the chat.
+Bridge Feishu / Lark chat to a **local coding-agent CLI**. A user DMs the bot
+or `@`-mentions it in a group; this process spawns the agent and posts one
+clean reply.
 
-This repository is a fork of `lark-channel-bridge` (upstream supports Claude
-Code and Codex CLI; those code paths are intact but not the focus here). It is
-**not published to npm** — install from source.
+This README is the runbook for **Grok Bot** (SpaceXAI always-on teammate with
+its own computer). Every step is a command plus a checkable result. Decision
+points that need a human are marked **HUMAN**. Chinese: [README.zh.md](./README.zh.md).
 
-This README is written to be executable by an autonomous agent (e.g. an
-always-on AI teammate such as Grok Bot) deploying on a headless Linux host:
-every step is a command with a verifiable result, and decision points are
-explicit. Chinese version: [README.zh.md](./README.zh.md).
+This tree is an **incremental** fork of `lark-channel-bridge` / the Kimi Code
+fork. Claude Code, Codex CLI, and Kimi Code adapters stay. Grok Build is a
+fourth adapter (`src/agent/grok/`). Default for a new profile is Grok Build
+when you pass `--agent grok` (or when `grok` is the only detected binary).
+
+Not published to npm — install from source.
+
+## Pick the engine
+
+| Engine | `--agent` | Binary | Headless call | Resume flag | Host must reach |
+|---|---|---|---|---|---|
+| **Grok Build** | `grok` | `grok` | `grok -p --output-format streaming-json --always-approve` | `-r` (never `-s`) | `auth.x.ai` / grok chat proxy (**outside mainland GFW**) |
+| **Kimi Code** | `kimi` | `kimi` | `kimi -p --output-format stream-json` | `-S` | Moonshot endpoints |
+
+Claude (`claude`) and Codex (`codex`) still work if those CLIs are installed.
+Do not mix engines in one profile; create a second profile instead.
+
+**If the job is "Feishu bot powered by Grok Build":** `--agent grok`.
+**If the job is "Feishu bot powered by Kimi Code":** `--agent kimi`.
+
+Replace `<AGENT>` below with `grok` or `kimi`. Profile name defaults to the
+agent kind (`grok` / `kimi`).
 
 ## Mental model
 
 ```
-Feishu user message ──WS long connection──> bridge (this repo)
-   │  scope = chatId (or chatId:threadId in topic groups)
+Feishu user message ──WS long connection──> this process
+   │  scope = chatId (topic groups: chatId:threadId)
    ▼
-spawn `kimi -p "<prompt>" --output-format stream-json`  (+ `-S <sessionId>` on later turns)
-   │  stdout JSONL → AgentEvents (system / tool_use / tool_result / final_text / done)
+spawn local CLI (grok -p … or kimi -p …)  →  stdout JSONL → AgentEvent
    ▼
-Feishu reply (markdown by default; one clean final message per turn)
+one Feishu markdown reply (tool-call chatter hidden by default)
 ```
 
-- **Sessions**: one Kimi session per scope, persisted under
-  `~/.lark-channel/profiles/<profile>/`. A new `kimi` process is spawned per
-  message batch and resumed with `-S`; context survives across turns.
-- **Access**: this fork defaults to `mode: team` — anyone who can reach the
-  bot may use it. Admin commands (`/invite`, `/config`, …) stay owner-only.
-- **Identity**: the bot always *speaks* as the bot. For reading chat history,
-  search, docs/sheets and other tenant assets, the agent calls `lark-cli`
-  with `--as user` after the owner completes a one-time OAuth device login.
-  lark-cli policy is `strict-mode off` + `default-as bot` (fork default).
+- **Sessions**: catalog under `~/.lark-channel/profiles/<profile>/`; native
+  Grok sessions under `~/.grok/sessions/`. One CLI process per message batch.
+- **Speak vs read**: chat output is always the **bot**. Reading group history,
+  docs, sheets, and other tenant assets uses `lark-cli --as user` after a
+  one-time owner OAuth. Tokens live in the **profile-local lark-cli directory**,
+  not in a hung agent run. Restarting the bridge does not require a login
+  process to be running.
+- **First-init defaults** (written on `run` / `start`, do not hand-tune unless
+  asked): `mode: team`, `showToolCalls: false`,
+  `larkCli.identityPreset: user-default`, lark-cli `strict-mode off` +
+  `default-as bot`.
 
-## Prerequisites
+## Host constraints
 
-| Requirement | Check command | Expected |
+- Node.js ≥ 20.12, a writable `$HOME`, outbound HTTPS.
+- **Grok Build**: the machine must resolve and TLS to xAI. Mainland China
+  hosts fail even if a human completed device-code on another device. Do not
+  put a Grok profile on a GFW-side VPS.
+- **Kimi Code**: does not need xAI; still needs Feishu `open.feishu.cn`.
+- Do **not** set `GROK_HOME` / isolate `~/.grok` for the bot — inherit the
+  logged-in `auth.json`. Same for Kimi (`~/.kimi-code`). Isolating the home
+  forces a second login.
+- Do **not** set `XAI_API_KEY` if the owner wants SuperGrok quota.
+
+## Prerequisites (verify before install)
+
+| Requirement | Check | Pass |
 |---|---|---|
-| Node.js ≥ 20.12 | `node --version` | `v20.12.0` or newer |
-| pnpm (via npx is fine) | `npx pnpm --version` | any 10.x |
-| Kimi Code CLI, logged in | `kimi -p "say OK" --output-format stream-json` | JSONL on stdout, exit 0 |
+| Node ≥ 20.12 | `node --version` | `v20.12.0` or newer |
+| pnpm | `npx pnpm --version` | any 10.x |
 | lark-cli | `lark-cli --version` | e.g. `1.0.x` |
-| Feishu/Lark app credentials | — | obtained in the provisioning step below |
+| Grok (if `--agent grok`) | `grok --version` then `test -f ~/.grok/auth.json` | binary + auth file |
+| Kimi (if `--agent kimi`) | `kimi -p "say OK" --output-format stream-json` | JSONL, exit 0 |
+| TTY | `[ -t 0 ] && [ -t 1 ] && echo tty` | `tty` — required for QR wizard |
 
-If `kimi` is not logged in: `kimi login` (device-code flow, needs a browser).
+**HUMAN — agent login (once per host):**
 
-## Install from source
+- Grok: `grok login --device-auth` (print URL + code; owner confirms on any device).
+- Kimi: `kimi login`.
+
+Install Grok CLI: `curl -fsSL https://x.ai/cli/install.sh | bash`.
+Install lark-cli if missing: `npm install -g @larksuite/cli`.
+
+## Install
 
 ```bash
-git clone <this-repo-url> && cd lark-channel-bridge   # or unpack the tarball
-npx pnpm install        # also builds dist/ via the prepare script
-npx pnpm build          # rerun after any source change
+git clone https://github.com/Rainnystone/larkent-for-grokbot.git
+cd larkent-for-grokbot
+npx pnpm install        # prepare also builds dist/
+npx pnpm build          # after any source change
 ```
 
-The CLI entry point is `bin/lark-channel-bridge.mjs`; commands below are run
-as `node bin/lark-channel-bridge.mjs <command>` from the repo root
-(optionally `npx pnpm link --global` to get a `lark-channel-bridge` binary).
+Entry point: `node bin/lark-channel-bridge.mjs <command>` from the repo root.
 
 ## Provision the Feishu app
 
-Two paths; **path B is the scriptable one** for unattended deploys. Both end
-with the bridge running in the foreground — stop it after config is written
-(Ctrl-C) if you only wanted provisioning.
+**HUMAN.** Creates a Feishu/Lark application. Prefer path B when this process
+has no TTY (Grok Bot cloud shells often do not).
 
-**A. QR wizard (needs a human with the Feishu mobile app, once):**
-
-```bash
-node bin/lark-channel-bridge.mjs run --agent kimi
-```
-
-The wizard requires a TTY. In non-TTY environments use the bundled helper,
-which prints a plain URL for a human to open and writes credentials to JSON:
+**A. QR wizard (TTY required):**
 
 ```bash
-node scripts/register-app.mjs /tmp/app.json   # prints QR_URL=..., exits after confirmation
-# then continue with path B using the values in /tmp/app.json; delete the file afterwards
+node bin/lark-channel-bridge.mjs run --agent <AGENT>
 ```
 
-**B. Existing app credentials (fully non-interactive):**
+Prints a QR and a URL. Owner scans with the Feishu mobile app. Wait until
+stdout contains `✓ 应用创建成功` then `正在监听消息`.
+
+If stdin is not a TTY, do not attempt A. Use B.
+
+**B. Existing app credentials (scriptable):**
 
 ```bash
-node bin/lark-channel-bridge.mjs run --agent kimi \
-  --app-id cli_xxx --app-secret <secret> --tenant feishu   # use --tenant lark for Lark global
+node bin/lark-channel-bridge.mjs run --agent <AGENT> \
+  --app-id cli_xxx --app-secret <secret> --tenant feishu
 ```
 
-Config lands in `~/.lark-channel/config.json` (override the root with
-`LARK_CHANNEL_HOME`). Secrets go to an encrypted per-profile keystore, not
-the JSON file.
+Use `--tenant lark` for Lark global. Ask the owner for id/secret; do not invent
+them. Stop with Ctrl-C after `正在监听消息` if you only needed config written.
+
+Config: `~/.lark-channel/config.json` (`LARK_CHANNEL_HOME` overrides the root).
+Secrets go to the per-profile keystore, not the JSON file.
+
+## Owner OAuth (CLI — not inside a coding-agent turn)
+
+Needed before the bot can read group history or edit tenant docs. Tokens are
+stored in the **profile-local lark-cli directory**. This is a first-init step,
+not a leftover `grok`/`kimi` process.
+
+**HUMAN** opens `verification_url` (10 min TTL). Run in the **foreground**;
+do not background the device-code wait.
+
+```bash
+export LARK_CHANNEL=1 LARK_CHANNEL_HOME=~/.lark-channel LARK_CHANNEL_PROFILE=<AGENT> \
+  LARK_CHANNEL_CONFIG=~/.lark-channel/profiles/<AGENT>/lark-cli-source/config.json \
+  LARKSUITE_CLI_CONFIG_DIR=~/.lark-channel/profiles/<AGENT>/lark-cli
+
+lark-cli auth login --no-wait --json --domain im,docs,drive,wiki,sheets,base,markdown,task,calendar
+# print verification_url + device_code to the owner
+lark-cli auth login --device-code "<device_code>"
+lark-cli config strict-mode off && lark-cli config default-as bot
+lark-cli auth status --json
+# pass: identities.user.status == "ready", identities.bot.status == "ready", defaultAs == "bot"
+```
+
+This is the **lark-cli identity policy**: speak as bot; `--as user` only for
+reads/assets. Never send an OAuth URL into a group (whoever clicks binds the
+token).
 
 ## Run
 
-Validate in the foreground first:
+Foreground check:
 
 ```bash
-node bin/lark-channel-bridge.mjs run
-# expected tail: "✓ 已连接  bot: <name> ... agent: Kimi Code (kimi)" then "正在监听消息"
+node bin/lark-channel-bridge.mjs run --agent <AGENT>
+# pass: "✓ 已连接  bot: <name> ... agent: Grok Build (grok)"  or  "Kimi Code (kimi)"
+# then "正在监听消息"
 ```
 
-Then install as an OS service (self-healing, auto-start):
+Then install as an OS **per-profile service** (launchd on macOS, systemd
+`--user` on Linux). On Windows the unit is a `.cmd` wrapper via schtasks.
 
 ```bash
-node bin/lark-channel-bridge.mjs start    # launchd on macOS, systemd --user on Linux
-node bin/lark-channel-bridge.mjs ps       # list running bots
-node bin/lark-channel-bridge.mjs status   # service status
-node bin/lark-channel-bridge.mjs restart  # apply config changes
-node bin/lark-channel-bridge.mjs stop     # stop service
+node bin/lark-channel-bridge.mjs start
+node bin/lark-channel-bridge.mjs ps
+node bin/lark-channel-bridge.mjs status
+node bin/lark-channel-bridge.mjs restart
+node bin/lark-channel-bridge.mjs stop
 ```
 
-Linux note: the service is a **systemd user unit** (`Restart=always`,
-`RestartSec=5`, `WantedBy=default.target`). On a headless server where nobody
-stays logged in, run once:
+Headless Linux: `loginctl enable-linger "$USER"` or the user unit dies at logout.
 
-```bash
-loginctl enable-linger "$USER"
-```
+## Verify
 
-otherwise the user service is torn down at logout.
-
-## Verify the deployment
-
-1. In Feishu, DM the bot (or `@bot` in a group): `用一句话介绍你自己`.
-   Expected: one markdown reply within ~30 s, no tool-call chatter
-   (`showToolCalls: false` in this fork's default profile).
-2. After the OAuth step below, ask: `回顾一下这个群最近的聊天记录`.
-   Expected: it answers using the owner's user identity.
-3. Logs: `~/.lark-channel/profiles/kimi/logs/bridge-YYYYMMDD.jsonl`
-   (JSONL; grep `"phase":"run"` / `"event":"completed"`).
-
-## One-time owner OAuth (reading history / editing tenant assets)
-
-Run with the profile's lark-cli environment (adjust `~` if
-`LARK_CHANNEL_HOME` is overridden):
-
-```bash
-export LARK_CHANNEL=1 LARK_CHANNEL_HOME=~/.lark-channel LARK_CHANNEL_PROFILE=kimi \
-  LARK_CHANNEL_CONFIG=~/.lark-channel/profiles/kimi/lark-cli-source/config.json \
-  LARKSUITE_CLI_CONFIG_DIR=~/.lark-channel/profiles/kimi/lark-cli
-
-lark-cli auth login --no-wait --json --domain im,docs,drive,wiki,sheets,base,markdown,task,calendar
-# prints verification_url (10 min TTL) + device_code — give the URL to the owner
-lark-cli auth login --device-code "<device_code>"   # blocks until the owner confirms
-lark-cli config strict-mode off && lark-cli config default-as bot
-lark-cli auth status --json   # expect identities.user.status == "ready", defaultAs == "bot"
-```
-
-Identity rules the agent follows (written into its bridge system prompt):
-chat output is always sent as the bot; `--as user` is used only for reading
-history / search / docs / sheets / tenant-asset operations.
+1. Feishu DM (or group `@bot`): `用一句话介绍你自己`.
+   Pass: one markdown reply in ~30 s, no tool-call rows
+   (`showToolCalls: false`).
+2. After owner OAuth: `回顾一下这个群最近的聊天记录`.
+   Pass: answers using the owner's user identity; chat still shows the bot.
+3. Logs: `~/.lark-channel/profiles/<AGENT>/logs/bridge-YYYYMMDD.jsonl`
+   (`"phase":"run"` / `"event":"completed"`).
 
 ## Configuration reference
 
 `~/.lark-channel/config.json` → `profiles.<name>`:
 
-| Key | Default (this fork) | Meaning |
+| Key | Default | Meaning |
 |---|---|---|
-| `agentKind` | `kimi` | agent adapter |
-| `mode` | `team` | `team` = open to everyone; `personal` = allowlists |
-| `access.allowedUsers/allowedChats/admins` | `[]` | used in personal mode; admins also in team |
-| `preferences.model` | unset | pinned Kimi model alias → `kimi -m` |
-| `preferences.showToolCalls` | `false` | hide tool-call progress messages |
-| `larkCli.identityPreset` | `user-default` | user identity available (bot stays the default) |
+| `agentKind` | `grok` or `kimi` as passed | adapter |
+| `mode` | `team` | `team` = anyone who can reach the bot; `personal` = allowlists |
+| `access.allowedUsers/allowedChats/admins` | `[]` | personal mode; admins also in team |
+| `workspaces.default` | profile workspace | `/cd` default |
+| `preferences.model` | unset | `grok -m` / `kimi -m` |
+| `preferences.showToolCalls` | `false` | hide tool-call progress |
+| `larkCli.identityPreset` | `user-default` | user identity allowed; default identity stays bot |
 
-In-chat commands: `/help` `/status` `/config` `/cd <path>` `/new` `/stop`
-`/resume` `/invite user @x` `/remove user @x` `/invite admin @x`
-`/remove admin @x` `/invite group` `/remove group` `/invite all group`.
-
-Environment variables: `LARK_CHANNEL_HOME` (config root),
-`LARK_CHANNEL_KIMI_BIN` (override the kimi binary path).
-
-## Multiple profiles
-
-Each profile is an independent bot binding (app + agent + workspace) under
-`~/.lark-channel/profiles/<name>/`, and each can run as its own
-per-profile service via `start --profile <name>`. Manage them:
-
-```bash
-node bin/lark-channel-bridge.mjs profile list
-node bin/lark-channel-bridge.mjs profile create <name> --agent kimi
-node bin/lark-channel-bridge.mjs profile use <name>
-node bin/lark-channel-bridge.mjs profile export <name>                          # JSON to stdout
-node bin/lark-channel-bridge.mjs profile export <name> --include-secrets --yes  # incl. app secret
-node bin/lark-channel-bridge.mjs profile remove <name>                          # archive
-node bin/lark-channel-bridge.mjs profile remove <name> --purge --yes            # permanently delete
-```
-
-`workspaces.default` sets a profile's default working directory; users
-override it per chat with `/cd <path>` and manage named shortcuts with `/ws`.
-
-## Permissions
-
-Kimi's print mode always runs under the CLI's own auto permission policy, so
-the bridge-level config is declarative here. The canonical keys are:
+Canonical permissions (legacy `sandbox` is still accepted on read, then
+normalized away — do not add new sandbox keys):
 
 ```json
-"permissions": { "defaultAccess": "full", "maxAccess": "full" }
+"permissions": {
+  "defaultAccess": "full",
+  "maxAccess": "full"
+}
 ```
 
-The legacy `sandbox` block is still accepted and auto-migrated; don't
-hand-write it for new profiles.
+In-chat: `/help` `/status` `/config` `/cd <path>` `/new` `/stop` `/resume`
+`/invite user` `/remove user` `/invite group` `/remove group`
+`/invite all group` `/invite admin`.
 
-## lark-cli identity policy
+Profile CLI: `profile export`, `profile remove --purge --yes`,
+`profile export --include-secrets --yes`.
 
-Each profile owns a profile-local lark-cli directory
-(`~/.lark-channel/profiles/<name>/lark-cli`). On startup the bridge applies
-its lark-cli identity policy there (`strict-mode off`, `default-as bot`) so
-the agent defaults to bot identity and opts into the owner's user identity
-per call with `--as user`.
+Env: `LARK_CHANNEL_HOME`, `LARK_CHANNEL_GROK_BIN`, `LARK_CHANNEL_KIMI_BIN`.
 
-## Cloud-doc comments
-
-Cloud-doc comments are document-scoped: @-mention the bot in a Feishu
-document's comment thread and it answers right there; access follows the
-document's own permissions, not the chat allowlists.
-
-## Windows
-
-The daemon uses Scheduled Tasks on Windows (launchd/systemd elsewhere). Agent
-binaries resolve through their `.cmd` shims when present.
+Cloud-doc comments are document-scoped: `@bot` on a Feishu doc comment uses
+that document's session, not the IM allowlist.
 
 ## Troubleshooting
 
 | Symptom | Diagnosis | Fix |
 |---|---|---|
-| No reply at all | logs show no `intake enter` | `ps`/`status`; verify app credentials and WS connectivity |
-| Run completes but no message | logs end at `progress-stream-skipped` | fixed in this fork (final-answer-only replies) — update |
-| `agent-binary-not-found` | preflight fails | install/login kimi, or set `LARK_CHANNEL_KIMI_BIN` |
-| `230027` reading group history | bot identity lacks the scope | expected; complete OAuth, agent uses `--as user` |
-| OAuth link expired | 10 min TTL | rerun `auth login --no-wait` for a fresh URL |
-| Service dead after logout (Linux) | `systemctl --user status` shows inactive | `loginctl enable-linger "$USER"` |
+| QR wizard errors about non-interactive mode | no TTY | use `--app-id` / `--app-secret` |
+| `agent-binary-not-found` | CLI missing or not on PATH | install/login; or `LARK_CHANNEL_GROK_BIN` / `LARK_CHANNEL_KIMI_BIN` |
+| Grok auth fails on the server | host cannot reach xAI | move the process off the GFW |
+| Resume is a blank Grok session | used `-s` | adapter uses `-r` only |
+| `230027` on group history | bot lacks the scope | expected until owner OAuth; then `--as user` |
+| OAuth URL expired | 10 min TTL | `auth login --no-wait` again |
+| Linux service dies after logout | systemd user unit | `loginctl enable-linger "$USER"` |
+| Tool rows in Feishu | `showToolCalls` true | `/config` hide, or this fork default is already false |
 
 ## Development
 
 ```bash
 npx pnpm typecheck
-npx pnpm test            # unit + integration + process + static contracts
-KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts  # real-kimi smoke (opt-in)
+npx pnpm test
+npx pnpm build
+GROK_REAL_SMOKE=1 npx vitest run tests/process/grok-real.smoke.test.ts
+KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts
 ```
 
-Layout: `src/agent/kimi/` is the adapter — `argv.ts` builds the CLI call,
-`jsonl.ts` translates Kimi's stream-json into `AgentEvent`, `adapter.ts`
-manages the child process. Everything above the adapter (channel, cards,
-sessions, access, commands, daemon, web console) is agent-agnostic. Shared
-bot/card code must not import agent internals — enforced by
-`tests/static/contracts.test.ts`.
+Adapters: `src/agent/grok/`, `src/agent/kimi/`, plus Claude/Codex. Channel,
+cards, sessions, daemon, web console are agent-agnostic. Shared bot/card code
+must not import adapter internals (`tests/static/contracts.test.ts`).
 
 ## License
 

@@ -29,7 +29,7 @@ function uniqueName(base: string, existing: string[]): string {
 }
 
 export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => void }) {
-  const [agentKind, setAgentKind] = useState<AgentKind>("claude");
+  const [agentKind, setAgentKind] = useState<AgentKind>("grok");
   const [profileName, setProfileName] = useState("");
   const [botName, setBotName] = useState("");
   const [detected, setDetected] = useState<AgentKind[]>([]);
@@ -45,7 +45,8 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
       .then((s) => {
         setDetected(s.detectedAgents);
         setExisting(s.profiles);
-        if (s.detectedAgents.length && !s.detectedAgents.includes("claude"))
+        if (s.detectedAgents.includes("grok")) setAgentKind("grok");
+        else if (s.detectedAgents.length && !s.detectedAgents.includes("claude"))
           setAgentKind(s.detectedAgents[0]!);
       })
       .catch(() => {});
@@ -131,6 +132,7 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
           <Select value={agentKind} onValueChange={(v) => setAgentKind(v as AgentKind)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="grok">Grok Build</SelectItem>
               <SelectItem value="claude">Claude Code</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="kimi">Kimi Code</SelectItem>
@@ -186,7 +188,7 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
         )}
       </div>
       {detected.length === 0 && (
-        <p className="text-center text-xs text-muted-foreground">未检测到已安装的 agent，请确保 claude、codex 或 kimi 已安装。</p>
+        <p className="text-center text-xs text-muted-foreground">未检测到已安装的 agent，请确保 grok、claude、codex 或 kimi 已安装。</p>
       )}
       <p className="text-center text-xs text-muted-foreground">扫码人会成为应用 owner，自动豁免访问控制。</p>
     </div>

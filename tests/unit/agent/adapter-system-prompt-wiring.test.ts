@@ -18,6 +18,7 @@ import {
 } from '../../../src/agent/bridge-system-prompt';
 import { ClaudeAdapter } from '../../../src/agent/claude/adapter';
 import { CodexAdapter } from '../../../src/agent/codex/adapter';
+import { GrokAdapter } from '../../../src/agent/grok/adapter';
 import { KimiAdapter } from '../../../src/agent/kimi/adapter';
 
 interface FakeChild extends EventEmitter {
@@ -149,6 +150,45 @@ describe('KimiAdapter system prompt wiring', () => {
     adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
 
     expect(argvPrompt()).toBe(prefixBridgeSystemPrompt('hi', undefined));
+  });
+});
+
+describe('GrokAdapter system prompt wiring', () => {
+  function grokAdapter(): GrokAdapter {
+    return new GrokAdapter({ binary: '/usr/local/bin/grok' });
+  }
+
+  function argv(): string[] {
+    return spawnMock.spawnProcess.mock.calls[0]?.[1] as string[];
+  }
+
+  it('sends the identity-aware bridge prompt via --rules and keeps the user prompt clean', () => {
+    const child = fakeChild();
+    spawnMock.spawnProcess.mockReturnValue(child);
+    const adapter = grokAdapter();
+    adapter.setBotIdentity({ openId: 'ou_bot_self', name: 'Bridge' });
+
+    adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+
+    const args = argv();
+    expect(args[0]).toBe('-p');
+    expect(args[1]).toBe('hi');
+    expect(args[args.indexOf('--rules') + 1]).toBe(
+      buildBridgeSystemPrompt({ openId: 'ou_bot_self', name: 'Bridge' }),
+    );
+    expect(child.stdin.readableEnded || child.stdin.writableEnded).toBe(true);
+  });
+
+  it('falls back to the base system prompt when no identity was set', () => {
+    const child = fakeChild();
+    spawnMock.spawnProcess.mockReturnValue(child);
+    const adapter = grokAdapter();
+
+    adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+
+    const args = argv();
+    expect(args[1]).toBe('hi');
+    expect(args[args.indexOf('--rules') + 1]).toBe(buildBridgeSystemPrompt(undefined));
   });
 });
 

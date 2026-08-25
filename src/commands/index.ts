@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
-import { claudeCapability, codexCapability, kimiCapability } from '../agent/capability';
+import { capabilityForProfile, usesNativeSessionId } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
@@ -153,7 +153,7 @@ type Handler = (args: string, ctx: CommandContext) => Promise<void>;
 
 interface ResumeCandidate {
   scopeId: string;
-  agentId: 'claude' | 'codex' | 'kimi';
+  agentId: 'claude' | 'codex' | 'kimi' | 'grok';
   cwdRealpath: string;
   policyFingerprint: string;
   sessionId?: string;
@@ -592,9 +592,11 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  if (ctx.controls.profileConfig.agentKind === 'kimi') {
-    // kimi has no history provider yet (its sessions live under
-    // ~/.kimi-code/sessions); offer re-binding the current catalog session.
+  if (
+    ctx.controls.profileConfig.agentKind === 'kimi' ||
+    ctx.controls.profileConfig.agentKind === 'grok'
+  ) {
+    const agentLabel = ctx.controls.profileConfig.agentKind === 'grok' ? 'Grok' : 'Kimi';
     const identity = ctx.sessionCatalogIdentity;
     const entry =
       ctx.sessionCatalog && identity
@@ -604,7 +606,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
       const nonce = issueResumeCandidate(identity, { sessionId: entry.sessionId });
       await reply(
         ctx,
-        `当前 Kimi 会话可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。`,
+        `当前 ${agentLabel} 会话可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。`,
       );
       return;
     }
@@ -668,8 +670,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     }
     ctx.activeRuns.interrupt(ctx.scope);
     if (
-      ctx.sessionCatalogIdentity.agentId === 'claude' ||
-      ctx.sessionCatalogIdentity.agentId === 'kimi'
+      usesNativeSessionId(ctx.sessionCatalogIdentity.agentId)
     ) {
       ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
     }
@@ -723,7 +724,7 @@ function consumeResumeCandidate(
     candidate.agentId !== identity.agentId ||
     candidate.cwdRealpath !== identity.cwdRealpath ||
     candidate.policyFingerprint !== identity.policyFingerprint ||
-    ((identity.agentId === 'claude' || identity.agentId === 'kimi') && !candidate.sessionId) ||
+    (usesNativeSessionId(identity.agentId) && !candidate.sessionId) ||
     (identity.agentId === 'codex' && !candidate.threadId)
   ) {
     return undefined;
@@ -798,6 +799,9 @@ function runtimeAccessStatus(
   if (profileConfig.agentKind === 'kimi') {
     // kimi's print mode always runs under the CLI's own auto policy.
     return { label: 'permission', value: 'auto (kimi -p)' };
+  }
+  if (profileConfig.agentKind === 'grok') {
+    return { label: 'permission', value: 'bypassPermissions (grok --always-approve)' };
   }
   return {
     label: 'sandbox',
@@ -1161,12 +1165,7 @@ async function handleDoctor(args: string, ctx: CommandContext): Promise<void> {
   }
   doctorLastByOperator.set(rateKey, now);
 
-  const capability =
-    ctx.controls.profileConfig.agentKind === 'codex'
-      ? codexCapability(ctx.controls.profileConfig)
-      : ctx.controls.profileConfig.agentKind === 'kimi'
-        ? kimiCapability(ctx.controls.profileConfig)
-        : claudeCapability(ctx.controls.profileConfig);
+  const capability = capabilityForProfile(ctx.controls.profileConfig);
   const policy = evaluateRunPolicy({
     scope: {
       source: 'im',

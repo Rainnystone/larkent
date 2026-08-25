@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { BRIDGE_SYSTEM_PROMPT } from '../../../src/agent/bridge-system-prompt';
-import { claudeCapability, codexCapability, kimiCapability } from '../../../src/agent/capability';
+import {
+  claudeCapability,
+  capabilityForProfile,
+  codexCapability,
+  grokCapability,
+  kimiCapability,
+  usesNativeSessionId,
+} from '../../../src/agent/capability';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 
 describe('agent capability contract', () => {
@@ -109,5 +116,51 @@ describe('agent capability contract', () => {
     });
 
     expect(kimiCapability(profile).permissions.maxAccess).toBe('workspace');
+  });
+
+  it('defines Grok capability with session-id resume and rules prompt injection', () => {
+    const capability = grokCapability();
+
+    expect(capability).toMatchObject({
+      agentId: 'grok',
+      sessionKind: 'grok-session',
+      promptInjection: 'append-system-prompt',
+      supportsNativeHistory: true,
+      systemPrompt: BRIDGE_SYSTEM_PROMPT,
+      callback: {
+        marker: '__bridge_cb',
+        legacyMarkers: [],
+      },
+      permissions: {
+        maxAccess: 'full',
+      },
+    });
+  });
+
+  it('uses Grok profile max access as the static capability ceiling', () => {
+    const profile = createDefaultProfileConfig({
+      agentKind: 'grok',
+      accounts: {
+        app: {
+          id: 'cli_test',
+          secret: '${APP_SECRET}',
+          tenant: 'feishu',
+        },
+      },
+      permissions: {
+        defaultAccess: 'workspace',
+        maxAccess: 'workspace',
+      },
+    });
+
+    expect(grokCapability(profile).permissions.maxAccess).toBe('workspace');
+    expect(capabilityForProfile(profile).agentId).toBe('grok');
+  });
+
+  it('treats grok like claude/kimi for native session ids', () => {
+    expect(usesNativeSessionId('grok')).toBe(true);
+    expect(usesNativeSessionId('claude')).toBe(true);
+    expect(usesNativeSessionId('kimi')).toBe(true);
+    expect(usesNativeSessionId('codex')).toBe(false);
   });
 });

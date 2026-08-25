@@ -5,7 +5,7 @@ import type {
 } from '@larksuite/channel';
 import { createLarkChannel } from '@larksuite/channel';
 import { dirname, join } from 'node:path';
-import { claudeCapability, codexCapability, kimiCapability } from '../agent/capability';
+import { capabilityForProfile } from '../agent/capability';
 import { modelLabel, normalizeModelSelection, resolveModelArg } from '../agent/models';
 import {
   buildAgentPrompt,
@@ -82,13 +82,13 @@ const REACTION_CLEANUP_GRACE_MS = 1000;
 
 /**
  * Agents whose runs end with a single final answer instead of streamed text
- * deltas (codex, kimi) can't rely on the progress stream carrying the reply —
+ * deltas (codex, kimi, grok) can't rely on the progress stream carrying the reply —
  * nothing opens it. They send the answer at the end via sendFinalReply under
  * final-answer-only semantics, and skip the streaming fallbacks that would
  * double-post it.
  */
 function usesFinalAnswerReply(agentKind: AgentKind): boolean {
-  return agentKind === 'codex' || agentKind === 'kimi';
+  return agentKind === 'codex' || agentKind === 'kimi' || agentKind === 'grok';
 }
 
 const BRIDGE_AGENT_INSTRUCTIONS = [
@@ -967,12 +967,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     actorId: firstMsg.senderId,
     ...(threadId ? { threadId } : {}),
   };
-  const capability =
-    controls.profileConfig.agentKind === 'codex'
-      ? codexCapability(controls.profileConfig)
-      : controls.profileConfig.agentKind === 'kimi'
-        ? kimiCapability(controls.profileConfig)
-        : claudeCapability(controls.profileConfig);
+  const capability = capabilityForProfile(controls.profileConfig);
   const flow = await startRunFlow({
     scopeId: scope,
     scope: scopeContext,

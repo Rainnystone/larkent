@@ -178,11 +178,8 @@ export function ConfigView({ profile }: { profile: string }) {
           <SelectRow value={cfg.larkCliIdentity} onChange={(v) => set("larkCliIdentity", v as ConfigData["larkCliIdentity"])}
             options={[["bot-only", "只允许应用身份"], ["user-default", "允许用户身份"]]} />
           <p className="text-xs text-muted-foreground">
-            只允许应用身份：不访问个人资源。允许用户身份：可访问已授权用户的日历/邮箱/云盘等。
+            只允许应用身份：不访问个人资源。允许用户身份：聊天仍以 bot 发言；读历史/文档等走已授权用户身份。
           </p>
-          {team && (
-            <p className="text-xs text-primary">⚠️ 团队版已开启：本项被覆盖为「只允许应用身份」。切回个人版后恢复。</p>
-          )}
         </CardContent>
       </Card>
 

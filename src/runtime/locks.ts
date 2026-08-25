@@ -178,7 +178,10 @@ function isRuntimeLockMeta(value: unknown): value is RuntimeLockMeta {
     (meta.kind === 'profile' || meta.kind === 'app') &&
     typeof meta.target === 'string' &&
     typeof meta.profile === 'string' &&
-    (meta.agentKind === 'claude' || meta.agentKind === 'codex' || meta.agentKind === 'kimi') &&
+    (meta.agentKind === 'claude' ||
+      meta.agentKind === 'codex' ||
+      meta.agentKind === 'kimi' ||
+      meta.agentKind === 'grok') &&
     typeof meta.pid === 'number' &&
     typeof meta.startedAt === 'string' &&
     (meta.appId === undefined || typeof meta.appId === 'string')

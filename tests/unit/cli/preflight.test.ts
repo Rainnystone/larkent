@@ -128,7 +128,7 @@ describe('lark-cli preflight', () => {
   it('binds lark-cli into the bridge-private config dir when target config is missing', async () => {
     const root = await tempRoot();
     const appPaths = resolveAppPaths({ rootDir: root, profile: 'codex' });
-    mocks.exitCodes = [0];
+    mocks.exitCodes = [0, 0, 0];
 
     await preFlightChecks({
       larkChannel: {
@@ -144,6 +144,8 @@ describe('lark-cli preflight', () => {
 
     expect(mocks.calls.map((call) => call.args)).toEqual([
       ['config', 'bind', '--source', 'lark-channel', '--identity', 'bot-only'],
+      ['config', 'strict-mode', 'off'],
+      ['config', 'default-as', 'bot'],
     ]);
     expect(mocks.calls[0]?.env).toMatchObject({
       LARK_CHANNEL: '1',
@@ -176,7 +178,7 @@ describe('lark-cli preflight', () => {
       { mode: 0o600 },
     );
     const originalRoot = await readFile(appPaths.configFile, 'utf8');
-    mocks.exitCodes = [2, 0];
+    mocks.exitCodes = [2, 0, 0, 0];
     mocks.outputs = [
       JSON.stringify({
         ok: false,
@@ -210,6 +212,8 @@ describe('lark-cli preflight', () => {
     expect(mocks.calls.map((call) => call.args)).toEqual([
       ['config', 'bind', '--source', 'lark-channel', '--identity', 'bot-only'],
       ['config', 'bind', '--source', 'lark-channel', '--identity', 'bot-only'],
+      ['config', 'strict-mode', 'off'],
+      ['config', 'default-as', 'bot'],
     ]);
     expect(mocks.calls[0]?.env).toMatchObject({
       LARK_CHANNEL_CONFIG: appPaths.larkCliSourceConfigFile,
@@ -243,7 +247,7 @@ describe('lark-cli preflight', () => {
       }, null, 2)}\n`,
       { mode: 0o600 },
     );
-    mocks.exitCodes = [2, 0];
+    mocks.exitCodes = [2, 0, 0, 0];
     mocks.outputs = [
       JSON.stringify({
         ok: false,
@@ -270,6 +274,8 @@ describe('lark-cli preflight', () => {
     expect(mocks.calls.map((call) => call.args)).toEqual([
       ['config', 'bind', '--source', 'lark-channel', '--identity', 'bot-only'],
       ['config', 'bind', '--source', 'lark-channel', '--identity', 'bot-only'],
+      ['config', 'strict-mode', 'off'],
+      ['config', 'default-as', 'bot'],
     ]);
   });
 
@@ -581,7 +587,7 @@ describe('lark-cli preflight', () => {
     });
   });
 
-  it('rolls back to bot-only when switching an existing private user auth to user-default partially fails', async () => {
+  it('keeps user-default when switching an existing private user auth to user-default partially fails', async () => {
     const root = await tempRoot();
     const appPaths = resolveAppPaths({ rootDir: root, profile: 'codex' });
     await writeRootConfig(appPaths.configFile, 'codex');
@@ -618,13 +624,11 @@ describe('lark-cli preflight', () => {
     expect(mocks.calls.map((call) => call.args)).toEqual([
       ['config', 'strict-mode', 'off'],
       ['config', 'default-as', 'bot'],
-      ['config', 'strict-mode', 'bot'],
-      ['config', 'default-as', 'bot'],
       ['config', 'show'],
     ]);
     const saved = await loadRootConfig(appPaths.configFile);
     expect(saved?.profiles.codex?.larkCli).toMatchObject({
-      identityPreset: 'bot-only',
+      identityPreset: 'user-default',
       localUserImport: {
         status: 'failed',
         reason: 'private-user-policy-switch-failed',
@@ -838,7 +842,7 @@ describe('lark-cli preflight', () => {
     expect(privateTarget.apps[0]?.users).toBeNull();
     const saved = await loadRootConfig(appPaths.configFile);
     expect(saved?.profiles.codex?.larkCli).toMatchObject({
-      identityPreset: 'bot-only',
+      identityPreset: 'user-default',
       localUserImport: {
         status: 'skipped-no-local-user',
         reason: 'local-user-missing',
@@ -1086,10 +1090,12 @@ describe('lark-cli preflight', () => {
     expect(mocks.calls.map((call) => call.args)).toEqual([
       ['config', 'show'],
       ['config', 'bind', '--source', 'lark-channel', '--identity', 'bot-only'],
+      ['config', 'strict-mode', 'off'],
+      ['config', 'default-as', 'bot'],
     ]);
     const saved = await loadRootConfig(appPaths.configFile);
     expect(saved?.profiles.codex?.larkCli).toMatchObject({
-      identityPreset: 'bot-only',
+      identityPreset: 'user-default',
       localUserImport: {
         status: 'skipped-no-local-user',
         reason: 'local-user-unstructured',
@@ -1097,12 +1103,12 @@ describe('lark-cli preflight', () => {
     });
   });
 
-  it('keeps bot-only and continues when local user detection fails', async () => {
+  it('keeps user-default and continues when local user detection fails', async () => {
     const root = await tempRoot();
     const appPaths = resolveAppPaths({ rootDir: root, profile: 'codex' });
     const profileConfig = await writeRootConfig(appPaths.configFile, 'codex');
-    mocks.exitCodes = [1, 0];
-    mocks.outputs = ['no local config', ''];
+    mocks.exitCodes = [1, 0, 0, 0];
+    mocks.outputs = ['no local config', '', '', ''];
 
     await preFlightChecks({
       larkChannel: {
@@ -1120,10 +1126,12 @@ describe('lark-cli preflight', () => {
     expect(mocks.calls.map((call) => call.args)).toEqual([
       ['config', 'show'],
       ['config', 'bind', '--source', 'lark-channel', '--identity', 'bot-only'],
+      ['config', 'strict-mode', 'off'],
+      ['config', 'default-as', 'bot'],
     ]);
     const saved = await loadRootConfig(appPaths.configFile);
     expect(saved?.profiles.codex?.larkCli).toMatchObject({
-      identityPreset: 'bot-only',
+      identityPreset: 'user-default',
       localUserImport: { status: 'failed' },
     });
   });
@@ -1220,8 +1228,8 @@ describe('lark-cli preflight', () => {
 async function writeRootConfig(configPath: string, profile: string): Promise<RootConfig['profiles'][string]> {
   const profileConfig = createDefaultProfileConfig({
     agentKind: 'codex',
-    // These tests exercise user-identity import, which team mode disables;
-    // pin personal mode explicitly now that the fork defaults to team.
+    // Pin personal mode so access-control fixtures stay deterministic;
+    // lark-cli identity is no longer coupled to team/personal.
     mode: 'personal',
     accounts: bridgeConfig.accounts,
     codex: { binaryPath: 'codex' },

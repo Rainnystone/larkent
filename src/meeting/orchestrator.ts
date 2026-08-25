@@ -1,6 +1,6 @@
 import type { LarkChannel } from '@larksuite/channel';
 import type { AgentEvent } from '../agent/types';
-import { claudeCapability, codexCapability, kimiCapability } from '../agent/capability';
+import { capabilityForProfile } from '../agent/capability';
 import type { Controls } from '../commands';
 import { log } from '../core/logger';
 import type { RunExecutor } from '../runtime/run-executor';
@@ -295,12 +295,7 @@ async function runMeetingAgent(
 ): Promise<string> {
   const { session, controls } = deps;
   const scopeId = meetingScopeId(session.meetingId);
-  const capability =
-    controls.profileConfig.agentKind === 'codex'
-      ? codexCapability(controls.profileConfig)
-      : controls.profileConfig.agentKind === 'kimi'
-        ? kimiCapability(controls.profileConfig)
-        : claudeCapability(controls.profileConfig);
+  const capability = capabilityForProfile(controls.profileConfig);
   const result = await startRunFlow({
     scopeId,
     scope: {
@@ -361,7 +356,7 @@ async function runMeetingAgent(
 /** Collect assistant text from the agent event stream. */
 function textOf(event: AgentEvent): string {
   if (event.type === 'text') return event.delta;
-  // Codex/kimi hold the answer back as a terminal `final_text` instead of
+  // Codex/kimi/grok hold the answer back as a terminal `final_text` instead of
   // streaming it; claude never emits `final_text`, so this can't double-post.
   if (event.type === 'final_text') return event.content;
   return '';

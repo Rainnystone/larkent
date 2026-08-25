@@ -135,9 +135,8 @@ async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
               reason: 'existing-private-user',
             });
           } else {
-            await switchLarkCliIdentityPolicy(profileArgs, larkChannelEnv, 'bot-only');
             await persistLarkCliConfig(opts, {
-              identityPreset: 'bot-only',
+              identityPreset: forkIdentityPreset(opts),
               importStatus: 'failed',
               reason: 'private-user-policy-switch-failed',
             });
@@ -162,9 +161,9 @@ async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
             });
             return;
           }
-          await switchLarkCliIdentityPolicy(profileArgs, larkChannelEnv, 'bot-only');
+          await switchLarkCliIdentityPolicy(profileArgs, larkChannelEnv, 'user-default');
           await persistLarkCliConfig(opts, {
-            identityPreset: target.identityPreset ?? 'bot-only',
+            identityPreset: forkIdentityPreset(opts),
             importStatus: 'failed',
             reason: switchResult.success
               ? 'private-user-missing-after-switch'
@@ -173,7 +172,7 @@ async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
           return;
         } else {
           await persistLarkCliConfig(opts, {
-            identityPreset: target.identityPreset ?? 'bot-only',
+            identityPreset: forkIdentityPreset(opts),
             importStatus: localUser.status,
             reason: localUser.reason,
           });
@@ -218,7 +217,7 @@ async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
     sBind.error('lark-cli configuration failed');
     if (privateBinding) {
       await persistLarkCliConfig(opts, {
-        identityPreset: 'bot-only',
+        identityPreset: forkIdentityPreset(opts),
         importStatus: localUser.status === 'imported' ? 'failed' : localUser.status,
         reason: 'bind-failed',
       });
@@ -237,9 +236,11 @@ async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
           reason: 'same-app-local-user',
         });
       } else {
-        await switchLarkCliIdentityPolicy(profileArgs, larkChannelEnv, 'bot-only');
+        // Keep user-default so a later p2p owner OAuth can still `--as user`.
+        // Switching to bot-only would set strict-mode bot and block it.
+        await switchLarkCliIdentityPolicy(profileArgs, larkChannelEnv, 'user-default');
         await persistLarkCliConfig(opts, {
-          identityPreset: 'bot-only',
+          identityPreset: forkIdentityPreset(opts),
           importStatus: 'failed',
           reason: switchResult.success
             ? 'private-user-missing-after-switch'
@@ -247,8 +248,9 @@ async function checkLarkCli(opts: PreFlightOptions): Promise<void> {
         });
       }
     } else {
+      await switchLarkCliIdentityPolicy(profileArgs, larkChannelEnv, forkIdentityPreset(opts));
       await persistLarkCliConfig(opts, {
-        identityPreset: 'bot-only',
+        identityPreset: forkIdentityPreset(opts),
         importStatus: localUser.status,
         reason: localUser.reason,
       });
@@ -351,8 +353,16 @@ function larkCliIdentityPresetForTarget(app: {
   strictMode?: string;
 }): LarkCliIdentityPreset | undefined {
   if (app.defaultAs === 'bot' && app.strictMode === 'bot') return 'bot-only';
-  if (app.defaultAs === 'auto' && app.strictMode === 'off') return 'user-default';
+  // Fork policy: user-default is strict off + default-as bot (or auto).
+  if (app.strictMode === 'off' && (app.defaultAs === 'auto' || app.defaultAs === 'bot')) {
+    return 'user-default';
+  }
   return undefined;
+}
+
+/** First-init default: allow a later owner OAuth unless the operator chose bot-only. */
+function forkIdentityPreset(opts: PreFlightOptions): LarkCliIdentityPreset {
+  return shouldSkipLocalUserImport(opts.profileConfig?.larkCli) ? 'bot-only' : 'user-default';
 }
 
 function shouldSkipLocalUserImport(config: LarkCliConfig | undefined): boolean {
