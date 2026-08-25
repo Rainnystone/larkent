@@ -165,6 +165,28 @@ describe('GrokAdapter process contract', () => {
     ]);
   });
 
+  it('fails when grok exits 0 without a streaming-json end event', async () => {
+    const fake = await createFakeGrok({
+      lines: [{ type: 'text', data: 'orphan' }],
+    });
+    cleanup.push(fake.dir);
+
+    const run = new GrokAdapter({ binary: fake.path }).run({
+      runId: 'run-no-end',
+      prompt: 'hi',
+      cwd: fake.dir,
+    });
+
+    expect(await collect(run.events)).toEqual([
+      { type: 'text', delta: 'orphan\n\n' },
+      {
+        type: 'error',
+        message: 'grok exited before a terminal streaming-json end event',
+        terminationReason: 'failed',
+      },
+    ]);
+  });
+
   it('includes stderr when the process exits non-zero', async () => {
     const fake = await createFakeGrok({
       lines: [{ type: 'text', data: 'before failure' }],

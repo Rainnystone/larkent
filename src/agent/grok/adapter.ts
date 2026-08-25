@@ -296,7 +296,10 @@ async function* createEventStream(
     return;
   }
 
-  yield* translator.finish('normal');
+  if (!translator.terminalEmitted()) {
+    yield* translator.fail('grok exited before a terminal streaming-json end event');
+    return;
+  }
 }
 
 async function waitForExitCode(child: GrokChild): Promise<number | null> {

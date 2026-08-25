@@ -126,6 +126,16 @@ export async function writeNewProfile(
   }
   const profile = appPaths.profile;
 
+  if (input.agentKind === 'grok') {
+    const detected = await detectInstalledAgents();
+    if (!detected.some((d) => d.kind === 'grok')) {
+      throw new HttpError(
+        400,
+        '未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。',
+      );
+    }
+  }
+
   // Never clobber an existing profile — this is a *new*-profile path. Fast-fail
   // before storing the secret; re-checked inside the lock against races.
   const pre = await loadRootConfig(appPaths.configFile);

@@ -28,6 +28,8 @@ export function buildGrokArgs(input: BuildGrokArgsInput): string[] {
     'streaming-json',
     '--rules',
     input.rules,
+    // Unattended Feishu bot: always bypass tool prompts. Restricted
+    // profile access modes are not mapped onto Grok flags.
     '--always-approve',
     '--no-auto-update',
   ];

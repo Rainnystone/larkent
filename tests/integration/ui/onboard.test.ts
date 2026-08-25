@@ -74,4 +74,31 @@ describe('writeNewProfile (new-profile is additive)', () => {
       ),
     ).rejects.toMatchObject({ status: 400 });
   });
+
+  it('rejects a grok profile when Grok Build CLI is not installed', async () => {
+    const root = await tmpRoot();
+    const prev = process.env.LARK_CHANNEL_GROK_BIN;
+    process.env.LARK_CHANNEL_GROK_BIN = join(tmpdir(), `missing-grok-${Date.now()}`);
+    try {
+      await expect(
+        writeNewProfile(
+          {
+            profile: 'grok',
+            agentKind: 'grok',
+            appId: 'cli_g',
+            appSecret: 'secret',
+            tenant: 'feishu',
+            workspace: root,
+          },
+          root,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringMatching(/未检测到 Grok Build CLI/),
+      });
+    } finally {
+      if (prev === undefined) delete process.env.LARK_CHANNEL_GROK_BIN;
+      else process.env.LARK_CHANNEL_GROK_BIN = prev;
+    }
+  });
 });
