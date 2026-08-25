@@ -2,8 +2,8 @@ import type { AccessMode } from '../config/permissions';
 import type { ProfileConfig } from '../config/profile-schema';
 import { BRIDGE_SYSTEM_PROMPT } from './bridge-system-prompt';
 
-export type AgentCapabilityId = 'claude' | 'codex' | 'kimi';
-export type AgentSessionKind = 'claude-session' | 'codex-thread' | 'kimi-session';
+export type AgentCapabilityId = 'claude' | 'codex' | 'kimi' | 'grok';
+export type AgentSessionKind = 'claude-session' | 'codex-thread' | 'kimi-session' | 'grok-session';
 export type PromptInjectionMode = 'append-system-prompt' | 'stdin-prefix' | 'argv-prefix';
 
 export interface AgentCapability {
@@ -57,6 +57,40 @@ export function kimiCapability(profile?: Pick<ProfileConfig, 'permissions'>): Ag
       maxAccess,
     },
   };
+}
+
+export function grokCapability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability {
+  const maxAccess = profile?.permissions.maxAccess ?? 'full';
+  return {
+    agentId: 'grok',
+    sessionKind: 'grok-session',
+    // grok `--rules` appends to the system prompt without replacing the
+    // coding prompt (`--system-prompt-override` would).
+    promptInjection: 'append-system-prompt',
+    systemPrompt: BRIDGE_SYSTEM_PROMPT,
+    supportsNativeHistory: true,
+    callback: {
+      marker: '__bridge_cb',
+      legacyMarkers: [],
+    },
+    permissions: {
+      maxAccess,
+    },
+  };
+}
+
+export function capabilityForProfile(
+  profile: Pick<ProfileConfig, 'agentKind' | 'permissions'>,
+): AgentCapability {
+  if (profile.agentKind === 'codex') return codexCapability(profile);
+  if (profile.agentKind === 'kimi') return kimiCapability(profile);
+  if (profile.agentKind === 'grok') return grokCapability(profile);
+  return claudeCapability(profile);
+}
+
+/** Claude / Kimi / Grok persist a sessionId; Codex uses a threadId. */
+export function usesNativeSessionId(agentId: AgentCapabilityId): boolean {
+  return agentId === 'claude' || agentId === 'kimi' || agentId === 'grok';
 }
 
 export function codexCapability(profile: Pick<ProfileConfig, 'permissions'>): AgentCapability {

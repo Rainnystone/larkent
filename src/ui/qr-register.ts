@@ -153,7 +153,13 @@ export async function finishQrRegistration(
   if (!s.app) throw new HttpError(409, '尚未完成扫码');
 
   const agentKind: AgentKind =
-    fv.agentKind === 'codex' ? 'codex' : fv.agentKind === 'kimi' ? 'kimi' : 'claude';
+    fv.agentKind === 'codex'
+      ? 'codex'
+      : fv.agentKind === 'kimi'
+        ? 'kimi'
+        : fv.agentKind === 'grok'
+          ? 'grok'
+          : 'claude';
   const profile = String(fv.profile ?? '').trim() || s.suggestedProfile || agentKind;
   const created = await writeNewProfile(
     { profile, agentKind, appId: s.app.appId, appSecret: s.app.appSecret, tenant: s.app.tenant },

@@ -49,10 +49,19 @@ const KIMI_MODELS: ModelOption[] = [
   { value: 'kimi-code/kimi-for-coding', label: 'Kimi for Coding' },
 ];
 
+/** Grok Build models. Forwarded to `grok -m`. */
+const GROK_MODELS: ModelOption[] = [
+  { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
+  { value: 'grok-build', label: 'Grok Build' },
+  { value: 'grok-4.6', label: 'Grok 4.6' },
+  { value: 'grok-4.5', label: 'Grok 4.5' },
+];
+
 /** The model picker options for a profile's agent kind. */
 export function supportedModels(agentKind: AgentKind): ModelOption[] {
   if (agentKind === 'codex') return CODEX_MODELS;
   if (agentKind === 'kimi') return KIMI_MODELS;
+  if (agentKind === 'grok') return GROK_MODELS;
   return CLAUDE_MODELS;
 }
 

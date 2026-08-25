@@ -27,6 +27,8 @@ describe('static architecture contracts', () => {
     ];
     for (const file of sharedFiles) {
       expect(read(file), file).not.toMatch(/agent\/codex/);
+      expect(read(file), file).not.toMatch(/agent\/grok/);
+      expect(read(file), file).not.toMatch(/agent\/kimi/);
     }
   });
 

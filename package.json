@@ -1,7 +1,7 @@
 {
   "name": "lark-channel-bridge",
   "version": "0.7.0",
-  "description": "Bridge Feishu/Lark messenger with local CLI coding agents",
+  "description": "Bridge Feishu/Lark messenger with local Grok Build (and other CLI coding agents)",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "publishConfig": {
@@ -104,6 +104,9 @@
     "claude",
     "claude-code",
     "codex",
+    "grok",
+    "grok-build",
+    "kimi",
     "cli",
     "channel",
     "bridge"

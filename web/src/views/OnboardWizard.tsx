@@ -29,7 +29,7 @@ function uniqueName(base: string, existing: string[]): string {
 }
 
 export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => void }) {
-  const [agentKind, setAgentKind] = useState<AgentKind>("claude");
+  const [agentKind, setAgentKind] = useState<AgentKind>("grok");
   const [profileName, setProfileName] = useState("");
   const [botName, setBotName] = useState("");
   const [detected, setDetected] = useState<AgentKind[]>([]);
@@ -45,8 +45,7 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
       .then((s) => {
         setDetected(s.detectedAgents);
         setExisting(s.profiles);
-        if (s.detectedAgents.length && !s.detectedAgents.includes("claude"))
-          setAgentKind(s.detectedAgents[0]!);
+        setAgentKind("grok");
       })
       .catch(() => {});
   }, []);
@@ -98,6 +97,10 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
 
   async function confirmCreate() {
     if (!qr) return;
+    if (agentKind === "grok" && !detected.includes("grok")) {
+      toast.error("未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。");
+      return;
+    }
     setPhase("creating");
     try {
       const r = await apiPost<{ profile: string }>("/api/profiles/qr/finish", {
@@ -131,6 +134,7 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
           <Select value={agentKind} onValueChange={(v) => setAgentKind(v as AgentKind)}>
             <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="grok">Grok Build</SelectItem>
               <SelectItem value="claude">Claude Code</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="kimi">Kimi Code</SelectItem>
@@ -147,11 +151,19 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
           {existing.includes(profileName.trim()) && (
             <p className="text-xs text-destructive">已存在同名 profile，请换个名字（不会覆盖现有的）。</p>
           )}
+          {agentKind === "grok" && !detected.includes("grok") && (
+            <p className="text-xs text-destructive">未检测到 Grok Build CLI（grok）。请先安装并登录。</p>
+          )}
         </div>
         <div className="flex justify-end">
           <Button
             onClick={confirmCreate}
-            disabled={phase === "creating" || !profileName.trim() || existing.includes(profileName.trim())}
+            disabled={
+              phase === "creating" ||
+              !profileName.trim() ||
+              existing.includes(profileName.trim()) ||
+              (agentKind === "grok" && !detected.includes("grok"))
+            }
           >
             {phase === "creating" ? "创建中…" : "确定创建"}
           </Button>
@@ -185,8 +197,8 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
           <Button variant="outline" size="sm" onClick={generate}>重新生成</Button>
         )}
       </div>
-      {detected.length === 0 && (
-        <p className="text-center text-xs text-muted-foreground">未检测到已安装的 agent，请确保 claude、codex 或 kimi 已安装。</p>
+      {!detected.includes("grok") && (
+        <p className="text-center text-xs text-destructive">未检测到 Grok Build CLI（grok）。默认会创建 grok profile，请先安装并登录。</p>
       )}
       <p className="text-center text-xs text-muted-foreground">扫码人会成为应用 owner，自动豁免访问控制。</p>
     </div>

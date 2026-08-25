@@ -32,7 +32,10 @@ export async function createBootstrapProfileConfig(
   const profile = createDefaultProfileConfig({
     agentKind: input.agentKind,
     accounts: input.accounts,
-    preferences: input.preferences,
+    preferences: {
+      showToolCalls: false,
+      ...input.preferences,
+    },
     secrets: input.secrets,
     ...(codex ? { codex } : {}),
   });

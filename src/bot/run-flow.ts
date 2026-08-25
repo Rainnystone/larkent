@@ -120,7 +120,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       cwdRealpath: workspace.cwdRealpath,
       policyFingerprint: policy.policyFingerprint,
     });
-    if (catalogEntry?.agentId === 'claude' || catalogEntry?.agentId === 'kimi') {
+    if (catalogEntry?.agentId === 'claude' || catalogEntry?.agentId === 'kimi' || catalogEntry?.agentId === 'grok') {
       sessionId = catalogEntry.sessionId;
       resumeFrom = sessionId;
     } else if (catalogEntry?.agentId === 'codex') {
@@ -130,7 +130,9 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   }
   if (
     !resumeFrom &&
-    (input.capability.agentId === 'claude' || input.capability.agentId === 'kimi')
+    (input.capability.agentId === 'claude' ||
+      input.capability.agentId === 'kimi' ||
+      input.capability.agentId === 'grok')
   ) {
     resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
     sessionId = resumeFrom;
@@ -192,7 +194,9 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
   if (input.event.type !== 'system') return;
   if (
-    (input.capability.agentId === 'claude' || input.capability.agentId === 'kimi') &&
+    (input.capability.agentId === 'claude' ||
+      input.capability.agentId === 'kimi' ||
+      input.capability.agentId === 'grok') &&
     input.event.sessionId
   ) {
     const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;

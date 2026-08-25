@@ -103,8 +103,8 @@ export interface AppPreferences {
   messageReplyMigrated?: boolean;
   /**
    * Whether to render tool-call blocks (Bash / Read / Edit / ...) in the
-   * output. Default true. Turn off if you only care about Claude's final
-   * text answer and want to hide the "工具调用过程".
+   * output. Default false in this fork: only the final answer is posted
+   * unless the operator turns it on in `/config`.
    */
   showToolCalls?: boolean;
   /**
@@ -214,9 +214,9 @@ export function getMessageReplyMode(cfg: AppConfig): MessageReplyMode {
   return 'markdown';
 }
 
-/** Resolve the show-tool-calls preference with default fallback. */
+/** Resolve the show-tool-calls preference. Unset means hide (this fork). */
 export function getShowToolCalls(cfg: AppConfig): boolean {
-  return cfg.preferences?.showToolCalls !== false;
+  return cfg.preferences?.showToolCalls === true;
 }
 
 export function getCotMessages(cfg: AppConfig): CotMessagesMode {

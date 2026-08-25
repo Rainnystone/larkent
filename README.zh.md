@@ -1,236 +1,235 @@
-# lark-channel-bridge（Kimi Code 分支）
+# lark-channel-bridge（给 Grok Bot 用）
 
-把飞书 / Lark 消息接到本地 **Kimi Code** CLI 的桥。用户私聊 bot 或在群里
-`@` 它，桥就运行 `kimi -p` 并把 agent 的答复发回聊天。
+把飞书 / Lark 聊天接到本机 **coding-agent CLI**。用户私聊 bot 或在群里 `@`，
+本进程拉起 agent，回一条干净的最终消息。
 
-本仓库是 `lark-channel-bridge` 的 fork（上游还支持 Claude Code / Codex
-CLI，代码保留但不是重点）。**没有发布到 npm**，只能从源码安装。
+本 README 是 **Grok Bot**（SpaceXAI 常驻队友，自带一台电脑）的执行手册：
+每一步都是命令 + 可核对结果。需要人的步骤标 **HUMAN**。
+英文：[README.md](./README.md)。
 
-本 README 面向自动化部署 agent（例如 Grok Bot 这类常驻 AI 队友）编写：
-每一步都是可执行命令 + 可验证结果。英文完整版：[README.md](./README.md)。
+本仓库是 `lark-channel-bridge` / Kimi Code 分支的**增量** fork。Claude Code、
+Codex CLI、Kimi Code 适配器都还在。Grok Build 是第四个（`src/agent/grok/`）。
+`--agent grok` 时新 profile 默认走 Grok Build。
+
+没有发 npm，从源码安装。
+
+## 选引擎
+
+| 引擎 | `--agent` | 二进制 | 无头调用 | 续会话 | 机器必须能访问 |
+|---|---|---|---|---|---|
+| **Grok Build** | `grok` | `grok` | `grok -p --output-format streaming-json --always-approve` | `-r`（不要用 `-s`） | `auth.x.ai` / grok 代理（**必须在墙外**） |
+| **Kimi Code** | `kimi` | `kimi` | `kimi -p --output-format stream-json` | `-S` | Moonshot |
+
+本机若装了 Claude / Codex，`--agent claude` / `codex` 仍可用。一个 profile
+不要混引擎；另建 profile。
+
+把下文 `<AGENT>` 换成 `grok` 或 `kimi`。profile 名默认等于引擎名。
 
 ## 心智模型
 
 ```
-飞书用户消息 ──WS 长连接──> bridge（本仓库）
-   │  scope = chatId（话题群为 chatId:threadId）
+飞书用户消息 ──WS 长连接──> 本进程
+   │  scope = chatId（话题群 chatId:threadId）
    ▼
-拉起 `kimi -p "<prompt>" --output-format stream-json`（后续轮次带 `-S <sessionId>`）
-   │  stdout JSONL → AgentEvent（system / tool_use / tool_result / final_text / done）
+拉起本机 CLI（grok -p … 或 kimi -p …）→ stdout JSONL → AgentEvent
    ▼
-飞书回复（默认 markdown；每轮只发一条干净的最终消息）
+一条飞书 markdown（默认不展示 tool 过程）
 ```
 
-- **会话**：每个 scope 一个 Kimi session，持久化在
-  `~/.lark-channel/profiles/<profile>/`；每批消息起新进程、用 `-S` 续接，
-  上下文跨轮保留。
-- **访问**：本 fork 默认 `mode: team`——能看到 bot 的人都能用；管理命令
-  （`/invite`、`/config` 等）仍只有 owner/admin 可用。
-- **身份**：bot 说话永远是 bot。读聊天记录、搜索、文档/表格等公司资产时，
-  agent 用 `lark-cli --as user`（owner 完成一次 OAuth 设备授权后可用）。
-  lark-cli 策略为 `strict-mode off` + `default-as bot`（本 fork 默认）。
+- **会话**：catalog 在 `~/.lark-channel/profiles/<profile>/`；Grok 原生会话在
+  `~/.grok/sessions/`。每批消息一个 CLI 进程。
+- **发言 vs 读取**：聊天输出永远是 **bot**。读群历史、文档、表格等走
+  `lark-cli --as user`（owner 完成一次 OAuth 之后）。Token 在
+  **当前 profile 的 lark-cli 目录**，不在某个挂着的 agent 进程里。重启桥
+  不需要登录进程还活着。
+- **首次 init 默认**（`run`/`start` 写盘，不要手改除非被要求）：
+  `mode: team`、`showToolCalls: false`、`larkCli.identityPreset: user-default`、
+  **lark-cli 身份策略** `strict-mode off` + `default-as bot`。
 
-## 前置条件
+## 主机约束
 
-| 依赖 | 检查命令 | 预期 |
+- Node.js ≥ 20.12，可写 `$HOME`，出站 HTTPS。
+- **Grok Build**：机器必须打到 xAI。墙内主机即使用户在别的设备完成了
+  device-code 也会失败。不要把 grok profile 放在境内 VPS。
+- **Kimi Code**：不需要 xAI；仍要能连 `open.feishu.cn`。
+- **不要**给 bot 单独设 `GROK_HOME` / 隔离 `~/.grok`，继承已登录的
+  `auth.json`。Kimi 同理（`~/.kimi-code`）。隔离家目录等于再登一次。
+- 想走 SuperGrok 额度就 **不要**设 `XAI_API_KEY`。
+
+## 前置（安装前先核对）
+
+| 依赖 | 检查 | 通过 |
 |---|---|---|
-| Node.js ≥ 20.12 | `node --version` | `v20.12.0` 或更新 |
-| pnpm（用 npx 即可） | `npx pnpm --version` | 任意 10.x |
-| Kimi Code CLI（已登录） | `kimi -p "say OK" --output-format stream-json` | stdout 输出 JSONL，退出码 0 |
+| Node ≥ 20.12 | `node --version` | `v20.12.0` 或更新 |
+| pnpm | `npx pnpm --version` | 任意 10.x |
 | lark-cli | `lark-cli --version` | 如 `1.0.x` |
-| 飞书/Lark 应用凭证 | — | 在下方"注册应用"步骤获得 |
+| Grok（若 `--agent grok`） | `grok --version` 且 `test -f ~/.grok/auth.json` | 二进制 + 登录文件 |
+| Kimi（若 `--agent kimi`） | `kimi -p "say OK" --output-format stream-json` | JSONL，退出码 0 |
+| TTY | `[ -t 0 ] && [ -t 1 ] && echo tty` | `tty` — 扫码向导需要 |
 
-kimi 未登录时先 `kimi login`（设备码流程，需要浏览器）。
+**HUMAN — 本机 agent 登录（每台机器一次）：**
 
-## 从源码安装
+- Grok：`grok login --device-auth`（URL + 短码，owner 在任意设备确认）。
+- Kimi：`kimi login`。
+
+Grok CLI：`curl -fsSL https://x.ai/cli/install.sh | bash`。
+缺 lark-cli：`npm install -g @larksuite/cli`。
+
+## 安装
 
 ```bash
-git clone <本仓库地址> && cd lark-channel-bridge   # 或解压 tarball
-npx pnpm install        # prepare 脚本会顺带构建 dist/
-npx pnpm build          # 改动源码后重跑
+git clone https://github.com/Rainnystone/larkent-for-grokbot.git
+cd larkent-for-grokbot
+npx pnpm install
+npx pnpm build
 ```
 
-CLI 入口是 `bin/lark-channel-bridge.mjs`；下文命令都在仓库根目录以
-`node bin/lark-channel-bridge.mjs <命令>` 执行（也可 `npx pnpm link --global`
-获得全局 `lark-channel-bridge` 命令）。
+入口：仓库根目录 `node bin/lark-channel-bridge.mjs <命令>`。
 
 ## 注册飞书应用
 
-两条路；**无人值守部署选 B**。两条路结束时桥都会以前台方式运行——只想
-完成配置的话按 Ctrl-C 停掉即可。
+**HUMAN。** 无 TTY（Grok Bot 云壳常见）走 B，不要跑扫码向导。
 
-**A. 扫码向导（需要有人用手机飞书扫一次）：**
-
-```bash
-node bin/lark-channel-bridge.mjs run --agent kimi
-```
-
-向导要求 TTY。非 TTY 环境用自带辅助脚本：打印一个普通 URL 让人在浏览器
-打开确认，确认后把凭证写入 JSON：
+**A. 扫码向导（必须 TTY）：**
 
 ```bash
-node scripts/register-app.mjs /tmp/app.json   # 打印 QR_URL=...，确认后自动退出
-# 然后拿 /tmp/app.json 里的值走路径 B；用完删除该文件
+node bin/lark-channel-bridge.mjs run --agent <AGENT>
 ```
 
-**B. 已有应用凭证（完全非交互）：**
+打印二维码和 URL。owner 用飞书 App 扫。等到 stdout 出现 `✓ 应用创建成功`
+再出现 `正在监听消息`。
+
+stdin 不是 TTY 就不要走 A，改 B。
+
+**B. 已有应用凭证（可脚本化）：**
 
 ```bash
-node bin/lark-channel-bridge.mjs run --agent kimi \
-  --app-id cli_xxx --app-secret <secret> --tenant feishu   # 国际版 Lark 用 --tenant lark
+node bin/lark-channel-bridge.mjs run --agent <AGENT> \
+  --app-id cli_xxx --app-secret <secret> --tenant feishu
 ```
 
-配置写入 `~/.lark-channel/config.json`（可用 `LARK_CHANNEL_HOME` 改根目录）。
-密钥存进每个 profile 的加密 keystore，不在 JSON 里。
+国际版 Lark 用 `--tenant lark`。向 owner 要 id/secret，不要编。只想写配置的话，
+看到 `正在监听消息` 后 Ctrl-C。
+
+配置：`~/.lark-channel/config.json`（`LARK_CHANNEL_HOME` 改根目录）。
+密钥进每个 profile 的 keystore，不进 JSON。
+
+## Owner OAuth（CLI，不要塞进 coding-agent 那一轮）
+
+读群历史、改租户文档之前必须做。Token 写在 **当前 profile 的 lark-cli 目录**。
+这是首次 init 的一步，不是某个 grok/kimi 进程一直挂着。
+
+**HUMAN** 打开 `verification_url`（10 分钟有效）。**前台**跑；不要把
+device-code 等待丢到后台。
+
+```bash
+export LARK_CHANNEL=1 LARK_CHANNEL_HOME=~/.lark-channel LARK_CHANNEL_PROFILE=<AGENT> \
+  LARK_CHANNEL_CONFIG=~/.lark-channel/profiles/<AGENT>/lark-cli-source/config.json \
+  LARKSUITE_CLI_CONFIG_DIR=~/.lark-channel/profiles/<AGENT>/lark-cli
+
+lark-cli auth login --no-wait --json --domain im,docs,drive,wiki,sheets,base,markdown,task,calendar
+# 把 verification_url 和 device_code 给 owner
+lark-cli auth login --device-code "<device_code>"
+lark-cli config strict-mode off && lark-cli config default-as bot
+lark-cli auth status --json
+# 通过：identities.user.status == "ready"，identities.bot.status == "ready"，defaultAs == "bot"
+```
+
+这就是 **lark-cli 身份策略**：说话是 bot；`--as user` 只用于读/资产。
+授权链接不要发到群里（谁先点谁绑 token）。
 
 ## 运行
 
-先前台验证：
+先前台：
 
 ```bash
-node bin/lark-channel-bridge.mjs run
-# 预期末尾输出："✓ 已连接  bot: <名字> ... agent: Kimi Code (kimi)"，随后"正在监听消息"
+node bin/lark-channel-bridge.mjs run --agent <AGENT>
+# 通过："✓ 已连接  bot: <名字> ... agent: Grok Build (grok)" 或 "Kimi Code (kimi)"
+# 然后 "正在监听消息"
 ```
 
-再装成系统服务（崩溃自愈、开机自启）：
+再装成系统 **per-profile service**（macOS launchd，Linux systemd `--user`）。
+Windows 上是 `.cmd` 包装，交给 schtasks。
 
 ```bash
-node bin/lark-channel-bridge.mjs start    # macOS 用 launchd，Linux 用 systemd --user
-node bin/lark-channel-bridge.mjs ps       # 查看运行中的 bot
-node bin/lark-channel-bridge.mjs status   # 服务状态
-node bin/lark-channel-bridge.mjs restart  # 改配置后重启
-node bin/lark-channel-bridge.mjs stop     # 停止服务
+node bin/lark-channel-bridge.mjs start
+node bin/lark-channel-bridge.mjs ps
+node bin/lark-channel-bridge.mjs status
+node bin/lark-channel-bridge.mjs restart
+node bin/lark-channel-bridge.mjs stop
 ```
 
-Linux 注意：服务是 **systemd 用户单元**（`Restart=always`、`RestartSec=5`、
-`WantedBy=default.target`）。无人登录的服务器上要执行一次：
+无人登录的 Linux：`loginctl enable-linger "$USER"`，否则用户退出后服务被收。
 
-```bash
-loginctl enable-linger "$USER"
-```
+## 验收
 
-否则用户退出登录后服务会被系统回收。
-
-## 部署验收
-
-1. 飞书里私聊 bot（或群里 `@bot`）：`用一句话介绍你自己`。
-   预期：约 30 秒内收到一条 markdown 回复，不带工具调用过程（本 fork
-   默认 profile 已关 `showToolCalls`）。
-2. 完成下面的 OAuth 后问：`回顾一下这个群最近的聊天记录`。
-   预期：它以 owner 的用户身份读取并总结。
-3. 日志：`~/.lark-channel/profiles/kimi/logs/bridge-YYYYMMDD.jsonl`
-   （JSONL；grep `"phase":"run"` / `"event":"completed"`）。
-
-## 一次性 owner OAuth（解锁读历史 / 编辑公司资产）
-
-带上 profile 的 lark-cli 环境变量执行（若改过 `LARK_CHANNEL_HOME` 请相应调整）：
-
-```bash
-export LARK_CHANNEL=1 LARK_CHANNEL_HOME=~/.lark-channel LARK_CHANNEL_PROFILE=kimi \
-  LARK_CHANNEL_CONFIG=~/.lark-channel/profiles/kimi/lark-cli-source/config.json \
-  LARKSUITE_CLI_CONFIG_DIR=~/.lark-channel/profiles/kimi/lark-cli
-
-lark-cli auth login --no-wait --json --domain im,docs,drive,wiki,sheets,base,markdown,task,calendar
-# 输出 verification_url（10 分钟有效）和 device_code——把 URL 给 owner 打开确认
-lark-cli auth login --device-code "<device_code>"   # 阻塞直到 owner 确认
-lark-cli config strict-mode off && lark-cli config default-as bot
-lark-cli auth status --json   # 预期 identities.user.status == "ready"，defaultAs == "bot"
-```
-
-agent 遵守的身份规则（已写进它的系统提示）：聊天输出永远以 bot 身份发出；
-`--as user` 只用于读历史 / 搜索 / 文档 / 表格等资产操作。
+1. 飞书私聊（或群 `@bot`）：`用一句话介绍你自己`。
+   通过：约 30 秒一条 markdown，没有 tool 行（`showToolCalls: false`）。
+2. Owner OAuth 之后：`回顾一下这个群最近的聊天记录`。
+   通过：用 owner 用户身份读；聊天里说话的仍是 bot。
+3. 日志：`~/.lark-channel/profiles/<AGENT>/logs/bridge-YYYYMMDD.jsonl`
+   （`"phase":"run"` / `"event":"completed"`）。
 
 ## 配置参考
 
 `~/.lark-channel/config.json` → `profiles.<name>`：
 
-| 键 | 本 fork 默认 | 含义 |
+| 键 | 默认 | 含义 |
 |---|---|---|
-| `agentKind` | `kimi` | agent 适配器 |
-| `mode` | `team` | `team` 全员可用；`personal` 走白名单 |
-| `access.allowedUsers/allowedChats/admins` | `[]` | personal 模式下使用；admin 两种模式都有效 |
-| `preferences.model` | 不设置 | 固定 Kimi 模型别名 → `kimi -m` |
-| `preferences.showToolCalls` | `false` | 不显示工具调用过程消息 |
-| `larkCli.identityPreset` | `user-default` | 用户身份可用（默认身份仍是 bot） |
+| `agentKind` | 传入的 `grok` 或 `kimi` | 适配器 |
+| `mode` | `team` | `team` 能看到就能用；`personal` 走白名单 |
+| `access.allowedUsers/allowedChats/admins` | `[]` | personal 用；admin 两种模式都有效 |
+| `workspaces.default` | profile 工作区 | `/cd` 默认目录 |
+| `preferences.model` | 不设置 | `grok -m` / `kimi -m` |
+| `preferences.showToolCalls` | `false` | 不展示工具过程 |
+| `larkCli.identityPreset` | `user-default` | 允许用户身份；默认身份仍是 bot |
 
-聊天内命令：`/help` `/status` `/config` `/cd <path>` `/new` `/stop`
-`/resume` `/invite user @x` `/remove user @x` `/invite admin @x`
-`/remove admin @x` `/invite group` `/remove group` `/invite all group`。
-
-环境变量：`LARK_CHANNEL_HOME`（配置根目录）、`LARK_CHANNEL_KIMI_BIN`
-（覆盖 kimi 二进制路径）。
-
-## 多 profile
-
-每个 profile 是一套独立的 bot 绑定（应用 + agent + 工作目录），位于
-`~/.lark-channel/profiles/<name>/`，每个都能用 `start --profile <name>`
-跑成独立的服务。管理命令：
-
-```bash
-node bin/lark-channel-bridge.mjs profile list
-node bin/lark-channel-bridge.mjs profile create <name> --agent kimi
-node bin/lark-channel-bridge.mjs profile use <name>
-node bin/lark-channel-bridge.mjs profile export <name>                          # 导出 JSON 到 stdout
-node bin/lark-channel-bridge.mjs profile export <name> --include-secrets --yes  # 含应用密钥
-node bin/lark-channel-bridge.mjs profile remove <name>                          # 归档
-node bin/lark-channel-bridge.mjs profile remove <name> --purge --yes            # 永久删除
-```
-
-`workspaces.default` 是 profile 的默认工作目录；用户在聊天里用
-`/cd <path>` 覆盖，用 `/ws` 管理常用目录别名。
-
-## 权限
-
-kimi 的 print 模式固定走 CLI 自带的 auto 权限策略，桥层的权限配置在这里
-只是声明性的。标准键是：
+规范权限（旧版 `sandbox` 读入时会规范化掉，不要再写新的 sandbox 键）：
 
 ```json
-"permissions": { "defaultAccess": "full", "maxAccess": "full" }
+"permissions": {
+  "defaultAccess": "full",
+  "maxAccess": "full"
+}
 ```
 
-旧版 `sandbox` 配置块仍被接受并自动迁移；新 profile 不要手写它。
+聊天：`/help` `/status` `/config` `/cd <path>` `/new` `/stop` `/resume`
+`/invite user` `/remove user` `/invite group` `/remove group`
+`/invite all group` `/invite admin`。
 
-## lark-cli 身份策略
+Profile CLI：`profile export`、`profile remove --purge --yes`、
+`profile export --include-secrets --yes`。
 
-每个 profile 有当前 profile 的 lark-cli 目录
-（`~/.lark-channel/profiles/<name>/lark-cli`）。启动时桥会把 lark-cli
-身份策略（`strict-mode off`、`default-as bot`）应用到该目录：agent 默认
-以 bot 身份行动，需要用户身份时逐次加 `--as user`。
+环境变量：`LARK_CHANNEL_HOME`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_KIMI_BIN`。
 
-## 云文档评论
-
-云文档评论按文档权限生效：在飞书文档的评论里 @ bot，它就在那条评论
-串里回答；能否使用取决于文档本身的权限，与聊天白名单无关。
-
-## Windows
-
-Windows 下守护进程用计划任务（其他平台用 launchd/systemd）。agent
-二进制在需要时会解析到对应的 `.cmd` 垫片。
+云文档评论按文档权限生效：在飞书文档评论里 `@bot` 走该文档会话，不走 IM 白名单。
 
 ## 故障排查
 
 | 症状 | 诊断 | 处理 |
 |---|---|---|
-| 完全没回复 | 日志没有 `intake enter` | 查 `ps`/`status`；核对应用凭证与 WS 连通性 |
-| run 完成但没有消息 | 日志止于 `progress-stream-skipped` | 本 fork 已修（final-answer-only 回复），更新代码 |
-| `agent-binary-not-found` | 预检失败 | 安装/登录 kimi，或设置 `LARK_CHANNEL_KIMI_BIN` |
-| 读群历史报 `230027` | bot 身份缺权限 | 预期行为；完成 OAuth 后 agent 会走 `--as user` |
-| OAuth 链接过期 | 10 分钟有效期 | 重跑 `auth login --no-wait` 取新链接 |
-| Linux 退出登录后服务没了 | `systemctl --user status` 不活跃 | `loginctl enable-linger "$USER"` |
+| 扫码向导报非交互 | 没有 TTY | `--app-id` / `--app-secret` |
+| `agent-binary-not-found` | CLI 不在 PATH | 安装/登录；或设 `LARK_CHANNEL_GROK_BIN` / `LARK_CHANNEL_KIMI_BIN` |
+| 服务器上 Grok 认证失败 | 主机到不了 xAI | 把进程放到墙外 |
+| Grok 续会话变空白 | 误用了 `-s` | adapter 只用 `-r` |
+| 读群历史 `230027` | bot 没这个权限 | 预期；OAuth 后走 `--as user` |
+| OAuth 链接过期 | 10 分钟 | 重跑 `auth login --no-wait` |
+| Linux 退出登录服务没了 | systemd 用户单元 | `loginctl enable-linger "$USER"` |
+| 飞书里刷 tool 行 | `showToolCalls` 为 true | `/config` 关掉；本 fork 默认已是 false |
 
 ## 开发
 
 ```bash
 npx pnpm typecheck
-npx pnpm test            # 单元 + 集成 + 进程 + 静态契约
-KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts  # 真 kimi 冒烟（可选）
+npx pnpm test
+npx pnpm build
+GROK_REAL_SMOKE=1 npx vitest run tests/process/grok-real.smoke.test.ts
+KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts
 ```
 
-结构：`src/agent/kimi/` 是适配层——`argv.ts` 拼 CLI 调用，`jsonl.ts` 把
-Kimi 的 stream-json 翻成 `AgentEvent`，`adapter.ts` 管子进程。适配层之上
-（channel、卡片、会话、访问控制、命令、守护进程、web 控制台）与 agent
-无关。共享 bot/card 代码不允许 import agent 内部实现，由
-`tests/static/contracts.test.ts` 强制保证。
+适配层：`src/agent/grok/`、`src/agent/kimi/`，以及 Claude/Codex。通道、卡片、
+会话、守护进程、web 控制台与 agent 无关。共享 bot/card 代码不许 import
+adapter 内部（`tests/static/contracts.test.ts`）。
 
 ## 许可证
 

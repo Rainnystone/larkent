@@ -65,8 +65,6 @@ function chatList(chatIds: string[], knownChats: KnownChat[]): string {
 /** Form card for `/config`. */
 export function configFormCard(opts: ConfigFormOpts): object {
   const teamMode = opts.mode === 'team';
-  const teamOverrideNote =
-    '\n\n_⚠️ 团队版已开启：本项被覆盖 —— 身份强制为「只允许应用身份」、访问控制不生效。切回个人版后恢复。_';
   const accessElements: object[] = [
     ...(teamMode
       ? [
@@ -274,8 +272,7 @@ export function configFormCard(opts: ConfigFormOpts): object {
               content:
                 '\n**lark-cli 身份策略**\n' +
                 '_只允许应用身份:使用 bot/app 能力,不访问个人资源_\n' +
-                '_允许用户身份:保留应用身份,并允许已授权用户访问个人日历、邮箱、云盘等资源_' +
-                (teamMode ? teamOverrideNote : ''),
+                '_允许用户身份:聊天仍以 bot 发言；读历史/文档等走已授权用户身份（`--as user`）_',
             },
             {
               tag: 'select_static',
@@ -355,7 +352,7 @@ export function configSavedCard(opts: ConfigFormOpts): object {
             `**并发上限**:\`${opts.maxConcurrentRuns}\`\n` +
             `**run 探活**:\`${opts.runIdleTimeoutMinutes > 0 ? `${opts.runIdleTimeoutMinutes} 分钟` : '关闭'}\`\n` +
             `**群里需要 @ bot**:\`${opts.requireMentionInGroup ? '是' : '否'}\`\n\n` +
-            `**lark-cli 身份策略**:\`${opts.mode === 'team' ? '只允许应用身份(团队版强制)' : opts.larkCliIdentity === 'user-default' ? '允许用户身份' : '只允许应用身份'}\`\n\n` +
+            `**lark-cli 身份策略**:\`${opts.larkCliIdentity === 'user-default' ? '允许用户身份（发言仍是 bot）' : '只允许应用身份'}\`\n\n` +
             '🔒 **访问控制**' +
             (opts.mode === 'team' ? '（_团队版下不生效,任何人可用_）' : '') +
             '\n' +

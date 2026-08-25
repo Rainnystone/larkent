@@ -1,5 +1,6 @@
 import { ClaudeAdapter } from '../agent/claude/adapter';
 import { CodexAdapter } from '../agent/codex/adapter';
+import { GrokAdapter } from '../agent/grok/adapter';
 import { KimiAdapter } from '../agent/kimi/adapter';
 import { AgentPreflightError, type AgentAvailability, type LocalAgentId } from '../agent/preflight';
 import type { AgentAdapter } from '../agent/types';
@@ -56,6 +57,12 @@ export function createRuntimeAgent(
       larkChannel,
     });
   }
+  if (profileConfig.agentKind === 'grok') {
+    return new GrokAdapter({
+      binary: process.env.LARK_CHANNEL_GROK_BIN ?? 'grok',
+      larkChannel,
+    });
+  }
   return new ClaudeAdapter({ larkChannel });
 }
 
@@ -64,7 +71,13 @@ export async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promis
   const ok = await agent.isAvailable();
   if (ok) return { ok: true };
   const agentId: LocalAgentId =
-    agent.id === 'codex' ? 'codex' : agent.id === 'kimi' ? 'kimi' : 'claude';
+    agent.id === 'codex'
+      ? 'codex'
+      : agent.id === 'kimi'
+        ? 'kimi'
+        : agent.id === 'grok'
+          ? 'grok'
+          : 'claude';
   const diagnostic = {
     code: 'agent-binary-not-found' as const,
     agentId,

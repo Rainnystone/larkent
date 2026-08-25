@@ -8,6 +8,7 @@ import {
   effectiveLarkCliIdentity,
   normalizeProfileConfig,
 } from '../../../src/config/profile-schema';
+import { getShowToolCalls } from '../../../src/config/schema';
 
 const app = {
   id: 'cli_test',
@@ -134,6 +135,26 @@ describe('profile schema', () => {
       admins: [],
       requireMentionInGroup: true,
     });
+  });
+
+  it('hides tool-call chatter unless the operator explicitly enables it', () => {
+    expect(
+      getShowToolCalls({
+        accounts: { app: { id: 'cli_test', secret: 'x', tenant: 'feishu' } },
+      }),
+    ).toBe(false);
+    expect(
+      getShowToolCalls({
+        accounts: { app: { id: 'cli_test', secret: 'x', tenant: 'feishu' } },
+        preferences: { showToolCalls: false },
+      }),
+    ).toBe(false);
+    expect(
+      getShowToolCalls({
+        accounts: { app: { id: 'cli_test', secret: 'x', tenant: 'feishu' } },
+        preferences: { showToolCalls: true },
+      }),
+    ).toBe(true);
   });
 
   it('drops invalid legacy message reply values instead of blocking config load', () => {

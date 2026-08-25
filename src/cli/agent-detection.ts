@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 
-export type AgentKind = 'claude' | 'codex' | 'kimi';
+export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok';
 
 export interface DetectedAgent {
   kind: AgentKind;
@@ -46,6 +46,7 @@ function pathExts(): string[] {
 
 export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
   const candidates: Array<{ kind: AgentKind; command: string }> = [
+    { kind: 'grok', command: process.env.LARK_CHANNEL_GROK_BIN ?? 'grok' },
     { kind: 'claude', command: process.env.LARK_CHANNEL_CLAUDE_BIN ?? 'claude' },
     { kind: 'codex', command: process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex' },
     { kind: 'kimi', command: process.env.LARK_CHANNEL_KIMI_BIN ?? 'kimi' },

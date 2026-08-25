@@ -78,7 +78,13 @@ export interface CreateProfileInput {
 export async function onboardCreate(body: unknown, rootDir?: string) {
   const fv = asRecord(body);
   const agentKind: AgentKind =
-    fv.agentKind === 'codex' ? 'codex' : fv.agentKind === 'kimi' ? 'kimi' : 'claude';
+    fv.agentKind === 'codex'
+      ? 'codex'
+      : fv.agentKind === 'kimi'
+        ? 'kimi'
+        : fv.agentKind === 'grok'
+          ? 'grok'
+          : 'claude';
   const input: CreateProfileInput = {
     profile: String(fv.profile ?? '').trim() || agentKind,
     agentKind,
@@ -119,6 +125,16 @@ export async function writeNewProfile(
     throw new HttpError(400, `profile 名称无效：${err instanceof Error ? err.message : String(err)}`);
   }
   const profile = appPaths.profile;
+
+  if (input.agentKind === 'grok') {
+    const detected = await detectInstalledAgents();
+    if (!detected.some((d) => d.kind === 'grok')) {
+      throw new HttpError(
+        400,
+        '未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。',
+      );
+    }
+  }
 
   // Never clobber an existing profile — this is a *new*-profile path. Fast-fail
   // before storing the secret; re-checked inside the lock against races.
