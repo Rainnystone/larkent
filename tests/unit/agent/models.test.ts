@@ -21,6 +21,10 @@ describe('agent model catalog', () => {
     expect(grok[0]?.value).toBe(DEFAULT_MODEL);
     expect(grok.map((m) => m.value)).toContain('grok-build');
     expect(grok.map((m) => m.value)).not.toContain('gpt-5-codex');
+    const cursor = supportedModels('cursor');
+    expect(cursor[0]?.value).toBe(DEFAULT_MODEL);
+    expect(cursor.map((m) => m.value)).toContain('composer-2.5');
+    expect(cursor.map((m) => m.value)).not.toContain('gpt-5-codex');
   });
 
   it('treats unset and the default sentinel as "use agent default"', () => {

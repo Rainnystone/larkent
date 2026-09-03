@@ -2,7 +2,7 @@ import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 
-export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok';
+export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
 
 export interface DetectedAgent {
   kind: AgentKind;
@@ -50,6 +50,7 @@ export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
     { kind: 'claude', command: process.env.LARK_CHANNEL_CLAUDE_BIN ?? 'claude' },
     { kind: 'codex', command: process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex' },
     { kind: 'kimi', command: process.env.LARK_CHANNEL_KIMI_BIN ?? 'kimi' },
+    { kind: 'cursor', command: process.env.LARK_CHANNEL_CURSOR_BIN ?? 'cursor-agent' },
   ];
   const detected: DetectedAgent[] = [];
   for (const candidate of candidates) {
@@ -62,5 +63,30 @@ export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
       // Missing agents are reported by the caller based on the final count.
     }
   }
+  if (!detected.some((d) => d.kind === 'cursor') && !process.env.LARK_CHANNEL_CURSOR_BIN) {
+    try {
+      const binaryPath = await resolveExecutablePath('agent');
+      if (await looksLikeCursorBinary(binaryPath)) {
+        detected.push({ kind: 'cursor', binaryPath });
+      }
+    } catch {
+      // `agent` is a common name; ignore non-Cursor binaries.
+    }
+  }
   return detected;
+}
+
+async function looksLikeCursorBinary(binaryPath: string): Promise<boolean> {
+  try {
+    const { checkAgentVersion } = await import('../agent/preflight');
+    const version = await checkAgentVersion({
+      agentId: 'cursor',
+      agentName: 'Cursor CLI',
+      command: binaryPath,
+      binaryPath,
+    });
+    return /cursor/i.test(version) || /^agent\b/i.test(version) || /^\d{4}\.\d{2}/.test(version);
+  } catch {
+    return false;
+  }
 }

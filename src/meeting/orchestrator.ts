@@ -356,8 +356,9 @@ async function runMeetingAgent(
 /** Collect assistant text from the agent event stream. */
 function textOf(event: AgentEvent): string {
   if (event.type === 'text') return event.delta;
-  // Codex/kimi/grok hold the answer back as a terminal `final_text` instead of
-  // streaming it; claude never emits `final_text`, so this can't double-post.
+  // Codex/kimi/grok/cursor hold the answer back as a terminal `final_text`
+  // instead of streaming it; claude never emits `final_text`, so this can't
+  // double-post.
   if (event.type === 'final_text') return event.content;
   return '';
 }

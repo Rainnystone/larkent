@@ -51,7 +51,9 @@ export async function runMigrate(opts: MigrateOptions): Promise<void> {
         ? 'kimi'
         : opts.profile === 'grok'
           ? 'grok'
-          : undefined);
+          : opts.profile === 'cursor'
+            ? 'cursor'
+            : undefined);
   const needsV2Migration = await hasLegacyProfileConfig(configPath);
   const result = await migrateProfileV2WithActiveBridgePrompt({
     rootDir: dirname(configPath),

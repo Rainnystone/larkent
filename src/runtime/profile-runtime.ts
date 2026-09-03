@@ -108,7 +108,7 @@ export async function resolveProfileRuntime(
   if (!profile && opts.allowBootstrap) {
     const detected = await detectInstalledAgents();
     if (detected.length === 0) {
-      throw new Error('no supported local agent found; install grok, claude, codex or kimi first');
+      throw new Error('no supported local agent found; install grok, claude, codex, kimi or cursor first');
     }
     if (detected.length > 1) {
       const selected = await selectDetectedAgent(detected, opts.selectAgent);
@@ -403,7 +403,9 @@ function resolveBootstrapAgent(
         ? 'kimi'
         : profile === 'grok'
           ? 'grok'
-          : undefined)
+          : profile === 'cursor'
+            ? 'cursor'
+            : undefined)
   );
 }
 
@@ -577,7 +579,7 @@ function formatAmbiguousAgentSelectionError(
 ): string {
   const lines = detected.map((agent) => `  - ${agent.kind}: ${agent.binaryPath}`);
   return [
-    '检测到多个本地 agent，请使用 --agent <grok|claude|codex|kimi> 指定要初始化哪一个。',
+    '检测到多个本地 agent，请使用 --agent <grok|claude|codex|kimi|cursor> 指定要初始化哪一个。',
     '已检测到：',
     ...lines,
   ].join('\n');
@@ -628,7 +630,9 @@ function displayAgentKind(kind: AgentKind): string {
       ? 'Kimi Code'
       : kind === 'grok'
         ? 'Grok Build'
-        : 'Codex CLI';
+        : kind === 'cursor'
+          ? 'Cursor CLI'
+          : 'Codex CLI';
 }
 
 async function maybeMigrateRootPlaintextSecret(

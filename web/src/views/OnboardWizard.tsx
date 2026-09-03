@@ -101,6 +101,10 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
       toast.error("未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。");
       return;
     }
+    if (agentKind === "cursor" && !detected.includes("cursor")) {
+      toast.error("未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。");
+      return;
+    }
     setPhase("creating");
     try {
       const r = await apiPost<{ profile: string }>("/api/profiles/qr/finish", {
@@ -138,6 +142,7 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
               <SelectItem value="claude">Claude Code</SelectItem>
               <SelectItem value="codex">Codex</SelectItem>
               <SelectItem value="kimi">Kimi Code</SelectItem>
+              <SelectItem value="cursor">Cursor CLI</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -154,6 +159,9 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
           {agentKind === "grok" && !detected.includes("grok") && (
             <p className="text-xs text-destructive">未检测到 Grok Build CLI（grok）。请先安装并登录。</p>
           )}
+          {agentKind === "cursor" && !detected.includes("cursor") && (
+            <p className="text-xs text-destructive">未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录。</p>
+          )}
         </div>
         <div className="flex justify-end">
           <Button
@@ -162,7 +170,8 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
               phase === "creating" ||
               !profileName.trim() ||
               existing.includes(profileName.trim()) ||
-              (agentKind === "grok" && !detected.includes("grok"))
+              (agentKind === "grok" && !detected.includes("grok")) ||
+              (agentKind === "cursor" && !detected.includes("cursor"))
             }
           >
             {phase === "creating" ? "创建中…" : "确定创建"}

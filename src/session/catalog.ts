@@ -217,7 +217,8 @@ function normalizeEntry(input: unknown): SessionCatalogEntry | undefined {
     (raw.agentId !== 'claude' &&
       raw.agentId !== 'codex' &&
       raw.agentId !== 'kimi' &&
-      raw.agentId !== 'grok') ||
+      raw.agentId !== 'grok' &&
+      raw.agentId !== 'cursor') ||
     typeof raw.cwdRealpath !== 'string' ||
     typeof raw.policyFingerprint !== 'string' ||
     (raw.status !== 'active' && raw.status !== 'archived') ||
@@ -260,7 +261,13 @@ function assertAgentIdentity(input: UpsertSessionCatalogInput): void {
   if (usesNativeSessionId(input.agentId)) {
     if (!input.sessionId || input.threadId) {
       const label =
-        input.agentId === 'kimi' ? 'Kimi' : input.agentId === 'grok' ? 'Grok' : 'Claude';
+        input.agentId === 'kimi'
+          ? 'Kimi'
+          : input.agentId === 'grok'
+            ? 'Grok'
+            : input.agentId === 'cursor'
+              ? 'Cursor'
+              : 'Claude';
       throw new Error(
         `${label} catalog entries require sessionId and must not include threadId`,
       );

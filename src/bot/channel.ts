@@ -82,13 +82,18 @@ const REACTION_CLEANUP_GRACE_MS = 1000;
 
 /**
  * Agents whose runs end with a single final answer instead of streamed text
- * deltas (codex, kimi, grok) can't rely on the progress stream carrying the reply —
+ * deltas (codex, kimi, grok, cursor) can't rely on the progress stream carrying the reply —
  * nothing opens it. They send the answer at the end via sendFinalReply under
  * final-answer-only semantics, and skip the streaming fallbacks that would
  * double-post it.
  */
 function usesFinalAnswerReply(agentKind: AgentKind): boolean {
-  return agentKind === 'codex' || agentKind === 'kimi' || agentKind === 'grok';
+  return (
+    agentKind === 'codex' ||
+    agentKind === 'kimi' ||
+    agentKind === 'grok' ||
+    agentKind === 'cursor'
+  );
 }
 
 const BRIDGE_AGENT_INSTRUCTIONS = [

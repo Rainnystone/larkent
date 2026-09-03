@@ -1,4 +1,4 @@
-export type AgentKind = "claude" | "codex" | "kimi" | "grok";
+export type AgentKind = "claude" | "codex" | "kimi" | "grok" | "cursor";
 export type ProfileMode = "personal" | "team";
 export type LarkCliIdentity = "bot-only" | "user-default";
 export type MessageReply = "card" | "markdown" | "text";

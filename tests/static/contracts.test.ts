@@ -29,6 +29,7 @@ describe('static architecture contracts', () => {
       expect(read(file), file).not.toMatch(/agent\/codex/);
       expect(read(file), file).not.toMatch(/agent\/grok/);
       expect(read(file), file).not.toMatch(/agent\/kimi/);
+      expect(read(file), file).not.toMatch(/agent\/cursor/);
     }
   });
 

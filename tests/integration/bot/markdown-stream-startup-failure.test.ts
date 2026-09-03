@@ -265,6 +265,36 @@ describe('markdown stream startup failures', () => {
     expect(h.sessions.getRaw('oc_dm')?.sessionId).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
   });
 
+  it('cursor final-only round sends exactly one final reply, no progress stream', async () => {
+    const streamCalls: unknown[] = [];
+    const h = await createHarness({
+      agentKind: 'cursor',
+      events: [
+        { type: 'system', sessionId: 'c6b62c6f-7ead-4fd6-9922-e952131177ff' },
+        { type: 'final_text', content: 'CURSOR_FINAL_SENTINEL' },
+        {
+          type: 'done',
+          sessionId: 'c6b62c6f-7ead-4fd6-9922-e952131177ff',
+          terminationReason: 'normal',
+        },
+      ],
+      stream: async (_chatId, input) => {
+        streamCalls.push(input);
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_cursor_final', 'run'));
+    await waitFor(() => h.channel.sent.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+
+    expect(streamCalls).toHaveLength(0);
+    expect(h.channel.sent).toHaveLength(1);
+    expect(lastMarkdown(h.channel)).toContain('CURSOR_FINAL_SENTINEL');
+    expect(h.channel.sent[0]?.options).toMatchObject({ replyTo: 'om_cursor_final' });
+    expect(h.sessions.getRaw('oc_dm')?.sessionId).toBe('c6b62c6f-7ead-4fd6-9922-e952131177ff');
+  });
+
   it('opens no progress stream for a final-only round', async () => {    // The regression this guards: Codex answering without any commentary. The
     // SDK sends its streaming card as soon as `stream()` is called and finishes
     // an empty one with "(no content)", so the user saw that placeholder for a
@@ -497,8 +527,8 @@ async function createHarness(options: {
   /** One run's events, or one array per run. */
   events?: FakeAgentEvents;
   messageReply?: 'card' | 'markdown' | 'text';
-  /** Codex/kimi/grok hold the answer back for a dedicated final reply; Claude streams it. */
-  agentKind?: 'claude' | 'codex' | 'kimi' | 'grok';
+  /** Codex/kimi/grok/cursor hold the answer back for a dedicated final reply; Claude streams it. */
+  agentKind?: 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
 } = {}): Promise<{
   tmp: TmpProfile;
   channel: FakeLarkChannel;

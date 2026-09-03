@@ -13,7 +13,7 @@ import {
   type PermissionSource,
 } from './permissions';
 
-export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok';
+export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
 export type SandboxMode = CodexSandboxMode;
 export type { AccessMode, PermissionConfig, PermissionSource };
 
@@ -252,9 +252,10 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     raw.agentKind !== 'claude' &&
     raw.agentKind !== 'codex' &&
     raw.agentKind !== 'kimi' &&
-    raw.agentKind !== 'grok'
+    raw.agentKind !== 'grok' &&
+    raw.agentKind !== 'cursor'
   ) {
-    throw new Error('agentKind must be claude, codex, kimi or grok');
+    throw new Error('agentKind must be claude, codex, kimi, grok or cursor');
   }
   const accounts = normalizeAccounts(raw.accounts);
   if (raw.agentKind === 'codex' && !raw.codex) {

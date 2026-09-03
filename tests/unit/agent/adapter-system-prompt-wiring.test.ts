@@ -18,6 +18,7 @@ import {
 } from '../../../src/agent/bridge-system-prompt';
 import { ClaudeAdapter } from '../../../src/agent/claude/adapter';
 import { CodexAdapter } from '../../../src/agent/codex/adapter';
+import { CursorAdapter } from '../../../src/agent/cursor/adapter';
 import { GrokAdapter } from '../../../src/agent/grok/adapter';
 import { KimiAdapter } from '../../../src/agent/kimi/adapter';
 
@@ -189,6 +190,42 @@ describe('GrokAdapter system prompt wiring', () => {
     const args = argv();
     expect(args[1]).toBe('hi');
     expect(args[args.indexOf('--rules') + 1]).toBe(buildBridgeSystemPrompt(undefined));
+  });
+});
+
+describe('CursorAdapter system prompt wiring', () => {
+  function cursorAdapter(): CursorAdapter {
+    return new CursorAdapter({ binary: '/usr/local/bin/cursor-agent' });
+  }
+
+  function argvPrompt(): string {
+    const args = spawnMock.spawnProcess.mock.calls[0]?.[1] as string[];
+    expect(args[0]).toBe('-p');
+    return args.at(-1) as string;
+  }
+
+  it('prefixes the positional prompt with the identity-aware bridge system prompt after setBotIdentity', () => {
+    const child = fakeChild();
+    spawnMock.spawnProcess.mockReturnValue(child);
+    const adapter = cursorAdapter();
+    adapter.setBotIdentity({ openId: 'ou_bot_self', name: 'Bridge' });
+
+    adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+
+    expect(argvPrompt()).toBe(
+      prefixBridgeSystemPrompt('hi', { openId: 'ou_bot_self', name: 'Bridge' }),
+    );
+    expect(child.stdin.readableEnded || child.stdin.writableEnded).toBe(true);
+  });
+
+  it('falls back to the base system prompt when no identity was set', () => {
+    const child = fakeChild();
+    spawnMock.spawnProcess.mockReturnValue(child);
+    const adapter = cursorAdapter();
+
+    adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+
+    expect(argvPrompt()).toBe(prefixBridgeSystemPrompt('hi', undefined));
   });
 });
 

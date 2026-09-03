@@ -262,7 +262,7 @@ describe('profile runtime resolver', () => {
       expect(message).toContain(claude);
       expect(message).toContain('codex');
       expect(message).toContain(codex);
-      expect(message).toContain('--agent <grok|claude|codex|kimi>');
+      expect(message).toContain('--agent <grok|claude|codex|kimi|cursor>');
     } finally {
       process.env.PATH = oldPath;
       if (oldClaude === undefined) {

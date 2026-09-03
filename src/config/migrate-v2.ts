@@ -204,7 +204,8 @@ function activeProcessFromRegistryEntry(entry: RegistryEntry): ActiveBridgeMigra
     entry.agentKind === 'claude' ||
     entry.agentKind === 'codex' ||
     entry.agentKind === 'kimi' ||
-    entry.agentKind === 'grok'
+    entry.agentKind === 'grok' ||
+    entry.agentKind === 'cursor'
   ) {
     active.agentKind = entry.agentKind;
   }
