@@ -1,4 +1,5 @@
 import { usesNativeSessionId, type AgentCapability } from '../agent/capability';
+import { descriptorFor } from '../agent/registry';
 import { resolveModelArg } from '../agent/models';
 import type { AgentEvent } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
@@ -123,7 +124,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     if (catalogEntry && usesNativeSessionId(catalogEntry.agentId)) {
       sessionId = catalogEntry.sessionId;
       resumeFrom = sessionId;
-    } else if (catalogEntry?.agentId === 'codex') {
+    } else if (catalogEntry && descriptorFor(catalogEntry.agentId).resume.label === 'thread') {
       threadId = catalogEntry.threadId;
       resumeFrom = threadId;
     }
@@ -149,7 +150,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
         input.profileConfig.preferences.model,
       ),
       images:
-        input.capability.agentId === 'codex'
+        descriptorFor(input.capability.agentId).resumeHistory === 'codex-thread'
           ? policy.attachments
               .filter((attachment) => attachment.kind === 'image' && attachment.decision === 'accepted')
               .map((attachment) => attachment.path)
@@ -200,10 +201,10 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
     });
     return;
   }
-  if (input.capability.agentId === 'codex' && input.event.threadId) {
+  if (descriptorFor(input.capability.agentId).resume.label === 'thread' && input.event.threadId) {
     input.sessionCatalog?.upsertActive({
       scopeId: input.scopeId,
-      agentId: 'codex',
+      agentId: input.capability.agentId,
       cwdRealpath: input.policy.cwdRealpath,
       policyFingerprint: input.policy.policyFingerprint,
       threadId: input.event.threadId,

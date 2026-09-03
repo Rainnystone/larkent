@@ -1,4 +1,9 @@
-export type AgentKind = "claude" | "codex" | "kimi" | "grok" | "cursor";
+export {
+  AGENT_KINDS,
+  descriptorFor,
+  isAgentKind,
+} from "../../../src/agent/registry";
+export type { AgentKind } from "../../../src/agent/registry";
 export type ProfileMode = "personal" | "team";
 export type LarkCliIdentity = "bot-only" | "user-default";
 export type MessageReply = "card" | "markdown" | "text";

@@ -6,6 +6,8 @@ import type {
 import { createLarkChannel } from '@larksuite/channel';
 import { dirname, join } from 'node:path';
 import { capabilityForProfile } from '../agent/capability';
+import { descriptorFor } from '../agent/registry';
+import type { AgentKind } from '../config/profile-schema';
 import { modelLabel, normalizeModelSelection, resolveModelArg } from '../agent/models';
 import {
   buildAgentPrompt,
@@ -88,12 +90,7 @@ const REACTION_CLEANUP_GRACE_MS = 1000;
  * double-post it.
  */
 function usesFinalAnswerReply(agentKind: AgentKind): boolean {
-  return (
-    agentKind === 'codex' ||
-    agentKind === 'kimi' ||
-    agentKind === 'grok' ||
-    agentKind === 'cursor'
-  );
+  return descriptorFor(agentKind).replyMode === 'final-answer';
 }
 
 const BRIDGE_AGENT_INSTRUCTIONS = [

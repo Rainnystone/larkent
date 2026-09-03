@@ -11,6 +11,7 @@ import {
   type MigrateV2Result,
 } from '../../config/migrate-v2';
 import { legacyPaths, paths } from '../../config/paths';
+import { descriptorFor, isAgentKind } from '../../agent/registry';
 import { agentKindFromString } from '../../config/profile-store';
 import type { RootConfig } from '../../config/profile-schema';
 import { isComplete, type AppCredentials, type AppConfig } from '../../config/schema';
@@ -44,23 +45,14 @@ export async function runMigrate(opts: MigrateOptions): Promise<void> {
   await migrateLegacyPaths();
   await migrateConfigShape(configPath);
   const agentKind =
-    agentKindFromString(opts.agent) ??
-    (opts.profile === 'codex'
-      ? 'codex'
-      : opts.profile === 'kimi'
-        ? 'kimi'
-        : opts.profile === 'grok'
-          ? 'grok'
-          : opts.profile === 'cursor'
-            ? 'cursor'
-            : undefined);
+    agentKindFromString(opts.agent) ?? (isAgentKind(opts.profile) ? opts.profile : undefined);
   const needsV2Migration = await hasLegacyProfileConfig(configPath);
   const result = await migrateProfileV2WithActiveBridgePrompt({
     rootDir: dirname(configPath),
     configFile: configPath,
     profile: opts.profile,
     ...(agentKind ? { agentKind } : {}),
-    ...(needsV2Migration && agentKind === 'codex'
+    ...(needsV2Migration && agentKind && descriptorFor(agentKind).requiresCodexConfig
       ? { codex: await createBootstrapCodexConfig(undefined) }
       : {}),
   }, opts);

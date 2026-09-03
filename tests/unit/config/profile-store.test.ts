@@ -270,6 +270,6 @@ describe('agentKindFromString', () => {
     expect(agentKindFromString(undefined)).toBeUndefined();
     expect(agentKindFromString('')).toBeUndefined();
     expect(agentKindFromString('cursor')).toBe('cursor');
-    expect(() => agentKindFromString('nope')).toThrow(/unsupported agent/);
+    expect(() => agentKindFromString('nope')).toThrow(/unknown agent kind nope; expected one of: claude, codex, kimi, grok, cursor/);
   });
 });

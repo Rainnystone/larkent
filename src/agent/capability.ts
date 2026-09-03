@@ -1,8 +1,14 @@
 import type { AccessMode } from '../config/permissions';
 import type { ProfileConfig } from '../config/profile-schema';
 import { BRIDGE_SYSTEM_PROMPT } from './bridge-system-prompt';
+import {
+  descriptorFor,
+  isAgentKind,
+  unknownAgentKindMessage,
+  type AgentKind,
+} from './registry';
 
-export type AgentCapabilityId = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+export type AgentCapabilityId = AgentKind;
 export type AgentSessionKind =
   | 'claude-session'
   | 'codex-thread'
@@ -27,114 +33,62 @@ export interface AgentCapability {
 }
 
 export function claudeCapability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability {
-  const maxAccess = profile?.permissions.maxAccess ?? 'full';
-  return {
-    agentId: 'claude',
-    sessionKind: 'claude-session',
-    promptInjection: 'append-system-prompt',
-    systemPrompt: BRIDGE_SYSTEM_PROMPT,
-    supportsNativeHistory: true,
-    callback: {
-      marker: '__bridge_cb',
-      legacyMarkers: ['__claude_cb'],
-    },
-    permissions: {
-      maxAccess,
-    },
-  };
+  return capabilityForProfile({
+    agentKind: 'claude',
+    permissions: profile?.permissions ?? { defaultAccess: 'full', maxAccess: 'full' },
+  });
 }
 
 export function kimiCapability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability {
-  const maxAccess = profile?.permissions.maxAccess ?? 'full';
-  return {
-    agentId: 'kimi',
-    sessionKind: 'kimi-session',
-    // kimi has no append-system-prompt flag and `-p` ignores stdin, so the
-    // bridge system prompt is prefixed into the argv prompt.
-    promptInjection: 'argv-prefix',
-    systemPrompt: BRIDGE_SYSTEM_PROMPT,
-    supportsNativeHistory: false,
-    callback: {
-      marker: '__bridge_cb',
-      legacyMarkers: [],
-    },
-    permissions: {
-      maxAccess,
-    },
-  };
+  return capabilityForProfile({
+    agentKind: 'kimi',
+    permissions: profile?.permissions ?? { defaultAccess: 'full', maxAccess: 'full' },
+  });
 }
 
 export function grokCapability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability {
-  const maxAccess = profile?.permissions.maxAccess ?? 'full';
-  return {
-    agentId: 'grok',
-    sessionKind: 'grok-session',
-    // grok `--rules` appends to the system prompt without replacing the
-    // coding prompt (`--system-prompt-override` would).
-    promptInjection: 'append-system-prompt',
-    systemPrompt: BRIDGE_SYSTEM_PROMPT,
-    supportsNativeHistory: true,
-    callback: {
-      marker: '__bridge_cb',
-      legacyMarkers: [],
-    },
-    permissions: {
-      maxAccess,
-    },
-  };
+  return capabilityForProfile({
+    agentKind: 'grok',
+    permissions: profile?.permissions ?? { defaultAccess: 'full', maxAccess: 'full' },
+  });
 }
 
 export function cursorCapability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability {
-  const maxAccess = profile?.permissions.maxAccess ?? 'full';
-  return {
-    agentId: 'cursor',
-    sessionKind: 'cursor-session',
-    // Cursor CLI has no --append-system-prompt; the bridge prompt is prefixed
-    // into the positional argv prompt (same as kimi).
-    promptInjection: 'argv-prefix',
-    systemPrompt: BRIDGE_SYSTEM_PROMPT,
-    supportsNativeHistory: true,
-    callback: {
-      marker: '__bridge_cb',
-      legacyMarkers: [],
-    },
-    permissions: {
-      maxAccess,
-    },
-  };
+  return capabilityForProfile({
+    agentKind: 'cursor',
+    permissions: profile?.permissions ?? { defaultAccess: 'full', maxAccess: 'full' },
+  });
 }
 
 export function capabilityForProfile(
   profile: Pick<ProfileConfig, 'agentKind' | 'permissions'>,
 ): AgentCapability {
-  if (profile.agentKind === 'codex') return codexCapability(profile);
-  if (profile.agentKind === 'kimi') return kimiCapability(profile);
-  if (profile.agentKind === 'grok') return grokCapability(profile);
-  if (profile.agentKind === 'cursor') return cursorCapability(profile);
-  return claudeCapability(profile);
+  if (!isAgentKind(profile.agentKind)) {
+    throw new Error(unknownAgentKindMessage(profile.agentKind));
+  }
+  const maxAccess = profile.permissions.maxAccess ?? 'full';
+  const { capabilities } = descriptorFor(profile.agentKind);
+  return {
+    agentId: capabilities.agentId,
+    sessionKind: capabilities.sessionKind,
+    promptInjection: capabilities.promptInjection,
+    systemPrompt: BRIDGE_SYSTEM_PROMPT,
+    supportsNativeHistory: capabilities.supportsNativeHistory,
+    callback: {
+      marker: '__bridge_cb',
+      legacyMarkers: [...capabilities.callback.legacyMarkers],
+    },
+    permissions: { maxAccess },
+  };
 }
 
-/** Claude / Kimi / Grok / Cursor persist a sessionId; Codex uses a threadId. */
 export function usesNativeSessionId(agentId: AgentCapabilityId): boolean {
-  return (
-    agentId === 'claude' || agentId === 'kimi' || agentId === 'grok' || agentId === 'cursor'
-  );
+  if (!isAgentKind(agentId)) {
+    throw new Error(unknownAgentKindMessage(agentId));
+  }
+  return descriptorFor(agentId).resume.label === 'session';
 }
 
 export function codexCapability(profile: Pick<ProfileConfig, 'permissions'>): AgentCapability {
-  const maxAccess = profile.permissions.maxAccess;
-  return {
-    agentId: 'codex',
-    sessionKind: 'codex-thread',
-    promptInjection: 'stdin-prefix',
-    systemPrompt: BRIDGE_SYSTEM_PROMPT,
-    supportsNativeHistory: false,
-    callback: {
-      marker: '__bridge_cb',
-      legacyMarkers: [],
-    },
-    permissions: {
-      maxAccess,
-    },
-  };
+  return capabilityForProfile({ agentKind: 'codex', permissions: profile.permissions });
 }

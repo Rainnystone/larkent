@@ -10,7 +10,7 @@ import {
   withConfigFileLock,
   writeActiveProfile,
 } from '../config/profile-store';
-import type { AgentKind } from '../config/profile-schema';
+import { descriptorFor, type AgentKind } from '../agent/registry';
 import { secretKeyForApp, type AppConfig, type TenantBrand } from '../config/schema';
 import { buildEncryptedAccountConfig } from '../config/store';
 import { createBootstrapProfileConfig } from '../cli/profile-bootstrap';
@@ -78,7 +78,10 @@ export interface CreateProfileInput {
  */
 export async function onboardCreate(body: unknown, rootDir?: string) {
   const fv = asRecord(body);
-  const agentKind: AgentKind = agentKindFromString(String(fv.agentKind ?? '')) ?? 'claude';
+  const agentKind = agentKindFromString(String(fv.agentKind ?? ''));
+  if (!agentKind) {
+    throw new HttpError(400, 'agentKind is required');
+  }
   const input: CreateProfileInput = {
     profile: String(fv.profile ?? '').trim() || agentKind,
     agentKind,
@@ -120,22 +123,11 @@ export async function writeNewProfile(
   }
   const profile = appPaths.profile;
 
-  if (input.agentKind === 'grok') {
+  const descriptor = descriptorFor(input.agentKind);
+  if (descriptor.createRequiresInstalled) {
     const detected = await detectInstalledAgents();
-    if (!detected.some((d) => d.kind === 'grok')) {
-      throw new HttpError(
-        400,
-        '未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。',
-      );
-    }
-  }
-  if (input.agentKind === 'cursor') {
-    const detected = await detectInstalledAgents();
-    if (!detected.some((d) => d.kind === 'cursor')) {
-      throw new HttpError(
-        400,
-        '未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。',
-      );
+    if (!detected.some((d) => d.kind === input.agentKind)) {
+      throw new HttpError(400, descriptor.missingBinaryMessage);
     }
   }
 

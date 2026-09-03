@@ -10,7 +10,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema.j
 import { createRuntimeProfileConfig } from '../../../src/runtime/profile-runtime.js';
 
 describe('start runtime agent factory', () => {
-  it('keeps Claude as the default runtime agent', () => {
+  it('creates ClaudeAdapter for a claude profile', () => {
     const agent = createRuntimeAgent(
       createDefaultProfileConfig({
         agentKind: 'claude',

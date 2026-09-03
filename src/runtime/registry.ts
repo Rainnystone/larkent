@@ -13,6 +13,7 @@ import {
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import * as lockfile from 'proper-lockfile';
+import { isAgentKind, requireAgentKind } from '../agent/registry';
 import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
 import type { AgentKind } from '../config/profile-schema';
@@ -64,11 +65,7 @@ function isValidEntry(e: unknown): e is ProcessEntry {
     typeof x.appId === 'string' &&
     (x.tenant === 'feishu' || x.tenant === 'lark') &&
     typeof x.profileName === 'string' &&
-    (x.agentKind === 'claude' ||
-      x.agentKind === 'codex' ||
-      x.agentKind === 'kimi' ||
-      x.agentKind === 'grok' ||
-      x.agentKind === 'cursor') &&
+    isAgentKind(x.agentKind) &&
     typeof x.configPath === 'string' &&
     typeof x.startedAt === 'string' &&
     typeof x.version === 'string'
@@ -141,7 +138,7 @@ export async function register(args: RegisterArgs): Promise<ProcessEntry> {
     appId: args.appId,
     tenant: args.tenant,
     profileName: args.profileName ?? 'claude',
-    agentKind: args.agentKind ?? 'claude',
+    agentKind: requireAgentKind(args.agentKind),
     configPath: args.configPath,
     startedAt: new Date().toISOString(),
     version: args.version,

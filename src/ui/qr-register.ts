@@ -3,7 +3,7 @@ import { registerApp } from '@larksuite/channel';
 import { resolveAppPaths } from '../config/app-paths';
 import { agentKindFromString, loadRootConfig } from '../config/profile-store';
 import type { TenantBrand } from '../config/schema';
-import type { AgentKind } from '../config/profile-schema';
+import { agentKindHelpList } from '../agent/registry';
 import { validateAppCredentials } from '../utils/feishu-auth';
 import { log } from '../core/logger';
 import { HttpError } from './http';
@@ -152,7 +152,10 @@ export async function finishQrRegistration(
   if (s.status === 'error') throw new HttpError(400, s.error ?? '扫码创建失败');
   if (!s.app) throw new HttpError(409, '尚未完成扫码');
 
-  const agentKind: AgentKind = agentKindFromString(String(fv.agentKind ?? '')) ?? 'claude';
+  const agentKind = agentKindFromString(String(fv.agentKind ?? ''));
+  if (!agentKind) {
+    throw new HttpError(400, `agentKind is required; expected one of: ${agentKindHelpList()}`);
+  }
   const profile = String(fv.profile ?? '').trim() || s.suggestedProfile || agentKind;
   const created = await writeNewProfile(
     { profile, agentKind, appId: s.app.appId, appSecret: s.app.appSecret, tenant: s.app.tenant },

@@ -1,3 +1,9 @@
+import {
+  descriptorFor,
+  isAgentKind,
+  unknownAgentKindMessage,
+  type AgentKind,
+} from '../agent/registry';
 import type {
   AppCredentials,
   AppPreferences,
@@ -13,7 +19,7 @@ import {
   type PermissionSource,
 } from './permissions';
 
-export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+export type { AgentKind };
 export type SandboxMode = CodexSandboxMode;
 export type { AccessMode, PermissionConfig, PermissionSource };
 
@@ -248,17 +254,11 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   if (raw.schemaVersion !== 2) {
     throw new Error('profile schemaVersion must be 2');
   }
-  if (
-    raw.agentKind !== 'claude' &&
-    raw.agentKind !== 'codex' &&
-    raw.agentKind !== 'kimi' &&
-    raw.agentKind !== 'grok' &&
-    raw.agentKind !== 'cursor'
-  ) {
-    throw new Error('agentKind must be claude, codex, kimi, grok or cursor');
+  if (!isAgentKind(raw.agentKind)) {
+    throw new Error(unknownAgentKindMessage(raw.agentKind));
   }
   const accounts = normalizeAccounts(raw.accounts);
-  if (raw.agentKind === 'codex' && !raw.codex) {
+  if (descriptorFor(raw.agentKind).requiresCodexConfig && !raw.codex) {
     throw new Error('codex profile requires codex configuration');
   }
 

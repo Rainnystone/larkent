@@ -1,3 +1,4 @@
+import { descriptorFor } from '../../agent/registry';
 import { isComplete } from '../../config/schema';
 import { createInterface } from 'node:readline';
 import { paths } from '../../config/paths';
@@ -605,9 +606,6 @@ async function maybeResolveProfileRuntime(
 }
 
 function agentDisplay(agentKind: ProcessEntry['agentKind']): { id: string; displayName: string } {
-  if (agentKind === 'codex') return { id: 'codex', displayName: 'Codex CLI' };
-  if (agentKind === 'kimi') return { id: 'kimi', displayName: 'Kimi Code' };
-  if (agentKind === 'grok') return { id: 'grok', displayName: 'Grok Build' };
-  if (agentKind === 'cursor') return { id: 'cursor', displayName: 'Cursor CLI' };
-  return { id: 'claude', displayName: 'Claude Code' };
+  const descriptor = descriptorFor(agentKind);
+  return { id: descriptor.kind, displayName: descriptor.displayName };
 }

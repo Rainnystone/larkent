@@ -2,8 +2,13 @@ import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 import { looksLikeCursorBinary } from '../agent/cursor/binary';
+import {
+  descriptorFor,
+  kindsInDetectionOrder,
+  type AgentKind,
+} from '../agent/registry';
 
-export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+export type { AgentKind };
 
 export interface DetectedAgent {
   kind: AgentKind;
@@ -46,19 +51,15 @@ function pathExts(): string[] {
 }
 
 export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
-  const candidates: Array<{ kind: AgentKind; command: string }> = [
-    { kind: 'grok', command: process.env.LARK_CHANNEL_GROK_BIN ?? 'grok' },
-    { kind: 'claude', command: process.env.LARK_CHANNEL_CLAUDE_BIN ?? 'claude' },
-    { kind: 'codex', command: process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex' },
-    { kind: 'kimi', command: process.env.LARK_CHANNEL_KIMI_BIN ?? 'kimi' },
-    { kind: 'cursor', command: process.env.LARK_CHANNEL_CURSOR_BIN ?? 'cursor-agent' },
-  ];
   const detected: DetectedAgent[] = [];
-  for (const candidate of candidates) {
+  for (const kind of kindsInDetectionOrder()) {
+    const descriptor = descriptorFor(kind);
+    const command = process.env[descriptor.envBinVar] ?? descriptor.binaryNames[0];
+    if (!command) continue;
     try {
       detected.push({
-        kind: candidate.kind,
-        binaryPath: await resolveExecutablePath(candidate.command),
+        kind,
+        binaryPath: await resolveExecutablePath(command),
       });
     } catch {
       // Missing agents are reported by the caller based on the final count.
@@ -82,15 +83,17 @@ export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
 export async function resolveCursorBinary(): Promise<string> {
   const explicit = process.env.LARK_CHANNEL_CURSOR_BIN;
   if (explicit) return resolveExecutablePath(explicit);
+  const names = descriptorFor('cursor').binaryNames;
   try {
-    return await resolveExecutablePath('cursor-agent');
+    return await resolveExecutablePath(names[0] ?? 'cursor-agent');
   } catch {
     return resolveCursorAgentFallback();
   }
 }
 
 async function resolveCursorAgentFallback(): Promise<string> {
-  const binaryPath = await resolveExecutablePath('agent');
+  const fallback = descriptorFor('cursor').binaryNames[1] ?? 'agent';
+  const binaryPath = await resolveExecutablePath(fallback);
   if (await looksLikeCursorBinary(binaryPath)) return binaryPath;
-  throw new Error('executable not found: cursor-agent');
+  throw new Error(`executable not found: ${descriptorFor('cursor').binaryNames[0] ?? 'cursor-agent'}`);
 }

@@ -8,6 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { isAgentKind } from '../agent/registry';
 import { resolveAppPaths } from './app-paths';
 import {
   createDefaultProfileConfig,
@@ -128,7 +129,7 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
       ...legacy.preferences?.access,
       requireMentionInGroup: legacy.preferences?.requireMentionInGroup,
     },
-    ...(agentKind === 'codex' && opts.codex ? { codex: opts.codex } : {}),
+    ...(descriptorFor(agentKind).requiresCodexConfig && opts.codex ? { codex: opts.codex } : {}),
   });
   if (legacyDefaultWorkspace) {
     profileConfig.workspaces = {
@@ -200,13 +201,7 @@ function activeProcessFromRegistryEntry(entry: RegistryEntry): ActiveBridgeMigra
   if (typeof entry.appId === 'string') active.appId = entry.appId;
   if (typeof entry.tenant === 'string') active.tenant = entry.tenant;
   if (typeof entry.profileName === 'string') active.profileName = entry.profileName;
-  if (
-    entry.agentKind === 'claude' ||
-    entry.agentKind === 'codex' ||
-    entry.agentKind === 'kimi' ||
-    entry.agentKind === 'grok' ||
-    entry.agentKind === 'cursor'
-  ) {
+  if (isAgentKind(entry.agentKind)) {
     active.agentKind = entry.agentKind;
   }
   if (typeof entry.configPath === 'string') active.configPath = entry.configPath;

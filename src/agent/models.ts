@@ -1,4 +1,4 @@
-import type { AgentKind } from '../config/profile-schema';
+import { descriptorFor, type AgentKind } from './registry';
 
 /**
  * Sentinel selection meaning "don't pass `--model`; let the agent CLI /
@@ -18,59 +18,12 @@ export interface ModelOption {
   label: string;
 }
 
-/**
- * Claude Code models. Pinned to concrete version ids (Claude Code's `--model`
- * accepts the full model-id string, not just the `opus`/`sonnet` aliases) so
- * the picker names an exact model. Add new ids here when a generation ships;
- * `opusplan` is kept as the one alias with no versioned equivalent (it runs
- * Opus for planning and Sonnet for execution).
- */
-const CLAUDE_MODELS: ModelOption[] = [
-  { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
-  { value: 'claude-opus-4-8', label: 'Opus 4.8（最新）' },
-  { value: 'claude-opus-4-7', label: 'Opus 4.7' },
-  { value: 'claude-sonnet-5', label: 'Sonnet 5（最新）' },
-  { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-  { value: 'claude-haiku-4-5', label: 'Haiku 4.5（最新）' },
-  { value: 'opusplan', label: 'Opus Plan（规划用 Opus，执行用 Sonnet）' },
-];
-
-/** Codex CLI models. Forwarded to `codex exec --model`. */
-const CODEX_MODELS: ModelOption[] = [
-  { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
-  { value: 'gpt-5-codex', label: 'GPT-5 Codex' },
-  { value: 'gpt-5', label: 'GPT-5' },
-  { value: 'o3', label: 'o3' },
-];
-
-/** Kimi Code models. Forwarded to `kimi -m`; aliases come from config.toml. */
-const KIMI_MODELS: ModelOption[] = [
-  { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
-  { value: 'kimi-code/kimi-for-coding', label: 'Kimi for Coding' },
-];
-
-/** Grok Build models. Forwarded to `grok -m`. */
-const GROK_MODELS: ModelOption[] = [
-  { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
-  { value: 'grok-build', label: 'Grok Build' },
-  { value: 'grok-4.6', label: 'Grok 4.6' },
-  { value: 'grok-4.5', label: 'Grok 4.5' },
-];
-
-/** Cursor CLI models. Forwarded to `agent --model`. */
-const CURSOR_MODELS: ModelOption[] = [
-  { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
-  { value: 'composer-2.5', label: 'Composer 2.5' },
-  { value: 'grok-4.6', label: 'Grok 4.6' },
-];
-
 /** The model picker options for a profile's agent kind. */
 export function supportedModels(agentKind: AgentKind): ModelOption[] {
-  if (agentKind === 'codex') return CODEX_MODELS;
-  if (agentKind === 'kimi') return KIMI_MODELS;
-  if (agentKind === 'grok') return GROK_MODELS;
-  if (agentKind === 'cursor') return CURSOR_MODELS;
-  return CLAUDE_MODELS;
+  return descriptorFor(agentKind).models.map((model) => ({
+    value: model.value,
+    label: model.label,
+  }));
 }
 
 /** True when the selection means "use the agent default" (no `--model`). */

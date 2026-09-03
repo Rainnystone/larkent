@@ -204,4 +204,13 @@ describe('agent capability contract', () => {
     expect(cursorCapability(profile).permissions.maxAccess).toBe('workspace');
     expect(capabilityForProfile(profile).agentId).toBe('cursor');
   });
+
+  it('throws listing AGENT_KINDS for an unknown profile kind', () => {
+    expect(() =>
+      capabilityForProfile({
+        agentKind: 'nope' as never,
+        permissions: { defaultAccess: 'full', maxAccess: 'full' },
+      }),
+    ).toThrow(/claude, codex, kimi, grok, cursor/);
+  });
 });

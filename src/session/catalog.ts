@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import { paths } from '../config/paths';
 import { log } from '../core/logger';
 import { usesNativeSessionId, type AgentCapabilityId } from '../agent/capability';
+import { descriptorFor } from '../agent/registry';
 
 export type CatalogAgentId = AgentCapabilityId;
 export type SessionCatalogStatus = 'active' | 'archived';
@@ -260,14 +261,7 @@ function isValidAgentEntry(entry: SessionCatalogEntry): boolean {
 function assertAgentIdentity(input: UpsertSessionCatalogInput): void {
   if (usesNativeSessionId(input.agentId)) {
     if (!input.sessionId || input.threadId) {
-      const label =
-        input.agentId === 'kimi'
-          ? 'Kimi'
-          : input.agentId === 'grok'
-            ? 'Grok'
-            : input.agentId === 'cursor'
-              ? 'Cursor'
-              : 'Claude';
+      const label = descriptorFor(input.agentId).resumeNoun;
       throw new Error(
         `${label} catalog entries require sessionId and must not include threadId`,
       );

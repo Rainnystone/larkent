@@ -49,6 +49,36 @@ describe('static architecture contracts', () => {
     }
   });
 
+  it('does not keep hand-written unions of the five agent kinds outside the registry', () => {
+    const kind = String.raw`['"](?:claude|codex|kimi|grok|cursor)['"]`;
+    const union = new RegExp(`${kind}(?:\\s*\\|\\s*${kind}){4}`, 'g');
+    const allowed = new Set(['src/agent/registry.ts']);
+    const files = [...collectTsFiles('src'), ...collectTsFiles('web/src')].filter(
+      (file) => file.endsWith('.ts') || file.endsWith('.tsx'),
+    );
+    const stray: string[] = [];
+    for (const file of files) {
+      if (allowed.has(file)) continue;
+      const source = read(file);
+      const matches = source.match(union) ?? [];
+      for (const match of matches) {
+        const found = new Set(
+          [...match.matchAll(/['"](claude|codex|kimi|grok|cursor)['"]/g)].map((item) => item[1]),
+        );
+        if (found.size === 5) stray.push(`${file}: ${match.replace(/\s+/g, ' ')}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+  });
+
+  it('starts the onboard wizard with no selected agent kind', () => {
+    const source = read('web/src/views/OnboardWizard.tsx');
+    expect(source).toMatch(/useState<AgentKind \| "">\(""\)/);
+    expect(source).not.toMatch(/useState<AgentKind>\("grok"\)/);
+    expect(source).not.toMatch(/setAgentKind\("grok"\)/);
+    expect(source).toContain('AGENT_KINDS.map');
+  });
+
   it('persists profile runtime state through atomic 0600 writes', () => {
     for (const file of ['src/session/store.ts', 'src/workspace/store.ts', 'src/card/callback-store.ts']) {
       const source = read(file);

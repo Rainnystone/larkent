@@ -1,6 +1,7 @@
 import { mkdir, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { AgentPreflightError } from '../agent/preflight';
+import { descriptorFor } from '../agent/registry';
 import { createDefaultProfileConfig, type AgentKind, type ProfileConfig } from '../config/profile-schema';
 import type { AppConfig } from '../config/schema';
 import { resolveWorkingDirectory } from '../policy/workspace';
@@ -26,7 +27,7 @@ export async function createBootstrapProfileConfig(
       ? await ensureManagedDefaultWorkspace(input.defaultWorkspace)
       : undefined;
   const codex =
-    input.agentKind === 'codex'
+    descriptorFor(input.agentKind).requiresCodexConfig
       ? await createBootstrapCodexConfig(input.codexBinaryPath)
       : undefined;
   const profile = createDefaultProfileConfig({

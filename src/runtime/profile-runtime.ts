@@ -29,8 +29,14 @@ import {
   writeActiveProfile,
 } from '../config/profile-store';
 import {
-  createDefaultProfileConfig,
+  agentKindCliUnion,
+  agentKindHelpList,
+  descriptorFor,
+  isAgentKind,
   type AgentKind,
+} from '../agent/registry';
+import {
+  createDefaultProfileConfig,
   type CreateDefaultProfileConfigInput,
   type ProfileConfig,
   type RootConfig,
@@ -87,7 +93,7 @@ export function createRuntimeProfileConfig(
 ): ProfileConfig {
   return createDefaultProfileConfig({
     ...input,
-    ...(input.agentKind === 'codex'
+    ...(descriptorFor(input.agentKind).requiresCodexConfig
       ? { codex: input.codex ?? { binaryPath: process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex' } }
       : {}),
   });
@@ -108,7 +114,7 @@ export async function resolveProfileRuntime(
   if (!profile && opts.allowBootstrap) {
     const detected = await detectInstalledAgents();
     if (detected.length === 0) {
-      throw new Error('no supported local agent found; install grok, claude, codex, kimi or cursor first');
+      throw new Error(`no supported local agent found; install ${agentKindHelpList()} first`);
     }
     if (detected.length > 1) {
       const selected = await selectDetectedAgent(detected, opts.selectAgent);
@@ -123,7 +129,9 @@ export async function resolveProfileRuntime(
   if (!profile && !opts.allowBootstrap) {
     throw new Error('active profile is required');
   }
-  profile ??= 'claude';
+  if (!profile) {
+    throw new Error(`agent kind is required; expected one of: ${agentKindHelpList()}`);
+  }
   let appPaths = resolveAppPaths({ rootDir, profile });
   const configPath = opts.config ?? appPaths.configFile;
 
@@ -135,7 +143,7 @@ export async function resolveProfileRuntime(
     configFile: configPath,
     workspace: opts.workspace,
     ...(migrationAgent ? { agentKind: migrationAgent } : {}),
-    ...(needsMigration && migrationAgent === 'codex'
+    ...(needsMigration && migrationAgent && descriptorFor(migrationAgent).requiresCodexConfig
       ? { codex: await createBootstrapCodexConfig(undefined) }
       : {}),
   }, opts.handleActiveBridgeMigrationConflict);
@@ -204,7 +212,7 @@ export async function resolveProfileRuntime(
   if (!opts.allowBootstrap) {
     throw new Error('config not initialized');
   }
-  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
+  const bootstrapAgent = requireBootstrapAgent(requestedAgent, profile);
   const workspace = opts.workspace;
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
@@ -233,7 +241,7 @@ async function bootstrapProfileIntoExistingRoot(args: {
   configPath: string;
 }): Promise<ProfileRuntime> {
   const { rootConfig, profile, requestedAgent, opts, appPaths, configPath } = args;
-  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
+  const bootstrapAgent = requireBootstrapAgent(requestedAgent, profile);
   const workspace = opts.workspace;
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
@@ -280,9 +288,10 @@ function upgradeLegacyRuntimeDefaults(
   }
 
   const permissionDefaultsMigrated = hasPermissionDefaultsMigration(rootConfig, profile);
+  const descriptor = descriptorFor(profileConfig.agentKind);
   const shouldUpgradeClaudeDefaultPermissions =
     !permissionDefaultsMigrated &&
-    profileConfig.agentKind === 'claude' &&
+    descriptor.upgradeWorkspacePermissionsToFull &&
     !profileConfig.permissions.claude?.permissionMode &&
     profileConfig.permissions.defaultAccess === 'workspace' &&
     profileConfig.permissions.maxAccess === 'workspace';
@@ -293,13 +302,13 @@ function upgradeLegacyRuntimeDefaults(
   const legacyCodexDefaults = profileConfig.permissionSource !== 'permissions';
   const legacyIsolatedCodexHome =
     legacyCodexDefaults &&
-    profileConfig.agentKind === 'codex' &&
+    descriptor.inheritCodexHomeWhenIsolated &&
     Boolean(profileConfig.codex) &&
     !profileConfig.codex?.codexHome &&
     profileConfig.codex?.inheritCodexHome === false;
   const legacyIgnoredUserConfig =
     legacyCodexDefaults &&
-    profileConfig.agentKind === 'codex' &&
+    descriptor.inheritCodexHomeWhenIsolated &&
     Boolean(profileConfig.codex) &&
     !profileConfig.codex?.codexHome &&
     profileConfig.codex?.ignoreUserConfig === true;
@@ -395,18 +404,18 @@ function resolveBootstrapAgent(
   requestedAgent: AgentKind | undefined,
   profile: string | undefined,
 ): AgentKind | undefined {
-  return (
-    requestedAgent ??
-    (profile === 'codex'
-      ? 'codex'
-      : profile === 'kimi'
-        ? 'kimi'
-        : profile === 'grok'
-          ? 'grok'
-          : profile === 'cursor'
-            ? 'cursor'
-            : undefined)
-  );
+  return requestedAgent ?? (isAgentKind(profile) ? profile : undefined);
+}
+
+function requireBootstrapAgent(
+  requestedAgent: AgentKind | undefined,
+  profile: string | undefined,
+): AgentKind {
+  const agentKind = resolveBootstrapAgent(requestedAgent, profile);
+  if (!agentKind) {
+    throw new Error(`agent kind is required; expected one of: ${agentKindHelpList()}`);
+  }
+  return agentKind;
 }
 
 async function hasLegacyConfig(configPath: string): Promise<boolean> {
@@ -579,7 +588,7 @@ function formatAmbiguousAgentSelectionError(
 ): string {
   const lines = detected.map((agent) => `  - ${agent.kind}: ${agent.binaryPath}`);
   return [
-    '检测到多个本地 agent，请使用 --agent <grok|claude|codex|kimi|cursor> 指定要初始化哪一个。',
+    `检测到多个本地 agent，请使用 --agent <${agentKindCliUnion()}> 指定要初始化哪一个。`,
     '已检测到：',
     ...lines,
   ].join('\n');
@@ -624,15 +633,7 @@ class UserCancelledError extends Error {
 }
 
 function displayAgentKind(kind: AgentKind): string {
-  return kind === 'claude'
-    ? 'Claude Code'
-    : kind === 'kimi'
-      ? 'Kimi Code'
-      : kind === 'grok'
-        ? 'Grok Build'
-        : kind === 'cursor'
-          ? 'Cursor CLI'
-          : 'Codex CLI';
+  return descriptorFor(kind).displayName;
 }
 
 async function maybeMigrateRootPlaintextSecret(
