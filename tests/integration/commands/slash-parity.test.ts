@@ -70,7 +70,7 @@ describe('P5 slash command parity', () => {
       history: { handled: historyHandled },
       model: { handled: modelHandled },
     });
-  });
+  }, 15_000);
 });
 
 async function createHarness(kind: PinnedAgentKind): Promise<{

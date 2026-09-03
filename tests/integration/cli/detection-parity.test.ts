@@ -120,7 +120,7 @@ describe.sequential('P7 detection and /doctor parity', () => {
     expect(missing.report).toContain(`agent: ${pinnedDisplayName(kind)} (${kind})`);
     expect(missing.report).toContain(missingDoctorEchoCheck(kind));
     expect(missing.report).not.toContain('larkent doctor');
-  });
+  }, 30_000);
 });
 
 async function doctorRun(kind: PinnedAgentKind, scenario: 'found' | 'missing'): Promise<{

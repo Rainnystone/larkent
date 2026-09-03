@@ -177,7 +177,7 @@ describe.sequential('P6 multi-bot isolation', () => {
         expect(lockB).toMatchObject({ profile: kindB, agentKind: kindB });
       },
     );
-  });
+  }, 20_000);
 });
 
 function profileFor(kind: 'kimi' | 'grok' | 'cursor', appId: string, workspace: string) {

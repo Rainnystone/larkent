@@ -206,10 +206,19 @@ export function assertGoldenFile(file: string, actual: unknown): void {
 export function sanitizePinValue(value: unknown, replacements: ReadonlyArray<readonly [RegExp | string, string]> = []): unknown {
   const normalized = normalizeCard(value);
   let next = JSON.stringify(normalized);
+  const expanded: Array<readonly [RegExp | string, string]> = [];
   for (const [from, to] of replacements) {
+    if (typeof from === 'string') {
+      const escaped = JSON.stringify(from).slice(1, -1);
+      if (escaped !== from) expanded.push([escaped, to]);
+    }
+    expanded.push([from, to]);
+  }
+  for (const [from, to] of expanded) {
     next = typeof from === 'string' ? next.split(from).join(to) : next.replace(from, to);
   }
   next = next
+    .replace(/<(tmp-root|workspace|tmp)>(?:\\\\)+/g, '<$1>/')
     .replace(/\/resume use [a-f0-9-]+/gi, '/resume use <resume-nonce>')
     .replace(/"arg":"[a-f0-9-]{8,36}"/g, '"arg":"<resume-nonce>"')
     .replace(/`[a-f0-9]{8}…`/g, '`<resume-nonce>…`')

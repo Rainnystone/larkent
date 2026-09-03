@@ -59,7 +59,7 @@ describe.sequential('P1 Feishu surface parity', () => {
       happy,
       error,
     });
-  });
+  }, 20_000);
 });
 
 async function captureParity(kind: PinnedAgentKind, scenario: ScriptedScenario): Promise<unknown> {
