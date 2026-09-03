@@ -89,6 +89,10 @@ export async function resolveCursorBinary(): Promise<string> {
   return resolveDetectedBinary('cursor', process.env.LARK_CHANNEL_CURSOR_BIN);
 }
 
+export async function resolveCursorPathBinary(): Promise<string> {
+  return resolveDetectedBinary('cursor', undefined);
+}
+
 export async function resolveEnvPinnedBinary(kind: AgentKind): Promise<string | undefined> {
   const command = process.env[descriptorFor(kind).envBinVar];
   if (!command) return undefined;

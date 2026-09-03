@@ -347,6 +347,24 @@ describe('profile v2 to v3 migrations', () => {
     await expect(createRuntimeAgent(missing, { profileDir: join(dir, 'missing') }).isAvailable()).resolves.toBe(false);
   });
 
+  it('does not let an unpinned Cursor adapter read LARK_CHANNEL_CURSOR_BIN at spawn time', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'profile-cursor-no-env-'));
+    roots.push(dir);
+    const envBin = await writeVersionExecutable(dir, 'env-cursor', 'cursor-agent 0.0.0-env');
+    const profile = normalizeProfileConfig({
+      schemaVersion: PROFILE_SCHEMA_VERSION,
+      agent: { kind: 'cursor' },
+      agentKind: 'cursor',
+      accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' as const } },
+    });
+    await withEnvBin('cursor', envBin, async () => {
+      await withIsolatedPath(join(dir, 'empty-path'), async () => {
+        const agent = createRuntimeAgent(profile, { profileDir: join(dir, 'cursor') });
+        await expect(agent.checkAvailability?.()).resolves.toMatchObject({ ok: false });
+      });
+    });
+  });
+
   it('deletes src/agent/cursor/binary.ts so detection uses descriptor.binaryNames', () => {
     expect(existsSync(join(process.cwd(), 'src/agent/cursor/binary.ts'))).toBe(false);
   });
