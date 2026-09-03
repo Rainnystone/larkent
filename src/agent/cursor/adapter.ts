@@ -6,11 +6,20 @@ import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
 import { descriptorFor } from '../registry';
 import { runJsonlAgent } from '../runner/jsonl-cli-runner';
-import type { AgentAdapter, AgentBotIdentity, AgentRun, AgentRunOptions } from '../types';
+import {
+  mergeAgentOptions,
+  runAgentOptions,
+  type AgentAdapter,
+  type AgentBotIdentity,
+  type AgentRun,
+  type AgentRunOptions,
+} from '../types';
 import { assertCursorSandbox, buildCursorArgs } from './argv';
+import { parseCursorAgentOptions } from './options';
 
 export interface CursorAdapterOptions {
   binary?: string;
+  agentOptions?: unknown;
   stopGraceMs?: number;
   larkChannel?: LarkChannelEnvContext;
 }
@@ -23,6 +32,7 @@ export class CursorAdapter implements AgentAdapter {
   private readonly explicitBinary: boolean;
   private readonly defaultStopGraceMs: number;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
+  private readonly profileOptions: unknown;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: CursorAdapterOptions = {}) {
@@ -30,6 +40,7 @@ export class CursorAdapter implements AgentAdapter {
     this.binary = opts.binary ?? descriptorFor('cursor').binaryNames[0] ?? 'cursor-agent';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
+    this.profileOptions = opts.agentOptions;
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -57,7 +68,11 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   async prepareRun(opts: AgentRunOptions): Promise<void> {
-    assertCursorSandbox(opts.sandbox);
+    const parsed = parseCursorAgentOptions(
+      mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
+      false,
+    );
+    assertCursorSandbox(parsed.sandbox);
     const availability = await this.checkAvailability();
     if (!availability.ok) {
       throw new SpawnFailed(
@@ -73,7 +88,11 @@ export class CursorAdapter implements AgentAdapter {
     if (!opts.cwd) {
       throw new Error('cwd is required for CursorAdapter.run');
     }
-    assertCursorSandbox(opts.sandbox);
+    const parsed = parseCursorAgentOptions(
+      mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
+      false,
+    );
+    assertCursorSandbox(parsed.sandbox);
 
     return runJsonlAgent({
       runId: opts.runId,
@@ -83,7 +102,7 @@ export class CursorAdapter implements AgentAdapter {
         prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
         ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
-        ...(opts.sandbox ? { sandbox: opts.sandbox } : {}),
+        ...(parsed.sandbox ? { sandbox: parsed.sandbox } : {}),
       }),
       cwd: opts.cwd,
       env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),

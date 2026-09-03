@@ -10,6 +10,7 @@ import { buildKimiArgs } from './argv';
 
 export interface KimiAdapterOptions {
   binary?: string;
+  agentOptions?: unknown;
   stopGraceMs?: number;
   larkChannel?: LarkChannelEnvContext;
 }

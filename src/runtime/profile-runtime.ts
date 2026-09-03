@@ -1,6 +1,11 @@
 import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import * as p from '@clack/prompts';
+import {
+  applyCodexLegacyUpgrades,
+  shouldUpgradeIgnoredUserConfig,
+  shouldUpgradeIsolatedCodexHome,
+} from '../agent/codex/options';
 import { runRegistrationWizard } from '../bot/wizard';
 import { detectInstalledAgents, type DetectedAgent } from '../cli/agent-detection';
 import {
@@ -304,16 +309,10 @@ function upgradeLegacyRuntimeDefaults(
   const legacyCodexDefaults = profileConfig.permissionSource !== 'permissions';
   const legacyIsolatedCodexHome =
     legacyCodexDefaults &&
-    descriptor.inheritCodexHomeWhenIsolated &&
-    Boolean(profileConfig.codex) &&
-    !profileConfig.codex?.codexHome &&
-    profileConfig.codex?.inheritCodexHome === false;
+    shouldUpgradeIsolatedCodexHome(descriptor.inheritCodexHomeWhenIsolated, profileConfig.codex);
   const legacyIgnoredUserConfig =
     legacyCodexDefaults &&
-    descriptor.inheritCodexHomeWhenIsolated &&
-    Boolean(profileConfig.codex) &&
-    !profileConfig.codex?.codexHome &&
-    profileConfig.codex?.ignoreUserConfig === true;
+    shouldUpgradeIgnoredUserConfig(descriptor.inheritCodexHomeWhenIsolated, profileConfig.codex);
   const permissionsChanged = legacySandboxPolicy || shouldUpgradeClaudeDefaultPermissions;
   const permissionDefaultsMarkerChanged = !permissionDefaultsMigrated;
   const codexChanged = legacyIsolatedCodexHome || legacyIgnoredUserConfig;
@@ -332,11 +331,13 @@ function upgradeLegacyRuntimeDefaults(
       : {}),
     ...(profileConfig.codex
       ? {
-          codex: {
-            ...profileConfig.codex,
-            ...(legacyIsolatedCodexHome ? { inheritCodexHome: true } : {}),
-            ...(legacyIgnoredUserConfig ? { ignoreUserConfig: false } : {}),
-          },
+          codex: applyCodexLegacyUpgrades(
+            { ...profileConfig.codex },
+            {
+              isolatedHome: legacyIsolatedCodexHome,
+              ignoredUser: legacyIgnoredUserConfig,
+            },
+          ),
         }
       : {}),
   };

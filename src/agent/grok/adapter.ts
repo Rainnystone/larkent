@@ -10,6 +10,7 @@ import { buildGrokArgs } from './argv';
 
 export interface GrokAdapterOptions {
   binary?: string;
+  agentOptions?: unknown;
   stopGraceMs?: number;
   larkChannel?: LarkChannelEnvContext;
 }

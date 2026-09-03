@@ -5,6 +5,7 @@ import {
   unknownAgentKindMessage,
   type AgentKind,
 } from '../agent/registry';
+import { omitEmptyAgentOptions } from '../agent/types';
 import { PROFILE_SCHEMA_VERSION, upgradeProfileToCurrent } from './migrations';
 import type {
   AppCredentials,
@@ -155,6 +156,7 @@ export { PROFILE_SCHEMA_VERSION };
 export interface ProfileAgentConfig {
   kind: AgentKind;
   binaryPath?: string;
+  options?: unknown;
 }
 
 export interface ProfileConfig {
@@ -223,18 +225,20 @@ export interface CreateDefaultProfileConfigInput {
   secrets?: SecretsConfig;
   larkCli?: LarkCliConfig;
   binaryPath?: string;
+  options?: unknown;
 }
 
 export function createDefaultProfileConfig(
   input: CreateDefaultProfileConfigInput,
 ): ProfileConfig {
-  const { binaryPath, ...rest } = input;
+  const { binaryPath, options, ...rest } = input;
   return normalizeProfileConfig({
     schemaVersion: PROFILE_SCHEMA_VERSION,
     ...rest,
     agent: {
       kind: input.agentKind,
       ...(binaryPath ? { binaryPath } : {}),
+      ...(options !== undefined ? { options } : {}),
     },
   });
 }
@@ -247,7 +251,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const raw = upgraded as {
     schemaVersion?: unknown;
     agentKind?: unknown;
-    agent?: { kind?: unknown; binaryPath?: unknown };
+    agent?: { kind?: unknown; binaryPath?: unknown; options?: unknown };
     mode?: unknown;
     accounts?: unknown;
     secrets?: SecretsConfig;
@@ -292,6 +296,9 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const meeting = normalizeMeeting(raw.meeting);
   const larkCli = normalizeLarkCli(raw.larkCli);
   const binaryPath = resolveProfileBinaryPath(raw.agent, raw.codex);
+  const options = omitEmptyAgentOptions(
+    descriptorFor(kind).agentOptionsSchema.parse(raw.agent?.options ?? {}),
+  );
 
   return {
     schemaVersion: PROFILE_SCHEMA_VERSION,
@@ -299,6 +306,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     agent: {
       kind,
       ...(binaryPath ? { binaryPath } : {}),
+      ...(options !== undefined ? { options } : {}),
     },
     mode: raw.mode === 'personal' ? 'personal' : 'team',
     accounts,
@@ -326,7 +334,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
 
 function resolveProfileAgentKind(
   agentKind: unknown,
-  agent: { kind?: unknown; binaryPath?: unknown } | undefined,
+  agent: { kind?: unknown; binaryPath?: unknown; options?: unknown } | undefined,
 ): AgentKind {
   if (agent?.kind !== undefined && agentKind !== undefined && agent.kind !== agentKind) {
     throw new Error('agent.kind must match agentKind');
@@ -339,7 +347,7 @@ function resolveProfileAgentKind(
 }
 
 function resolveProfileBinaryPath(
-  agent: { kind?: unknown; binaryPath?: unknown } | undefined,
+  agent: { kind?: unknown; binaryPath?: unknown; options?: unknown } | undefined,
   codex: CodexConfig | undefined,
 ): string | undefined {
   if (typeof agent?.binaryPath === 'string' && agent.binaryPath.trim()) {

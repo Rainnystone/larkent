@@ -7,12 +7,25 @@ import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
 import { descriptorFor } from '../registry';
 import { runJsonlAgent } from '../runner/jsonl-cli-runner';
-import type { AgentAdapter, AgentBotIdentity, AgentRun, AgentRunOptions } from '../types';
+import {
+  mergeAgentOptions,
+  runAgentOptions,
+  type AgentAdapter,
+  type AgentBotIdentity,
+  type AgentRun,
+  type AgentRunOptions,
+} from '../types';
 import { buildCodexArgs } from './argv';
+import {
+  parseCodexAgentOptions,
+  type CodexAgentOptions,
+  type CodexSandboxOption,
+} from './options';
 
 export interface CodexAdapterOptions {
   binary: string;
   profileStateDir: string;
+  agentOptions?: unknown;
   codexHome?: string;
   inheritCodexHome?: boolean;
   ignoreUserConfig?: boolean;
@@ -28,11 +41,8 @@ export class CodexAdapter implements AgentAdapter {
 
   private readonly binary: string;
   private readonly profileStateDir: string;
-  private readonly codexHome: string | undefined;
-  private readonly inheritCodexHome: boolean;
-  private readonly ignoreUserConfig: boolean;
-  private readonly ignoreRules: boolean;
-  private readonly sandbox: SandboxMode;
+  private readonly profileOptions: CodexAgentOptions;
+  private readonly sandbox: CodexSandboxOption;
   private readonly defaultStopGraceMs: number;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
   private botIdentity: AgentBotIdentity | undefined;
@@ -40,13 +50,38 @@ export class CodexAdapter implements AgentAdapter {
   constructor(opts: CodexAdapterOptions) {
     this.binary = opts.binary;
     this.profileStateDir = opts.profileStateDir;
-    this.codexHome = opts.codexHome;
-    this.inheritCodexHome = opts.inheritCodexHome !== false;
-    this.ignoreUserConfig = opts.ignoreUserConfig === true;
-    this.ignoreRules = opts.ignoreRules !== false;
-    this.sandbox = opts.sandbox ?? 'danger-full-access';
+    this.profileOptions = parseCodexAgentOptions(
+      mergeAgentOptions(
+        {
+          ...(opts.codexHome ? { codexHome: opts.codexHome } : {}),
+          inheritCodexHome: opts.inheritCodexHome,
+          ignoreUserConfig: opts.ignoreUserConfig,
+          ignoreRules: opts.ignoreRules,
+          ...(opts.sandbox ? { sandbox: opts.sandbox } : {}),
+        },
+        opts.agentOptions,
+      ),
+      false,
+    );
+    this.sandbox = this.profileOptions.sandbox ?? 'danger-full-access';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
+  }
+
+  private get codexHome(): string | undefined {
+    return this.profileOptions.codexHome;
+  }
+
+  private get inheritCodexHome(): boolean {
+    return this.profileOptions.inheritCodexHome !== false;
+  }
+
+  private get ignoreUserConfig(): boolean {
+    return this.profileOptions.ignoreUserConfig === true;
+  }
+
+  private get ignoreRules(): boolean {
+    return this.profileOptions.ignoreRules !== false;
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -83,6 +118,10 @@ export class CodexAdapter implements AgentAdapter {
       throw new Error('cwd is required for CodexAdapter.run');
     }
 
+    const parsed = parseCodexAgentOptions(
+      mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
+      false,
+    );
     const envOverrides: NodeJS.ProcessEnv = buildLarkChannelEnv(this.larkChannel);
     if (this.codexHome) {
       envOverrides.CODEX_HOME = this.codexHome;
@@ -96,11 +135,11 @@ export class CodexAdapter implements AgentAdapter {
       binaryPath: this.binary,
       argv: buildCodexArgs({
         cwd: opts.cwd,
-        sandbox: opts.sandbox ?? this.sandbox,
+        sandbox: parsed.sandbox ?? this.sandbox,
         threadId: opts.resumeHandle,
         images: opts.images,
-        ignoreUserConfig: this.ignoreUserConfig,
-        ignoreRules: this.ignoreRules,
+        ignoreUserConfig: parsed.ignoreUserConfig ?? this.ignoreUserConfig,
+        ignoreRules: parsed.ignoreRules ?? this.ignoreRules,
         model: opts.model,
       }),
       cwd: opts.cwd,

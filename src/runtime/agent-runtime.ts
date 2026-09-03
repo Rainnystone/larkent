@@ -1,5 +1,6 @@
 import { ClaudeAdapter } from '../agent/claude/adapter';
 import { CodexAdapter } from '../agent/codex/adapter';
+import { codexAdapterAgentOptions } from '../agent/codex/options';
 import { CursorAdapter } from '../agent/cursor/adapter';
 import { GrokAdapter } from '../agent/grok/adapter';
 import { KimiAdapter } from '../agent/kimi/adapter';
@@ -24,20 +25,20 @@ type RuntimeAgentFactory = (
 
 const RUNTIME_AGENT_FACTORIES: Record<AgentKind, RuntimeAgentFactory> = {
   claude: (profileConfig, _appPaths, larkChannel) =>
-    new ClaudeAdapter({ ...adapterBinaryOpts(profileConfig), larkChannel }),
+    new ClaudeAdapter({
+      ...adapterBinaryOpts(profileConfig),
+      agentOptions: profileConfig.agent.options,
+      larkChannel,
+    }),
   codex: (profileConfig, appPaths, larkChannel) => {
     const binary = runtimeBinary(profileConfig);
     if (!binary) {
       throw new Error('codex profile requires a binary path');
     }
-    const codex = profileConfig.codex;
     return new CodexAdapter({
       binary,
       profileStateDir: appPaths.profileDir,
-      ...(codex?.codexHome ? { codexHome: codex.codexHome } : {}),
-      inheritCodexHome: codex?.inheritCodexHome === true,
-      ignoreUserConfig: codex?.ignoreUserConfig === true,
-      ignoreRules: codex?.ignoreRules !== false,
+      agentOptions: codexAdapterAgentOptions(profileConfig),
       sandbox: profileConfig.sandbox.defaultMode,
       larkChannel,
     });
@@ -45,16 +46,19 @@ const RUNTIME_AGENT_FACTORIES: Record<AgentKind, RuntimeAgentFactory> = {
   kimi: (profileConfig, _appPaths, larkChannel) =>
     new KimiAdapter({
       binary: runtimeBinary(profileConfig) ?? descriptorFor('kimi').binaryNames[0] ?? 'kimi',
+      agentOptions: profileConfig.agent.options,
       larkChannel,
     }),
   grok: (profileConfig, _appPaths, larkChannel) =>
     new GrokAdapter({
       binary: runtimeBinary(profileConfig) ?? descriptorFor('grok').binaryNames[0] ?? 'grok',
+      agentOptions: profileConfig.agent.options,
       larkChannel,
     }),
   cursor: (profileConfig, _appPaths, larkChannel) =>
     new CursorAdapter({
       ...adapterBinaryOpts(profileConfig),
+      agentOptions: profileConfig.agent.options,
       larkChannel,
     }),
 };

@@ -7,11 +7,20 @@ import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
 import { descriptorFor } from '../registry';
 import { runJsonlAgent } from '../runner/jsonl-cli-runner';
-import type { AgentAdapter, AgentBotIdentity, AgentRun, AgentRunOptions } from '../types';
+import {
+  mergeAgentOptions,
+  runAgentOptions,
+  type AgentAdapter,
+  type AgentBotIdentity,
+  type AgentRun,
+  type AgentRunOptions,
+} from '../types';
 import { buildClaudeArgs } from './argv';
+import { CLAUDE_DEFAULT_PERMISSION_MODE, parseClaudeAgentOptions } from './options';
 
 export interface ClaudeAdapterOptions {
   binary?: string;
+  agentOptions?: unknown;
   larkChannel?: LarkChannelEnvContext;
 }
 
@@ -21,11 +30,13 @@ export class ClaudeAdapter implements AgentAdapter {
 
   private readonly binary: string;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
+  private readonly profileOptions: unknown;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: ClaudeAdapterOptions = {}) {
     this.binary = opts.binary ?? 'claude';
     this.larkChannel = opts.larkChannel;
+    this.profileOptions = opts.agentOptions;
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -51,12 +62,16 @@ export class ClaudeAdapter implements AgentAdapter {
     }
 
     const prepared = writeSystemPromptFile(buildBridgeSystemPrompt(this.botIdentity));
+    const parsed = parseClaudeAgentOptions(
+      mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
+      false,
+    );
     return runJsonlAgent({
       runId: opts.runId,
       name: this.id,
       binaryPath: this.binary,
       argv: buildClaudeArgs({
-        permissionMode: opts.permissionMode,
+        permissionMode: parsed.permissionMode ?? CLAUDE_DEFAULT_PERMISSION_MODE,
         systemPromptFile: prepared.path,
         sessionId: opts.resumeHandle,
         model: opts.model,

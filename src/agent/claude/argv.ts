@@ -1,5 +1,5 @@
 import type { ClaudePermissionMode } from '../../config/permissions';
-import { CLAUDE_DEFAULT_PERMISSION_MODE } from '../types';
+import { CLAUDE_DEFAULT_PERMISSION_MODE } from './options';
 
 export interface BuildClaudeArgsInput {
   permissionMode?: ClaudePermissionMode;

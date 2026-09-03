@@ -1,9 +1,35 @@
 import { ClaudeJsonlTranslator } from './claude/stream-json';
+import {
+  claudeAgentOptionsSchema,
+  claudePolicyInputs,
+  mapClaudeEffectiveAccess,
+} from './claude/options';
 import { CodexJsonlTranslator } from './codex/jsonl';
+import {
+  codexAgentOptionsSchema,
+  codexPolicyInputs,
+  mapCodexEffectiveAccess,
+} from './codex/options';
 import { CursorJsonlTranslator } from './cursor/jsonl';
+import {
+  cursorAgentOptionsSchema,
+  cursorPolicyInputs,
+  mapCursorEffectiveAccess,
+} from './cursor/options';
 import { GrokJsonlTranslator } from './grok/jsonl';
+import {
+  grokAgentOptionsSchema,
+  grokPolicyInputs,
+  mapGrokEffectiveAccess,
+} from './grok/options';
 import { KimiJsonlTranslator } from './kimi/jsonl';
+import {
+  kimiAgentOptionsSchema,
+  kimiPolicyInputs,
+  mapKimiEffectiveAccess,
+} from './kimi/options';
 import type { JsonlTranslator } from './runner/jsonl-translator';
+import type { AgentOptionsSchema, EffectiveAccess } from './types';
 
 export type { JsonlTranslator } from './runner/jsonl-translator';
 
@@ -60,6 +86,9 @@ export interface AgentDescriptor {
   readonly upgradeWorkspacePermissionsToFull: boolean;
   readonly inheritCodexHomeWhenIsolated: boolean;
   readonly createTranslator: () => JsonlTranslator;
+  readonly agentOptionsSchema: AgentOptionsSchema;
+  readonly policyInputs: (options: unknown) => Record<string, unknown>;
+  readonly mapEffectiveAccess: (access: EffectiveAccess) => unknown;
 }
 
 const DEFAULT_MODEL_OPTION: AgentModelOption = {
@@ -101,6 +130,9 @@ const CLAUDE: AgentDescriptor = {
   upgradeWorkspacePermissionsToFull: true,
   inheritCodexHomeWhenIsolated: false,
   createTranslator: () => new ClaudeJsonlTranslator(),
+  agentOptionsSchema: claudeAgentOptionsSchema,
+  policyInputs: claudePolicyInputs,
+  mapEffectiveAccess: mapClaudeEffectiveAccess,
 };
 
 const CODEX: AgentDescriptor = {
@@ -134,6 +166,9 @@ const CODEX: AgentDescriptor = {
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: true,
   createTranslator: () => new CodexJsonlTranslator(),
+  agentOptionsSchema: codexAgentOptionsSchema,
+  policyInputs: codexPolicyInputs,
+  mapEffectiveAccess: mapCodexEffectiveAccess,
 };
 
 const KIMI: AgentDescriptor = {
@@ -165,6 +200,9 @@ const KIMI: AgentDescriptor = {
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: false,
   createTranslator: () => new KimiJsonlTranslator(),
+  agentOptionsSchema: kimiAgentOptionsSchema,
+  policyInputs: kimiPolicyInputs,
+  mapEffectiveAccess: mapKimiEffectiveAccess,
 };
 
 const GROK: AgentDescriptor = {
@@ -199,6 +237,9 @@ const GROK: AgentDescriptor = {
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: false,
   createTranslator: () => new GrokJsonlTranslator(),
+  agentOptionsSchema: grokAgentOptionsSchema,
+  policyInputs: grokPolicyInputs,
+  mapEffectiveAccess: mapGrokEffectiveAccess,
 };
 
 const CURSOR_BINARY_NAMES = ['cursor-agent', 'agent'] as const;
@@ -234,6 +275,9 @@ const CURSOR: AgentDescriptor = {
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: false,
   createTranslator: () => new CursorJsonlTranslator(),
+  agentOptionsSchema: cursorAgentOptionsSchema,
+  policyInputs: cursorPolicyInputs,
+  mapEffectiveAccess: mapCursorEffectiveAccess,
 };
 
 const DESCRIPTORS = {

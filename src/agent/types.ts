@@ -1,7 +1,4 @@
 import type { AgentAvailability } from './preflight';
-import type { ClaudePermissionMode, CodexSandboxMode } from '../config/permissions';
-
-export type { ClaudePermissionMode } from '../config/permissions';
 
 export type AgentEvent =
   | { type: 'system'; resumeHandle?: string; cwd?: string; model?: string }
@@ -25,7 +22,28 @@ export type AgentEvent =
     }
   | { type: 'error'; message: string; terminationReason: 'failed' | 'interrupted' | 'timeout' };
 
-export const CLAUDE_DEFAULT_PERMISSION_MODE: ClaudePermissionMode = 'bypassPermissions';
+export type EffectiveAccess = 'read-only' | 'workspace' | 'full';
+
+export interface AgentOptionsSchema {
+  readonly parse: (value: unknown) => unknown;
+}
+
+export interface AgentRunAttachment {
+  kind: string;
+  path?: string;
+  originalName?: string;
+}
+
+export interface AgentRunInput {
+  prompt: string;
+  cwd: string;
+  resumeHandle?: string;
+  model?: string;
+  attachments: readonly AgentRunAttachment[];
+  botIdentity: AgentBotIdentity;
+  effectiveAccess: EffectiveAccess;
+  agentOptions: unknown;
+}
 
 export interface AgentRunOptions {
   runId: string;
@@ -34,16 +52,35 @@ export interface AgentRunOptions {
   resumeHandle?: string;
   model?: string;
   images?: readonly string[];
-  sandbox?: CodexSandboxMode;
-  permissionMode?: ClaudePermissionMode;
-  /**
-   * Grace period (ms) between SIGTERM and SIGKILL when stop() is called on
-   * the returned run. Lets the agent (and any subprocess it spawned, e.g.
-   * lark-cli mid-OAuth) clean up before the kernel reaps the tree.
-   * Adapters that don't kill via signals are free to ignore this. Defaults
-   * are adapter-specific.
-  */
+  agentOptions?: unknown;
+  sandbox?: string;
+  permissionMode?: string;
   stopGraceMs?: number;
+}
+
+export function asAgentOptionsObject(value: unknown, label: string): Record<string, unknown> {
+  if (value === undefined || value === null) return {};
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`${label} agent options must be an object`);
+  }
+  return { ...(value as Record<string, unknown>) };
+}
+
+export function runAgentOptions(opts: AgentRunOptions): unknown {
+  return opts.agentOptions !== undefined ? opts.agentOptions : opts;
+}
+
+export function mergeAgentOptions(...bags: unknown[]): Record<string, unknown> {
+  const merged: Record<string, unknown> = {};
+  for (const bag of bags) {
+    Object.assign(merged, asAgentOptionsObject(bag, 'agent'));
+  }
+  return merged;
+}
+
+export function omitEmptyAgentOptions(options: unknown): unknown | undefined {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) return undefined;
+  return Object.keys(options).length > 0 ? options : undefined;
 }
 
 export interface AgentRun {
