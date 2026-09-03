@@ -371,20 +371,22 @@ function readRaw(path: string): RegistryFile {
 }
 
 function readRegistryFile(path: string): RegistryFile | undefined {
-  let parsed: Partial<RegistryFile>;
+  let parsed: unknown;
   try {
-    parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RegistryFile>;
+    parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     return { ...EMPTY };
   }
-  if (!parsed || !Array.isArray(parsed.entries)) return { ...EMPTY };
-  assertSupportedProcessRegistrySchemaVersion(parsed.schemaVersion);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...EMPTY };
+  const document = parsed as Partial<RegistryFile>;
+  assertSupportedProcessRegistrySchemaVersion(document.schemaVersion);
+  if (!Array.isArray(document.entries)) return { ...EMPTY };
   return {
-    schemaVersion: parsed.schemaVersion === undefined
+    schemaVersion: document.schemaVersion === undefined
       ? PROCESS_REGISTRY_SCHEMA_VERSION
-      : parsed.schemaVersion,
-    entries: parsed.entries.filter(isValidEntry),
+      : document.schemaVersion,
+    entries: document.entries.filter(isValidEntry),
   };
 }
 

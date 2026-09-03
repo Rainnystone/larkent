@@ -240,6 +240,56 @@ describe('registry and runtime lock integration', () => {
     expect(() => readAndPrune(registryFile)).toThrow(UnsupportedProcessRegistrySchemaError);
   });
 
+  it('refuses to mutate an unsupported process-registry schemaVersion without entries', async () => {
+    const root = await makeRoot();
+    const registryFile = join(root, 'registry', 'processes.json');
+    const payload = {
+      schemaVersion: 2,
+      processes: [entry({ id: 'keep-me' })],
+    };
+    await writeJson(registryFile, payload);
+
+    await expect(
+      register({
+        appId: 'cli_new',
+        tenant: 'feishu',
+        profileName: 'codex-dev',
+        agentKind: 'codex',
+        configPath: join(root, 'config.json'),
+        version: '0.1.32',
+        registryFile,
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedProcessRegistrySchemaError);
+    expect(JSON.parse(await readFile(registryFile, 'utf8'))).toEqual(payload);
+    expect(() => readAndPrune(registryFile)).toThrow(UnsupportedProcessRegistrySchemaError);
+
+    unregisterSync('keep-me', registryFile);
+    expect(JSON.parse(await readFile(registryFile, 'utf8'))).toEqual(payload);
+  });
+
+  it('treats a current-schema registry without entries as empty', async () => {
+    const root = await makeRoot();
+    const registryFile = join(root, 'registry', 'processes.json');
+    await writeJson(registryFile, { schemaVersion: 1 });
+
+    const created = await register({
+      appId: 'cli_new',
+      tenant: 'feishu',
+      profileName: 'codex-dev',
+      agentKind: 'codex',
+      configPath: join(root, 'config.json'),
+      version: '0.1.32',
+      registryFile,
+    });
+
+    const persisted = JSON.parse(await readFile(registryFile, 'utf8')) as {
+      schemaVersion: number;
+      entries: ProcessEntry[];
+    };
+    expect(persisted.schemaVersion).toBe(1);
+    expect(persisted.entries.map((item) => item.id)).toEqual([created.id]);
+  });
+
   it('uses the registry file lock from sync unregister paths', async () => {
     const root = await makeRoot();
     const registryFile = join(root, 'registry', 'processes.json');
