@@ -81,6 +81,49 @@ describe('README runtime contract', () => {
     expect(docs).not.toContain('/doc ws bind');
   });
 
+  it('names Grok Bot as the deployment target and treats Grok Build as one of five peers', async () => {
+    const [en, zh, pkgRaw, context] = await Promise.all([
+      readFile(new URL('../../../README.md', import.meta.url), 'utf8'),
+      readFile(new URL('../../../README.zh.md', import.meta.url), 'utf8'),
+      readFile(new URL('../../../package.json', import.meta.url), 'utf8'),
+      readFile(new URL('../../../CONTEXT.md', import.meta.url), 'utf8'),
+    ]);
+    const pkg = JSON.parse(pkgRaw) as {
+      description: string;
+      repository: { url: string };
+      bugs: { url: string };
+      homepage: string;
+    };
+    const enFirst = firstParagraph(en);
+    const zhFirst = firstParagraph(zh);
+
+    expect(enFirst).toContain('Grok Bot is the deployment target');
+    expect(enFirst).toContain('Grok Build is an agent, one of five, with no special standing');
+    expect(enFirst).toContain('`claude`, `codex`, `kimi`, `grok`, and `cursor`');
+    expect(enFirst).toContain('There is no default agent.');
+    expect(enFirst).not.toMatch(/primary engine/i);
+    expect(enFirst).not.toMatch(/Default for a new profile is Grok Build/);
+    expect(en).not.toContain('Grok Build is a fourth adapter');
+    expect(en).not.toContain('Pick the engine');
+
+    expect(zhFirst).toContain('Grok Bot 是部署目标');
+    expect(zhFirst).toContain('Grok Build 是五个 agent 之一，没有特殊地位');
+    expect(zhFirst).toContain('`claude`、`codex`、`kimi`、`grok`、`cursor`');
+    expect(zhFirst).toContain('没有默认 agent。');
+    expect(zh).not.toContain('Grok Build 是第四个');
+    expect(zh).not.toContain('选引擎');
+
+    expect(context).toContain('Grok Bot is the deployment target');
+    expect(context).toContain('Grok Build is an agent, one of five, with no special standing');
+    expect(context).toContain('"default agent". There is none.');
+
+    expect(pkg.description).toBe('Bridge Feishu/Lark bots to CLI coding agents');
+    expect(pkg.description).not.toMatch(/Grok Build/);
+    expect(pkg.repository.url).toBe('git+https://github.com/Rainnystone/larkent-for-grokbot.git');
+    expect(pkg.bugs.url).toBe('https://github.com/Rainnystone/larkent-for-grokbot/issues');
+    expect(pkg.homepage).toBe('https://github.com/Rainnystone/larkent-for-grokbot#readme');
+  });
+
   it('documents canonical permissions instead of recommending legacy sandbox config', async () => {
     const docs = await readDocs();
 
@@ -99,4 +142,10 @@ async function readDocs(): Promise<string> {
     readFile(new URL('../../../README.zh.md', import.meta.url), 'utf8'),
   ]);
   return `${en}\n${zh}`;
+}
+
+function firstParagraph(markdown: string): string {
+  const withoutTitle = markdown.replace(/^#.*\n+/, '');
+  const block = withoutTitle.split(/\n\n+/)[0] ?? '';
+  return block.replace(/\n/g, ' ').trim();
 }

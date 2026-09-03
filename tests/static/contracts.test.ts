@@ -81,4 +81,19 @@ describe('static architecture contracts', () => {
     }
     expect(read('src/agent/runner/jsonl-cli-runner.ts')).toMatch(/\bspawnProcess\b/);
   });
+
+  it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
+    const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
+    const files = [...collectTsFiles('src'), ...collectTsFiles('web/src')].filter(
+      (file) => file.endsWith('.ts') || file.endsWith('.tsx'),
+    );
+    const stray: string[] = [];
+    for (const file of files) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+  });
 });
