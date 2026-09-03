@@ -72,7 +72,7 @@ describe('IM run flow', () => {
     expect(h.agent.runOptions[0]).toMatchObject({
       runId: 'run-1',
       cwd: workspaceRealpath,
-      sessionId: 'sess-1',
+      resumeHandle: 'sess-1',
     });
   });
 

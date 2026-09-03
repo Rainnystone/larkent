@@ -40,9 +40,9 @@ describe('CursorJsonlTranslator', () => {
       RESULT,
     ]);
     expect(events).toEqual([
-      { type: 'system', sessionId: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
+      { type: 'system', resumeHandle: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
       { type: 'final_text', content: 'OK' },
-      { type: 'done', sessionId: SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
     expect(t.terminalEmitted()).toBe(true);
   });
@@ -96,7 +96,7 @@ describe('CursorJsonlTranslator', () => {
       RESULT,
     ]);
     expect(events).toEqual([
-      { type: 'system', sessionId: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
+      { type: 'system', resumeHandle: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
       { type: 'tool_use', id: 'tool_1', name: 'Read', input: { path: 'README.md' } },
       {
         type: 'tool_result',
@@ -105,7 +105,7 @@ describe('CursorJsonlTranslator', () => {
         isError: false,
       },
       { type: 'final_text', content: 'The command printed hi.' },
-      { type: 'done', sessionId: SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
   });
 
@@ -154,7 +154,7 @@ describe('CursorJsonlTranslator', () => {
         isError: false,
       },
       { type: 'final_text', content: 'Done.' },
-      { type: 'done', sessionId: SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
   });
 
@@ -189,7 +189,7 @@ describe('CursorJsonlTranslator', () => {
   it('finish(failed) surfaces an error when the stream never reached result', () => {
     const t = new CursorJsonlTranslator();
     expect([...collect(t, [INIT]), ...t.finish()]).toEqual([
-      { type: 'system', sessionId: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
+      { type: 'system', resumeHandle: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
       {
         type: 'error',
         message: 'cursor stream ended before a terminal event',

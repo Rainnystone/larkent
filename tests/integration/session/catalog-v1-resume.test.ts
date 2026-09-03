@@ -22,6 +22,18 @@ import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js'
 const cleanups: Array<() => Promise<void>> = [];
 const fixtureRoot = join(process.cwd(), 'tests/fixtures/sessions');
 
+interface CatalogV1FixtureEntry {
+  key: string;
+  scopeId: string;
+  agentId: PinAgentKind;
+  cwdRealpath: string;
+  policyFingerprint: string;
+  status: SessionCatalogEntry['status'];
+  updatedAt: number;
+  sessionId?: string;
+  threadId?: string;
+}
+
 describe('P2 catalog v1 resume continuity', () => {
   afterEach(async () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
@@ -37,7 +49,8 @@ describe('P2 catalog v1 resume continuity', () => {
     await drain(probe.execution.subscribe());
 
     const fixturePath = join(fixtureRoot, `catalog-v1-${pinned}.json`);
-    const raw = JSON.parse(await readFile(fixturePath, 'utf8')) as SessionCatalogEntry[];
+    const fixtureBytes = await readFile(fixturePath);
+    const raw = JSON.parse(fixtureBytes.toString('utf8')) as CatalogV1FixtureEntry[];
     expect(Array.isArray(raw)).toBe(true);
     expect(raw).toHaveLength(1);
     const template = raw[0]!;
@@ -51,20 +64,17 @@ describe('P2 catalog v1 resume continuity', () => {
       expect(template.threadId).toBeUndefined();
     }
 
-    const materialized: SessionCatalogEntry[] = raw.map((entry) => {
-      const next: SessionCatalogEntry = {
-        ...entry,
+    const materialized = raw.map((entry) => ({
+      ...entry,
+      cwdRealpath,
+      policyFingerprint: probe.policy.policyFingerprint,
+      key: sessionCatalogKey({
+        scopeId: entry.scopeId,
+        agentId: entry.agentId,
         cwdRealpath,
         policyFingerprint: probe.policy.policyFingerprint,
-        key: sessionCatalogKey({
-          scopeId: entry.scopeId,
-          agentId: entry.agentId,
-          cwdRealpath,
-          policyFingerprint: probe.policy.policyFingerprint,
-        }),
-      };
-      return next;
-    });
+      }),
+    }));
     await writeFile(join(h.tmp.profile, 'sessions.json.catalog.json'), `${JSON.stringify(materialized, null, 2)}\n`);
     await h.catalog.load();
 
@@ -75,39 +85,32 @@ describe('P2 catalog v1 resume continuity', () => {
       policyFingerprint: probe.policy.policyFingerprint,
     });
     expect(loaded).toBeDefined();
-    if (pinned === 'codex') {
-      expect(loaded?.threadId).toBe('thread-v1-codex');
-      expect(loaded?.sessionId).toBeUndefined();
-      expect(loaded).not.toHaveProperty('sessionId');
-    } else {
-      expect(loaded?.sessionId).toBe(`sess-v1-${pinned}`);
-      expect(loaded?.threadId).toBeUndefined();
-      expect(loaded).not.toHaveProperty('threadId');
-    }
+    const handle = pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`;
+    expect(loaded?.resumeHandle).toBe(handle);
+    expect(loaded).not.toHaveProperty('sessionId');
+    expect(loaded).not.toHaveProperty('threadId');
 
     const resumed = await start(h);
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected resume');
-    const handle = pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`;
     expect(resumed.resumeFrom).toBe(handle);
     const resumeOpts = h.agent.runOptions[1];
     expect(resumeOpts).toBeDefined();
-    if (pinned === 'codex') {
-      expect(resumeOpts?.threadId).toBe('thread-v1-codex');
-      expect(resumeOpts?.sessionId).toBeUndefined();
-    } else {
-      expect(resumeOpts?.sessionId).toBe(handle);
-      expect(resumeOpts?.threadId).toBeUndefined();
-    }
+    expect(resumeOpts?.resumeHandle).toBe(handle);
+    expect(resumeOpts).not.toHaveProperty('sessionId');
+    expect(resumeOpts).not.toHaveProperty('threadId');
+    expect(await readFile(fixturePath)).toEqual(fixtureBytes);
   }, 20_000);
 
   it('keeps committed v1 catalog files loadable without rewriting the fixture bytes', async () => {
     for (const kind of PIN_AGENT_KINDS) {
       const pinned = pinAgentKind(kind);
+      const fixturePath = join(fixtureRoot, `catalog-v1-${pinned}.json`);
+      const fixtureBytes = await readFile(fixturePath);
       const tmp = await createTmpProfile(`catalog-load-${pinned}-`);
       cleanups.push(tmp.cleanup);
       const dest = join(tmp.profile, 'sessions.json.catalog.json');
-      await copyFile(join(fixtureRoot, `catalog-v1-${pinned}.json`), dest);
+      await copyFile(fixturePath, dest);
       const catalog = new SessionCatalog(dest);
       await catalog.load();
       const entries = catalog.entries();
@@ -115,11 +118,35 @@ describe('P2 catalog v1 resume continuity', () => {
       expect(entries[0]?.agentId).toBe(pinned);
       expect(entries[0]?.cwdRealpath).toBe('/PINNED_CWD');
       expect(entries[0]?.policyFingerprint).toBe('PINNED_FP');
-      if (pinned === 'codex') {
-        expect(entries[0]?.threadId).toBe('thread-v1-codex');
-      } else {
-        expect(entries[0]?.sessionId).toBe(`sess-v1-${pinned}`);
-      }
+      const handle = pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`;
+      expect(entries[0]?.resumeHandle).toBe(handle);
+      expect(entries[0]).not.toHaveProperty('sessionId');
+      expect(entries[0]).not.toHaveProperty('threadId');
+      expect(await readFile(fixturePath)).toEqual(fixtureBytes);
+    }
+  });
+
+  it('upgrades on-disk v1 catalogs to schemaVersion 2 and reloads as a no-op', async () => {
+    for (const kind of PIN_AGENT_KINDS) {
+      const pinned = pinAgentKind(kind);
+      const tmp = await createTmpProfile(`catalog-upgrade-${pinned}-`);
+      cleanups.push(tmp.cleanup);
+      const dest = join(tmp.profile, 'sessions.json.catalog.json');
+      await copyFile(join(fixtureRoot, `catalog-v1-${pinned}.json`), dest);
+      const catalog = new SessionCatalog(dest);
+      await catalog.load();
+      const upgraded = JSON.parse(await readFile(dest, 'utf8')) as {
+        schemaVersion: number;
+        entries: Array<Record<string, unknown>>;
+      };
+      expect(upgraded.schemaVersion).toBe(2);
+      const handle = pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`;
+      expect(upgraded.entries[0]?.resumeHandle).toBe(handle);
+      expect(upgraded.entries[0]).not.toHaveProperty('sessionId');
+      expect(upgraded.entries[0]).not.toHaveProperty('threadId');
+      const beforeReload = await readFile(dest, 'utf8');
+      await catalog.load();
+      expect(await readFile(dest, 'utf8')).toBe(beforeReload);
     }
   });
 });

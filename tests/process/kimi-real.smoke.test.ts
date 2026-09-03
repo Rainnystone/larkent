@@ -27,7 +27,7 @@ describe.skipIf(!RUN)('KimiAdapter real binary smoke', () => {
     const system = first.find((e) => e.type === 'system');
     const finalText = first.find((e) => e.type === 'final_text');
     const done = first.find((e) => e.type === 'done');
-    expect(system?.sessionId).toMatch(/^session_/);
+    expect(system?.resumeHandle).toMatch(/^session_/);
     expect(finalText?.content).toContain('BRIDGE-SMOKE-1');
     expect(done?.terminationReason).toBe('normal');
 
@@ -36,7 +36,7 @@ describe.skipIf(!RUN)('KimiAdapter real binary smoke', () => {
         runId: 'r2',
         prompt: 'What exact token did I ask you to reply with earlier? Answer with just the token.',
         cwd: dir,
-        sessionId: system!.sessionId!,
+        resumeHandle: system!.resumeHandle!,
       }).events,
     );
     const secondFinal = second.find((e) => e.type === 'final_text');

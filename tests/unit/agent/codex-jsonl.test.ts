@@ -6,7 +6,7 @@ describe('Codex JSONL translator', () => {
     const t = new CodexJsonlTranslator();
 
     expect(t.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }))).toEqual([
-      { type: 'system', threadId: 'thread-1' },
+      { type: 'system', resumeHandle: 'thread-1' },
     ]);
     expect(t.translate(JSON.stringify({ type: 'turn.started' }))).toEqual([]);
     expect(
@@ -64,7 +64,7 @@ describe('Codex JSONL translator', () => {
         cachedInputTokens: 5,
         reasoningOutputTokens: 7,
       },
-      { type: 'done', threadId: 'thread-1', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'thread-1', terminationReason: 'normal' },
     ]);
   });
 
@@ -74,7 +74,10 @@ describe('Codex JSONL translator', () => {
     const done = t.translate(JSON.stringify({ type: 'turn.completed' })).at(-1);
 
     expect(system).not.toHaveProperty('sessionId');
+    expect(system).not.toHaveProperty('threadId');
     expect(done).not.toHaveProperty('sessionId');
+    expect(done).not.toHaveProperty('threadId');
+    expect(system).toMatchObject({ resumeHandle: 'thread-1' });
   });
 
   it('translates current Codex agent messages emitted as completed items', () => {
@@ -188,7 +191,7 @@ describe('Codex JSONL translator', () => {
     const t = new CodexJsonlTranslator();
 
     expect(t.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-retry' }))).toEqual([
-      { type: 'system', threadId: 'thread-retry' },
+      { type: 'system', resumeHandle: 'thread-retry' },
     ]);
     expect(
       t.translate(JSON.stringify({
@@ -200,7 +203,7 @@ describe('Codex JSONL translator', () => {
     expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'after retry' }))).toEqual([]);
     expect(t.translate(JSON.stringify({ type: 'turn.completed' }))).toEqual([
       { type: 'final_text', content: 'after retry' },
-      { type: 'done', threadId: 'thread-retry', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'thread-retry', terminationReason: 'normal' },
     ]);
   });
 
@@ -283,13 +286,13 @@ describe('Codex JSONL translator', () => {
     const stopped = new CodexJsonlTranslator();
     stopped.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-stop' }));
     expect(stopped.finish('interrupted')).toEqual([
-      { type: 'done', threadId: 'thread-stop', terminationReason: 'interrupted' },
+      { type: 'done', resumeHandle: 'thread-stop', terminationReason: 'interrupted' },
     ]);
 
     const timedOut = new CodexJsonlTranslator();
     timedOut.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-timeout' }));
     expect(timedOut.finish('timeout')).toEqual([
-      { type: 'done', threadId: 'thread-timeout', terminationReason: 'timeout' },
+      { type: 'done', resumeHandle: 'thread-timeout', terminationReason: 'timeout' },
     ]);
   });
 });

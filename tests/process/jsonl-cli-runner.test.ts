@@ -82,26 +82,26 @@ const FRESH_LINES: Record<AgentKind, unknown[]> = {
 };
 
 const FRESH_EVENTS: Record<AgentKind, AgentEvent[]> = {
-  claude: [{ type: 'done', sessionId: 'sess-fresh', terminationReason: 'normal' }],
+  claude: [{ type: 'done', resumeHandle: 'sess-fresh', terminationReason: 'normal' }],
   codex: [
-    { type: 'system', threadId: 'thread-fresh' },
+    { type: 'system', resumeHandle: 'thread-fresh' },
     { type: 'final_text', content: 'hello user' },
-    { type: 'done', threadId: 'thread-fresh', terminationReason: 'normal' },
+    { type: 'done', resumeHandle: 'thread-fresh', terminationReason: 'normal' },
   ],
   kimi: [
-    { type: 'system', sessionId: 'session_fake' },
+    { type: 'system', resumeHandle: 'session_fake' },
     { type: 'final_text', content: 'OK' },
-    { type: 'done', sessionId: 'session_fake', terminationReason: 'normal' },
+    { type: 'done', resumeHandle: 'session_fake', terminationReason: 'normal' },
   ],
   grok: [
-    { type: 'system', sessionId: GROK_SESSION },
+    { type: 'system', resumeHandle: GROK_SESSION },
     { type: 'final_text', content: 'OK' },
-    { type: 'done', sessionId: GROK_SESSION, terminationReason: 'normal' },
+    { type: 'done', resumeHandle: GROK_SESSION, terminationReason: 'normal' },
   ],
   cursor: [
-    { type: 'system', sessionId: CURSOR_SESSION, cwd: '/tmp', model: 'Composer 2.5' },
+    { type: 'system', resumeHandle: CURSOR_SESSION, cwd: '/tmp', model: 'Composer 2.5' },
     { type: 'final_text', content: 'OK' },
-    { type: 'done', sessionId: CURSOR_SESSION, terminationReason: 'normal' },
+    { type: 'done', resumeHandle: CURSOR_SESSION, terminationReason: 'normal' },
   ],
 };
 
@@ -218,7 +218,7 @@ describe.each(AGENT_KINDS)('JsonlCliRunner %s process contract', (kind) => {
     });
     const events = await collect(adapter.run({ runId: 'run-resume', prompt: 'continue', cwd, ...resume }).events);
     if (kind === 'claude') {
-      expect(events).toEqual([{ type: 'done', sessionId: 'sess-resumed', terminationReason: 'normal' }]);
+      expect(events).toEqual([{ type: 'done', resumeHandle: 'sess-resumed', terminationReason: 'normal' }]);
     }
     const record = await readRecord(fake.recordPath);
     assertResumeArgv(kind, record, cwd, image);
@@ -505,7 +505,7 @@ describe('kind-specific argv and env extras', () => {
     const iterator = run.events[Symbol.asyncIterator]();
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: 'done', sessionId: 'sess-tail', terminationReason: 'normal' },
+      value: { type: 'done', resumeHandle: 'sess-tail', terminationReason: 'normal' },
     });
     expect(await run.waitForExit(10)).toBe(false);
     expect(await run.waitForExit(1_000)).toBe(true);
@@ -631,9 +631,9 @@ describe('kind-specific argv and env extras', () => {
         }).events,
       ),
     ).toEqual([
-      { type: 'system', threadId: 'thread-retry' },
+      { type: 'system', resumeHandle: 'thread-retry' },
       { type: 'final_text', content: 'after retry' },
-      { type: 'done', threadId: 'thread-retry', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'thread-retry', terminationReason: 'normal' },
     ]);
   });
 
@@ -655,13 +655,13 @@ describe('kind-specific argv and env extras', () => {
     const iterator = run.events[Symbol.asyncIterator]();
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: 'system', threadId: 'thread-stop' },
+      value: { type: 'system', resumeHandle: 'thread-stop' },
     });
     expect(await run.waitForExit(10)).toBe(false);
     await run.stop();
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: 'done', threadId: 'thread-stop', terminationReason: 'interrupted' },
+      value: { type: 'done', resumeHandle: 'thread-stop', terminationReason: 'interrupted' },
     });
     await iterator.return?.();
   });
@@ -696,9 +696,9 @@ describe('kind-specific argv and env extras', () => {
     ).toEqual([
       { type: 'tool_use', id: 'tool_1', name: 'Bash', input: { command: 'echo hi' } },
       { type: 'tool_result', id: 'tool_1', output: 'hi\n', isError: false },
-      { type: 'system', sessionId: 'session_fake' },
+      { type: 'system', resumeHandle: 'session_fake' },
       { type: 'final_text', content: 'done' },
-      { type: 'done', sessionId: 'session_fake', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'session_fake', terminationReason: 'normal' },
     ]);
 
     const hung = await createFakeCli({ lines: [], hang: true });
@@ -749,9 +749,9 @@ describe('kind-specific argv and env extras', () => {
         input: { command: 'echo hi' },
       },
       { type: 'tool_result', id: 'call_1', output: '{"stdout":"hi\\n"}', isError: false },
-      { type: 'system', sessionId: GROK_SESSION },
+      { type: 'system', resumeHandle: GROK_SESSION },
       { type: 'final_text', content: 'done' },
-      { type: 'done', sessionId: GROK_SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: GROK_SESSION, terminationReason: 'normal' },
     ]);
 
     const orphan = await createFakeCli({ lines: [{ type: 'text', data: 'orphan' }] });
@@ -992,15 +992,15 @@ async function assertFreshArgv(kind: AgentKind, record: FakeRecord, cwd: string)
 function resumeOptions(kind: AgentKind, image: string): Partial<AgentRunOptions> {
   switch (kind) {
     case 'claude':
-      return { sessionId: 'sess-old', model: 'sonnet' };
+      return { resumeHandle: 'sess-old', model: 'sonnet' };
     case 'codex':
-      return { threadId: 'thread-old', images: [image] };
+      return { resumeHandle: 'thread-old', images: [image] };
     case 'kimi':
-      return { sessionId: 'session_old', model: 'kimi-code/kimi-for-coding' };
+      return { resumeHandle: 'session_old', model: 'kimi-code/kimi-for-coding' };
     case 'grok':
-      return { sessionId: GROK_SESSION, model: 'grok-build' };
+      return { resumeHandle: GROK_SESSION, model: 'grok-build' };
     case 'cursor':
-      return { sessionId: 'session_old', model: 'composer-2.5' };
+      return { resumeHandle: 'session_old', model: 'composer-2.5' };
     default: {
       const exhaustive: never = kind;
       throw new Error(`unhandled agent kind: ${String(exhaustive)}`);
