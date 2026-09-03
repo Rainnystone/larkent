@@ -8,6 +8,7 @@ export const RUNTIME_LOCK_SCHEMA_VERSION = 1;
 export interface ProfileAgentV3 {
   kind: AgentKind;
   binaryPath?: string;
+  options?: unknown;
 }
 
 export interface ProfileUpgradeResult<T> {
@@ -135,6 +136,7 @@ function upgradeProfileV2(profile: Record<string, unknown>): Record<string, unkn
   const agent: ProfileAgentV3 = {
     kind,
     ...(spreadBinaryPath(binaryPathFromV2(profile))),
+    ...(spreadOptions(isRecord(profile.agent) ? profile.agent.options : undefined)),
   };
   return {
     ...profile,
@@ -149,6 +151,7 @@ function currentAgent(profile: Record<string, unknown>): ProfileAgentV3 {
     return {
       kind: profile.agent.kind,
       ...(spreadBinaryPath(optionalBinaryPath(profile.agent.binaryPath))),
+      ...(spreadOptions(profile.agent.options)),
     };
   }
   if (isAgentKind(profile.agentKind)) {
@@ -183,6 +186,10 @@ function optionalBinaryPath(value: unknown): string | undefined {
 
 function spreadBinaryPath(binaryPath: string | undefined): { binaryPath: string } | Record<string, never> {
   return binaryPath ? { binaryPath } : {};
+}
+
+function spreadOptions(value: unknown): { options: unknown } | Record<string, never> {
+  return value === undefined ? {} : { options: value };
 }
 
 function unsupportedSchemaMessage(version: unknown): string {

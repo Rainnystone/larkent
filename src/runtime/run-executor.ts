@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import type { AgentAdapter, AgentEvent, AgentRun } from '../agent/types';
+import { descriptorFor, isAgentKind } from '../agent/registry';
+import { mergeAgentOptions, type AgentAdapter, type AgentEvent, type AgentRun } from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
 import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
@@ -92,6 +93,15 @@ export class RunExecutor {
     const runId = this.createRunId();
     const startedAt = this.now();
     const queueWaitMs = startedAt - submittedAt;
+    const mappedOptions = isAgentKind(this.agent.id)
+      ? mergeAgentOptions(
+          descriptorFor(this.agent.id).mapEffectiveAccess(input.policy.accessMode),
+          {
+            permissionMode: input.policy.permissionMode,
+            sandbox: input.policy.sandbox,
+          },
+        )
+      : undefined;
     const runOptions = {
       runId,
       prompt: input.policy.prompt,
@@ -99,6 +109,7 @@ export class RunExecutor {
       resumeHandle: input.resumeHandle,
       model: input.model,
       images: input.images,
+      ...(mappedOptions !== undefined ? { agentOptions: mappedOptions } : {}),
       sandbox: input.policy.sandbox,
       permissionMode: input.policy.permissionMode,
       stopGraceMs: input.stopGraceMs,

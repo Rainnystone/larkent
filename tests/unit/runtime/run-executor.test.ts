@@ -35,6 +35,30 @@ describe('RunExecutor policy runtime options', () => {
 
     await collect(execution.subscribe());
   });
+
+  it('passes descriptor mapEffectiveAccess as the per-run agentOptions bag', async () => {
+    const agent = new FakeAgentAdapter({
+      id: 'claude',
+      events: [{ type: 'done', terminationReason: 'normal' }],
+    });
+    const executor = new RunExecutor({
+      agent,
+      pool: new ProcessPool(() => 1),
+      activeRuns: new ActiveRuns(),
+      createRunId: () => 'run-mapped',
+      now: () => 1000,
+      postDoneExitGraceMs: 10,
+    });
+
+    const execution = await executor.submit({
+      scopeId: 'scope-mapped',
+      policy: policy({ accessMode: 'workspace' }),
+    });
+
+    expect(agent.runOptions[0]?.agentOptions).toMatchObject({ permissionMode: 'acceptEdits' });
+
+    await collect(execution.subscribe());
+  });
 });
 
 function policy(overrides: Partial<RunPolicyAllow> = {}): RunPolicyAllow {

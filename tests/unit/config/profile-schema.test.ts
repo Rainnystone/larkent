@@ -375,6 +375,26 @@ describe('profile schema', () => {
     });
   });
 
+  it('keeps agent.options through createDefault and v3 normalize', () => {
+    const created = createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app },
+      options: { permissionMode: 'acceptEdits' },
+    });
+    expect(created.agent.options).toEqual({ permissionMode: 'acceptEdits' });
+
+    const roundTrip = normalizeProfileConfig(created);
+    expect(roundTrip.agent.options).toEqual({ permissionMode: 'acceptEdits' });
+
+    const loaded = normalizeProfileConfig({
+      schemaVersion: 3,
+      agent: { kind: 'cursor', options: { sandbox: 'read-only' } },
+      agentKind: 'cursor',
+      accounts: { app },
+    });
+    expect(loaded.agent.options).toEqual({ sandbox: 'read-only' });
+  });
+
   it('aligns Codex history with agent.binaryPath when the two fields disagree', () => {
     const cfg = normalizeProfileConfig({
       schemaVersion: 3,
