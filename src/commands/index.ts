@@ -43,7 +43,7 @@ import type {
 } from '../config/profile-schema';
 import { effectiveLarkCliIdentity } from '../config/profile-schema';
 import { resolveAppPaths } from '../config/app-paths';
-import { accessToClaudePermissionMode } from '../config/permissions';
+import { descriptorFor, type AgentKind } from '../agent/registry';
 import {
   canRunAdminCommand,
   canUseDm,
@@ -153,7 +153,7 @@ type Handler = (args: string, ctx: CommandContext) => Promise<void>;
 
 interface ResumeCandidate {
   scopeId: string;
-  agentId: 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+  agentId: AgentKind;
   cwdRealpath: string;
   policyFingerprint: string;
   sessionId?: string;
@@ -557,7 +557,8 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  if (ctx.controls.profileConfig.agentKind === 'codex') {
+  const resumeDescriptor = descriptorFor(ctx.controls.profileConfig.agentKind);
+  if (resumeDescriptor.resume.label === 'thread') {
     const identity = ctx.sessionCatalogIdentity;
     const entry =
       ctx.sessionCatalog && identity
@@ -592,17 +593,8 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
 
-  if (
-    ctx.controls.profileConfig.agentKind === 'kimi' ||
-    ctx.controls.profileConfig.agentKind === 'grok' ||
-    ctx.controls.profileConfig.agentKind === 'cursor'
-  ) {
-    const agentLabel =
-      ctx.controls.profileConfig.agentKind === 'grok'
-        ? 'Grok'
-        : ctx.controls.profileConfig.agentKind === 'cursor'
-          ? 'Cursor'
-          : 'Kimi';
+  if (resumeDescriptor.replyMode === 'final-answer' && resumeDescriptor.resume.label === 'session') {
+    const agentLabel = resumeDescriptor.displayName.replace(/ (Code|CLI|Build)$/, '');
     const identity = ctx.sessionCatalogIdentity;
     const entry =
       ctx.sessionCatalog && identity
@@ -684,7 +676,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     return;
   }
 
-  if (ctx.controls.profileConfig.agentKind === 'codex') {
+  if (descriptorFor(ctx.controls.profileConfig.agentKind).resume.label === 'thread') {
     await reply(ctx, '当前上下文没有可恢复的 Codex thread，请先在当前工作区完成一次运行。');
     return;
   }
@@ -793,29 +785,7 @@ function selectedResumeCwd(ctx: CommandContext): string | undefined {
 function runtimeAccessStatus(
   profileConfig: ProfileConfig,
 ): { label: string; value: string } {
-  if (profileConfig.agentKind === 'claude') {
-    return {
-      label: 'permission',
-      value: accessToClaudePermissionMode(
-        profileConfig.permissions.defaultAccess,
-        profileConfig.permissions,
-      ),
-    };
-  }
-  if (profileConfig.agentKind === 'kimi') {
-    // kimi's print mode always runs under the CLI's own auto policy.
-    return { label: 'permission', value: 'auto (kimi -p)' };
-  }
-  if (profileConfig.agentKind === 'grok') {
-    return { label: 'permission', value: 'bypassPermissions (grok --always-approve)' };
-  }
-  if (profileConfig.agentKind === 'cursor') {
-    return { label: 'permission', value: 'force (cursor --force)' };
-  }
-  return {
-    label: 'sandbox',
-    value: `${profileConfig.sandbox.defaultMode}/${profileConfig.sandbox.maxMode}`,
-  };
+  return descriptorFor(profileConfig.agentKind).runtimeAccess(profileConfig);
 }
 
 async function larkCliStatus(ctx: CommandContext): Promise<'app' | 'user-ready' | 'user-missing' | 'check-failed'> {
@@ -859,17 +829,17 @@ async function larkCliStatus(ctx: CommandContext): Promise<'app' | 'user-ready' 
 async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const cwd = effectiveWorkspaceCwd(ctx);
   const sess = ctx.sessions.getRaw(ctx.scope);
-  const isCodex = ctx.controls.profileConfig.agentKind === 'codex';
+  const isThreadResume = descriptorFor(ctx.controls.profileConfig.agentKind).resume.label === 'thread';
   const catalogEntry =
-    isCodex && ctx.sessionCatalog && ctx.sessionCatalogIdentity
+    isThreadResume && ctx.sessionCatalog && ctx.sessionCatalogIdentity
       ? ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity)
       : undefined;
   const card = statusCard({
     profileName: ctx.controls.profile,
     cwd,
-    sessionId: isCodex ? catalogEntry?.threadId : sess?.sessionId,
-    emptySessionText: isCodex ? '(未建立)' : undefined,
-    sessionStale: !isCodex && Boolean(cwd && sess && sess.cwd !== cwd),
+    sessionId: isThreadResume ? catalogEntry?.threadId : sess?.sessionId,
+    emptySessionText: isThreadResume ? '(未建立)' : undefined,
+    sessionStale: !isThreadResume && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
     runtimeAccess: runtimeAccessStatus(ctx.controls.profileConfig),
     larkCliStatus: await larkCliStatus(ctx),

@@ -88,6 +88,16 @@ describe('profile schema', () => {
     ).toBe('bot-only');
   });
 
+  it('hard-errors unknown agentKind and lists the registry kinds', () => {
+    expect(() =>
+      normalizeProfileConfig({
+        schemaVersion: 2,
+        agentKind: 'nope',
+        accounts: { app },
+      }),
+    ).toThrow(/unknown agent kind: nope.*claude, codex, kimi, grok, cursor/);
+  });
+
   it('requires codex configuration when agentKind is codex', () => {
     expect(() =>
       normalizeProfileConfig({

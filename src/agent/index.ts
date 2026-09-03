@@ -1,4 +1,12 @@
 export type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from './types';
+export type { AgentDescriptor, AgentKind } from './registry';
+export {
+  AGENT_KINDS,
+  AGENT_REGISTRY,
+  descriptorFor,
+  isAgentKind,
+  requireAgentKind,
+} from './registry';
 export { ClaudeAdapter } from './claude/adapter';
 export { CodexAdapter } from './codex/adapter';
 export { CursorAdapter } from './cursor/adapter';

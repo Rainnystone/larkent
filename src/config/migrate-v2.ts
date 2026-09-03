@@ -17,6 +17,7 @@ import {
 } from './profile-schema';
 import { markPermissionDefaultsMigration, saveRootConfig } from './profile-store';
 import type { AppConfig } from './schema';
+import { isAgentKind, unknownAgentKindMessage } from '../agent/registry';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { resolveWorkingDirectory } from '../policy/workspace';
 
@@ -119,7 +120,10 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   const legacyDefaultWorkspace = opts.workspace
     ? await resolveBootstrapWorkspace(opts.workspace)
     : await collectLegacyDefaultWorkspace(paths.rootDir);
-  const agentKind = opts.agentKind ?? 'claude';
+  const agentKind = opts.agentKind ?? (isAgentKind(profile) ? profile : undefined);
+  if (!agentKind) {
+    throw new Error(unknownAgentKindMessage(opts.agentKind ?? profile));
+  }
   const profileConfig = createDefaultProfileConfig({
     agentKind,
     accounts: { app },
@@ -200,13 +204,7 @@ function activeProcessFromRegistryEntry(entry: RegistryEntry): ActiveBridgeMigra
   if (typeof entry.appId === 'string') active.appId = entry.appId;
   if (typeof entry.tenant === 'string') active.tenant = entry.tenant;
   if (typeof entry.profileName === 'string') active.profileName = entry.profileName;
-  if (
-    entry.agentKind === 'claude' ||
-    entry.agentKind === 'codex' ||
-    entry.agentKind === 'kimi' ||
-    entry.agentKind === 'grok' ||
-    entry.agentKind === 'cursor'
-  ) {
+  if (isAgentKind(entry.agentKind)) {
     active.agentKind = entry.agentKind;
   }
   if (typeof entry.configPath === 'string') active.configPath = entry.configPath;

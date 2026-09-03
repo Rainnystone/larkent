@@ -2,10 +2,10 @@ import { chmod, mkdir, readFile, rename, rm, rmdir, stat, writeFile } from 'node
 import { dirname, join } from 'node:path';
 import * as lockfile from 'proper-lockfile';
 import { writeFileAtomic } from '../platform/atomic-write';
+import { isAgentKind, unknownAgentKindMessage, type AgentKind } from '../agent/registry';
 import { resolveAppPaths } from './app-paths';
 import {
   normalizeProfileConfig,
-  type AgentKind,
   type ProfileConfig,
   type RootConfig,
 } from './profile-schema';
@@ -296,14 +296,7 @@ async function pathExists(path: string): Promise<boolean> {
 }
 
 export function agentKindFromString(value: string | undefined): AgentKind | undefined {
-  if (
-    value === 'claude' ||
-    value === 'codex' ||
-    value === 'kimi' ||
-    value === 'grok' ||
-    value === 'cursor'
-  )
-    return value;
   if (value === undefined || value === '') return undefined;
-  throw new Error(`unsupported agent: ${value}`);
+  if (isAgentKind(value)) return value;
+  throw new Error(`unsupported agent: ${value}. ${unknownAgentKindMessage(value)}`);
 }

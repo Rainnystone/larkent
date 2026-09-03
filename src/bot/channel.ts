@@ -68,7 +68,7 @@ import { lookupMessageThreadId } from './thread-id';
 import { addWorkingReaction, removeReaction } from './reaction';
 import { fetchKnownChats } from './lark-info';
 import type { AppPaths } from '../config/app-paths';
-import type { AgentKind } from '../config/profile-schema';
+import { descriptorFor, type AgentKind } from '../agent/registry';
 import {
   consumeCotEvents,
   CotClient,
@@ -88,12 +88,7 @@ const REACTION_CLEANUP_GRACE_MS = 1000;
  * double-post it.
  */
 function usesFinalAnswerReply(agentKind: AgentKind): boolean {
-  return (
-    agentKind === 'codex' ||
-    agentKind === 'kimi' ||
-    agentKind === 'grok' ||
-    agentKind === 'cursor'
-  );
+  return descriptorFor(agentKind).replyMode === 'final-answer';
 }
 
 const BRIDGE_AGENT_INSTRUCTIONS = [

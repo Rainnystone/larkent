@@ -35,6 +35,7 @@ import {
   type ProfileConfig,
   type RootConfig,
 } from '../config/profile-schema';
+import { AGENT_KINDS, descriptorFor, isAgentKind } from '../agent/registry';
 import { permissionsToLegacySandbox } from '../config/permissions';
 import type { AppConfig, SecretInput, TenantBrand } from '../config/schema';
 import { isComplete, isSecretRef, secretKeyForApp } from '../config/schema';
@@ -108,7 +109,9 @@ export async function resolveProfileRuntime(
   if (!profile && opts.allowBootstrap) {
     const detected = await detectInstalledAgents();
     if (detected.length === 0) {
-      throw new Error('no supported local agent found; install grok, claude, codex, kimi or cursor first');
+      throw new Error(
+        `no supported local agent found; install ${AGENT_KINDS.join(', ')} first`,
+      );
     }
     if (detected.length > 1) {
       const selected = await selectDetectedAgent(detected, opts.selectAgent);
@@ -120,10 +123,13 @@ export async function resolveProfileRuntime(
       profile = detected[0]?.kind;
     }
   }
-  if (!profile && !opts.allowBootstrap) {
-    throw new Error('active profile is required');
+  if (!profile) {
+    throw new Error(
+      opts.allowBootstrap
+        ? `agent kind is required. pass --agent ${AGENT_KINDS.join('|')}`
+        : 'active profile is required',
+    );
   }
-  profile ??= 'claude';
   let appPaths = resolveAppPaths({ rootDir, profile });
   const configPath = opts.config ?? appPaths.configFile;
 
@@ -189,7 +195,7 @@ export async function resolveProfileRuntime(
     assertBootstrapAppMatchesExistingConfig(opts, profile, existing);
     const cfg = await maybeMigratePlaintextSecret(existing, configPath, appPaths);
     const profileConfig = createRuntimeProfileConfig({
-      agentKind: requestedAgent ?? 'claude',
+      agentKind: requestedAgent ?? requireNamedAgentKind(profile),
       accounts: cfg.accounts,
       preferences: cfg.preferences,
       secrets: cfg.secrets,
@@ -204,7 +210,7 @@ export async function resolveProfileRuntime(
   if (!opts.allowBootstrap) {
     throw new Error('config not initialized');
   }
-  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
+  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? requireNamedAgentKind(profile);
   const workspace = opts.workspace;
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
@@ -233,7 +239,7 @@ async function bootstrapProfileIntoExistingRoot(args: {
   configPath: string;
 }): Promise<ProfileRuntime> {
   const { rootConfig, profile, requestedAgent, opts, appPaths, configPath } = args;
-  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
+  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? requireNamedAgentKind(profile);
   const workspace = opts.workspace;
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
@@ -395,18 +401,14 @@ function resolveBootstrapAgent(
   requestedAgent: AgentKind | undefined,
   profile: string | undefined,
 ): AgentKind | undefined {
-  return (
-    requestedAgent ??
-    (profile === 'codex'
-      ? 'codex'
-      : profile === 'kimi'
-        ? 'kimi'
-        : profile === 'grok'
-          ? 'grok'
-          : profile === 'cursor'
-            ? 'cursor'
-            : undefined)
-  );
+  if (requestedAgent) return requestedAgent;
+  if (isAgentKind(profile)) return profile;
+  return undefined;
+}
+
+function requireNamedAgentKind(profile: string): AgentKind {
+  if (isAgentKind(profile)) return profile;
+  throw new Error(`agent kind is required. pass --agent ${AGENT_KINDS.join('|')}`);
 }
 
 async function hasLegacyConfig(configPath: string): Promise<boolean> {
@@ -579,7 +581,7 @@ function formatAmbiguousAgentSelectionError(
 ): string {
   const lines = detected.map((agent) => `  - ${agent.kind}: ${agent.binaryPath}`);
   return [
-    '检测到多个本地 agent，请使用 --agent <grok|claude|codex|kimi|cursor> 指定要初始化哪一个。',
+    `检测到多个本地 agent，请使用 --agent <${AGENT_KINDS.join('|')}> 指定要初始化哪一个。`,
     '已检测到：',
     ...lines,
   ].join('\n');
@@ -606,7 +608,6 @@ async function promptForDetectedAgentSelection(detected: DetectedAgent[]): Promi
       label: displayAgentKind(agent.kind),
       hint: agent.binaryPath,
     })),
-    initialValue: detected[0]?.kind,
   });
   if (p.isCancel(selected)) {
     p.cancel('已取消 agent 选择。');
@@ -624,15 +625,7 @@ class UserCancelledError extends Error {
 }
 
 function displayAgentKind(kind: AgentKind): string {
-  return kind === 'claude'
-    ? 'Claude Code'
-    : kind === 'kimi'
-      ? 'Kimi Code'
-      : kind === 'grok'
-        ? 'Grok Build'
-        : kind === 'cursor'
-          ? 'Cursor CLI'
-          : 'Codex CLI';
+  return descriptorFor(kind).displayName;
 }
 
 async function maybeMigrateRootPlaintextSecret(

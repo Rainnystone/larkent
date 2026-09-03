@@ -57,4 +57,19 @@ describe('static architecture contracts', () => {
       expect(source, file).not.toMatch(/\bwriteFile\(/);
     }
   });
+
+  it('keeps the five-kind union only in src/agent/registry.ts', () => {
+    const files = [
+      ...collectTsFiles('src'),
+      ...collectTsFiles('web/src'),
+    ].filter((file) => file !== 'src/agent/registry.ts' && !file.endsWith('.d.ts'));
+    const strayUnion =
+      /['"](?:claude|codex|kimi|grok|cursor)['"](?:\s*\|\s*['"](?:claude|codex|kimi|grok|cursor)['"]){4}/;
+    for (const file of files) {
+      const source = read(file)
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      expect(source, file).not.toMatch(strayUnion);
+    }
+  });
 });

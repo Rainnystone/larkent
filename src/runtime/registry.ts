@@ -16,6 +16,7 @@ import * as lockfile from 'proper-lockfile';
 import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
 import type { AgentKind } from '../config/profile-schema';
+import { isAgentKind } from '../agent/registry';
 import type { TenantBrand } from '../config/schema';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { checkRuntimeLock } from './locks';
@@ -64,11 +65,7 @@ function isValidEntry(e: unknown): e is ProcessEntry {
     typeof x.appId === 'string' &&
     (x.tenant === 'feishu' || x.tenant === 'lark') &&
     typeof x.profileName === 'string' &&
-    (x.agentKind === 'claude' ||
-      x.agentKind === 'codex' ||
-      x.agentKind === 'kimi' ||
-      x.agentKind === 'grok' ||
-      x.agentKind === 'cursor') &&
+    isAgentKind(x.agentKind) &&
     typeof x.configPath === 'string' &&
     typeof x.startedAt === 'string' &&
     typeof x.version === 'string'
@@ -120,7 +117,7 @@ export interface RegisterArgs {
   appId: string;
   tenant: TenantBrand;
   profileName?: string;
-  agentKind?: AgentKind;
+  agentKind: AgentKind;
   configPath: string;
   version: string;
   registryFile?: string;
@@ -141,7 +138,7 @@ export async function register(args: RegisterArgs): Promise<ProcessEntry> {
     appId: args.appId,
     tenant: args.tenant,
     profileName: args.profileName ?? 'claude',
-    agentKind: args.agentKind ?? 'claude',
+    agentKind: args.agentKind,
     configPath: args.configPath,
     startedAt: new Date().toISOString(),
     version: args.version,

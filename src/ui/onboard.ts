@@ -2,7 +2,6 @@ import { detectInstalledAgents } from '../cli/agent-detection';
 import { resolveAppPaths } from '../config/app-paths';
 import { setSecret } from '../config/keystore';
 import {
-  agentKindFromString,
   createRootConfig,
   loadRootConfig,
   readActiveProfile,
@@ -10,18 +9,25 @@ import {
   withConfigFileLock,
   writeActiveProfile,
 } from '../config/profile-store';
-import type { AgentKind } from '../config/profile-schema';
+import { AGENT_KINDS, descriptorFor, isAgentKind, type AgentKind } from '../agent/registry';
 import { secretKeyForApp, type AppConfig, type TenantBrand } from '../config/schema';
 import { buildEncryptedAccountConfig } from '../config/store';
 import { createBootstrapProfileConfig } from '../cli/profile-bootstrap';
 import { validateAppCredentials } from '../utils/feishu-auth';
 import { HttpError } from './http';
 
+export interface OnboardAgentChoice {
+  kind: AgentKind;
+  displayName: string;
+  requireInstalled: boolean;
+}
+
 export interface OnboardState {
   hasConfig: boolean;
   activeProfile?: string;
   profiles: string[];
   detectedAgents: AgentKind[];
+  agentKinds: OnboardAgentChoice[];
 }
 
 /** Snapshot for the wizard's first render: existing profiles + installed agents. */
@@ -34,6 +40,14 @@ export async function onboardState(rootDir?: string): Promise<OnboardState> {
     activeProfile: await readActiveProfile(rootDir),
     profiles: root ? Object.keys(root.profiles) : [],
     detectedAgents: detected.map((d) => d.kind),
+    agentKinds: AGENT_KINDS.map((kind) => {
+      const descriptor = descriptorFor(kind);
+      return {
+        kind,
+        displayName: descriptor.displayName,
+        requireInstalled: descriptor.requireInstalled,
+      };
+    }),
   };
 }
 
@@ -78,7 +92,11 @@ export interface CreateProfileInput {
  */
 export async function onboardCreate(body: unknown, rootDir?: string) {
   const fv = asRecord(body);
-  const agentKind: AgentKind = agentKindFromString(String(fv.agentKind ?? '')) ?? 'claude';
+  const rawKind = String(fv.agentKind ?? '').trim();
+  if (!isAgentKind(rawKind)) {
+    throw new HttpError(400, `agentKind 必填。支持：${AGENT_KINDS.join(', ')}`);
+  }
+  const agentKind = rawKind;
   const input: CreateProfileInput = {
     profile: String(fv.profile ?? '').trim() || agentKind,
     agentKind,
@@ -120,22 +138,11 @@ export async function writeNewProfile(
   }
   const profile = appPaths.profile;
 
-  if (input.agentKind === 'grok') {
+  const descriptor = descriptorFor(input.agentKind);
+  if (descriptor.requireInstalled) {
     const detected = await detectInstalledAgents();
-    if (!detected.some((d) => d.kind === 'grok')) {
-      throw new HttpError(
-        400,
-        '未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。',
-      );
-    }
-  }
-  if (input.agentKind === 'cursor') {
-    const detected = await detectInstalledAgents();
-    if (!detected.some((d) => d.kind === 'cursor')) {
-      throw new HttpError(
-        400,
-        '未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。',
-      );
+    if (!detected.some((d) => d.kind === input.agentKind)) {
+      throw new HttpError(400, descriptor.missingInstallMessage);
     }
   }
 

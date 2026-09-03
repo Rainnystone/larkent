@@ -2,8 +2,7 @@ import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { delimiter, extname, isAbsolute, join } from 'node:path';
 import { looksLikeCursorBinary } from '../agent/cursor/binary';
-
-export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+import { descriptorFor, type AgentKind } from '../agent/registry';
 
 export interface DetectedAgent {
   kind: AgentKind;
@@ -46,19 +45,15 @@ function pathExts(): string[] {
 }
 
 export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
-  const candidates: Array<{ kind: AgentKind; command: string }> = [
-    { kind: 'grok', command: process.env.LARK_CHANNEL_GROK_BIN ?? 'grok' },
-    { kind: 'claude', command: process.env.LARK_CHANNEL_CLAUDE_BIN ?? 'claude' },
-    { kind: 'codex', command: process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex' },
-    { kind: 'kimi', command: process.env.LARK_CHANNEL_KIMI_BIN ?? 'kimi' },
-    { kind: 'cursor', command: process.env.LARK_CHANNEL_CURSOR_BIN ?? 'cursor-agent' },
-  ];
+  const detectOrder: AgentKind[] = ['grok', 'claude', 'codex', 'kimi', 'cursor'];
   const detected: DetectedAgent[] = [];
-  for (const candidate of candidates) {
+  for (const kind of detectOrder) {
+    const descriptor = descriptorFor(kind);
+    const command = process.env[descriptor.envBinVar] ?? descriptor.binaryNames[0] ?? kind;
     try {
       detected.push({
-        kind: candidate.kind,
-        binaryPath: await resolveExecutablePath(candidate.command),
+        kind,
+        binaryPath: await resolveExecutablePath(command),
       });
     } catch {
       // Missing agents are reported by the caller based on the final count.

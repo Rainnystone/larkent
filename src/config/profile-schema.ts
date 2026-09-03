@@ -12,8 +12,9 @@ import {
   type PermissionConfig,
   type PermissionSource,
 } from './permissions';
+import { isAgentKind, unknownAgentKindMessage, type AgentKind } from '../agent/registry';
 
-export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+export type { AgentKind } from '../agent/registry';
 export type SandboxMode = CodexSandboxMode;
 export type { AccessMode, PermissionConfig, PermissionSource };
 
@@ -248,14 +249,8 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   if (raw.schemaVersion !== 2) {
     throw new Error('profile schemaVersion must be 2');
   }
-  if (
-    raw.agentKind !== 'claude' &&
-    raw.agentKind !== 'codex' &&
-    raw.agentKind !== 'kimi' &&
-    raw.agentKind !== 'grok' &&
-    raw.agentKind !== 'cursor'
-  ) {
-    throw new Error('agentKind must be claude, codex, kimi, grok or cursor');
+  if (!isAgentKind(raw.agentKind)) {
+    throw new Error(unknownAgentKindMessage(raw.agentKind));
   }
   const accounts = normalizeAccounts(raw.accounts);
   if (raw.agentKind === 'codex' && !raw.codex) {

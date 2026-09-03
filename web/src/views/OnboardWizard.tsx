@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { CheckCircle2 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
-import type { AgentKind, OnboardState } from "@/lib/types";
+import type { AgentKind, OnboardAgentChoice, OnboardState } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -15,10 +15,6 @@ import {
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
 
-// New-profile wizard: scan a Feishu QR to create a fresh app (same flow as the
-// CLI `registerApp` wizard). The QR renders immediately; once scanned, the user
-// names the new profile and confirms — so there's no rush and it never
-// overwrites an existing profile.
 type Phase = "loading" | "waiting" | "confirm" | "creating" | "error";
 
 function uniqueName(base: string, existing: string[]): string {
@@ -29,7 +25,8 @@ function uniqueName(base: string, existing: string[]): string {
 }
 
 export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => void }) {
-  const [agentKind, setAgentKind] = useState<AgentKind>("grok");
+  const [agentKind, setAgentKind] = useState<AgentKind | "">("");
+  const [agentKinds, setAgentKinds] = useState<OnboardAgentChoice[]>([]);
   const [profileName, setProfileName] = useState("");
   const [botName, setBotName] = useState("");
   const [detected, setDetected] = useState<AgentKind[]>([]);
@@ -45,10 +42,16 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
       .then((s) => {
         setDetected(s.detectedAgents);
         setExisting(s.profiles);
-        setAgentKind("grok");
+        setAgentKinds(s.agentKinds);
+        setAgentKind("");
       })
       .catch(() => {});
   }, []);
+
+  const selected = agentKinds.find((choice) => choice.kind === agentKind);
+  const missingRequired = Boolean(
+    selected?.requireInstalled && agentKind && !detected.includes(agentKind),
+  );
 
   const stopPolling = () => {
     if (timer.current) clearInterval(timer.current);
@@ -79,14 +82,13 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
     try {
       s = await apiGet(`/api/profiles/qr/status?sessionId=${encodeURIComponent(sessionId)}`);
     } catch {
-      return; // transient; keep polling
+      return;
     }
     if (s.status === "scanned" && !scanned.current) {
       scanned.current = true;
       stopPolling();
-      // App created — prefill the profile name from the scanned app's name.
       setBotName(s.botName ?? "");
-      setProfileName(s.suggestedProfile || uniqueName(agentKind, existing));
+      setProfileName(s.suggestedProfile || uniqueName(agentKind || "bot", existing));
       setPhase("confirm");
     } else if (s.status === "error") {
       stopPolling();
@@ -96,13 +98,11 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
   }
 
   async function confirmCreate() {
-    if (!qr) return;
-    if (agentKind === "grok" && !detected.includes("grok")) {
-      toast.error("未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。");
-      return;
-    }
-    if (agentKind === "cursor" && !detected.includes("cursor")) {
-      toast.error("未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。");
+    if (!qr || !agentKind) return;
+    if (missingRequired) {
+      toast.error(selected?.displayName
+        ? `未检测到 ${selected.displayName}。请先安装并登录后再创建 ${agentKind} profile。`
+        : "请先安装所选 agent 后再创建 profile。");
       return;
     }
     setPhase("creating");
@@ -115,12 +115,11 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
       toast.success(`profile「${r.profile}」已创建`);
       onCreated(r.profile);
     } catch (e) {
-      setPhase("confirm"); // let the user fix the name / retry
+      setPhase("confirm");
       toast.error(String((e as Error).message ?? e));
     }
   }
 
-  // Auto-render the QR on open.
   useEffect(() => {
     void generate();
     return stopPolling;
@@ -135,14 +134,17 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
         </div>
         <div className="space-y-1.5">
           <Label>AI Agent</Label>
-          <Select value={agentKind} onValueChange={(v) => setAgentKind(v as AgentKind)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
+          <Select
+            value={agentKind || undefined}
+            onValueChange={(v) => setAgentKind(v as AgentKind)}
+          >
+            <SelectTrigger><SelectValue placeholder="选择 agent" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="grok">Grok Build</SelectItem>
-              <SelectItem value="claude">Claude Code</SelectItem>
-              <SelectItem value="codex">Codex</SelectItem>
-              <SelectItem value="kimi">Kimi Code</SelectItem>
-              <SelectItem value="cursor">Cursor CLI</SelectItem>
+              {agentKinds.map((choice) => (
+                <SelectItem key={choice.kind} value={choice.kind}>
+                  {choice.displayName}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </div>
@@ -151,16 +153,15 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
           <Input
             value={profileName}
             onChange={(e) => setProfileName(e.target.value)}
-            placeholder={agentKind}
+            placeholder={agentKind || "profile"}
           />
           {existing.includes(profileName.trim()) && (
             <p className="text-xs text-destructive">已存在同名 profile，请换个名字（不会覆盖现有的）。</p>
           )}
-          {agentKind === "grok" && !detected.includes("grok") && (
-            <p className="text-xs text-destructive">未检测到 Grok Build CLI（grok）。请先安装并登录。</p>
-          )}
-          {agentKind === "cursor" && !detected.includes("cursor") && (
-            <p className="text-xs text-destructive">未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录。</p>
+          {missingRequired && (
+            <p className="text-xs text-destructive">
+              未检测到 {selected?.displayName}。请先安装并登录。
+            </p>
           )}
         </div>
         <div className="flex justify-end">
@@ -168,10 +169,10 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
             onClick={confirmCreate}
             disabled={
               phase === "creating" ||
+              !agentKind ||
               !profileName.trim() ||
               existing.includes(profileName.trim()) ||
-              (agentKind === "grok" && !detected.includes("grok")) ||
-              (agentKind === "cursor" && !detected.includes("cursor"))
+              missingRequired
             }
           >
             {phase === "creating" ? "创建中…" : "确定创建"}
@@ -206,9 +207,6 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
           <Button variant="outline" size="sm" onClick={generate}>重新生成</Button>
         )}
       </div>
-      {!detected.includes("grok") && (
-        <p className="text-center text-xs text-destructive">未检测到 Grok Build CLI（grok）。默认会创建 grok profile，请先安装并登录。</p>
-      )}
       <p className="text-center text-xs text-muted-foreground">扫码人会成为应用 owner，自动豁免访问控制。</p>
     </div>
   );
