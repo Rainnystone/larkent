@@ -101,6 +101,8 @@ describe('README runtime contract', () => {
     expect(enFirst).toContain('Grok Build is an agent, one of five, with no special standing');
     expect(enFirst).toContain('`claude`, `codex`, `kimi`, `grok`, and `cursor`');
     expect(enFirst).toContain('There is no default agent.');
+    expect(enFirst).toContain('start --web-ui');
+    expect(enFirst).toContain('per-profile service');
     expect(enFirst).not.toMatch(/primary engine/i);
     expect(enFirst).not.toMatch(/Default for a new profile is Grok Build/);
     expect(en).not.toContain('Grok Build is a fourth adapter');
@@ -110,6 +112,8 @@ describe('README runtime contract', () => {
     expect(zhFirst).toContain('Grok Build 是五个 agent 之一，没有特殊地位');
     expect(zhFirst).toContain('`claude`、`codex`、`kimi`、`grok`、`cursor`');
     expect(zhFirst).toContain('没有默认 agent。');
+    expect(zhFirst).toContain('start --web-ui');
+    expect(zhFirst).toContain('per-profile service');
     expect(zh).not.toContain('Grok Build 是第四个');
     expect(zh).not.toContain('选引擎');
 
@@ -122,6 +126,13 @@ describe('README runtime contract', () => {
     expect(pkg.repository.url).toBe('git+https://github.com/Rainnystone/larkent-for-grokbot.git');
     expect(pkg.bugs.url).toBe('https://github.com/Rainnystone/larkent-for-grokbot/issues');
     expect(pkg.homepage).toBe('https://github.com/Rainnystone/larkent-for-grokbot#readme');
+
+    expect(en).toContain('Claude (if `--agent claude`)');
+    expect(en).toContain('Codex (if `--agent codex`)');
+    expect(zh).toContain('Claude（若 `--agent claude`）');
+    expect(zh).toContain('Codex（若 `--agent codex`）');
+    expect(en).toContain('`codex login`');
+    expect(zh).toContain('`codex login`');
   });
 
   it('documents canonical permissions instead of recommending legacy sandbox config', async () => {

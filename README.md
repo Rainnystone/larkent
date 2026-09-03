@@ -1,6 +1,6 @@
 # lark-channel-bridge (for Grok Bot)
 
-A bridge that puts CLI coding agents behind Feishu/Lark bots. One machine (a VPS, or a Grok Bot cloud computer) runs one supervisor; the supervisor hosts any number of **profiles**; each profile is one Feishu bot backed by one **agent**. Grok Bot is the deployment target (a SpaceXAI always-on teammate with its own cloud computer). It is not an agent. Grok Build is an agent, one of five, with no special standing. The five peers are `claude`, `codex`, `kimi`, `grok`, and `cursor`. There is no default agent.
+A bridge that puts CLI coding agents behind Feishu/Lark bots. One machine (a VPS, or a Grok Bot cloud computer) can run each profile as its own **per-profile service**, or one supervisor via `start --web-ui` that hosts every **profile**. Each profile is one Feishu bot backed by one **agent**. Grok Bot is the deployment target (a SpaceXAI always-on teammate with its own cloud computer). It is not an agent. Grok Build is an agent, one of five, with no special standing. The five peers are `claude`, `codex`, `kimi`, `grok`, and `cursor`. There is no default agent.
 
 This README is the runbook for **Grok Bot**. Every step is a command plus a checkable result. Decision points that need a human are marked **HUMAN**. Chinese: [README.zh.md](./README.zh.md).
 
@@ -46,14 +46,17 @@ one Feishu markdown reply (tool-call chatter hidden by default)
 ## Host constraints
 
 - Node.js ≥ 20.12, a writable `$HOME`, outbound HTTPS.
+- **Claude Code**: needs Anthropic. Does not need xAI.
+- **Codex CLI**: needs OpenAI. Does not need xAI.
 - **Grok Build**: the machine must resolve and TLS to xAI. Mainland China
   hosts fail even if a human completed device-code on another device. Do not
   put a Grok profile on a GFW-side VPS.
 - **Kimi Code**: does not need xAI; still needs Feishu `open.feishu.cn`.
 - **Cursor CLI**: needs the Cursor API (logged-in CLI or `CURSOR_API_KEY`). Does not need xAI.
 - Do **not** set `GROK_HOME` / isolate `~/.grok` for the bot — inherit the
-  logged-in `auth.json`. Same for Kimi (`~/.kimi-code`) and Cursor (inherit the
-  logged-in CLI / `CURSOR_API_KEY`). Isolating the home forces a second login.
+  logged-in `auth.json`. Same for Claude (`~/.claude`), Codex (`~/.codex`),
+  Kimi (`~/.kimi-code`), and Cursor (inherit the logged-in CLI / `CURSOR_API_KEY`).
+  Isolating the home forces a second login.
 - Do **not** set `XAI_API_KEY` if the owner wants SuperGrok quota.
 
 ## Prerequisites (verify before install)
@@ -63,6 +66,8 @@ one Feishu markdown reply (tool-call chatter hidden by default)
 | Node ≥ 20.12 | `node --version` | `v20.12.0` or newer |
 | pnpm | `npx pnpm --version` | any 10.x |
 | lark-cli | `lark-cli --version` | e.g. `1.0.x` |
+| Claude (if `--agent claude`) | `claude --version` | Claude Code version banner |
+| Codex (if `--agent codex`) | `codex --version` | Codex CLI version banner |
 | Grok (if `--agent grok`) | `grok --version` then `test -f ~/.grok/auth.json` | binary + auth file |
 | Kimi (if `--agent kimi`) | `kimi -p "say OK" --output-format stream-json` | JSONL, exit 0 |
 | Cursor (if `--agent cursor`) | `cursor-agent --version` or `agent --version` | Cursor CLI version banner |
@@ -70,10 +75,14 @@ one Feishu markdown reply (tool-call chatter hidden by default)
 
 **HUMAN — agent login (once per host):**
 
+- Claude: `claude` (complete the Anthropic login in the CLI).
+- Codex: `codex login`.
 - Grok: `grok login --device-auth` (print URL + code; owner confirms on any device).
 - Kimi: `kimi login`.
 - Cursor: `agent login` (or set `CURSOR_API_KEY`).
 
+Install Claude Code: `npm install -g @anthropic-ai/claude-code`.
+Install Codex CLI: `npm install -g @openai/codex`.
 Install Grok CLI: `curl -fsSL https://x.ai/cli/install.sh | bash`.
 Install Cursor CLI: `curl https://cursor.com/install -fsS | bash` (binary is `agent`; add `~/.local/bin` to PATH). If the binary is `agent` not `cursor-agent`, set `LARK_CHANNEL_CURSOR_BIN=agent`.
 Install lark-cli if missing: `npm install -g @larksuite/cli`.
@@ -164,6 +173,10 @@ node bin/lark-channel-bridge.mjs status
 node bin/lark-channel-bridge.mjs restart
 node bin/lark-channel-bridge.mjs stop
 ```
+
+Plain `start` is one **per-profile service**. To host every profile in one
+machine-wide supervisor (local web console), use `start --web-ui` /
+`run --web-ui` instead.
 
 Headless Linux: `loginctl enable-linger "$USER"` or the user unit dies at logout.
 

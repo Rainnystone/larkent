@@ -10,7 +10,7 @@ const collectTsFiles = (path: string): string[] => {
   if (!existsSync(fullPath)) return [];
 
   if (statSync(fullPath).isFile()) {
-    return path.endsWith('.ts') ? [path] : [];
+    return path.endsWith('.ts') || path.endsWith('.tsx') ? [path] : [];
   }
 
   return readdirSync(fullPath)
@@ -84,9 +84,9 @@ describe('static architecture contracts', () => {
 
   it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
     const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
-    const files = [...collectTsFiles('src'), ...collectTsFiles('web/src')].filter(
-      (file) => file.endsWith('.ts') || file.endsWith('.tsx'),
-    );
+    const webFiles = collectTsFiles('web/src');
+    expect(webFiles).toContain('web/src/views/OnboardWizard.tsx');
+    const files = [...collectTsFiles('src'), ...webFiles];
     const stray: string[] = [];
     for (const file of files) {
       const source = read(file);
