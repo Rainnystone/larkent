@@ -8,7 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { isAgentKind } from '../agent/registry';
+import { descriptorFor, isAgentKind } from '../agent/registry';
 import { resolveAppPaths } from './app-paths';
 import {
   createDefaultProfileConfig,

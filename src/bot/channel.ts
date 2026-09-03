@@ -6,8 +6,7 @@ import type {
 import { createLarkChannel } from '@larksuite/channel';
 import { dirname, join } from 'node:path';
 import { capabilityForProfile } from '../agent/capability';
-import { descriptorFor } from '../agent/registry';
-import type { AgentKind } from '../config/profile-schema';
+import { descriptorFor, type AgentKind } from '../agent/registry';
 import { modelLabel, normalizeModelSelection, resolveModelArg } from '../agent/models';
 import {
   buildAgentPrompt,
@@ -70,7 +69,6 @@ import { lookupMessageThreadId } from './thread-id';
 import { addWorkingReaction, removeReaction } from './reaction';
 import { fetchKnownChats } from './lark-info';
 import type { AppPaths } from '../config/app-paths';
-import type { AgentKind } from '../config/profile-schema';
 import {
   consumeCotEvents,
   CotClient,
