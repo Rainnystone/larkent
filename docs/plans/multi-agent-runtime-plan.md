@@ -85,7 +85,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 - [ ] Create `tests/fixtures/sessions/catalog-v1-cursor.json`.
 - [ ] Create `tests/fixtures/profiles/` old-shape fixtures for env-var, PATH, Codex `binaryPath`, and Cursor versioned `agent`.
 - [ ] Create `tests/fixtures/goldens/feishu-parity/` one golden per kind.
-- [ ] Create `tests/fixtures/goldens/slash/` snapshots for `/resume`, `/status`, `/history`, `/model` per kind.
+- [ ] Create `tests/fixtures/goldens/slash/` snapshots for `/resume` and `/status` per kind. Assert `/history` and `/model` are absent from `handlers`.
 - [ ] Create `tests/integration/bot/feishu-parity.test.ts`.
 - [ ] Create `tests/integration/session/catalog-v1-resume.test.ts`.
 - [ ] Create `tests/unit/config/profile-load-parity.test.ts`.
@@ -97,10 +97,10 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] Add `writeScriptedJsonlExecutable` on `tests/helpers/fake-executable.ts` so a fake CLI emits a scripted JSONL stream and records argv.
 - [ ] Add one parameterized P1 test over the five kinds in `tests/integration/bot/feishu-parity.test.ts`. Do not write five tests.
-- [ ] Commit v1 `sessions.catalog.json` fixtures, including Codex `threadId`, and assert they load and resume.
+- [ ] Commit v1 catalog fixtures (on-disk name is `sessions.json.catalog.json`), including Codex `threadId`, and assert they load and resume.
 - [ ] Commit golden `policyFingerprint` hashes for all five kinds in `tests/unit/policy/fingerprint.test.ts`.
 - [ ] Pin profile load for the three binary conventions that exist today.
-- [ ] Snapshot slash command text per kind.
+- [ ] Snapshot `/resume` and `/status` text per kind. Pin that `/history` and `/model` are not slash handlers. Do not add those commands.
 - [ ] Extend supervisor coverage to two heterogeneous kinds so a mention in bot A never reaches bot B.
 - [ ] Pin `detectInstalledAgents` and slash `/doctor` found versus missing binaries. There is no `larkent doctor` CLI command.
 - [ ] Touch no file under `src/` or `web/`.
@@ -129,7 +129,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 - [ ] Lane 3. P2 resume from committed v1 catalog fixtures including a Codex `threadId` entry. Save `pr0-l3-p2-resume.png`. Pass when each fixture loads and the run-flow resume path uses the stored handle.
 - [ ] Lane 4. P3 fingerprint goldens for representative `FingerprintInputV2` values for all five kinds, including Codex with `codexHome` and `inheritCodexHome`. Save `pr0-l4-p3-fingerprint.png`. Pass when `tests/unit/policy/fingerprint.test.ts` asserts the committed hashes.
 - [ ] Lane 5. P4 profile load parity for env-var, PATH, and Cursor versioned-agent binary conventions. Save `pr0-l5-p4-profile.png`. Pass when fixtures under `tests/fixtures/profiles/` load to the same effective runtime config as today.
-- [ ] Lane 6. P5 slash command snapshots for `/resume`, `/status`, `/history`, and `/model` per kind. Save `pr0-l6-p5-slash.png`. Pass when snapshot text matches per kind.
+- [ ] Lane 6. P5 slash snapshots for `/resume` and `/status` per kind, plus a check that `/history` and `/model` are unknown. Save `pr0-l6-p5-slash.png`. Pass when snapshot text matches per kind and the missing commands stay missing.
 - [ ] Lane 7. P6 supervisor isolation with two heterogeneous fake-CLI profiles. Save `pr0-l7-p6-isolation.png`. Pass when a mention in profile A never reaches profile B's agent and sessions, locks, and registry rows stay per profile.
 - [ ] Lane 8. P7 detection and `/doctor` found versus missing binaries for a scripted PATH. Save `pr0-l8-p7-detect.png`. Pass when `detectInstalledAgents` and `/doctor` report the same found and missing set as the fixture.
 - [ ] Lane 9. Real smoke binaries. Run `tests/process/grok-real.smoke.test.ts`, `tests/process/kimi-real.smoke.test.ts`, and `tests/process/cursor-real.smoke.test.ts` when the binary exists. Skip with a reason when it does not. Save `pr0-l9-smoke.png`. Pass when each file either runs to green or records skip with the missing binary name.
@@ -575,6 +575,8 @@ Doctor CLI. There is no `larkent` bin and no `doctor` subcommand. P7 pins `detec
 
 Web import. Unproven whether Vite can import `AgentKind` from `src/agent/registry.ts`. PR-1 tries a relative import from `web/src/lib/types.ts`. If the bundle fails, that owner emits a generated file from the registry in the same PR.
 
+Slash P5. `src/commands/index.ts` `handlers` includes `/resume` and `/status`. It does not include `/history` or `/model`. PR-0 pins that absence. Adding those handlers is out of scope.
+
 ## Appendix B. Alternatives rejected
 
 Following the spec's profile "v1 to v2" label for `agent.binaryPath`. Lost because `ProfileConfig.schemaVersion` is already 2 via `src/config/migrate-v2.ts`. PR-4 bumps 2 to 3 so the existing migration stays.
@@ -603,6 +605,8 @@ Existing JSDoc and narrating comments in adapters. Each owner runs `/no-comments
 
 Cloud spawn. If `environment: "cloud"` fails from this VM, owners run as local background subagents in git worktrees. Record that fallback on PR #3.
 
+Spec P5 named `/history` and `/model`. Those handlers do not exist. A PR-0 that adds them is a finding. Pin current slash behavior instead.
+
 ## Appendix D. Links and reading list
 
 Read before any owner edits.
@@ -612,6 +616,9 @@ Read before any owner edits.
 - `docs/plans/multi-agent-runtime-plan.md`
 - `package.json` scripts and `packageManager`
 - `tests/helpers/fake-executable.ts`, `tests/helpers/fake-channel.ts`, `tests/helpers/fake-agent.ts`, `tests/helpers/tmp-profile.ts`
+- `tests/process/*-adapter.test.ts` (JSONL fake CLI pattern to lift)
+- `tests/integration/bot/markdown-stream-startup-failure.test.ts` (bot plus fake channel)
+- `tests/unit/agent/types-contract.test.ts` (PR-3 must stop pinning dual `sessionId` and `threadId`)
 
 PR-1 and PR-5 also read `pstack/skills/how/SKILL.md` and `pstack/skills/interrogate/SKILL.md` because a wrong registry or a fingerprint hash change is costly to undo.
 
