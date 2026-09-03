@@ -112,13 +112,13 @@ describe.sequential('P7 detection and /doctor parity', () => {
     const found = await doctorRun(kind, 'found');
     expect(found.handled).toBe(true);
     expect(found.report).toContain(`agent: ${pinnedDisplayName(kind)} (${kind})`);
-    expect(found.report).toMatch(/agent echo check: OK/);
+    expect(found.report).toContain('agent echo check: OK');
     expect(found.report).not.toContain('larkent doctor');
 
     const missing = await doctorRun(kind, 'missing');
     expect(missing.handled).toBe(true);
     expect(missing.report).toContain(`agent: ${pinnedDisplayName(kind)} (${kind})`);
-    expect(missing.report).toMatch(/agent echo check: (failed|error)/);
+    expect(missing.report).toContain(missingDoctorEchoCheck(kind));
     expect(missing.report).not.toContain('larkent doctor');
   });
 });
@@ -207,6 +207,22 @@ function doctorMessage(kind: PinnedAgentKind, scenario: string): NormalizedMessa
     resources: [],
     mentionedBot: false,
   } as unknown as NormalizedMessage;
+}
+
+function missingDoctorEchoCheck(kind: PinnedAgentKind): string {
+  switch (kind) {
+    case 'claude':
+      return 'agent echo check: error';
+    case 'codex':
+    case 'kimi':
+    case 'grok':
+    case 'cursor':
+      return 'agent echo check: failed';
+    default: {
+      const exhaustive: never = kind;
+      throw new Error(`unhandled agent kind: ${exhaustive}`);
+    }
+  }
 }
 
 function doctorReport(channel: FakeChannel): string {
