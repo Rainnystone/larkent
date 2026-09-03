@@ -365,6 +365,34 @@ process.exit(0);
     expect(getEventListeners(controller.signal, 'abort')).toEqual([]);
     expect(() => controller.abort()).not.toThrow();
   });
+
+  it('keeps the first stop reason when abort overlaps an in-flight idle kill', async () => {
+    const fake = await createFakeRunnerBinary(`
+process.on('SIGTERM', () => {});
+setInterval(() => {}, 1000);
+`);
+    cleanup.push(fake.dir);
+    const controller = new AbortController();
+    const run = runJsonlCli({
+      runId: 'run-stop-overlap',
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: wrapParsedTranslator({ translate: () => [] }, 'stop-overlap'),
+      spawnName: 'stop-overlap',
+      signal: controller.signal,
+      timeouts: { idleMs: 40 },
+      stopGraceMs: 80,
+    });
+    const pending = collect(run.events);
+    await new Promise((resolve) => setTimeout(resolve, 70));
+    controller.abort();
+    expect(await pending).toEqual([
+      { type: 'error', message: 'stop-overlap timeout', terminationReason: 'timeout' },
+    ]);
+    expect(await run.waitForExit(1_000)).toBe(true);
+  });
 });
 
 async function createFakeRunnerBinary(body: string): Promise<FakeBinary> {

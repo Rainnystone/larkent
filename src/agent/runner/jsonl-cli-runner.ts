@@ -138,12 +138,14 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     void runCleanup().catch(() => {});
   };
 
-  const stopChild = async (reason: JsonlFinishReason): Promise<void> => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
+  let stopInFlight: Promise<void> | undefined;
+  const stopChild = (reason: JsonlFinishReason): Promise<void> => {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+    if (stopInFlight) return stopInFlight;
     stopReason = reason;
-    log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
-    child.kill('SIGTERM');
-    await new Promise<void>((resolve) => {
+    stopInFlight = new Promise<void>((resolve) => {
+      log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
+      child.kill('SIGTERM');
       const timer = setTimeout(() => {
         if (child.exitCode === null && child.signalCode === null) {
           log.warn('agent', 'stop-sigkill', {
@@ -160,6 +162,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
         resolve();
       });
     });
+    return stopInFlight;
   };
 
   const idleMs = input.timeouts?.idleMs;
