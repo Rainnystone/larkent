@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type {
   AppCredentials,
   AppPreferences,
@@ -12,8 +13,11 @@ import {
   type PermissionConfig,
   type PermissionSource,
 } from './permissions';
+import { isAgentKind, unknownAgentKindMessage, descriptorFor, type AgentKind } from '../agent/registry';
+import { omitEmptyAgentOptions } from '../agent/types';
+import { PROFILE_SCHEMA_VERSION, upgradeProfileRecord } from './migrations';
 
-export type AgentKind = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+export type { AgentKind } from '../agent/registry';
 export type SandboxMode = CodexSandboxMode;
 export type { AccessMode, PermissionConfig, PermissionSource };
 
@@ -141,8 +145,15 @@ export interface LarkCliConfig {
   };
 }
 
+export interface ProfileAgentConfig {
+  kind: AgentKind;
+  binaryPath?: string;
+  options?: unknown;
+}
+
 export interface ProfileConfig {
-  schemaVersion: 2;
+  schemaVersion: 3;
+  agent: ProfileAgentConfig;
   agentKind: AgentKind;
   /** Deployment mode switch. Default 'team' in this fork. See {@link ProfileMode}. */
   mode: ProfileMode;
@@ -181,7 +192,7 @@ export function effectiveLarkCliIdentity(
 }
 
 export interface RootConfig {
-  schemaVersion: 2;
+  schemaVersion: 3;
   activeProfile: string;
   preferences: Record<string, never>;
   secrets?: SecretsConfig;
@@ -193,6 +204,7 @@ export interface RootConfig {
 
 export interface CreateDefaultProfileConfigInput {
   agentKind: AgentKind;
+  binaryPath?: string;
   /** Deployment mode. Default 'team' in this fork. */
   mode?: ProfileMode;
   accounts: {
@@ -205,14 +217,25 @@ export interface CreateDefaultProfileConfigInput {
   codex?: CodexConfig;
   secrets?: SecretsConfig;
   larkCli?: LarkCliConfig;
+  options?: unknown;
 }
 
 export function createDefaultProfileConfig(
   input: CreateDefaultProfileConfigInput,
 ): ProfileConfig {
+  const { options, ...rest } = input;
   return normalizeProfileConfig({
-    schemaVersion: 2,
-    ...input,
+    ...rest,
+    schemaVersion: PROFILE_SCHEMA_VERSION,
+    agent: {
+      kind: input.agentKind,
+      ...(input.binaryPath
+        ? { binaryPath: input.binaryPath }
+        : input.codex?.binaryPath && isAbsolute(input.codex.binaryPath)
+          ? { binaryPath: input.codex.binaryPath }
+          : {}),
+      ...(options !== undefined ? { options } : {}),
+    },
   });
 }
 
@@ -220,8 +243,10 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   if (!input || typeof input !== 'object') {
     throw new Error('profile config must be an object');
   }
-  const raw = input as {
+  const upgraded = upgradeProfileRecord(input).document;
+  const raw = upgraded as {
     schemaVersion?: unknown;
+    agent?: { kind?: unknown; binaryPath?: unknown; options?: unknown };
     agentKind?: unknown;
     mode?: unknown;
     accounts?: unknown;
@@ -245,20 +270,19 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     larkCli?: unknown;
   };
 
-  if (raw.schemaVersion !== 2) {
-    throw new Error('profile schemaVersion must be 2');
+  if (raw.schemaVersion !== PROFILE_SCHEMA_VERSION) {
+    throw new Error('profile schemaVersion must be 3');
   }
-  if (
-    raw.agentKind !== 'claude' &&
-    raw.agentKind !== 'codex' &&
-    raw.agentKind !== 'kimi' &&
-    raw.agentKind !== 'grok' &&
-    raw.agentKind !== 'cursor'
-  ) {
-    throw new Error('agentKind must be claude, codex, kimi, grok or cursor');
+  const agentKind = isAgentKind(raw.agent?.kind)
+    ? raw.agent.kind
+    : isAgentKind(raw.agentKind)
+      ? raw.agentKind
+      : undefined;
+  if (!agentKind) {
+    throw new Error(unknownAgentKindMessage(raw.agent?.kind ?? raw.agentKind));
   }
   const accounts = normalizeAccounts(raw.accounts);
-  if (raw.agentKind === 'codex' && !raw.codex) {
+  if (agentKind === 'codex' && !raw.codex) {
     throw new Error('codex profile requires codex configuration');
   }
 
@@ -277,9 +301,32 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const meeting = normalizeMeeting(raw.meeting);
   const larkCli = normalizeLarkCli(raw.larkCli);
 
+  const binaryPath =
+    typeof raw.agent?.binaryPath === 'string' && raw.agent.binaryPath.trim()
+      ? raw.agent.binaryPath
+      : agentKind === 'codex' && typeof raw.codex?.binaryPath === 'string' && isAbsolute(raw.codex.binaryPath)
+        ? raw.codex.binaryPath
+        : undefined;
+  const options = omitEmptyAgentOptions(
+    descriptorFor(agentKind).agentOptionsSchema.parse(raw.agent?.options ?? {}),
+  );
+  const agent: ProfileAgentConfig = {
+    kind: agentKind,
+    ...(binaryPath ? { binaryPath } : {}),
+    ...(options !== undefined ? { options } : {}),
+  };
+  const codex = raw.codex
+    ? normalizeCodex(
+        agentKind === 'codex' && binaryPath
+          ? { ...raw.codex, binaryPath }
+          : raw.codex,
+      )
+    : undefined;
+
   return {
-    schemaVersion: 2,
-    agentKind: raw.agentKind,
+    schemaVersion: PROFILE_SCHEMA_VERSION,
+    agent,
+    agentKind,
     // This fork defaults to 'team': the bot answers anyone without allowlist
     // gating. `personal` is still honored when stored explicitly.
     mode: raw.mode === 'personal' ? 'personal' : 'team',
@@ -291,7 +338,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     sandbox,
     permissions,
     permissionSource,
-    ...(raw.codex ? { codex: normalizeCodex(raw.codex) } : {}),
+    ...(codex ? { codex } : {}),
     attachments: {
       maxCount: numberOr(raw.attachments?.maxCount, 10),
       maxBytes: numberOr(raw.attachments?.maxBytes, 100 * 1024 * 1024),

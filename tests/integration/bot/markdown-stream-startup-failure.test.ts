@@ -212,9 +212,9 @@ describe('markdown stream startup failures', () => {
     const h = await createHarness({
       agentKind: 'kimi',
       events: [
-        { type: 'system', sessionId: 'session_kimi_1' },
+        { type: 'system', resumeHandle: 'session_kimi_1' },
         { type: 'final_text', content: 'KIMI_FINAL_SENTINEL' },
-        { type: 'done', sessionId: 'session_kimi_1', terminationReason: 'normal' },
+        { type: 'done', resumeHandle: 'session_kimi_1', terminationReason: 'normal' },
       ],
       stream: async (_chatId, input) => {
         streamCalls.push(input);
@@ -240,11 +240,11 @@ describe('markdown stream startup failures', () => {
     const h = await createHarness({
       agentKind: 'grok',
       events: [
-        { type: 'system', sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
+        { type: 'system', resumeHandle: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' },
         { type: 'final_text', content: 'GROK_FINAL_SENTINEL' },
         {
           type: 'done',
-          sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
+          resumeHandle: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',
           terminationReason: 'normal',
         },
       ],
@@ -270,11 +270,11 @@ describe('markdown stream startup failures', () => {
     const h = await createHarness({
       agentKind: 'cursor',
       events: [
-        { type: 'system', sessionId: 'c6b62c6f-7ead-4fd6-9922-e952131177ff' },
+        { type: 'system', resumeHandle: 'c6b62c6f-7ead-4fd6-9922-e952131177ff' },
         { type: 'final_text', content: 'CURSOR_FINAL_SENTINEL' },
         {
           type: 'done',
-          sessionId: 'c6b62c6f-7ead-4fd6-9922-e952131177ff',
+          resumeHandle: 'c6b62c6f-7ead-4fd6-9922-e952131177ff',
           terminationReason: 'normal',
         },
       ],

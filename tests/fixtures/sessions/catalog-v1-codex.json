@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fcodex\u001f/PINNED_CWD\u001fPINNED_FP",
+    "scopeId": "chat-1",
+    "agentId": "codex",
+    "cwdRealpath": "/PINNED_CWD",
+    "policyFingerprint": "PINNED_FP",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "threadId": "thread-v1-codex"
+  }
+]

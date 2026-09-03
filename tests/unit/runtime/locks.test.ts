@@ -36,6 +36,7 @@ describe('runtime locks', () => {
         const metaFile = `${lock.target}.meta.json`;
         metaFiles.push(metaFile);
         const meta = JSON.parse(await readFile(metaFile, 'utf8')) as {
+          schemaVersion: number;
           kind: string;
           pid: number;
           profile: string;
@@ -43,6 +44,7 @@ describe('runtime locks', () => {
           appId?: string;
           startedAt: string;
         };
+        expect(meta.schemaVersion).toBe(1);
         expect(meta.kind).toBe(lock.kind);
         expect(meta.pid).toBe(process.pid);
         expect(meta.profile).toBe('claude');

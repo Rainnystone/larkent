@@ -10,7 +10,7 @@ const collectTsFiles = (path: string): string[] => {
   if (!existsSync(fullPath)) return [];
 
   if (statSync(fullPath).isFile()) {
-    return path.endsWith('.ts') ? [path] : [];
+    return path.endsWith('.ts') || path.endsWith('.tsx') ? [path] : [];
   }
 
   return readdirSync(fullPath)
@@ -56,5 +56,44 @@ describe('static architecture contracts', () => {
       expect(source, file).toContain('mode: 0o600');
       expect(source, file).not.toMatch(/\bwriteFile\(/);
     }
+  });
+
+  it('keeps the five-kind union only in src/agent/registry.ts', () => {
+    const files = [
+      ...collectTsFiles('src'),
+      ...collectTsFiles('web/src'),
+    ].filter((file) => file !== 'src/agent/registry.ts' && !file.endsWith('.d.ts'));
+    const strayUnion =
+      /['"](?:claude|codex|kimi|grok|cursor)['"](?:\s*\|\s*['"](?:claude|codex|kimi|grok|cursor)['"]){4}/;
+    for (const file of files) {
+      const source = read(file)
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^\s*\/\/.*$/gm, '');
+      expect(source, file).not.toMatch(strayUnion);
+    }
+  });
+
+  it('spawns agent CLIs only from JsonlCliRunner', () => {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const) {
+      for (const file of collectTsFiles(`src/agent/${kind}`)) {
+        expect(read(file), file).not.toMatch(/\bspawnProcess\b/);
+      }
+    }
+    expect(read('src/agent/runner/jsonl-cli-runner.ts')).toMatch(/\bspawnProcess\b/);
+  });
+
+  it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
+    const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
+    const webFiles = collectTsFiles('web/src');
+    expect(webFiles).toContain('web/src/views/OnboardWizard.tsx');
+    const files = [...collectTsFiles('src'), ...webFiles];
+    const stray: string[] = [];
+    for (const file of files) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
   });
 });

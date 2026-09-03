@@ -3,9 +3,15 @@ import { open, readFile, rename, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { paths } from '../config/paths';
 import { log } from '../core/logger';
-import { usesNativeSessionId, type AgentCapabilityId } from '../agent/capability';
+import { isAgentKind, type AgentKind } from '../agent/registry';
+import {
+  CATALOG_SCHEMA_VERSION,
+  UnsupportedCatalogSchemaError,
+  upgradeCatalogDocument,
+  type CatalogEntryV2,
+} from './migrations';
 
-export type CatalogAgentId = AgentCapabilityId;
+export type CatalogAgentId = AgentKind;
 export type SessionCatalogStatus = 'active' | 'archived';
 
 export interface SessionCatalogIdentity {
@@ -15,19 +21,11 @@ export interface SessionCatalogIdentity {
   policyFingerprint: string;
 }
 
-export interface SessionCatalogEntry extends SessionCatalogIdentity {
-  key: string;
-  status: SessionCatalogStatus;
-  updatedAt: number;
-  sessionId?: string;
-  threadId?: string;
-  lastSummary?: string;
-}
+export type SessionCatalogEntry = CatalogEntryV2;
 
 export interface UpsertSessionCatalogInput extends SessionCatalogIdentity {
   now?: number;
-  sessionId?: string;
-  threadId?: string;
+  resumeHandle: string;
   lastSummary?: string;
 }
 
@@ -59,6 +57,7 @@ export function sessionCatalogKey(input: SessionCatalogIdentity): string {
 export class SessionCatalog {
   private data = new Map<string, SessionCatalogEntry>();
   private saving: Promise<void> = Promise.resolve();
+  private persistFrozen = false;
   private readonly path: string;
 
   constructor(path = `${paths.sessionsFile}.catalog.json`) {
@@ -66,22 +65,37 @@ export class SessionCatalog {
   }
 
   async load(): Promise<void> {
+    let raw: unknown;
     try {
-      const raw = JSON.parse(await readFile(this.path, 'utf8')) as unknown;
-      if (!Array.isArray(raw)) {
-        this.data.clear();
-        return;
-      }
-      this.data.clear();
-      for (const item of raw) {
-        const entry = normalizeEntry(item);
-        if (!entry) continue;
-        this.data.set(entry.key, entry);
-      }
+      raw = JSON.parse(await readFile(this.path, 'utf8')) as unknown;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
       log.fail('session-catalog', err, { step: 'load' });
       this.data.clear();
+      return;
+    }
+
+    let document: { entries: SessionCatalogEntry[] };
+    let upgraded: boolean;
+    try {
+      ({ document, upgraded } = upgradeCatalogDocument(raw));
+    } catch (err) {
+      log.fail('session-catalog', err, { step: 'load' });
+      if (err instanceof UnsupportedCatalogSchemaError) {
+        this.persistFrozen = true;
+        return;
+      }
+      this.data.clear();
+      return;
+    }
+
+    this.persistFrozen = false;
+    this.data = new Map(document.entries.map((entry) => [entry.key, { ...entry }]));
+    if (!upgraded) return;
+    try {
+      await this.persist();
+    } catch (err) {
+      log.fail('session-catalog', err, { step: 'persist' });
     }
   }
 
@@ -110,8 +124,7 @@ export class SessionCatalog {
       policyFingerprint: input.policyFingerprint,
       status: 'active',
       updatedAt: input.now ?? Date.now(),
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-      ...(input.threadId ? { threadId: input.threadId } : {}),
+      resumeHandle: input.resumeHandle,
       ...(input.lastSummary ? { lastSummary: input.lastSummary } : {}),
     };
     this.data.set(key, entry);
@@ -184,9 +197,17 @@ export class SessionCatalog {
   }
 
   private async persist(): Promise<void> {
+    if (this.persistFrozen) {
+      log.warn('session-catalog', 'persist-skipped', { reason: 'unsupported-schema' });
+      return;
+    }
     await mkdir(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-    const payload = `${JSON.stringify(this.entries(), null, 2)}\n`;
+    const payload = `${JSON.stringify(
+      { schemaVersion: CATALOG_SCHEMA_VERSION, entries: this.entries() },
+      null,
+      2,
+    )}\n`;
     const fh = await open(tmp, 'w', 0o600);
     try {
       await fh.writeFile(payload, 'utf8');
@@ -208,38 +229,6 @@ export class SessionCatalog {
   }
 }
 
-function normalizeEntry(input: unknown): SessionCatalogEntry | undefined {
-  if (!input || typeof input !== 'object') return undefined;
-  const raw = input as Partial<SessionCatalogEntry>;
-  if (
-    typeof raw.key !== 'string' ||
-    typeof raw.scopeId !== 'string' ||
-    (raw.agentId !== 'claude' &&
-      raw.agentId !== 'codex' &&
-      raw.agentId !== 'kimi' &&
-      raw.agentId !== 'grok' &&
-      raw.agentId !== 'cursor') ||
-    typeof raw.cwdRealpath !== 'string' ||
-    typeof raw.policyFingerprint !== 'string' ||
-    (raw.status !== 'active' && raw.status !== 'archived') ||
-    typeof raw.updatedAt !== 'number'
-  ) {
-    return undefined;
-  }
-  return {
-    key: raw.key,
-    scopeId: raw.scopeId,
-    agentId: raw.agentId,
-    cwdRealpath: raw.cwdRealpath,
-    policyFingerprint: raw.policyFingerprint,
-    status: raw.status,
-    updatedAt: raw.updatedAt,
-    ...(typeof raw.sessionId === 'string' ? { sessionId: raw.sessionId } : {}),
-    ...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
-    ...(typeof raw.lastSummary === 'string' ? { lastSummary: raw.lastSummary } : {}),
-  };
-}
-
 function matchesIdentity(entry: SessionCatalogEntry, input: SessionCatalogIdentity): boolean {
   return (
     entry.scopeId === input.scopeId &&
@@ -251,30 +240,11 @@ function matchesIdentity(entry: SessionCatalogEntry, input: SessionCatalogIdenti
 }
 
 function isValidAgentEntry(entry: SessionCatalogEntry): boolean {
-  if (usesNativeSessionId(entry.agentId)) {
-    return Boolean(entry.sessionId) && !entry.threadId;
-  }
-  return Boolean(entry.threadId) && !entry.sessionId;
+  return Boolean(entry.resumeHandle) && isAgentKind(entry.agentId);
 }
 
 function assertAgentIdentity(input: UpsertSessionCatalogInput): void {
-  if (usesNativeSessionId(input.agentId)) {
-    if (!input.sessionId || input.threadId) {
-      const label =
-        input.agentId === 'kimi'
-          ? 'Kimi'
-          : input.agentId === 'grok'
-            ? 'Grok'
-            : input.agentId === 'cursor'
-              ? 'Cursor'
-              : 'Claude';
-      throw new Error(
-        `${label} catalog entries require sessionId and must not include threadId`,
-      );
-    }
-    return;
-  }
-  if (!input.threadId || input.sessionId) {
-    throw new Error('Codex catalog entries require threadId and must not include sessionId');
+  if (!input.resumeHandle) {
+    throw new Error('catalog entries require resumeHandle');
   }
 }

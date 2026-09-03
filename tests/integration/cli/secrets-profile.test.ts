@@ -128,7 +128,7 @@ async function writeProfiles(root: string, activeProfile: string, names: string[
     await mkdir(join(root, 'profiles', name), { recursive: true });
   }
   const config: RootConfig = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeProfile,
     preferences: {},
     profiles,

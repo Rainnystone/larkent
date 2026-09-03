@@ -12,9 +12,10 @@ import type { AccessDecision } from './access';
 import {
   accessPolicyDigest,
   attachmentPolicyConfigDigest,
-  policyFingerprint,
+  policyFingerprintFromAgentOptions,
   resourceScopeDigest,
 } from './fingerprint';
+import { agentOptionsForProfile } from '../agent/codex/options';
 
 export interface ScopeContext {
   source: 'im' | 'card' | 'comment' | 'meeting';
@@ -52,8 +53,6 @@ export interface RunPolicyInput {
   capability: AgentCapability;
   profileConfig: ProfileConfig;
   now: number;
-  codexHome?: string;
-  inheritCodexHome?: boolean;
   ttlMs?: number;
 }
 
@@ -138,15 +137,17 @@ export function evaluateRunPolicy(input: RunPolicyInput): RunPolicyResult {
     access: input.access,
     attachments: input.attachments,
     expiresAt: input.now + (input.ttlMs ?? DEFAULT_TTL_MS),
-    policyFingerprint: policyFingerprint({
-      cwdRealpath: input.cwdRealpath,
-      sandbox,
-      accessPolicyDigest: accessDigest,
-      resourceScopeDigest: resourceDigest,
-      attachmentPolicyShapeDigest: attachmentDigest,
-      codexHome: input.codexHome,
-      inheritCodexHome: input.inheritCodexHome ?? false,
-    }),
+    policyFingerprint: policyFingerprintFromAgentOptions(
+      {
+        cwdRealpath: input.cwdRealpath,
+        sandbox,
+        accessPolicyDigest: accessDigest,
+        resourceScopeDigest: resourceDigest,
+        attachmentPolicyShapeDigest: attachmentDigest,
+      },
+      input.profileConfig.agentKind,
+      agentOptionsForProfile(input.profileConfig),
+    ),
   };
 }
 

@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { AGENT_KINDS, descriptorFor } from '../../../src/agent/registry';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import {
   accessPolicyDigest,
   attachmentPolicyShapeDigest,
   policyFingerprint,
+  policyFingerprintFromAgentOptions,
   resourceScopeDigest,
   type FingerprintInputV2,
 } from '../../../src/policy/fingerprint';
@@ -87,6 +89,66 @@ describe('policy fingerprint', () => {
         },
       ]),
     );
+  });
+
+  it('pins golden hashes for representative FingerprintInputV2 values for all five kinds', () => {
+    const shared = {
+      cwdRealpath: '/repo/pin',
+      sandbox: 'danger-full-access' as const,
+      accessPolicyDigest: digestOf('access-pin'),
+      resourceScopeDigest: digestOf('scope-pin'),
+      attachmentPolicyShapeDigest: digestOf('attachments-pin'),
+    };
+
+    const golden = {
+      claude: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      kimi: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      grok: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      cursor: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      codex: policyFingerprint({
+        ...shared,
+        codexHome: '/state/codex-home',
+        inheritCodexHome: true,
+      }),
+    };
+
+    expect(golden).toEqual({
+      claude: 'fjPD7eP2aPRy3wCTFsivSQ',
+      kimi: 'fjPD7eP2aPRy3wCTFsivSQ',
+      grok: 'fjPD7eP2aPRy3wCTFsivSQ',
+      cursor: 'fjPD7eP2aPRy3wCTFsivSQ',
+      codex: 'V3nDu8JkeWrhmqWwgYyqSQ',
+    });
+  });
+
+  it('feeds FingerprintInputV2 from descriptor.policyInputs without a V3 bump', () => {
+    const shared = {
+      cwdRealpath: '/repo/pin',
+      sandbox: 'danger-full-access' as const,
+      accessPolicyDigest: digestOf('access-pin'),
+      resourceScopeDigest: digestOf('scope-pin'),
+      attachmentPolicyShapeDigest: digestOf('attachments-pin'),
+    };
+
+    for (const kind of AGENT_KINDS) {
+      if (kind === 'codex') continue;
+      expect(policyFingerprintFromAgentOptions(shared, kind, {})).toBe('fjPD7eP2aPRy3wCTFsivSQ');
+    }
+    expect(
+      policyFingerprintFromAgentOptions(shared, 'codex', {
+        codexHome: '/state/codex-home',
+        inheritCodexHome: true,
+      }),
+    ).toBe('V3nDu8JkeWrhmqWwgYyqSQ');
+    expect(
+      descriptorFor('codex').policyInputs({
+        codexHome: '/state/codex-home',
+        inheritCodexHome: true,
+      }),
+    ).toEqual({
+      codexHome: '/state/codex-home',
+      inheritCodexHome: true,
+    });
   });
 
   it('sorts access and resource allowlists so ordering does not change digests', () => {

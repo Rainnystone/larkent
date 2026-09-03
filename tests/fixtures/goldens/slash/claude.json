@@ -1,0 +1,139 @@
+{
+  "/resume": {
+    "handled": true,
+    "sent": [
+      {
+        "card": {
+          "config": {
+            "wide_screen_mode": true,
+            "update_multi": true
+          },
+          "header": {
+            "title": {
+              "tag": "plain_text",
+              "content": "🔁 恢复历史会话"
+            }
+          },
+          "elements": [
+            {
+              "tag": "div",
+              "text": {
+                "tag": "lark_md",
+                "content": "当前 cwd：`<cwd>`"
+              }
+            },
+            {
+              "tag": "hr"
+            },
+            {
+              "tag": "div",
+              "text": {
+                "tag": "lark_md",
+                "content": "**1.** pinned preview  ← 当前\n`sess-sla…` · 刚刚 · 3 条"
+              }
+            },
+            {
+              "tag": "action",
+              "actions": [
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "已是当前会话"
+                  },
+                  "type": "default",
+                  "value": {
+                    "cmd": "resume.use",
+                    "arg": "<nonce>"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "streams": []
+  },
+  "/status": {
+    "handled": true,
+    "sent": [
+      {
+        "card": {
+          "config": {
+            "wide_screen_mode": true,
+            "update_multi": true
+          },
+          "header": {
+            "title": {
+              "tag": "plain_text",
+              "content": "📊 当前状态"
+            }
+          },
+          "elements": [
+            {
+              "tag": "div",
+              "text": {
+                "tag": "lark_md",
+                "content": "🧭 **scope**: `chat-1`\n🧩 **profile**: claude\n📁 **cwd**: `<cwd>`\n🔗 **session**: `sess-sla…`\n🤖 **agent**: Claude Code\n🛡 **permission**: bypassPermissions\n🔐 **lark-cli**: app\n🏃 **active run**: no\n🚦 **queue**: unknown\n👤 **owner API**: ok owner=present refreshed=2023-11-14T22:13:20.000Z"
+              }
+            },
+            {
+              "tag": "hr"
+            },
+            {
+              "tag": "action",
+              "actions": [
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "🆕 新会话"
+                  },
+                  "type": "primary",
+                  "value": {
+                    "cmd": "new"
+                  }
+                },
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "🔁 恢复会话"
+                  },
+                  "type": "default",
+                  "value": {
+                    "cmd": "resume"
+                  }
+                },
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "📂 工作目录"
+                  },
+                  "type": "default",
+                  "value": {
+                    "cmd": "ws.list"
+                  }
+                },
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "💡 帮助"
+                  },
+                  "type": "default",
+                  "value": {
+                    "cmd": "help"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "streams": []
+  }
+}

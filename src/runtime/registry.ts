@@ -16,6 +16,11 @@ import * as lockfile from 'proper-lockfile';
 import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
 import type { AgentKind } from '../config/profile-schema';
+import {
+  PROCESS_REGISTRY_SCHEMA_VERSION,
+  assertSupportedProcessRegistrySchemaVersion,
+} from '../config/migrations';
+import { isAgentKind } from '../agent/registry';
 import type { TenantBrand } from '../config/schema';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { checkRuntimeLock } from './locks';
@@ -50,10 +55,11 @@ export interface ProcessEntry {
 }
 
 interface RegistryFile {
+  schemaVersion: number;
   entries: ProcessEntry[];
 }
 
-const EMPTY: RegistryFile = { entries: [] };
+const EMPTY: RegistryFile = { schemaVersion: PROCESS_REGISTRY_SCHEMA_VERSION, entries: [] };
 
 function isValidEntry(e: unknown): e is ProcessEntry {
   if (!e || typeof e !== 'object') return false;
@@ -64,11 +70,7 @@ function isValidEntry(e: unknown): e is ProcessEntry {
     typeof x.appId === 'string' &&
     (x.tenant === 'feishu' || x.tenant === 'lark') &&
     typeof x.profileName === 'string' &&
-    (x.agentKind === 'claude' ||
-      x.agentKind === 'codex' ||
-      x.agentKind === 'kimi' ||
-      x.agentKind === 'grok' ||
-      x.agentKind === 'cursor') &&
+    isAgentKind(x.agentKind) &&
     typeof x.configPath === 'string' &&
     typeof x.startedAt === 'string' &&
     typeof x.version === 'string'
@@ -90,13 +92,13 @@ export function readAndPrune(path: string = paths.processesFile): ProcessEntry[]
 }
 
 async function writeAtomic(entries: ProcessEntry[], path: string): Promise<void> {
-  const body = `${JSON.stringify({ entries } satisfies RegistryFile, null, 2)}\n`;
+  const body = `${JSON.stringify({ schemaVersion: PROCESS_REGISTRY_SCHEMA_VERSION, entries } satisfies RegistryFile, null, 2)}\n`;
   await writeFileAtomic(path, body, { mode: 0o600 });
 }
 
 function writeAtomicSync(entries: ProcessEntry[], path: string): void {
   const tmp = `${path}.tmp-${process.pid}`;
-  const body = `${JSON.stringify({ entries } satisfies RegistryFile, null, 2)}\n`;
+  const body = `${JSON.stringify({ schemaVersion: PROCESS_REGISTRY_SCHEMA_VERSION, entries } satisfies RegistryFile, null, 2)}\n`;
   mkdirSync(dirname(path), { recursive: true });
   const fd = openSync(tmp, 'w', 0o600);
   try {
@@ -120,7 +122,7 @@ export interface RegisterArgs {
   appId: string;
   tenant: TenantBrand;
   profileName?: string;
-  agentKind?: AgentKind;
+  agentKind: AgentKind;
   configPath: string;
   version: string;
   registryFile?: string;
@@ -141,7 +143,7 @@ export async function register(args: RegisterArgs): Promise<ProcessEntry> {
     appId: args.appId,
     tenant: args.tenant,
     profileName: args.profileName ?? 'claude',
-    agentKind: args.agentKind ?? 'claude',
+    agentKind: args.agentKind,
     configPath: args.configPath,
     startedAt: new Date().toISOString(),
     version: args.version,
@@ -363,21 +365,29 @@ function readRaw(path: string): RegistryFile {
   if (preferred) return preferred;
   const legacy = legacyRegistryFile(path);
   if (legacy && legacy !== path) {
-    return readRegistryFile(legacy) ?? { entries: [] };
+    return readRegistryFile(legacy) ?? { ...EMPTY };
   }
-  return { entries: [] };
+  return { ...EMPTY };
 }
 
 function readRegistryFile(path: string): RegistryFile | undefined {
+  let parsed: unknown;
   try {
-    const text = readFileSync(path, 'utf8');
-    const parsed = JSON.parse(text) as Partial<RegistryFile>;
-    if (!parsed || !Array.isArray(parsed.entries)) return { entries: [] };
-    return { entries: parsed.entries.filter(isValidEntry) };
+    parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    return { entries: [] };
+    return { ...EMPTY };
   }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ...EMPTY };
+  const document = parsed as Partial<RegistryFile>;
+  assertSupportedProcessRegistrySchemaVersion(document.schemaVersion);
+  if (!Array.isArray(document.entries)) return { ...EMPTY };
+  return {
+    schemaVersion: document.schemaVersion === undefined
+      ? PROCESS_REGISTRY_SCHEMA_VERSION
+      : document.schemaVersion,
+    entries: document.entries.filter(isValidEntry),
+  };
 }
 
 function legacyRegistryFile(path: string): string | undefined {

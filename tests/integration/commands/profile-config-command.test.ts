@@ -70,7 +70,7 @@ describe('profile-aware account and config commands', () => {
     const root = await waitForRoot(h.rootDir, (candidate) =>
       candidate.profiles.claude?.preferences.messageReply === 'text',
     );
-    expect(root.schemaVersion).toBe(2);
+    expect(root.schemaVersion).toBe(3);
     expect(root.activeProfile).toBe('claude');
     expect(root.profiles['codex-dev']).toBeDefined();
     expect(root.profiles.claude?.preferences).toMatchObject({
@@ -217,7 +217,7 @@ describe('profile-aware account and config commands', () => {
     const root = await waitForRoot(h.rootDir, (candidate) =>
       candidate.profiles.claude?.accounts.app.id === 'cli_new',
     );
-    expect(root.schemaVersion).toBe(2);
+    expect(root.schemaVersion).toBe(3);
     expect(root.profiles['codex-dev']).toBeDefined();
     expect(root.profiles.claude?.accounts.app).toMatchObject({
       id: 'cli_new',
@@ -298,7 +298,7 @@ async function writeRoot(
   preferences: RootConfig['profiles'][string]['preferences'] = {},
 ): Promise<RootConfig> {
   const root: RootConfig = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeProfile: 'claude',
     preferences: {},
     profiles: {

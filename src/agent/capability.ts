@@ -1,8 +1,9 @@
 import type { AccessMode } from '../config/permissions';
 import type { ProfileConfig } from '../config/profile-schema';
 import { BRIDGE_SYSTEM_PROMPT } from './bridge-system-prompt';
+import type { AgentKind } from './registry';
 
-export type AgentCapabilityId = 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
+export type AgentCapabilityId = AgentKind;
 export type AgentSessionKind =
   | 'claude-session'
   | 'codex-thread'
@@ -107,18 +108,15 @@ export function cursorCapability(profile?: Pick<ProfileConfig, 'permissions'>): 
 export function capabilityForProfile(
   profile: Pick<ProfileConfig, 'agentKind' | 'permissions'>,
 ): AgentCapability {
-  if (profile.agentKind === 'codex') return codexCapability(profile);
-  if (profile.agentKind === 'kimi') return kimiCapability(profile);
-  if (profile.agentKind === 'grok') return grokCapability(profile);
-  if (profile.agentKind === 'cursor') return cursorCapability(profile);
-  return claudeCapability(profile);
-}
-
-/** Claude / Kimi / Grok / Cursor persist a sessionId; Codex uses a threadId. */
-export function usesNativeSessionId(agentId: AgentCapabilityId): boolean {
-  return (
-    agentId === 'claude' || agentId === 'kimi' || agentId === 'grok' || agentId === 'cursor'
-  );
+  const builders: Record<AgentKind, (input: Pick<ProfileConfig, 'permissions'>) => AgentCapability> =
+    {
+      claude: claudeCapability,
+      codex: codexCapability,
+      kimi: kimiCapability,
+      grok: grokCapability,
+      cursor: cursorCapability,
+    };
+  return builders[profile.agentKind](profile);
 }
 
 export function codexCapability(profile: Pick<ProfileConfig, 'permissions'>): AgentCapability {

@@ -15,8 +15,15 @@ import {
   type CodexConfig,
   type RootConfig,
 } from './profile-schema';
+import {
+  PROFILE_SCHEMA_VERSION,
+  assertSupportedProfileSchemaVersion,
+  isKnownProfileSchemaVersion,
+  profileSchemaVersionOf,
+} from './migrations';
 import { markPermissionDefaultsMigration, saveRootConfig } from './profile-store';
 import type { AppConfig } from './schema';
+import { isAgentKind, unknownAgentKindMessage } from '../agent/registry';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { resolveWorkingDirectory } from '../policy/workspace';
 
@@ -101,14 +108,13 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   }
 
   const parsed = JSON.parse(rawConfig) as LegacyConfig | RootConfig;
-  if ((parsed as RootConfig).schemaVersion === 2) {
+  const schemaVersion = profileSchemaVersionOf(parsed);
+  if (isKnownProfileSchemaVersion(schemaVersion)) {
     return { migrated: false, profile: (parsed as RootConfig).activeProfile ?? profile };
   }
+  assertSupportedProfileSchemaVersion(schemaVersion);
 
-  await assertNoActiveOldProcesses([
-    paths.userRegistryFile,
-    join(paths.rootDir, 'processes.json'),
-  ]);
+  await assertNoActiveBridgeProcesses(paths.rootDir);
 
   const legacy = parsed as LegacyConfig;
   const app = legacy.accounts?.app ?? legacy.app;
@@ -119,7 +125,10 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   const legacyDefaultWorkspace = opts.workspace
     ? await resolveBootstrapWorkspace(opts.workspace)
     : await collectLegacyDefaultWorkspace(paths.rootDir);
-  const agentKind = opts.agentKind ?? 'claude';
+  const agentKind = opts.agentKind ?? (isAgentKind(profile) ? profile : undefined);
+  if (!agentKind) {
+    throw new Error(unknownAgentKindMessage(opts.agentKind ?? profile));
+  }
   const profileConfig = createDefaultProfileConfig({
     agentKind,
     accounts: { app },
@@ -138,7 +147,7 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   }
 
   const next: RootConfig = markPermissionDefaultsMigration({
-    schemaVersion: 2,
+    schemaVersion: PROFILE_SCHEMA_VERSION,
     activeProfile: profile,
     preferences: {},
     ...(legacy.secrets ? { secrets: legacy.secrets } : {}),
@@ -161,6 +170,14 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
     await rm(paths.activeProfileFile, { force: true }).catch(() => {});
     throw err;
   }
+}
+
+export async function assertNoActiveBridgeProcesses(rootDir: string): Promise<void> {
+  const paths = resolveAppPaths({ rootDir });
+  await assertNoActiveOldProcesses([
+    paths.userRegistryFile,
+    join(paths.rootDir, 'processes.json'),
+  ]);
 }
 
 async function assertNoActiveOldProcesses(registryFiles: string[]): Promise<void> {
@@ -200,13 +217,7 @@ function activeProcessFromRegistryEntry(entry: RegistryEntry): ActiveBridgeMigra
   if (typeof entry.appId === 'string') active.appId = entry.appId;
   if (typeof entry.tenant === 'string') active.tenant = entry.tenant;
   if (typeof entry.profileName === 'string') active.profileName = entry.profileName;
-  if (
-    entry.agentKind === 'claude' ||
-    entry.agentKind === 'codex' ||
-    entry.agentKind === 'kimi' ||
-    entry.agentKind === 'grok' ||
-    entry.agentKind === 'cursor'
-  ) {
+  if (isAgentKind(entry.agentKind)) {
     active.agentKind = entry.agentKind;
   }
   if (typeof entry.configPath === 'string') active.configPath = entry.configPath;

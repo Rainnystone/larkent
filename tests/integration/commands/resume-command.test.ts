@@ -34,6 +34,7 @@ interface Harness {
   pending: PendingQueue;
   run(content: string, options?: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' }): Promise<boolean>;
   dispatchResumeArg(arg: string): Promise<void>;
+  codexHistoryBinaries: string[];
 }
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -45,11 +46,11 @@ describe('agent-aware resume commands', () => {
 
   it('archives only the current catalog entry when starting a new conversation', async () => {
     const h = await createHarness('claude');
-    h.catalog.upsertActive({ ...h.identity, sessionId: 'sess-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'sess-current', now: 1000 });
     h.catalog.upsertActive({
       ...h.identity,
       agentId: 'codex',
-      threadId: 'thread-other-agent',
+      resumeHandle: 'thread-other-agent',
       now: 1000,
     });
 
@@ -57,17 +58,17 @@ describe('agent-aware resume commands', () => {
 
     expect(h.catalog.activeFor(h.identity)).toBeUndefined();
     expect(h.catalog.activeFor({ ...h.identity, agentId: 'codex' })).toMatchObject({
-      threadId: 'thread-other-agent',
+      resumeHandle: 'thread-other-agent',
     });
   });
 
   it('allows resume use only for the current agent/cwd/policy catalog entry', async () => {
     const h = await createHarness('claude');
-    h.catalog.upsertActive({ ...h.identity, sessionId: 'sess-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'sess-current', now: 1000 });
     h.catalog.upsertActive({
       ...h.identity,
       policyFingerprint: 'stale-fp',
-      sessionId: 'sess-stale',
+      resumeHandle: 'sess-stale',
       now: 1000,
     });
 
@@ -83,7 +84,7 @@ describe('agent-aware resume commands', () => {
   it('resumes the selected Claude history entry from the card button callback', async () => {
     const h = await createHarness('claude');
     h.sessions.set('chat-1', 'sess-current', h.identity.cwdRealpath);
-    h.catalog.upsertActive({ ...h.identity, sessionId: 'sess-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'sess-current', now: 1000 });
     h.claudeHistory.push(
       claudeSession('sess-current', 'current prompt', 1_700_000_100_000),
       claudeSession('sess-target', 'target prompt', 1_700_000_000_000),
@@ -104,14 +105,14 @@ describe('agent-aware resume commands', () => {
 
     expect(h.sessions.resumeFor('chat-1', h.identity.cwdRealpath)).toBe('sess-target');
     expect(h.catalog.activeFor(h.identity)).toMatchObject({
-      sessionId: 'sess-target',
+      resumeHandle: 'sess-target',
     });
     expect(lastMarkdown(h.channel)).toContain('已完成');
   });
 
   it('accepts the current Codex thread without writing it into legacy SessionStore', async () => {
     const h = await createHarness('codex');
-    h.catalog.upsertActive({ ...h.identity, threadId: 'thread-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'thread-current', now: 1000 });
 
     await expect(h.run('/resume')).resolves.toBe(true);
     const nonce = resumeNonce(lastMarkdown(h.channel));
@@ -124,7 +125,7 @@ describe('agent-aware resume commands', () => {
 
   it('falls back to an audit-safe reply when resume confirmation is rejected', async () => {
     const h = await createHarness('codex');
-    h.catalog.upsertActive({ ...h.identity, threadId: 'thread-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'thread-current', now: 1000 });
     await expect(h.run('/resume')).resolves.toBe(true);
     const nonce = resumeNonce(lastMarkdown(h.channel));
     const originalSend = h.channel.send.bind(h.channel);
@@ -147,7 +148,7 @@ describe('agent-aware resume commands', () => {
 
   it('shows only the current catalog-backed Codex thread in /resume', async () => {
     const h = await createHarness('codex');
-    h.catalog.upsertActive({ ...h.identity, threadId: 'thread-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'thread-current', now: 1000 });
 
     await expect(h.run('/resume')).resolves.toBe(true);
 
@@ -158,7 +159,7 @@ describe('agent-aware resume commands', () => {
 
   it('does not accept raw Codex thread ids as resume candidates', async () => {
     const h = await createHarness('codex');
-    h.catalog.upsertActive({ ...h.identity, threadId: 'thread-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'thread-current', now: 1000 });
 
     await expect(h.run('/resume use thread-current')).resolves.toBe(true);
 
@@ -204,7 +205,7 @@ describe('agent-aware resume commands', () => {
     await expect(h.run(`/resume use ${nonces[1]}`)).resolves.toBe(true);
 
     expect(h.catalog.activeFor(h.identity)).toMatchObject({
-      threadId: 'thread-beta-secret',
+      resumeHandle: 'thread-beta-secret',
     });
     expect(h.sessions.getRaw('chat-1')).toBeUndefined();
     expect(lastMarkdown(h.channel)).toContain('已完成');
@@ -221,7 +222,7 @@ describe('agent-aware resume commands', () => {
     await h.dispatchResumeArg(nonce!);
 
     expect(h.catalog.activeFor(h.identity)).toMatchObject({
-      threadId: 'thread-alpha-secret',
+      resumeHandle: 'thread-alpha-secret',
     });
     expect(lastMarkdown(h.channel)).toContain('已完成');
   });
@@ -248,7 +249,7 @@ describe('agent-aware resume commands', () => {
     expect(status).not.toContain('**thread**');
     expect(status).not.toContain('**conversation**');
 
-    h.catalog.upsertActive({ ...h.identity, threadId: 'thread-current', now: 1000 });
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'thread-current', now: 1000 });
     await expect(h.run('/status')).resolves.toBe(true);
 
     status = JSON.stringify(lastContent(h.channel));
@@ -264,6 +265,20 @@ describe('agent-aware resume commands', () => {
 
     expect(lastMarkdown(h.channel)).toContain('请先使用 /cd');
   });
+
+  it('lists Codex history with agent.binaryPath when it differs from nested codex.binaryPath', async () => {
+    const h = await createHarness('codex');
+    h.controls.profileConfig.agent = { kind: 'codex', binaryPath: '/opt/pinned/codex-a' };
+    if (h.controls.profileConfig.codex) {
+      h.controls.profileConfig.codex = {
+        ...h.controls.profileConfig.codex,
+        binaryPath: '/opt/pinned/codex-b',
+      };
+    }
+
+    await expect(h.run('/resume')).resolves.toBe(true);
+    expect(h.codexHistoryBinaries).toEqual(['/opt/pinned/codex-a']);
+  });
 });
 
 async function createHarness(
@@ -277,6 +292,7 @@ async function createHarness(
   const catalog = new SessionCatalog(join(tmp.profile, 'session-catalog.json'));
   const claudeHistory: SessionSummary[] = [];
   const codexHistory: CodexThreadHistoryEntry[] = [];
+  const codexHistoryBinaries: string[] = [];
   const activeRuns = new ActiveRuns();
   const pending = new PendingQueue(60_000, () => {});
   const agent = createFakeAgent();
@@ -321,7 +337,10 @@ async function createHarness(
       activeRuns,
       controls,
       claudeHistoryProvider: async () => claudeHistory,
-      codexHistoryProvider: async () => codexHistory,
+      codexHistoryProvider: async (input) => {
+        codexHistoryBinaries.push(input.binary);
+        return codexHistory;
+      },
     });
 
   const dispatchResumeArg = (arg: string): Promise<void> =>
@@ -358,6 +377,7 @@ async function createHarness(
     pending,
     run,
     dispatchResumeArg,
+    codexHistoryBinaries,
   };
 }
 
@@ -398,8 +418,6 @@ async function commandIdentity(
     capability,
     profileConfig,
     now: Date.now(),
-    codexHome: profileConfig.codex?.codexHome,
-    inheritCodexHome: profileConfig.codex?.inheritCodexHome,
   });
   if (!policy.ok) throw new Error(policy.rejectReason.userVisible);
   return {

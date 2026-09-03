@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { CheckCircle2 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
-import type { AgentKind, OnboardState } from "@/lib/types";
+import type { AgentKind, OnboardAgentChoice } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,11 +14,13 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
+import {
+  EMPTY_ONBOARD_SNAPSHOT,
+  loadOnboardWizardSnapshot,
+  mergeOnboardSnapshot,
+  type OnboardWizardSnapshot,
+} from "./onboard-wizard-state";
 
-// New-profile wizard: scan a Feishu QR to create a fresh app (same flow as the
-// CLI `registerApp` wizard). The QR renders immediately; once scanned, the user
-// names the new profile and confirms — so there's no rush and it never
-// overwrites an existing profile.
 type Phase = "loading" | "waiting" | "confirm" | "creating" | "error";
 
 function uniqueName(base: string, existing: string[]): string {
@@ -29,26 +31,45 @@ function uniqueName(base: string, existing: string[]): string {
 }
 
 export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => void }) {
-  const [agentKind, setAgentKind] = useState<AgentKind>("grok");
+  const [agentKind, setAgentKind] = useState<AgentKind | "">("");
+  const [agentKinds, setAgentKinds] = useState<OnboardAgentChoice[]>([]);
   const [profileName, setProfileName] = useState("");
   const [botName, setBotName] = useState("");
   const [detected, setDetected] = useState<AgentKind[]>([]);
   const [existing, setExisting] = useState<string[]>([]);
   const [qr, setQr] = useState<{ sessionId: string; qrUrl: string; expireIn: number } | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
+  const [stateError, setStateError] = useState<string | null>(null);
 
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const scanned = useRef(false);
+  const snapshotRef = useRef<OnboardWizardSnapshot>(EMPTY_ONBOARD_SNAPSHOT);
+
+  function applySnapshot(incoming: OnboardWizardSnapshot) {
+    const merged = mergeOnboardSnapshot(snapshotRef.current, incoming);
+    snapshotRef.current = merged;
+    setDetected(merged.detected);
+    setExisting(merged.existing);
+    setAgentKinds(merged.agentKinds);
+    setStateError(merged.error);
+    setAgentKind((current) =>
+      merged.agentKinds.some((choice) => choice.kind === current) ? current : "",
+    );
+  }
+
+  async function loadOnboardState() {
+    applySnapshot(await loadOnboardWizardSnapshot(apiGet));
+  }
 
   useEffect(() => {
-    apiGet<OnboardState>("/api/onboard/state")
-      .then((s) => {
-        setDetected(s.detectedAgents);
-        setExisting(s.profiles);
-        setAgentKind("grok");
-      })
-      .catch(() => {});
+    void loadOnboardState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const selected = agentKinds.find((choice) => choice.kind === agentKind);
+  const missingRequired = Boolean(
+    selected?.requireInstalled && agentKind && !detected.includes(agentKind),
+  );
 
   const stopPolling = () => {
     if (timer.current) clearInterval(timer.current);
@@ -79,14 +100,17 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
     try {
       s = await apiGet(`/api/profiles/qr/status?sessionId=${encodeURIComponent(sessionId)}`);
     } catch {
-      return; // transient; keep polling
+      return;
     }
     if (s.status === "scanned" && !scanned.current) {
       scanned.current = true;
       stopPolling();
-      // App created — prefill the profile name from the scanned app's name.
+      if (snapshotRef.current.agentKinds.length === 0) {
+        await loadOnboardState();
+      }
+      const snapshot = snapshotRef.current;
       setBotName(s.botName ?? "");
-      setProfileName(s.suggestedProfile || uniqueName(agentKind, existing));
+      setProfileName(s.suggestedProfile || uniqueName(agentKind || "bot", snapshot.existing));
       setPhase("confirm");
     } else if (s.status === "error") {
       stopPolling();
@@ -96,13 +120,11 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
   }
 
   async function confirmCreate() {
-    if (!qr) return;
-    if (agentKind === "grok" && !detected.includes("grok")) {
-      toast.error("未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。");
-      return;
-    }
-    if (agentKind === "cursor" && !detected.includes("cursor")) {
-      toast.error("未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。");
+    if (!qr || !agentKind || agentKinds.length === 0) return;
+    if (missingRequired) {
+      toast.error(selected?.displayName
+        ? `未检测到 ${selected.displayName}。请先安装并登录后再创建 ${agentKind} profile。`
+        : "请先安装所选 agent 后再创建 profile。");
       return;
     }
     setPhase("creating");
@@ -115,12 +137,11 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
       toast.success(`profile「${r.profile}」已创建`);
       onCreated(r.profile);
     } catch (e) {
-      setPhase("confirm"); // let the user fix the name / retry
+      setPhase("confirm");
       toast.error(String((e as Error).message ?? e));
     }
   }
 
-  // Auto-render the QR on open.
   useEffect(() => {
     void generate();
     return stopPolling;
@@ -135,32 +156,45 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
         </div>
         <div className="space-y-1.5">
           <Label>AI Agent</Label>
-          <Select value={agentKind} onValueChange={(v) => setAgentKind(v as AgentKind)}>
-            <SelectTrigger><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="grok">Grok Build</SelectItem>
-              <SelectItem value="claude">Claude Code</SelectItem>
-              <SelectItem value="codex">Codex</SelectItem>
-              <SelectItem value="kimi">Kimi Code</SelectItem>
-              <SelectItem value="cursor">Cursor CLI</SelectItem>
-            </SelectContent>
-          </Select>
+          {agentKinds.length === 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm text-destructive">
+                {stateError ? `无法加载 agent 列表：${stateError}` : "无法加载 agent 列表"}
+              </p>
+              <Button variant="outline" size="sm" onClick={() => void loadOnboardState()}>
+                重试
+              </Button>
+            </div>
+          ) : (
+            <Select
+              value={agentKind || undefined}
+              onValueChange={(v) => setAgentKind(v as AgentKind)}
+            >
+              <SelectTrigger><SelectValue placeholder="选择 agent" /></SelectTrigger>
+              <SelectContent>
+                {agentKinds.map((choice) => (
+                  <SelectItem key={choice.kind} value={choice.kind}>
+                    {choice.displayName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <div className="space-y-1.5">
           <Label>Profile 名称</Label>
           <Input
             value={profileName}
             onChange={(e) => setProfileName(e.target.value)}
-            placeholder={agentKind}
+            placeholder={agentKind || "profile"}
           />
           {existing.includes(profileName.trim()) && (
             <p className="text-xs text-destructive">已存在同名 profile，请换个名字（不会覆盖现有的）。</p>
           )}
-          {agentKind === "grok" && !detected.includes("grok") && (
-            <p className="text-xs text-destructive">未检测到 Grok Build CLI（grok）。请先安装并登录。</p>
-          )}
-          {agentKind === "cursor" && !detected.includes("cursor") && (
-            <p className="text-xs text-destructive">未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录。</p>
+          {missingRequired && (
+            <p className="text-xs text-destructive">
+              未检测到 {selected?.displayName}。请先安装并登录。
+            </p>
           )}
         </div>
         <div className="flex justify-end">
@@ -168,10 +202,11 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
             onClick={confirmCreate}
             disabled={
               phase === "creating" ||
+              agentKinds.length === 0 ||
+              !agentKind ||
               !profileName.trim() ||
               existing.includes(profileName.trim()) ||
-              (agentKind === "grok" && !detected.includes("grok")) ||
-              (agentKind === "cursor" && !detected.includes("cursor"))
+              missingRequired
             }
           >
             {phase === "creating" ? "创建中…" : "确定创建"}
@@ -205,10 +240,13 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
         {(phase === "error" || phase === "waiting") && (
           <Button variant="outline" size="sm" onClick={generate}>重新生成</Button>
         )}
+        {stateError && agentKinds.length === 0 && (
+          <div className="space-y-2 text-center">
+            <p className="text-sm text-destructive">无法加载 agent 列表：{stateError}</p>
+            <Button variant="outline" size="sm" onClick={() => void loadOnboardState()}>重试</Button>
+          </div>
+        )}
       </div>
-      {!detected.includes("grok") && (
-        <p className="text-center text-xs text-destructive">未检测到 Grok Build CLI（grok）。默认会创建 grok profile，请先安装并登录。</p>
-      )}
       <p className="text-center text-xs text-muted-foreground">扫码人会成为应用 owner，自动豁免访问控制。</p>
     </div>
   );

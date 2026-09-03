@@ -24,14 +24,14 @@ describe('KimiJsonlTranslator', () => {
       ...t.finish('normal'),
     ];
     expect(events).toEqual([
-      { type: 'system', sessionId: 'session_00000000-0000-4000-8000-000000000000' },
+      { type: 'system', resumeHandle: 'session_00000000-0000-4000-8000-000000000000' },
       {
         type: 'final_text',
         content: 'OK',
       },
       {
         type: 'done',
-        sessionId: 'session_00000000-0000-4000-8000-000000000000',
+        resumeHandle: 'session_00000000-0000-4000-8000-000000000000',
         terminationReason: 'normal',
       },
     ]);
@@ -67,11 +67,11 @@ describe('KimiJsonlTranslator', () => {
         input: { command: 'echo hi' },
       },
       { type: 'tool_result', id: 'tool_1', output: 'hi\n', isError: false },
-      { type: 'system', sessionId: 'session_00000000-0000-4000-8000-000000000000' },
+      { type: 'system', resumeHandle: 'session_00000000-0000-4000-8000-000000000000' },
       { type: 'final_text', content: 'The command printed hi.' },
       {
         type: 'done',
-        sessionId: 'session_00000000-0000-4000-8000-000000000000',
+        resumeHandle: 'session_00000000-0000-4000-8000-000000000000',
         terminationReason: 'normal',
       },
     ]);
@@ -98,11 +98,11 @@ describe('KimiJsonlTranslator', () => {
       { type: 'text', delta: 'Let me check.\n\n' },
       { type: 'tool_use', id: 'tool_1', name: 'Read', input: {} },
       { type: 'tool_result', id: 'tool_1', output: 'file body', isError: false },
-      { type: 'system', sessionId: 'session_00000000-0000-4000-8000-000000000000' },
+      { type: 'system', resumeHandle: 'session_00000000-0000-4000-8000-000000000000' },
       { type: 'final_text', content: 'Done.' },
       {
         type: 'done',
-        sessionId: 'session_00000000-0000-4000-8000-000000000000',
+        resumeHandle: 'session_00000000-0000-4000-8000-000000000000',
         terminationReason: 'normal',
       },
     ]);
@@ -156,11 +156,11 @@ describe('KimiJsonlTranslator', () => {
       ...t.finish('interrupted'),
     ];
     expect(events).toEqual([
-      { type: 'system', sessionId: 'session_00000000-0000-4000-8000-000000000000' },
+      { type: 'system', resumeHandle: 'session_00000000-0000-4000-8000-000000000000' },
       { type: 'final_text', content: 'partial' },
       {
         type: 'done',
-        sessionId: 'session_00000000-0000-4000-8000-000000000000',
+        resumeHandle: 'session_00000000-0000-4000-8000-000000000000',
         terminationReason: 'interrupted',
       },
     ]);

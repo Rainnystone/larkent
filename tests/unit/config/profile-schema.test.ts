@@ -23,7 +23,7 @@ describe('profile schema', () => {
       accounts: { app },
     });
 
-    expect(cfg.schemaVersion).toBe(2);
+    expect(cfg.schemaVersion).toBe(3);
     expect(cfg.agentKind).toBe('claude');
     expect(cfg.permissions).toMatchObject({
       defaultAccess: 'full',
@@ -86,6 +86,16 @@ describe('profile schema', () => {
     expect(
       effectiveLarkCliIdentity({ mode: 'team', larkCli: { identityPreset: 'bot-only' } }),
     ).toBe('bot-only');
+  });
+
+  it('hard-errors unknown agentKind and lists the registry kinds', () => {
+    expect(() =>
+      normalizeProfileConfig({
+        schemaVersion: 2,
+        agentKind: 'nope',
+        accounts: { app },
+      }),
+    ).toThrow(/unknown agent kind: nope.*claude, codex, kimi, grok, cursor/);
   });
 
   it('requires codex configuration when agentKind is codex', () => {
@@ -363,6 +373,38 @@ describe('profile schema', () => {
       defaultMode: 'danger-full-access',
       maxMode: 'danger-full-access',
     });
+  });
+
+  it('keeps agent.options through createDefault and v3 normalize', () => {
+    const created = createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app },
+      options: { permissionMode: 'acceptEdits' },
+    });
+    expect(created.agent.options).toEqual({ permissionMode: 'acceptEdits' });
+
+    const roundTrip = normalizeProfileConfig(created);
+    expect(roundTrip.agent.options).toEqual({ permissionMode: 'acceptEdits' });
+
+    const loaded = normalizeProfileConfig({
+      schemaVersion: 3,
+      agent: { kind: 'cursor', options: { sandbox: 'read-only' } },
+      agentKind: 'cursor',
+      accounts: { app },
+    });
+    expect(loaded.agent.options).toEqual({ sandbox: 'read-only' });
+  });
+
+  it('aligns Codex history with agent.binaryPath when the two fields disagree', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 3,
+      agent: { kind: 'codex', binaryPath: '/opt/pinned/codex-a' },
+      agentKind: 'codex',
+      accounts: { app },
+      codex: { binaryPath: '/opt/pinned/codex-b', inheritCodexHome: true },
+    });
+    expect(cfg.agent.binaryPath).toBe('/opt/pinned/codex-a');
+    expect(cfg.codex?.binaryPath).toBe('/opt/pinned/codex-a');
   });
 
   it('defaults Codex permissions to full/full and derives danger-full-access for Codex runtime', () => {

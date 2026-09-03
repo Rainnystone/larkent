@@ -1,12 +1,14 @@
 import { ClaudeAdapter } from '../agent/claude/adapter';
 import { CodexAdapter } from '../agent/codex/adapter';
+import { codexAdapterAgentOptions } from '../agent/codex/options';
 import { CursorAdapter } from '../agent/cursor/adapter';
 import { GrokAdapter } from '../agent/grok/adapter';
 import { KimiAdapter } from '../agent/kimi/adapter';
-import { AgentPreflightError, type AgentAvailability, type LocalAgentId } from '../agent/preflight';
+import { AgentPreflightError, type AgentAvailability } from '../agent/preflight';
+import { descriptorFor, isAgentKind, type AgentKind } from '../agent/registry';
 import type { AgentAdapter } from '../agent/types';
 import type { AppPaths } from '../config/app-paths';
-import type { AgentKind, ProfileConfig } from '../config/profile-schema';
+import type { ProfileConfig } from '../config/profile-schema';
 import type { AcquiredRuntimeLock } from './locks';
 
 /**
@@ -36,59 +38,57 @@ export function createRuntimeAgent(
             : {}),
         }
       : undefined;
-  if (profileConfig.agentKind === 'codex') {
-    const codex = profileConfig.codex;
-    if (!codex?.binaryPath) {
-      throw new Error('codex profile requires codex.binaryPath');
-    }
-    return new CodexAdapter({
-      binary: codex.binaryPath,
-      profileStateDir: appPaths.profileDir,
-      ...(codex.codexHome ? { codexHome: codex.codexHome } : {}),
-      inheritCodexHome: codex.inheritCodexHome === true,
-      ignoreUserConfig: codex.ignoreUserConfig === true,
-      ignoreRules: codex.ignoreRules !== false,
-      sandbox: profileConfig.sandbox.defaultMode,
-      larkChannel,
-    });
-  }
-  if (profileConfig.agentKind === 'kimi') {
-    return new KimiAdapter({
-      binary: process.env.LARK_CHANNEL_KIMI_BIN ?? 'kimi',
-      larkChannel,
-    });
-  }
-  if (profileConfig.agentKind === 'grok') {
-    return new GrokAdapter({
-      binary: process.env.LARK_CHANNEL_GROK_BIN ?? 'grok',
-      larkChannel,
-    });
-  }
-  if (profileConfig.agentKind === 'cursor') {
-    return new CursorAdapter({
-      ...(process.env.LARK_CHANNEL_CURSOR_BIN
-        ? { binary: process.env.LARK_CHANNEL_CURSOR_BIN }
-        : {}),
-      larkChannel,
-    });
-  }
-  return new ClaudeAdapter({ larkChannel });
+  const kind = profileConfig.agentKind;
+  const explicitBinary = resolveProfileBinary(profileConfig);
+  const defaultBinary = descriptorFor(kind).binaryNames[0] ?? kind;
+  const factories: Record<AgentKind, () => AgentAdapter> = {
+    claude: () => new ClaudeAdapter({ binary: explicitBinary ?? defaultBinary, agentOptions: profileConfig.agent.options, larkChannel }),
+    codex: () => {
+      const binary = explicitBinary ?? profileConfig.codex?.binaryPath;
+      if (!binary) {
+        throw new Error('codex profile requires codex.binaryPath');
+      }
+      return new CodexAdapter({
+        binary,
+        profileStateDir: appPaths.profileDir,
+        agentOptions: codexAdapterAgentOptions(profileConfig),
+        sandbox: profileConfig.sandbox.defaultMode,
+        larkChannel,
+      });
+    },
+    kimi: () =>
+      new KimiAdapter({
+        binary: explicitBinary ?? defaultBinary,
+        agentOptions: profileConfig.agent.options,
+        larkChannel,
+      }),
+    grok: () =>
+      new GrokAdapter({
+        binary: explicitBinary ?? defaultBinary,
+        agentOptions: profileConfig.agent.options,
+        larkChannel,
+      }),
+    cursor: () =>
+      new CursorAdapter({
+        ...(explicitBinary ? { binary: explicitBinary } : {}),
+        agentOptions: profileConfig.agent.options,
+        larkChannel,
+      }),
+  };
+  return factories[kind]();
+}
+
+export function resolveProfileBinary(profile: ProfileConfig): string | undefined {
+  if (profile.agent.binaryPath) return profile.agent.binaryPath;
+  if (profile.agentKind === 'codex') return profile.codex?.binaryPath;
+  return undefined;
 }
 
 export async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promise<AgentAvailability> {
   if (agent.checkAvailability) return agent.checkAvailability();
   const ok = await agent.isAvailable();
   if (ok) return { ok: true };
-  const agentId: LocalAgentId =
-    agent.id === 'codex'
-      ? 'codex'
-      : agent.id === 'kimi'
-        ? 'kimi'
-        : agent.id === 'grok'
-          ? 'grok'
-          : agent.id === 'cursor'
-            ? 'cursor'
-            : 'claude';
+  const agentId = isAgentKind(agent.id) ? agent.id : agent.id;
   const diagnostic = {
     code: 'agent-binary-not-found' as const,
     agentId,
@@ -103,13 +103,10 @@ export function assertReconnectAgentKindUnchanged(
   current: AgentKind | undefined,
   next: AgentKind | undefined,
 ): void {
-  const currentKind = current ?? 'claude';
-  const nextKind = next ?? 'claude';
-  if (nextKind !== currentKind) {
-    throw new Error(
-      `agent kind cannot change during reconnect (${currentKind} -> ${nextKind}); stop/start is required`,
-    );
-  }
+  if (current === next) return;
+  throw new Error(
+    `agent kind cannot change during reconnect (${current ?? 'none'} -> ${next ?? 'none'}); stop/start is required`,
+  );
 }
 
 /** Release a set of runtime locks, swallowing individual failures. */

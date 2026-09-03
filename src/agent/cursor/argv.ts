@@ -1,4 +1,4 @@
-import type { CodexSandboxMode } from '../../config/permissions';
+import type { CursorSandboxOption } from './options';
 
 export interface BuildCursorArgsInput {
   /**
@@ -17,7 +17,7 @@ export interface BuildCursorArgsInput {
    * own sandbox so lark-cli can use the network; restricted modes are not
    * mapped (enabled Cursor sandbox would block those calls).
    */
-  sandbox?: CodexSandboxMode;
+  sandbox?: CursorSandboxOption;
 }
 
 /**
@@ -25,7 +25,7 @@ export interface BuildCursorArgsInput {
  * host access, so reject read-only / workspace-write rather than silently
  * ignoring the profile ceiling.
  */
-export function assertCursorSandbox(sandbox?: CodexSandboxMode): void {
+export function assertCursorSandbox(sandbox?: CursorSandboxOption | string): void {
   if (sandbox && sandbox !== 'danger-full-access') {
     throw new Error(
       `Cursor CLI only supports full access; received sandbox ${sandbox}. ` +

@@ -76,6 +76,27 @@ describe('Supervisor', () => {
     expect(sup.list().map((s) => s.profile).sort()).toEqual(['claude', 'work']);
   });
 
+  it('hosts two profiles of different agent kinds at once', async () => {
+    const rc = (await loadRootConfig(join(root, 'config.json')))!;
+    rc.profiles.kimi = createDefaultProfileConfig({
+      agentKind: 'kimi',
+      accounts: { app: app('cli_kimi') },
+    });
+    rc.profiles.grok = createDefaultProfileConfig({
+      agentKind: 'grok',
+      accounts: { app: app('cli_grok') },
+    });
+    await saveRootConfig(rc, join(root, 'config.json'));
+    await mkdir(join(root, 'profiles', 'kimi'), { recursive: true });
+    await mkdir(join(root, 'profiles', 'grok'), { recursive: true });
+
+    await sup.startProfile('kimi');
+    await sup.startProfile('grok');
+    expect(sup.isOnline('kimi')).toBe(true);
+    expect(sup.isOnline('grok')).toBe(true);
+    expect(started).toEqual(expect.arrayContaining(['kimi', 'grok']));
+  });
+
   it('stops one profile without affecting others or the process', async () => {
     await sup.startProfile('claude');
     await sup.startProfile('work');

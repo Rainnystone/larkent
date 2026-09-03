@@ -1,4 +1,4 @@
-export type AgentKind = "claude" | "codex" | "kimi" | "grok" | "cursor";
+export type AgentKind = import("../../../src/agent/registry").AgentKind;
 export type ProfileMode = "personal" | "team";
 export type LarkCliIdentity = "bot-only" | "user-default";
 export type MessageReply = "card" | "markdown" | "text";
@@ -138,9 +138,16 @@ export interface MeetingPreflight {
   betaChatUrl?: string;
 }
 
+export interface OnboardAgentChoice {
+  kind: AgentKind;
+  displayName: string;
+  requireInstalled: boolean;
+}
+
 export interface OnboardState {
   hasConfig: boolean;
   activeProfile?: string;
   profiles: string[];
   detectedAgents: AgentKind[];
+  agentKinds: OnboardAgentChoice[];
 }

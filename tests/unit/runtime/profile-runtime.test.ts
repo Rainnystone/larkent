@@ -13,6 +13,7 @@ import { getSecret } from '../../../src/config/keystore';
 import { secretKeyForApp } from '../../../src/config/schema';
 import { legacyLarkCliSourceOverlayPaths } from '../../../src/lark-cli/legacy-source-overlay';
 import { writeLarkCliSourceProjection } from '../../../src/lark-cli/profile-projection';
+import { AGENT_KINDS } from '../../../src/agent/registry';
 import { writeVersionExecutable } from '../../helpers/fake-executable';
 
 const wizard = vi.hoisted(() => ({
@@ -86,7 +87,7 @@ describe('profile runtime resolver', () => {
       profiles?: Record<string, unknown>;
       accounts?: unknown;
     };
-    expect(recovered.schemaVersion).toBe(2);
+    expect(recovered.schemaVersion).toBe(3);
     expect(recovered.profiles?.codex).toBeTruthy();
     expect(recovered.accounts).toBeUndefined();
     await expect(readFile(backupFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
@@ -262,7 +263,7 @@ describe('profile runtime resolver', () => {
       expect(message).toContain(claude);
       expect(message).toContain('codex');
       expect(message).toContain(codex);
-      expect(message).toContain('--agent <grok|claude|codex|kimi|cursor>');
+      expect(message).toContain(`--agent <${AGENT_KINDS.join('|')}>`);
     } finally {
       process.env.PATH = oldPath;
       if (oldClaude === undefined) {

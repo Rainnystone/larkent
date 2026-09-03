@@ -11,7 +11,14 @@ import {
   type MigrateV2Result,
 } from '../../config/migrate-v2';
 import { legacyPaths, paths } from '../../config/paths';
+import {
+  assertSupportedProfileSchemaVersion,
+  isKnownProfileSchemaVersion,
+  isLegacyProfileSchemaVersion,
+  profileSchemaVersionOf,
+} from '../../config/migrations';
 import { agentKindFromString } from '../../config/profile-store';
+import { isAgentKind } from '../../agent/registry';
 import type { RootConfig } from '../../config/profile-schema';
 import { isComplete, type AppCredentials, type AppConfig } from '../../config/schema';
 import { saveConfig } from '../../config/store';
@@ -44,16 +51,7 @@ export async function runMigrate(opts: MigrateOptions): Promise<void> {
   await migrateLegacyPaths();
   await migrateConfigShape(configPath);
   const agentKind =
-    agentKindFromString(opts.agent) ??
-    (opts.profile === 'codex'
-      ? 'codex'
-      : opts.profile === 'kimi'
-        ? 'kimi'
-        : opts.profile === 'grok'
-          ? 'grok'
-          : opts.profile === 'cursor'
-            ? 'cursor'
-            : undefined);
+    agentKindFromString(opts.agent) ?? (isAgentKind(opts.profile) ? opts.profile : undefined);
   const needsV2Migration = await hasLegacyProfileConfig(configPath);
   const result = await migrateProfileV2WithActiveBridgePrompt({
     rootDir: dirname(configPath),
@@ -163,7 +161,7 @@ async function hasLegacyProfileConfig(path: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw err;
   }
-  return !isRootConfigV2(JSON.parse(raw));
+  return isLegacyProfileSchemaVersion(profileSchemaVersionOf(JSON.parse(raw)));
 }
 
 async function migrateLegacyPaths(): Promise<void> {
@@ -217,6 +215,7 @@ async function migrateConfigShape(path: string): Promise<void> {
     console.log(`✓ config 结构已是 profile v2 格式：${path}`);
     return;
   }
+  assertSupportedProfileSchemaVersion(profileSchemaVersionOf(parsed));
 
   const obj = parsed as Partial<AppConfig> & LegacyShape;
 
@@ -239,10 +238,11 @@ async function migrateConfigShape(path: string): Promise<void> {
 }
 
 function isRootConfigV2(value: unknown): value is RootConfig {
+  const schemaVersion = profileSchemaVersionOf(value);
   return Boolean(
     value &&
       typeof value === 'object' &&
-      (value as Partial<RootConfig>).schemaVersion === 2 &&
+      isKnownProfileSchemaVersion(schemaVersion) &&
       (value as Partial<RootConfig>).profiles &&
       typeof (value as Partial<RootConfig>).profiles === 'object',
   );

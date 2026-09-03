@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fclaude\u001f/PINNED_CWD\u001fPINNED_FP",
+    "scopeId": "chat-1",
+    "agentId": "claude",
+    "cwdRealpath": "/PINNED_CWD",
+    "policyFingerprint": "PINNED_FP",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "sessionId": "sess-v1-claude"
+  }
+]

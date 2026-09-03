@@ -1,6 +1,11 @@
 import { mkdir, readFile, realpath } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import * as p from '@clack/prompts';
+import {
+  applyCodexLegacyUpgrades,
+  shouldUpgradeIgnoredUserConfig,
+  shouldUpgradeIsolatedCodexHome,
+} from '../agent/codex/options';
 import { runRegistrationWizard } from '../bot/wizard';
 import { detectInstalledAgents, type DetectedAgent } from '../cli/agent-detection';
 import {
@@ -13,6 +18,7 @@ import { setSecret } from '../config/keystore';
 import { resolveAppPaths, type AppPaths } from '../config/app-paths';
 import {
   ActiveBridgeMigrationConflictError,
+  assertNoActiveBridgeProcesses,
   collectLegacyDefaultWorkspace,
   migrateV1ToV2,
   type MigrateV2Options,
@@ -22,6 +28,7 @@ import {
   createRootConfig,
   hasPermissionDefaultsMigration,
   loadRootConfig,
+  loadRootConfigWithMeta,
   markPermissionDefaultsMigration,
   readActiveProfile,
   runtimeProfileConfig,
@@ -29,12 +36,17 @@ import {
   writeActiveProfile,
 } from '../config/profile-store';
 import {
+  isLegacyProfileSchemaVersion,
+  profileSchemaVersionOf,
+} from '../config/migrations';
+import {
   createDefaultProfileConfig,
   type AgentKind,
   type CreateDefaultProfileConfigInput,
   type ProfileConfig,
   type RootConfig,
 } from '../config/profile-schema';
+import { AGENT_KINDS, descriptorFor, isAgentKind } from '../agent/registry';
 import { permissionsToLegacySandbox } from '../config/permissions';
 import type { AppConfig, SecretInput, TenantBrand } from '../config/schema';
 import { isComplete, isSecretRef, secretKeyForApp } from '../config/schema';
@@ -108,7 +120,9 @@ export async function resolveProfileRuntime(
   if (!profile && opts.allowBootstrap) {
     const detected = await detectInstalledAgents();
     if (detected.length === 0) {
-      throw new Error('no supported local agent found; install grok, claude, codex, kimi or cursor first');
+      throw new Error(
+        `no supported local agent found; install ${AGENT_KINDS.join(', ')} first`,
+      );
     }
     if (detected.length > 1) {
       const selected = await selectDetectedAgent(detected, opts.selectAgent);
@@ -120,10 +134,13 @@ export async function resolveProfileRuntime(
       profile = detected[0]?.kind;
     }
   }
-  if (!profile && !opts.allowBootstrap) {
-    throw new Error('active profile is required');
+  if (!profile) {
+    throw new Error(
+      opts.allowBootstrap
+        ? `agent kind is required. pass --agent ${AGENT_KINDS.join('|')}`
+        : 'active profile is required',
+    );
   }
-  profile ??= 'claude';
   let appPaths = resolveAppPaths({ rootDir, profile });
   const configPath = opts.config ?? appPaths.configFile;
 
@@ -140,8 +157,9 @@ export async function resolveProfileRuntime(
       : {}),
   }, opts.handleActiveBridgeMigrationConflict);
 
-  let rootConfig = await loadRootConfig(configPath);
-  if (rootConfig) {
+  const loadedRoot = await loadRootConfigWithMeta(configPath);
+  let rootConfig = loadedRoot?.root;
+  if (loadedRoot && rootConfig) {
     if (!explicitProfile && !activeProfile) {
       profile = rootConfig.activeProfile;
       appPaths = resolveAppPaths({ rootDir, profile });
@@ -169,7 +187,14 @@ export async function resolveProfileRuntime(
     if (defaultWorkspaceUpgrade.changed) {
       rootConfig = defaultWorkspaceUpgrade.rootConfig;
     }
-    if (runtimeUpgrade.changed || defaultWorkspaceUpgrade.changed) {
+    const persistUpgrade = loadedRoot.upgraded || runtimeUpgrade.changed || defaultWorkspaceUpgrade.changed;
+    if (persistUpgrade) {
+      if (loadedRoot.upgraded) {
+        await withActiveBridgeMigrationHandling(
+          () => assertNoActiveBridgeProcesses(appPaths.rootDir),
+          opts.handleActiveBridgeMigrationConflict,
+        );
+      }
       await saveRootConfig(rootConfig, configPath);
       profileConfig = rootConfig.profiles[profile]!;
       log.info('profile', 'legacy-runtime-defaults-upgraded', {
@@ -177,6 +202,7 @@ export async function resolveProfileRuntime(
         permissions: runtimeUpgrade.permissions,
         codex: runtimeUpgrade.codex,
         workspace: defaultWorkspaceUpgrade.changed,
+        schema: loadedRoot.upgraded,
       });
     }
     assertBootstrapAppMatchesExistingProfile(opts, profile, profileConfig);
@@ -189,7 +215,7 @@ export async function resolveProfileRuntime(
     assertBootstrapAppMatchesExistingConfig(opts, profile, existing);
     const cfg = await maybeMigratePlaintextSecret(existing, configPath, appPaths);
     const profileConfig = createRuntimeProfileConfig({
-      agentKind: requestedAgent ?? 'claude',
+      agentKind: requestedAgent ?? requireNamedAgentKind(profile),
       accounts: cfg.accounts,
       preferences: cfg.preferences,
       secrets: cfg.secrets,
@@ -204,7 +230,7 @@ export async function resolveProfileRuntime(
   if (!opts.allowBootstrap) {
     throw new Error('config not initialized');
   }
-  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
+  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? requireNamedAgentKind(profile);
   const workspace = opts.workspace;
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
@@ -233,7 +259,7 @@ async function bootstrapProfileIntoExistingRoot(args: {
   configPath: string;
 }): Promise<ProfileRuntime> {
   const { rootConfig, profile, requestedAgent, opts, appPaths, configPath } = args;
-  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? 'claude';
+  const bootstrapAgent = resolveBootstrapAgent(requestedAgent, profile) ?? requireNamedAgentKind(profile);
   const workspace = opts.workspace;
   const fresh = await resolveBootstrapAppConfig(opts);
   const encrypted = await encryptedConfigForProfile(fresh, appPaths);
@@ -291,18 +317,14 @@ function upgradeLegacyRuntimeDefaults(
     ? { defaultAccess: 'full' as const, maxAccess: 'full' as const }
     : profileConfig.permissions;
   const legacyCodexDefaults = profileConfig.permissionSource !== 'permissions';
-  const legacyIsolatedCodexHome =
-    legacyCodexDefaults &&
-    profileConfig.agentKind === 'codex' &&
-    Boolean(profileConfig.codex) &&
-    !profileConfig.codex?.codexHome &&
-    profileConfig.codex?.inheritCodexHome === false;
-  const legacyIgnoredUserConfig =
-    legacyCodexDefaults &&
-    profileConfig.agentKind === 'codex' &&
-    Boolean(profileConfig.codex) &&
-    !profileConfig.codex?.codexHome &&
-    profileConfig.codex?.ignoreUserConfig === true;
+  const legacyIsolatedCodexHome = shouldUpgradeIsolatedCodexHome(
+    legacyCodexDefaults && profileConfig.agentKind === 'codex',
+    profileConfig.codex,
+  );
+  const legacyIgnoredUserConfig = shouldUpgradeIgnoredUserConfig(
+    legacyCodexDefaults && profileConfig.agentKind === 'codex',
+    profileConfig.codex,
+  );
   const permissionsChanged = legacySandboxPolicy || shouldUpgradeClaudeDefaultPermissions;
   const permissionDefaultsMarkerChanged = !permissionDefaultsMigrated;
   const codexChanged = legacyIsolatedCodexHome || legacyIgnoredUserConfig;
@@ -321,11 +343,13 @@ function upgradeLegacyRuntimeDefaults(
       : {}),
     ...(profileConfig.codex
       ? {
-          codex: {
-            ...profileConfig.codex,
-            ...(legacyIsolatedCodexHome ? { inheritCodexHome: true } : {}),
-            ...(legacyIgnoredUserConfig ? { ignoreUserConfig: false } : {}),
-          },
+          codex: applyCodexLegacyUpgrades(
+            { ...profileConfig.codex },
+            {
+              isolatedHome: legacyIsolatedCodexHome,
+              ignoredUser: legacyIgnoredUserConfig,
+            },
+          ),
         }
       : {}),
   };
@@ -395,18 +419,14 @@ function resolveBootstrapAgent(
   requestedAgent: AgentKind | undefined,
   profile: string | undefined,
 ): AgentKind | undefined {
-  return (
-    requestedAgent ??
-    (profile === 'codex'
-      ? 'codex'
-      : profile === 'kimi'
-        ? 'kimi'
-        : profile === 'grok'
-          ? 'grok'
-          : profile === 'cursor'
-            ? 'cursor'
-            : undefined)
-  );
+  if (requestedAgent) return requestedAgent;
+  if (isAgentKind(profile)) return profile;
+  return undefined;
+}
+
+function requireNamedAgentKind(profile: string): AgentKind {
+  if (isAgentKind(profile)) return profile;
+  throw new Error(`agent kind is required. pass --agent ${AGENT_KINDS.join('|')}`);
 }
 
 async function hasLegacyConfig(configPath: string): Promise<boolean> {
@@ -417,17 +437,24 @@ async function hasLegacyConfig(configPath: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw err;
   }
-  const parsed = JSON.parse(raw) as { schemaVersion?: unknown };
-  return parsed.schemaVersion !== 2;
+  const parsed = JSON.parse(raw) as unknown;
+  return isLegacyProfileSchemaVersion(profileSchemaVersionOf(parsed));
 }
 
 async function migrateV1ToV2WithActiveBridgeHandling(
   options: MigrateV2Options,
   handler: ResolveProfileRuntimeOptions['handleActiveBridgeMigrationConflict'],
 ): Promise<void> {
+  await withActiveBridgeMigrationHandling(() => migrateV1ToV2(options), handler);
+}
+
+async function withActiveBridgeMigrationHandling(
+  work: () => Promise<unknown>,
+  handler: ResolveProfileRuntimeOptions['handleActiveBridgeMigrationConflict'],
+): Promise<void> {
   for (;;) {
     try {
-      await migrateV1ToV2(options);
+      await work();
       return;
     } catch (err) {
       if (!(err instanceof ActiveBridgeMigrationConflictError) || !handler) throw err;
@@ -579,7 +606,7 @@ function formatAmbiguousAgentSelectionError(
 ): string {
   const lines = detected.map((agent) => `  - ${agent.kind}: ${agent.binaryPath}`);
   return [
-    '检测到多个本地 agent，请使用 --agent <grok|claude|codex|kimi|cursor> 指定要初始化哪一个。',
+    `检测到多个本地 agent，请使用 --agent <${AGENT_KINDS.join('|')}> 指定要初始化哪一个。`,
     '已检测到：',
     ...lines,
   ].join('\n');
@@ -606,7 +633,6 @@ async function promptForDetectedAgentSelection(detected: DetectedAgent[]): Promi
       label: displayAgentKind(agent.kind),
       hint: agent.binaryPath,
     })),
-    initialValue: detected[0]?.kind,
   });
   if (p.isCancel(selected)) {
     p.cancel('已取消 agent 选择。');
@@ -624,15 +650,7 @@ class UserCancelledError extends Error {
 }
 
 function displayAgentKind(kind: AgentKind): string {
-  return kind === 'claude'
-    ? 'Claude Code'
-    : kind === 'kimi'
-      ? 'Kimi Code'
-      : kind === 'grok'
-        ? 'Grok Build'
-        : kind === 'cursor'
-          ? 'Cursor CLI'
-          : 'Codex CLI';
+  return descriptorFor(kind).displayName;
 }
 
 async function maybeMigrateRootPlaintextSecret(

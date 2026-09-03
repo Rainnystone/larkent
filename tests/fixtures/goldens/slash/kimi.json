@@ -1,0 +1,92 @@
+{
+  "/resume": {
+    "handled": true,
+    "sent": [
+      {
+        "markdown": "当前 Kimi 会话可恢复。\n使用 `/resume use <nonce>` 恢复（10 分钟内有效）。"
+      }
+    ],
+    "streams": []
+  },
+  "/status": {
+    "handled": true,
+    "sent": [
+      {
+        "card": {
+          "config": {
+            "wide_screen_mode": true,
+            "update_multi": true
+          },
+          "header": {
+            "title": {
+              "tag": "plain_text",
+              "content": "📊 当前状态"
+            }
+          },
+          "elements": [
+            {
+              "tag": "div",
+              "text": {
+                "tag": "lark_md",
+                "content": "🧭 **scope**: `chat-1`\n🧩 **profile**: kimi\n📁 **cwd**: `<cwd>`\n🔗 **session**: `sess-sla…`\n🤖 **agent**: Kimi Code\n🛡 **permission**: auto (kimi -p)\n🔐 **lark-cli**: app\n🏃 **active run**: no\n🚦 **queue**: unknown\n👤 **owner API**: ok owner=present refreshed=2023-11-14T22:13:20.000Z"
+              }
+            },
+            {
+              "tag": "hr"
+            },
+            {
+              "tag": "action",
+              "actions": [
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "🆕 新会话"
+                  },
+                  "type": "primary",
+                  "value": {
+                    "cmd": "new"
+                  }
+                },
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "🔁 恢复会话"
+                  },
+                  "type": "default",
+                  "value": {
+                    "cmd": "resume"
+                  }
+                },
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "📂 工作目录"
+                  },
+                  "type": "default",
+                  "value": {
+                    "cmd": "ws.list"
+                  }
+                },
+                {
+                  "tag": "button",
+                  "text": {
+                    "tag": "plain_text",
+                    "content": "💡 帮助"
+                  },
+                  "type": "default",
+                  "value": {
+                    "cmd": "help"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "streams": []
+  }
+}
