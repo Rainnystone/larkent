@@ -139,7 +139,7 @@ describe('policy fingerprint', () => {
       resourceScopeDigest: digestOf('scope'),
       attachmentPolicyShapeDigest: digestOf('attachments'),
     };
-    const goldens: Record<string, { input: FingerprintInputV2; hash: string }> = {
+    const goldens = {
       claude: { input: { ...shared, inheritCodexHome: false }, hash: 'U2Kkmm7iEU9Ol99NXdjeWw' },
       kimi: { input: { ...shared, inheritCodexHome: false }, hash: 'U2Kkmm7iEU9Ol99NXdjeWw' },
       grok: { input: { ...shared, inheritCodexHome: false }, hash: 'U2Kkmm7iEU9Ol99NXdjeWw' },
@@ -148,7 +148,7 @@ describe('policy fingerprint', () => {
         input: { ...shared, codexHome: '/state/codex-home', inheritCodexHome: false },
         hash: 'Uje6Rp7bY0Q6CG5G5RbdFQ',
       },
-    };
+    } satisfies Record<string, { input: FingerprintInputV2; hash: string }>;
 
     for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const) {
       expect(policyFingerprint(goldens[kind].input), kind).toBe(goldens[kind].hash);
