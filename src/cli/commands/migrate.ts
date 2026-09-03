@@ -11,6 +11,11 @@ import {
   type MigrateV2Result,
 } from '../../config/migrate-v2';
 import { legacyPaths, paths } from '../../config/paths';
+import {
+  assertSupportedProfileSchemaVersion,
+  isLegacyProfileSchemaVersion,
+  profileSchemaVersionOf,
+} from '../../config/migrations';
 import { agentKindFromString } from '../../config/profile-store';
 import { isAgentKind } from '../../agent/registry';
 import type { RootConfig } from '../../config/profile-schema';
@@ -155,7 +160,7 @@ async function hasLegacyProfileConfig(path: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw err;
   }
-  return !isRootConfigV2(JSON.parse(raw));
+  return isLegacyProfileSchemaVersion(profileSchemaVersionOf(JSON.parse(raw)));
 }
 
 async function migrateLegacyPaths(): Promise<void> {
@@ -209,6 +214,7 @@ async function migrateConfigShape(path: string): Promise<void> {
     console.log(`✓ config 结构已是 profile v2 格式：${path}`);
     return;
   }
+  assertSupportedProfileSchemaVersion(profileSchemaVersionOf(parsed));
 
   const obj = parsed as Partial<AppConfig> & LegacyShape;
 

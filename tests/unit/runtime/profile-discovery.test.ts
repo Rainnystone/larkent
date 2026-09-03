@@ -132,7 +132,7 @@ async function writeRootConfig(
   overrides: Pick<RootConfig, 'activeProfile' | 'profiles'>,
 ): Promise<void> {
   const config: RootConfig = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     preferences: {},
     ...overrides,
   };

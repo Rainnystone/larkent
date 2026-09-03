@@ -1,18 +1,21 @@
 import { existsSync } from 'node:fs';
-import { copyFile, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   PROFILE_SCHEMA_VERSION,
+  UnsupportedProfileSchemaError,
   upgradeProfileRecord,
   upgradeRootConfigDocument,
 } from '../../../src/config/migrations.js';
+import { migrateV1ToV2 } from '../../../src/config/migrate-v2.js';
 import { normalizeProfileConfig } from '../../../src/config/profile-schema.js';
 import { loadRootConfig, loadRootConfigWithMeta, saveRootConfig } from '../../../src/config/profile-store.js';
 import { createRuntimeAgent, resolveProfileBinary } from '../../../src/runtime/agent-runtime.js';
+import { resolveProfileRuntime } from '../../../src/runtime/profile-runtime.js';
 import { writeVersionExecutable } from '../../helpers/fake-executable.js';
-import { adapterDisplayName } from '../../helpers/scripted-jsonl-cli.js';
+import { adapterDisplayName, withEnvBin, withIsolatedPath } from '../../helpers/scripted-jsonl-cli.js';
 
 const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
 const roots: string[] = [];
@@ -141,6 +144,97 @@ describe('profile v2 to v3 migrations', () => {
     ).toThrow(/unsupported profile schemaVersion 4/);
   });
 
+  it('does not persist v3 into committed profile fixtures', async () => {
+    const fixture = join(fixtureRoot, 'env-var/config.json');
+    const before = await readFile(fixture, 'utf8');
+    expect(JSON.parse(before).schemaVersion).toBe(2);
+    await loadRootConfig(fixture);
+    expect(await readFile(fixture, 'utf8')).toBe(before);
+  });
+
+  it('persists v3 from profile-runtime on a tmp copy and reloads as a no-op', async () => {
+    const dest = await copyFixture('env-var');
+    const raw = JSON.parse(await readFile(dest, 'utf8')) as {
+      profiles: Record<string, { accounts?: { app?: { secret?: string } } }>;
+    };
+    raw.profiles.kimi!.accounts!.app!.secret = '${APP_SECRET}';
+    raw.profiles.grok!.accounts!.app!.secret = '${APP_SECRET}';
+    await writeFile(dest, `${JSON.stringify(raw, null, 2)}\n`);
+
+    await resolveProfileRuntime({
+      config: dest,
+      profile: 'kimi',
+      allowBootstrap: false,
+    });
+    const afterFirst = await readFile(dest, 'utf8');
+    const persisted = JSON.parse(afterFirst) as {
+      schemaVersion: number;
+      profiles: Record<string, { schemaVersion: number; agent?: { kind?: string } }>;
+    };
+    expect(persisted.schemaVersion).toBe(PROFILE_SCHEMA_VERSION);
+    expect(persisted.profiles.kimi?.agent).toEqual({ kind: 'kimi' });
+
+    await resolveProfileRuntime({
+      config: dest,
+      profile: 'kimi',
+      allowBootstrap: false,
+    });
+    expect(await readFile(dest, 'utf8')).toBe(afterFirst);
+  });
+
+  it('skips migrateV1ToV2 for both v2 and v3 roots', async () => {
+    const v2Path = await copyFixture('env-var');
+    const v2Before = await readFile(v2Path, 'utf8');
+    await expect(migrateV1ToV2({
+      rootDir: join(v2Path, '..'),
+      configFile: v2Path,
+      profile: 'kimi',
+    })).resolves.toEqual({ migrated: false, profile: 'kimi' });
+    expect(await readFile(v2Path, 'utf8')).toBe(v2Before);
+
+    const firstLoad = await loadRootConfigWithMeta(v2Path);
+    await saveRootConfig(firstLoad!.root, v2Path);
+    const v3Before = await readFile(v2Path, 'utf8');
+    await expect(migrateV1ToV2({
+      rootDir: join(v2Path, '..'),
+      configFile: v2Path,
+      profile: 'kimi',
+    })).resolves.toEqual({ migrated: false, profile: 'kimi' });
+    expect(await readFile(v2Path, 'utf8')).toBe(v3Before);
+  });
+
+  it('does not rewrite an unsupported schemaVersion config on load or migrate', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'profile-unsupported-'));
+    roots.push(root);
+    const dest = join(root, 'config.json');
+    const future = {
+      schemaVersion: 4,
+      activeProfile: 'kimi',
+      profiles: {
+        kimi: {
+          schemaVersion: 4,
+          agentKind: 'kimi',
+          agent: { kind: 'kimi', binaryPath: '/keep/me' },
+        },
+      },
+    };
+    const payload = `${JSON.stringify(future, null, 2)}\n`;
+    await writeFile(dest, payload);
+
+    await expect(loadRootConfig(dest)).rejects.toBeInstanceOf(UnsupportedProfileSchemaError);
+    expect(await readFile(dest, 'utf8')).toBe(payload);
+
+    await expect(migrateV1ToV2({ rootDir: root, configFile: dest, profile: 'kimi' })).rejects.toBeInstanceOf(
+      UnsupportedProfileSchemaError,
+    );
+    expect(await readFile(dest, 'utf8')).toBe(payload);
+
+    await expect(
+      resolveProfileRuntime({ config: dest, profile: 'kimi', allowBootstrap: false }),
+    ).rejects.toBeInstanceOf(UnsupportedProfileSchemaError);
+    expect(await readFile(dest, 'utf8')).toBe(payload);
+  });
+
   it('lets two same-kind profiles spawn distinct binaryPath values', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'profile-two-binaries-'));
     roots.push(dir);
@@ -160,15 +254,27 @@ describe('profile v2 to v3 migrations', () => {
       accounts,
     });
 
+    expect(left.agentKind).toBe('cursor');
+    expect(right.agentKind).toBe('cursor');
     expect(resolveProfileBinary(left)).toBe(leftBin);
     expect(resolveProfileBinary(right)).toBe(rightBin);
 
-    const leftAgent = createRuntimeAgent(left, { profileDir: join(dir, 'left') });
-    const rightAgent = createRuntimeAgent(right, { profileDir: join(dir, 'right') });
-    expect(leftAgent.id).toBe('cursor');
-    expect(rightAgent.displayName).toBe(adapterDisplayName('cursor'));
-    await expect(leftAgent.isAvailable()).resolves.toBe(true);
-    await expect(rightAgent.isAvailable()).resolves.toBe(true);
+    await withEnvBin('cursor', join(dir, 'missing-env-cursor'), async () => {
+      await withIsolatedPath(join(dir, 'empty-path'), async () => {
+        const leftAgent = createRuntimeAgent(left, { profileDir: join(dir, 'left') });
+        const rightAgent = createRuntimeAgent(right, { profileDir: join(dir, 'right') });
+        expect(leftAgent.id).toBe('cursor');
+        expect(rightAgent.displayName).toBe(adapterDisplayName('cursor'));
+        await expect(leftAgent.checkAvailability?.()).resolves.toEqual({
+          ok: true,
+          version: 'cursor-agent 0.0.0-left',
+        });
+        await expect(rightAgent.checkAvailability?.()).resolves.toEqual({
+          ok: true,
+          version: 'cursor-agent 0.0.0-right',
+        });
+      });
+    });
 
     const missing = normalizeProfileConfig({
       schemaVersion: PROFILE_SCHEMA_VERSION,

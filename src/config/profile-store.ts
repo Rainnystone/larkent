@@ -10,7 +10,12 @@ import {
   type RootConfig,
 } from './profile-schema';
 import type { AppConfig } from './schema';
-import { PROFILE_SCHEMA_VERSION, upgradeRootConfigDocument } from './migrations';
+import {
+  PROFILE_SCHEMA_VERSION,
+  assertSupportedProfileSchemaVersion,
+  profileSchemaVersionOf,
+  upgradeRootConfigDocument,
+} from './migrations';
 
 export interface LoadedRootConfig {
   root: RootConfig;
@@ -20,6 +25,8 @@ export interface LoadedRootConfig {
 export async function loadRootConfigWithMeta(path: string): Promise<LoadedRootConfig | undefined> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    assertSupportedProfileSchemaVersion(profileSchemaVersionOf(parsed));
+    if (!isRootConfig(parsed)) return undefined;
     const upgraded = upgradeRootConfigDocument(parsed);
     if (!isRootConfig(upgraded.document)) return undefined;
     return {

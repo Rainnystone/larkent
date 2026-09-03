@@ -49,7 +49,11 @@ describe('registry and runtime lock integration', () => {
       registryFile,
     });
 
-    const persisted = JSON.parse(await readFile(registryFile, 'utf8')) as { entries: ProcessEntry[] };
+    const persisted = JSON.parse(await readFile(registryFile, 'utf8')) as {
+      schemaVersion?: number;
+      entries: ProcessEntry[];
+    };
+    expect(persisted.schemaVersion).toBe(1);
     expect(persisted.entries.map((item) => item.id)).toEqual([registered.id]);
     expect(persisted.entries[0]).toMatchObject({
       appId: 'cli_new',

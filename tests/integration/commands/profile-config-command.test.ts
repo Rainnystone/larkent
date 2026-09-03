@@ -298,7 +298,7 @@ async function writeRoot(
   preferences: RootConfig['profiles'][string]['preferences'] = {},
 ): Promise<RootConfig> {
   const root: RootConfig = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     activeProfile: 'claude',
     preferences: {},
     profiles: {

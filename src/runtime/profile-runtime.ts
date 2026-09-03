@@ -30,6 +30,10 @@ import {
   writeActiveProfile,
 } from '../config/profile-store';
 import {
+  isLegacyProfileSchemaVersion,
+  profileSchemaVersionOf,
+} from '../config/migrations';
+import {
   createDefaultProfileConfig,
   type AgentKind,
   type CreateDefaultProfileConfigInput,
@@ -423,8 +427,8 @@ async function hasLegacyConfig(configPath: string): Promise<boolean> {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
     throw err;
   }
-  const parsed = JSON.parse(raw) as { schemaVersion?: unknown };
-  return parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3;
+  const parsed = JSON.parse(raw) as unknown;
+  return isLegacyProfileSchemaVersion(profileSchemaVersionOf(parsed));
 }
 
 async function migrateV1ToV2WithActiveBridgeHandling(

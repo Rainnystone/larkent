@@ -15,7 +15,7 @@ import {
   type CodexConfig,
   type RootConfig,
 } from './profile-schema';
-import { PROFILE_SCHEMA_VERSION } from './migrations';
+import { PROFILE_SCHEMA_VERSION, assertSupportedProfileSchemaVersion } from './migrations';
 import { markPermissionDefaultsMigration, saveRootConfig } from './profile-store';
 import type { AppConfig } from './schema';
 import { isAgentKind, unknownAgentKindMessage } from '../agent/registry';
@@ -107,6 +107,7 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   if (schemaVersion === 2 || schemaVersion === PROFILE_SCHEMA_VERSION) {
     return { migrated: false, profile: (parsed as RootConfig).activeProfile ?? profile };
   }
+  assertSupportedProfileSchemaVersion(schemaVersion);
 
   await assertNoActiveOldProcesses([
     paths.userRegistryFile,

@@ -1,3 +1,4 @@
+import { isAbsolute } from 'node:path';
 import type {
   AppCredentials,
   AppPreferences,
@@ -201,6 +202,7 @@ export interface RootConfig {
 
 export interface CreateDefaultProfileConfigInput {
   agentKind: AgentKind;
+  binaryPath?: string;
   /** Deployment mode. Default 'team' in this fork. */
   mode?: ProfileMode;
   accounts: {
@@ -219,12 +221,16 @@ export function createDefaultProfileConfig(
   input: CreateDefaultProfileConfigInput,
 ): ProfileConfig {
   return normalizeProfileConfig({
+    ...input,
     schemaVersion: PROFILE_SCHEMA_VERSION,
     agent: {
       kind: input.agentKind,
-      ...(input.codex?.binaryPath ? { binaryPath: input.codex.binaryPath } : {}),
+      ...(input.binaryPath
+        ? { binaryPath: input.binaryPath }
+        : input.codex?.binaryPath && isAbsolute(input.codex.binaryPath)
+          ? { binaryPath: input.codex.binaryPath }
+          : {}),
     },
-    ...input,
   });
 }
 
@@ -291,9 +297,9 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const larkCli = normalizeLarkCli(raw.larkCli);
 
   const binaryPath =
-    typeof raw.agent?.binaryPath === 'string'
+    typeof raw.agent?.binaryPath === 'string' && raw.agent.binaryPath.trim()
       ? raw.agent.binaryPath
-      : typeof raw.codex?.binaryPath === 'string'
+      : agentKind === 'codex' && typeof raw.codex?.binaryPath === 'string' && isAbsolute(raw.codex.binaryPath)
         ? raw.codex.binaryPath
         : undefined;
   const agent: ProfileAgentConfig = {

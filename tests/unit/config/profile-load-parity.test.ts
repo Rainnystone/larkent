@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -17,7 +17,11 @@ const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
 
 describe('P4 profile load parity', () => {
   it('loads env-var kimi and grok profiles to the same runtime adapter as today', async () => {
-    const root = await loadRootConfig(join(fixtureRoot, 'env-var/config.json'));
+    const fixture = join(fixtureRoot, 'env-var/config.json');
+    const before = await readFile(fixture, 'utf8');
+    expect(JSON.parse(before).schemaVersion).toBe(2);
+    const root = await loadRootConfig(fixture);
+    expect(await readFile(fixture, 'utf8')).toBe(before);
     expect(root?.schemaVersion).toBe(3);
     expect(root?.profiles.kimi?.agentKind).toBe('kimi');
     expect(root?.profiles.grok?.agentKind).toBe('grok');
@@ -55,6 +59,8 @@ describe('P4 profile load parity', () => {
   it('loads a PATH claude profile to the same runtime adapter as today', async () => {
     const root = await loadRootConfig(join(fixtureRoot, 'path-claude/config.json'));
     expect(root?.profiles.claude?.agentKind).toBe('claude');
+    expect(root?.profiles.claude?.agent).toEqual({ kind: 'claude' });
+    expect(root?.profiles.claude?.agent).not.toHaveProperty('binaryPath');
     const dir = await mkdtemp(join(tmpdir(), 'pin-path-claude-'));
     await writeVersionExecutable(dir, 'claude', 'claude 0.0.0-pin');
     await withEnvBin('claude', undefined, async () => {
@@ -91,6 +97,8 @@ describe('P4 profile load parity', () => {
   it('loads a Cursor versioned-agent profile through resolveCursorBinary', async () => {
     const root = await loadRootConfig(join(fixtureRoot, 'cursor-versioned-agent/config.json'));
     expect(root?.profiles.cursor?.agentKind).toBe('cursor');
+    expect(root?.profiles.cursor?.agent).toEqual({ kind: 'cursor' });
+    expect(root?.profiles.cursor?.agent).not.toHaveProperty('binaryPath');
     const dir = await mkdtemp(join(tmpdir(), 'pin-cursor-agent-'));
     const agentBin = await writeVersionExecutable(dir, 'agent', 'cursor-agent 2026.08.28-pin');
     await withEnvBin('cursor', undefined, async () => {
