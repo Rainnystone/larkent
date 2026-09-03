@@ -6,6 +6,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store.js';
 import { Supervisor } from '../../../src/runtime/supervisor.js';
+import type { SessionCatalogEntry } from '../../../src/session/catalog.js';
 import { writeScriptedJsonlExecutable } from '../../helpers/fake-executable.js';
 import {
   PIN_PROMPT,
@@ -13,12 +14,14 @@ import {
   envBinVar,
   pinnedDisplayName,
   readScriptedRecords,
+  scriptedCatalogHandle,
   scriptedJsonlLines,
   scriptedVersion,
   waitForQuietCalls,
   waitUntil,
   withProcessEnv,
   type RecordingLarkChannel,
+  type ScriptedCatalogHandle,
 } from '../../helpers/scripted-jsonl-cli.js';
 
 const PAIRS = [
@@ -138,18 +141,31 @@ describe.sequential('P6 multi-bot isolation', () => {
 
         const catalogPathA = join(root, 'profiles', kindA, 'sessions.json.catalog.json');
         const catalogPathB = join(root, 'profiles', kindB, 'sessions.json.catalog.json');
-        await waitUntil(async () => (await readCatalog(catalogPathA)).length > 0);
-        const catalogA = await readCatalog(catalogPathA);
-        const catalogB = await readCatalog(catalogPathB);
-        expect(catalogB).toEqual([]);
-        expect(catalogA).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              agentId: kindA,
-              status: 'active',
-            }),
-          ]),
+        const handleA = scriptedCatalogHandle(kindA);
+        await waitUntil(async () =>
+          asCatalogEntries(await readCatalog(catalogPathA)).some((row) =>
+            isActiveHandle(row, kindA, handleA),
+          ),
         );
+        const catalogA = asCatalogEntries(await readCatalog(catalogPathA));
+        const catalogB = asCatalogEntries(await readCatalog(catalogPathB));
+        expect(catalogB).toEqual([]);
+        const entryA = catalogA.find((row) => isActiveHandle(row, kindA, handleA));
+        expect(entryA).toMatchObject({ agentId: kindA, status: 'active' });
+        switch (handleA.field) {
+          case 'sessionId':
+            expect(entryA?.sessionId).toBe(handleA.sessionId);
+            expect(entryA?.threadId).toBeUndefined();
+            break;
+          case 'threadId':
+            expect(entryA?.threadId).toBe(handleA.threadId);
+            expect(entryA?.sessionId).toBeUndefined();
+            break;
+          default: {
+            const exhaustive: never = handleA;
+            throw new Error(`unhandled catalog handle: ${String(exhaustive)}`);
+          }
+        }
 
         const lockA = JSON.parse(
           await readFile(join(root, 'registry', 'locks', 'profile', `${kindA}.lock.meta.json`), 'utf8'),
@@ -180,6 +196,32 @@ async function readCatalog(path: string): Promise<unknown[]> {
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
     throw err;
+  }
+}
+
+function asCatalogEntries(raw: unknown[]): SessionCatalogEntry[] {
+  return raw.filter((row): row is SessionCatalogEntry => {
+    if (typeof row !== 'object' || row === null) return false;
+    const entry = row as Partial<SessionCatalogEntry>;
+    return typeof entry.agentId === 'string' && typeof entry.status === 'string';
+  });
+}
+
+function isActiveHandle(
+  row: SessionCatalogEntry,
+  kind: string,
+  handle: ScriptedCatalogHandle,
+): boolean {
+  if (row.agentId !== kind || row.status !== 'active') return false;
+  switch (handle.field) {
+    case 'sessionId':
+      return row.sessionId === handle.sessionId && row.threadId === undefined;
+    case 'threadId':
+      return row.threadId === handle.threadId && row.sessionId === undefined;
+    default: {
+      const exhaustive: never = handle;
+      throw new Error(`unhandled catalog handle: ${String(exhaustive)}`);
+    }
   }
 }
 

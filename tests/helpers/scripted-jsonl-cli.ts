@@ -128,6 +128,30 @@ export function scriptedVersion(kind: PinnedAgentKind): string {
   }
 }
 
+export type ScriptedCatalogHandle =
+  | { field: 'sessionId'; sessionId: string }
+  | { field: 'threadId'; threadId: string };
+
+/** Resume handle emitted by `scriptedJsonlLines` and persisted on catalog upsert. */
+export function scriptedCatalogHandle(kind: PinnedAgentKind): ScriptedCatalogHandle {
+  switch (kind) {
+    case 'claude':
+      return { field: 'sessionId', sessionId: CLAUDE_SESSION };
+    case 'codex':
+      return { field: 'threadId', threadId: CODEX_THREAD };
+    case 'kimi':
+      return { field: 'sessionId', sessionId: KIMI_SESSION };
+    case 'grok':
+      return { field: 'sessionId', sessionId: GROK_SESSION };
+    case 'cursor':
+      return { field: 'sessionId', sessionId: CURSOR_SESSION };
+    default: {
+      const exhaustive: never = kind;
+      throw new Error(`unhandled agent kind: ${exhaustive}`);
+    }
+  }
+}
+
 export function createPinnedAdapter(
   kind: PinnedAgentKind,
   binary: string,
