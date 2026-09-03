@@ -38,11 +38,11 @@ describe.sequential('P4 profile load parity', () => {
     expect(profile?.codex).toBeUndefined();
 
     const binDir = join(copied, 'bin');
-    const fake = await writeScriptedJsonlExecutable(join(binDir, 'kimi'), {
+    const fake = await writeScriptedJsonlExecutable(join(binDir, 'kimi-env-actual'), {
       lines: scriptedJsonlLines('kimi', 'happy'),
       version: scriptedVersion('kimi'),
     });
-    const decoy = await writeScriptedJsonlExecutable(join(binDir, 'decoy-kimi'), {
+    const decoy = await writeScriptedJsonlExecutable(join(binDir, 'kimi'), {
       lines: scriptedJsonlLines('kimi', 'happy'),
       version: scriptedVersion('kimi'),
     });

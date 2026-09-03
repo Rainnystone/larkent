@@ -42,23 +42,22 @@ afterEach(async () => {
 describe.sequential('P7 detection and /doctor parity', () => {
   it('detectInstalledAgents reports grok, claude, codex, kimi, then cursor from PATH', async () => {
     const root = await makeRoot();
-    await Promise.all(
-      PINNED_AGENT_KINDS.map((kind) =>
-        writeScriptedJsonlExecutable(join(root, scriptedBinaryName(kind)), {
-          lines: scriptedJsonlLines(kind, 'doctor'),
-          version: scriptedVersion(kind),
-        }),
-      ),
-    );
+    const written = {} as Record<PinnedAgentKind, { path: string }>;
+    for (const kind of PINNED_AGENT_KINDS) {
+      written[kind] = await writeScriptedJsonlExecutable(join(root, scriptedBinaryName(kind)), {
+        lines: scriptedJsonlLines(kind, 'doctor'),
+        version: scriptedVersion(kind),
+      });
+    }
     await withProcessEnv({ ...BIN_ENV, PATH: root }, async () => {
       const detected = await detectInstalledAgents();
       expect(detected.map((row) => row.kind)).toEqual(['grok', 'claude', 'codex', 'kimi', 'cursor']);
       expect(detected).toEqual([
-        { kind: 'grok', binaryPath: join(root, 'grok') },
-        { kind: 'claude', binaryPath: join(root, 'claude') },
-        { kind: 'codex', binaryPath: join(root, 'codex') },
-        { kind: 'kimi', binaryPath: join(root, 'kimi') },
-        { kind: 'cursor', binaryPath: join(root, 'cursor-agent') },
+        { kind: 'grok', binaryPath: written.grok.path },
+        { kind: 'claude', binaryPath: written.claude.path },
+        { kind: 'codex', binaryPath: written.codex.path },
+        { kind: 'kimi', binaryPath: written.kimi.path },
+        { kind: 'cursor', binaryPath: written.cursor.path },
       ]);
     });
   });

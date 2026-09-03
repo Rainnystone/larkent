@@ -61,7 +61,10 @@ export async function writeScriptedJsonlExecutable(
   options: ScriptedJsonlOptions,
 ): Promise<ScriptedJsonlExecutable> {
   await mkdir(dirname(file), { recursive: true });
-  const recordPath = `${file}.argv.jsonl`;
+  const win = process.platform === 'win32';
+  const scriptPath = win ? `${stripCmd(file)}.cjs` : file;
+  const execPath = win ? (isCmd(file) ? file : `${file}.CMD`) : file;
+  const recordPath = `${stripCmd(file)}.argv.jsonl`;
   const version = options.version ?? 'scripted-jsonl 0.0.0';
   const help = options.help ?? 'Usage: scripted-jsonl --version';
   const lines = JSON.stringify(options.lines);
@@ -69,8 +72,7 @@ export async function writeScriptedJsonlExecutable(
   const stderr = options.stderr ? `process.stderr.write(${JSON.stringify(options.stderr)});` : '';
   const exitCode = options.exitCode ?? 0;
   const exitDelayMs = options.exitDelayMs ?? 0;
-  const source = `#!${process.execPath}
-const { writeFileSync } = require('node:fs');
+  const source = `${win ? '' : `#!${process.execPath}\n`}const { writeFileSync } = require('node:fs');
 const argv = process.argv.slice(2);
 if (argv.includes('--version')) {
   console.log(${JSON.stringify(version)});
@@ -105,7 +107,14 @@ process.stdin.on('end', () => {
   setTimeout(() => process.exit(${exitCode}), ${exitDelayMs});
 });
 `;
-  await writeFile(file, source, { mode: 0o755 });
-  await chmod(file, 0o755);
-  return { path: file, recordPath };
+  await writeFile(scriptPath, source, { mode: 0o755 });
+  await chmod(scriptPath, 0o755);
+  if (win) {
+    await writeFile(execPath, `@echo off\r\n"${process.execPath}" "${scriptPath}" %*\r\n`, { mode: 0o755 });
+  }
+  return { path: execPath, recordPath };
+}
+
+function stripCmd(file: string): string {
+  return isCmd(file) ? file.slice(0, -4) : file;
 }

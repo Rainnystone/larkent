@@ -59,9 +59,16 @@ describe('P2 v1 catalog resume', () => {
     const resumed = await start(h);
     expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw new Error('expected resumed run');
-    const stored = kind === 'codex' ? entry!.threadId : entry!.sessionId;
-    expect(resumed.resumeFrom).toBe(stored);
-    expect(h.agent.runOptions[1]?.sessionId ?? h.agent.runOptions[1]?.threadId).toBe(stored);
+    const resumedOpts = h.agent.runOptions[1];
+    if (kind === 'codex') {
+      expect(resumed.resumeFrom).toBe('thread-v1-codex');
+      expect(resumedOpts?.threadId).toBe('thread-v1-codex');
+      expect(resumedOpts?.sessionId).toBeUndefined();
+    } else {
+      expect(resumed.resumeFrom).toBe(`sess-v1-${kind}`);
+      expect(resumedOpts?.sessionId).toBe(`sess-v1-${kind}`);
+      expect(resumedOpts?.threadId).toBeUndefined();
+    }
   });
 });
 

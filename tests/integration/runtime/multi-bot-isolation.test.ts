@@ -16,6 +16,7 @@ import {
   scriptedJsonlLines,
   scriptedVersion,
   waitForQuietCalls,
+  waitUntil,
   withProcessEnv,
   type RecordingLarkChannel,
 } from '../../helpers/scripted-jsonl-cli.js';
@@ -135,14 +136,20 @@ describe.sequential('P6 multi-bot isolation', () => {
           ]),
         );
 
-        const catalogA = JSON.parse(
-          await readFile(join(root, 'profiles', kindA, 'sessions.json.catalog.json'), 'utf8').catch(() => '[]'),
-        ) as unknown[];
-        const catalogB = JSON.parse(
-          await readFile(join(root, 'profiles', kindB, 'sessions.json.catalog.json'), 'utf8').catch(() => '[]'),
-        ) as unknown[];
+        const catalogPathA = join(root, 'profiles', kindA, 'sessions.json.catalog.json');
+        const catalogPathB = join(root, 'profiles', kindB, 'sessions.json.catalog.json');
+        await waitUntil(async () => (await readCatalog(catalogPathA)).length > 0);
+        const catalogA = await readCatalog(catalogPathA);
+        const catalogB = await readCatalog(catalogPathB);
         expect(catalogB).toEqual([]);
-        expect(Array.isArray(catalogA)).toBe(true);
+        expect(catalogA).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              agentId: kindA,
+              status: 'active',
+            }),
+          ]),
+        );
 
         const lockA = JSON.parse(
           await readFile(join(root, 'registry', 'locks', 'profile', `${kindA}.lock.meta.json`), 'utf8'),
@@ -164,6 +171,16 @@ function profileFor(kind: 'kimi' | 'grok' | 'cursor', appId: string, workspace: 
   });
   profile.workspaces.default = workspace;
   return profile;
+}
+
+async function readCatalog(path: string): Promise<unknown[]> {
+  try {
+    const raw = JSON.parse(await readFile(path, 'utf8')) as unknown;
+    return Array.isArray(raw) ? raw : [];
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw err;
+  }
 }
 
 function mentionMessage(input: {
