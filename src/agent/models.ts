@@ -57,11 +57,19 @@ const GROK_MODELS: ModelOption[] = [
   { value: 'grok-4.5', label: 'Grok 4.5' },
 ];
 
+/** Cursor CLI models. Forwarded to `agent --model`. */
+const CURSOR_MODELS: ModelOption[] = [
+  { value: DEFAULT_MODEL, label: '跟随默认（不指定）' },
+  { value: 'composer-2.5', label: 'Composer 2.5' },
+  { value: 'grok-4.6', label: 'Grok 4.6' },
+];
+
 /** The model picker options for a profile's agent kind. */
 export function supportedModels(agentKind: AgentKind): ModelOption[] {
   if (agentKind === 'codex') return CODEX_MODELS;
   if (agentKind === 'kimi') return KIMI_MODELS;
   if (agentKind === 'grok') return GROK_MODELS;
+  if (agentKind === 'cursor') return CURSOR_MODELS;
   return CLAUDE_MODELS;
 }
 

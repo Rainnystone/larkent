@@ -4,6 +4,7 @@ import {
   claudeCapability,
   capabilityForProfile,
   codexCapability,
+  cursorCapability,
   grokCapability,
   kimiCapability,
   usesNativeSessionId,
@@ -161,6 +162,46 @@ describe('agent capability contract', () => {
     expect(usesNativeSessionId('grok')).toBe(true);
     expect(usesNativeSessionId('claude')).toBe(true);
     expect(usesNativeSessionId('kimi')).toBe(true);
+    expect(usesNativeSessionId('cursor')).toBe(true);
     expect(usesNativeSessionId('codex')).toBe(false);
+  });
+
+  it('defines Cursor capability with session-id resume and argv prompt injection', () => {
+    const capability = cursorCapability();
+
+    expect(capability).toMatchObject({
+      agentId: 'cursor',
+      sessionKind: 'cursor-session',
+      promptInjection: 'argv-prefix',
+      supportsNativeHistory: true,
+      systemPrompt: BRIDGE_SYSTEM_PROMPT,
+      callback: {
+        marker: '__bridge_cb',
+        legacyMarkers: [],
+      },
+      permissions: {
+        maxAccess: 'full',
+      },
+    });
+  });
+
+  it('uses Cursor profile max access as the static capability ceiling', () => {
+    const profile = createDefaultProfileConfig({
+      agentKind: 'cursor',
+      accounts: {
+        app: {
+          id: 'cli_test',
+          secret: '${APP_SECRET}',
+          tenant: 'feishu',
+        },
+      },
+      permissions: {
+        defaultAccess: 'workspace',
+        maxAccess: 'workspace',
+      },
+    });
+
+    expect(cursorCapability(profile).permissions.maxAccess).toBe('workspace');
+    expect(capabilityForProfile(profile).agentId).toBe('cursor');
   });
 });

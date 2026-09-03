@@ -107,6 +107,7 @@
     "grok",
     "grok-build",
     "kimi",
+    "cursor",
     "cli",
     "channel",
     "bridge"

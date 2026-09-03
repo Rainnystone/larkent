@@ -326,7 +326,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             policy,
             event: e,
           });
-          if (capability.agentId === 'claude' && e.type === 'system' && e.sessionId) {
+          if (usesNativeSessionId(capability.agentId) && e.type === 'system' && e.sessionId) {
             sessions.set(docSessionScopeId, e.sessionId, policy.cwdRealpath);
           }
           switch (e.type) {

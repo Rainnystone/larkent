@@ -181,7 +181,8 @@ function isRuntimeLockMeta(value: unknown): value is RuntimeLockMeta {
     (meta.agentKind === 'claude' ||
       meta.agentKind === 'codex' ||
       meta.agentKind === 'kimi' ||
-      meta.agentKind === 'grok') &&
+      meta.agentKind === 'grok' ||
+      meta.agentKind === 'cursor') &&
     typeof meta.pid === 'number' &&
     typeof meta.startedAt === 'string' &&
     (meta.appId === undefined || typeof meta.appId === 'string')

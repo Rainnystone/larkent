@@ -2,6 +2,7 @@ import { detectInstalledAgents } from '../cli/agent-detection';
 import { resolveAppPaths } from '../config/app-paths';
 import { setSecret } from '../config/keystore';
 import {
+  agentKindFromString,
   createRootConfig,
   loadRootConfig,
   readActiveProfile,
@@ -77,14 +78,7 @@ export interface CreateProfileInput {
  */
 export async function onboardCreate(body: unknown, rootDir?: string) {
   const fv = asRecord(body);
-  const agentKind: AgentKind =
-    fv.agentKind === 'codex'
-      ? 'codex'
-      : fv.agentKind === 'kimi'
-        ? 'kimi'
-        : fv.agentKind === 'grok'
-          ? 'grok'
-          : 'claude';
+  const agentKind: AgentKind = agentKindFromString(String(fv.agentKind ?? '')) ?? 'claude';
   const input: CreateProfileInput = {
     profile: String(fv.profile ?? '').trim() || agentKind,
     agentKind,
@@ -132,6 +126,15 @@ export async function writeNewProfile(
       throw new HttpError(
         400,
         '未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。',
+      );
+    }
+  }
+  if (input.agentKind === 'cursor') {
+    const detected = await detectInstalledAgents();
+    if (!detected.some((d) => d.kind === 'cursor')) {
+      throw new HttpError(
+        400,
+        '未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。',
       );
     }
   }

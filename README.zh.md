@@ -9,7 +9,8 @@
 
 本仓库是 `lark-channel-bridge` / Kimi Code 分支的**增量** fork。Claude Code、
 Codex CLI、Kimi Code 适配器都还在。Grok Build 是第四个（`src/agent/grok/`）。
-`--agent grok` 时新 profile 默认走 Grok Build。
+Cursor CLI 是第五个（`src/agent/cursor/`）。`--agent grok` 时新 profile 默认走
+Grok Build。
 
 没有发 npm，从源码安装。
 
@@ -19,11 +20,16 @@ Codex CLI、Kimi Code 适配器都还在。Grok Build 是第四个（`src/agent/
 |---|---|---|---|---|---|
 | **Grok Build** | `grok` | `grok` | `grok -p --output-format streaming-json --always-approve` | `-r`（不要用 `-s`） | `auth.x.ai` / grok 代理（**必须在墙外**） |
 | **Kimi Code** | `kimi` | `kimi` | `kimi -p --output-format stream-json` | `-S` | Moonshot |
+| **Cursor CLI** | `cursor` | `cursor-agent`（回退 `agent`） | `agent -p --output-format stream-json --force --sandbox disabled --approve-mcps --trust` | `--resume` | Cursor API（已登录 CLI 或 `CURSOR_API_KEY`） |
 
 本机若装了 Claude / Codex，`--agent claude` / `codex` 仍可用。一个 profile
 不要混引擎；另建 profile。
 
-把下文 `<AGENT>` 换成 `grok` 或 `kimi`。profile 名默认等于引擎名。
+**如果任务是「飞书 bot 接 Grok Build」：** `--agent grok`。
+**如果任务是「飞书 bot 接 Kimi Code」：** `--agent kimi`。
+**如果任务是「飞书 bot 接 Cursor CLI」：** `--agent cursor`。
+
+把下文 `<AGENT>` 换成 `grok`、`kimi` 或 `cursor`。profile 名默认等于引擎名。
 
 ## 心智模型
 
@@ -31,7 +37,7 @@ Codex CLI、Kimi Code 适配器都还在。Grok Build 是第四个（`src/agent/
 飞书用户消息 ──WS 长连接──> 本进程
    │  scope = chatId（话题群 chatId:threadId）
    ▼
-拉起本机 CLI（grok -p … 或 kimi -p …）→ stdout JSONL → AgentEvent
+拉起本机 CLI（grok / kimi / cursor-agent -p …）→ stdout JSONL → AgentEvent
    ▼
 一条飞书 markdown（默认不展示 tool 过程）
 ```
@@ -52,8 +58,10 @@ Codex CLI、Kimi Code 适配器都还在。Grok Build 是第四个（`src/agent/
 - **Grok Build**：机器必须打到 xAI。墙内主机即使用户在别的设备完成了
   device-code 也会失败。不要把 grok profile 放在境内 VPS。
 - **Kimi Code**：不需要 xAI；仍要能连 `open.feishu.cn`。
+- **Cursor CLI**：需要 Cursor API（已登录 CLI 或 `CURSOR_API_KEY`）。不需要 xAI。
 - **不要**给 bot 单独设 `GROK_HOME` / 隔离 `~/.grok`，继承已登录的
-  `auth.json`。Kimi 同理（`~/.kimi-code`）。隔离家目录等于再登一次。
+  `auth.json`。Kimi 同理（`~/.kimi-code`）。Cursor 继承已登录 CLI /
+  `CURSOR_API_KEY`。隔离家目录等于再登一次。
 - 想走 SuperGrok 额度就 **不要**设 `XAI_API_KEY`。
 
 ## 前置（安装前先核对）
@@ -65,14 +73,17 @@ Codex CLI、Kimi Code 适配器都还在。Grok Build 是第四个（`src/agent/
 | lark-cli | `lark-cli --version` | 如 `1.0.x` |
 | Grok（若 `--agent grok`） | `grok --version` 且 `test -f ~/.grok/auth.json` | 二进制 + 登录文件 |
 | Kimi（若 `--agent kimi`） | `kimi -p "say OK" --output-format stream-json` | JSONL，退出码 0 |
+| Cursor（若 `--agent cursor`） | `cursor-agent --version` 或 `agent --version` | Cursor CLI 版本横幅 |
 | TTY | `[ -t 0 ] && [ -t 1 ] && echo tty` | `tty` — 扫码向导需要 |
 
 **HUMAN — 本机 agent 登录（每台机器一次）：**
 
 - Grok：`grok login --device-auth`（URL + 短码，owner 在任意设备确认）。
 - Kimi：`kimi login`。
+- Cursor：`agent login`（或设 `CURSOR_API_KEY`）。
 
 Grok CLI：`curl -fsSL https://x.ai/cli/install.sh | bash`。
+Cursor CLI：`curl https://cursor.com/install -fsS | bash`（二进制名是 `agent`；把 `~/.local/bin` 加进 PATH）。如果二进制是 `agent` 而不是 `cursor-agent`，设 `LARK_CHANNEL_CURSOR_BIN=agent`。
 缺 lark-cli：`npm install -g @larksuite/cli`。
 
 ## 安装
@@ -144,7 +155,7 @@ lark-cli auth status --json
 
 ```bash
 node bin/lark-channel-bridge.mjs run --agent <AGENT>
-# 通过："✓ 已连接  bot: <名字> ... agent: Grok Build (grok)" 或 "Kimi Code (kimi)"
+# 通过："✓ 已连接  bot: <名字> ... agent: Grok Build (grok)" / "Kimi Code (kimi)" / "Cursor CLI (cursor)"
 # 然后 "正在监听消息"
 ```
 
@@ -176,11 +187,11 @@ node bin/lark-channel-bridge.mjs stop
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `agentKind` | 传入的 `grok` 或 `kimi` | 适配器 |
+| `agentKind` | 传入的 `grok` / `kimi` / `cursor` | 适配器 |
 | `mode` | `team` | `team` 能看到就能用；`personal` 走白名单 |
 | `access.allowedUsers/allowedChats/admins` | `[]` | personal 用；admin 两种模式都有效 |
 | `workspaces.default` | profile 工作区 | `/cd` 默认目录 |
-| `preferences.model` | 不设置 | `grok -m` / `kimi -m` |
+| `preferences.model` | 不设置 | `grok -m` / `kimi -m` / `cursor --model` |
 | `preferences.showToolCalls` | `false` | 不展示工具过程 |
 | `larkCli.identityPreset` | `user-default` | 允许用户身份；默认身份仍是 bot |
 
@@ -200,7 +211,7 @@ node bin/lark-channel-bridge.mjs stop
 Profile CLI：`profile export`、`profile remove --purge --yes`、
 `profile export --include-secrets --yes`。
 
-环境变量：`LARK_CHANNEL_HOME`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_KIMI_BIN`。
+环境变量：`LARK_CHANNEL_HOME`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_CURSOR_BIN`。
 
 云文档评论按文档权限生效：在飞书文档评论里 `@bot` 走该文档会话，不走 IM 白名单。
 
@@ -209,7 +220,7 @@ Profile CLI：`profile export`、`profile remove --purge --yes`、
 | 症状 | 诊断 | 处理 |
 |---|---|---|
 | 扫码向导报非交互 | 没有 TTY | `--app-id` / `--app-secret` |
-| `agent-binary-not-found` | CLI 不在 PATH | 安装/登录；或设 `LARK_CHANNEL_GROK_BIN` / `LARK_CHANNEL_KIMI_BIN` |
+| `agent-binary-not-found` | CLI 不在 PATH | 安装/登录；或设 `LARK_CHANNEL_GROK_BIN` / `LARK_CHANNEL_KIMI_BIN` / `LARK_CHANNEL_CURSOR_BIN` |
 | 服务器上 Grok 认证失败 | 主机到不了 xAI | 把进程放到墙外 |
 | Grok 续会话变空白 | 误用了 `-s` | adapter 只用 `-r` |
 | 读群历史 `230027` | bot 没这个权限 | 预期；OAuth 后走 `--as user` |
@@ -225,9 +236,10 @@ npx pnpm test
 npx pnpm build
 GROK_REAL_SMOKE=1 npx vitest run tests/process/grok-real.smoke.test.ts
 KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts
+CURSOR_REAL_SMOKE=1 npx vitest run tests/process/cursor-real.smoke.test.ts
 ```
 
-适配层：`src/agent/grok/`、`src/agent/kimi/`，以及 Claude/Codex。通道、卡片、
+适配层：`src/agent/grok/`、`src/agent/kimi/`、`src/agent/cursor/`，以及 Claude/Codex。通道、卡片、
 会话、守护进程、web 控制台与 agent 无关。共享 bot/card 代码不许 import
 adapter 内部（`tests/static/contracts.test.ts`）。
 

@@ -67,7 +67,8 @@ function isValidEntry(e: unknown): e is ProcessEntry {
     (x.agentKind === 'claude' ||
       x.agentKind === 'codex' ||
       x.agentKind === 'kimi' ||
-      x.agentKind === 'grok') &&
+      x.agentKind === 'grok' ||
+      x.agentKind === 'cursor') &&
     typeof x.configPath === 'string' &&
     typeof x.startedAt === 'string' &&
     typeof x.version === 'string'

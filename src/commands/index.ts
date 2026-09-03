@@ -153,7 +153,7 @@ type Handler = (args: string, ctx: CommandContext) => Promise<void>;
 
 interface ResumeCandidate {
   scopeId: string;
-  agentId: 'claude' | 'codex' | 'kimi' | 'grok';
+  agentId: 'claude' | 'codex' | 'kimi' | 'grok' | 'cursor';
   cwdRealpath: string;
   policyFingerprint: string;
   sessionId?: string;
@@ -594,9 +594,15 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
 
   if (
     ctx.controls.profileConfig.agentKind === 'kimi' ||
-    ctx.controls.profileConfig.agentKind === 'grok'
+    ctx.controls.profileConfig.agentKind === 'grok' ||
+    ctx.controls.profileConfig.agentKind === 'cursor'
   ) {
-    const agentLabel = ctx.controls.profileConfig.agentKind === 'grok' ? 'Grok' : 'Kimi';
+    const agentLabel =
+      ctx.controls.profileConfig.agentKind === 'grok'
+        ? 'Grok'
+        : ctx.controls.profileConfig.agentKind === 'cursor'
+          ? 'Cursor'
+          : 'Kimi';
     const identity = ctx.sessionCatalogIdentity;
     const entry =
       ctx.sessionCatalog && identity
@@ -802,6 +808,9 @@ function runtimeAccessStatus(
   }
   if (profileConfig.agentKind === 'grok') {
     return { label: 'permission', value: 'bypassPermissions (grok --always-approve)' };
+  }
+  if (profileConfig.agentKind === 'cursor') {
+    return { label: 'permission', value: 'force (cursor --force)' };
   }
   return {
     label: 'sandbox',

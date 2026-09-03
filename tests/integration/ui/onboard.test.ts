@@ -101,4 +101,31 @@ describe('writeNewProfile (new-profile is additive)', () => {
       else process.env.LARK_CHANNEL_GROK_BIN = prev;
     }
   });
+
+  it('rejects a cursor profile when Cursor CLI is not installed', async () => {
+    const root = await tmpRoot();
+    const prev = process.env.LARK_CHANNEL_CURSOR_BIN;
+    process.env.LARK_CHANNEL_CURSOR_BIN = join(tmpdir(), `missing-cursor-${Date.now()}`);
+    try {
+      await expect(
+        writeNewProfile(
+          {
+            profile: 'cursor',
+            agentKind: 'cursor',
+            appId: 'cli_c',
+            appSecret: 'secret',
+            tenant: 'feishu',
+            workspace: root,
+          },
+          root,
+        ),
+      ).rejects.toMatchObject({
+        status: 400,
+        message: expect.stringMatching(/未检测到 Cursor CLI/),
+      });
+    } finally {
+      if (prev === undefined) delete process.env.LARK_CHANNEL_CURSOR_BIN;
+      else process.env.LARK_CHANNEL_CURSOR_BIN = prev;
+    }
+  });
 });

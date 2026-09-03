@@ -10,8 +10,9 @@ points that need a human are marked **HUMAN**. Chinese: [README.zh.md](./README.
 
 This tree is an **incremental** fork of `lark-channel-bridge` / the Kimi Code
 fork. Claude Code, Codex CLI, and Kimi Code adapters stay. Grok Build is a
-fourth adapter (`src/agent/grok/`). Default for a new profile is Grok Build
-when you pass `--agent grok` (or when `grok` is the only detected binary).
+fourth adapter (`src/agent/grok/`). Cursor CLI is a fifth (`src/agent/cursor/`).
+Default for a new profile is Grok Build when you pass `--agent grok` (or when
+`grok` is the only detected binary).
 
 Not published to npm — install from source.
 
@@ -21,15 +22,17 @@ Not published to npm — install from source.
 |---|---|---|---|---|---|
 | **Grok Build** | `grok` | `grok` | `grok -p --output-format streaming-json --always-approve` | `-r` (never `-s`) | `auth.x.ai` / grok chat proxy (**outside mainland GFW**) |
 | **Kimi Code** | `kimi` | `kimi` | `kimi -p --output-format stream-json` | `-S` | Moonshot endpoints |
+| **Cursor CLI** | `cursor` | `cursor-agent` (fallback `agent`) | `agent -p --output-format stream-json --force --sandbox disabled --approve-mcps --trust` | `--resume` | Cursor API (logged-in CLI or `CURSOR_API_KEY`) |
 
 Claude (`claude`) and Codex (`codex`) still work if those CLIs are installed.
 Do not mix engines in one profile; create a second profile instead.
 
 **If the job is "Feishu bot powered by Grok Build":** `--agent grok`.
 **If the job is "Feishu bot powered by Kimi Code":** `--agent kimi`.
+**If the job is "Feishu bot powered by Cursor CLI":** `--agent cursor`.
 
-Replace `<AGENT>` below with `grok` or `kimi`. Profile name defaults to the
-agent kind (`grok` / `kimi`).
+Replace `<AGENT>` below with `grok`, `kimi`, or `cursor`. Profile name defaults to the
+agent kind (`grok` / `kimi` / `cursor`).
 
 ## Mental model
 
@@ -37,7 +40,7 @@ agent kind (`grok` / `kimi`).
 Feishu user message ──WS long connection──> this process
    │  scope = chatId (topic groups: chatId:threadId)
    ▼
-spawn local CLI (grok -p … or kimi -p …)  →  stdout JSONL → AgentEvent
+spawn local CLI (grok / kimi / cursor-agent -p …)  →  stdout JSONL → AgentEvent
    ▼
 one Feishu markdown reply (tool-call chatter hidden by default)
 ```
@@ -61,9 +64,10 @@ one Feishu markdown reply (tool-call chatter hidden by default)
   hosts fail even if a human completed device-code on another device. Do not
   put a Grok profile on a GFW-side VPS.
 - **Kimi Code**: does not need xAI; still needs Feishu `open.feishu.cn`.
+- **Cursor CLI**: needs the Cursor API (logged-in CLI or `CURSOR_API_KEY`). Does not need xAI.
 - Do **not** set `GROK_HOME` / isolate `~/.grok` for the bot — inherit the
-  logged-in `auth.json`. Same for Kimi (`~/.kimi-code`). Isolating the home
-  forces a second login.
+  logged-in `auth.json`. Same for Kimi (`~/.kimi-code`) and Cursor (inherit the
+  logged-in CLI / `CURSOR_API_KEY`). Isolating the home forces a second login.
 - Do **not** set `XAI_API_KEY` if the owner wants SuperGrok quota.
 
 ## Prerequisites (verify before install)
@@ -75,14 +79,17 @@ one Feishu markdown reply (tool-call chatter hidden by default)
 | lark-cli | `lark-cli --version` | e.g. `1.0.x` |
 | Grok (if `--agent grok`) | `grok --version` then `test -f ~/.grok/auth.json` | binary + auth file |
 | Kimi (if `--agent kimi`) | `kimi -p "say OK" --output-format stream-json` | JSONL, exit 0 |
+| Cursor (if `--agent cursor`) | `cursor-agent --version` or `agent --version` | Cursor CLI version banner |
 | TTY | `[ -t 0 ] && [ -t 1 ] && echo tty` | `tty` — required for QR wizard |
 
 **HUMAN — agent login (once per host):**
 
 - Grok: `grok login --device-auth` (print URL + code; owner confirms on any device).
 - Kimi: `kimi login`.
+- Cursor: `agent login` (or set `CURSOR_API_KEY`).
 
 Install Grok CLI: `curl -fsSL https://x.ai/cli/install.sh | bash`.
+Install Cursor CLI: `curl https://cursor.com/install -fsS | bash` (binary is `agent`; add `~/.local/bin` to PATH). If the binary is `agent` not `cursor-agent`, set `LARK_CHANNEL_CURSOR_BIN=agent`.
 Install lark-cli if missing: `npm install -g @larksuite/cli`.
 
 ## Install
@@ -157,7 +164,7 @@ Foreground check:
 
 ```bash
 node bin/lark-channel-bridge.mjs run --agent <AGENT>
-# pass: "✓ 已连接  bot: <name> ... agent: Grok Build (grok)"  or  "Kimi Code (kimi)"
+# pass: "✓ 已连接  bot: <name> ... agent: Grok Build (grok)"  / "Kimi Code (kimi)" / "Cursor CLI (cursor)"
 # then "正在监听消息"
 ```
 
@@ -190,11 +197,11 @@ Headless Linux: `loginctl enable-linger "$USER"` or the user unit dies at logout
 
 | Key | Default | Meaning |
 |---|---|---|
-| `agentKind` | `grok` or `kimi` as passed | adapter |
+| `agentKind` | `grok` / `kimi` / `cursor` as passed | adapter |
 | `mode` | `team` | `team` = anyone who can reach the bot; `personal` = allowlists |
 | `access.allowedUsers/allowedChats/admins` | `[]` | personal mode; admins also in team |
 | `workspaces.default` | profile workspace | `/cd` default |
-| `preferences.model` | unset | `grok -m` / `kimi -m` |
+| `preferences.model` | unset | `grok -m` / `kimi -m` / `cursor --model` |
 | `preferences.showToolCalls` | `false` | hide tool-call progress |
 | `larkCli.identityPreset` | `user-default` | user identity allowed; default identity stays bot |
 
@@ -215,7 +222,7 @@ In-chat: `/help` `/status` `/config` `/cd <path>` `/new` `/stop` `/resume`
 Profile CLI: `profile export`, `profile remove --purge --yes`,
 `profile export --include-secrets --yes`.
 
-Env: `LARK_CHANNEL_HOME`, `LARK_CHANNEL_GROK_BIN`, `LARK_CHANNEL_KIMI_BIN`.
+Env: `LARK_CHANNEL_HOME`, `LARK_CHANNEL_GROK_BIN`, `LARK_CHANNEL_KIMI_BIN`, `LARK_CHANNEL_CURSOR_BIN`.
 
 Cloud-doc comments are document-scoped: `@bot` on a Feishu doc comment uses
 that document's session, not the IM allowlist.
@@ -225,7 +232,7 @@ that document's session, not the IM allowlist.
 | Symptom | Diagnosis | Fix |
 |---|---|---|
 | QR wizard errors about non-interactive mode | no TTY | use `--app-id` / `--app-secret` |
-| `agent-binary-not-found` | CLI missing or not on PATH | install/login; or `LARK_CHANNEL_GROK_BIN` / `LARK_CHANNEL_KIMI_BIN` |
+| `agent-binary-not-found` | CLI missing or not on PATH | install/login; or `LARK_CHANNEL_GROK_BIN` / `LARK_CHANNEL_KIMI_BIN` / `LARK_CHANNEL_CURSOR_BIN` |
 | Grok auth fails on the server | host cannot reach xAI | move the process off the GFW |
 | Resume is a blank Grok session | used `-s` | adapter uses `-r` only |
 | `230027` on group history | bot lacks the scope | expected until owner OAuth; then `--as user` |
@@ -241,9 +248,10 @@ npx pnpm test
 npx pnpm build
 GROK_REAL_SMOKE=1 npx vitest run tests/process/grok-real.smoke.test.ts
 KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts
+CURSOR_REAL_SMOKE=1 npx vitest run tests/process/cursor-real.smoke.test.ts
 ```
 
-Adapters: `src/agent/grok/`, `src/agent/kimi/`, plus Claude/Codex. Channel,
+Adapters: `src/agent/grok/`, `src/agent/kimi/`, `src/agent/cursor/`, plus Claude/Codex. Channel,
 cards, sessions, daemon, web console are agent-agnostic. Shared bot/card code
 must not import adapter internals (`tests/static/contracts.test.ts`).
 
