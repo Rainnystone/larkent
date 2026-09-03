@@ -1,5 +1,11 @@
 import type { AgentEvent } from '../types';
 import { log } from '../../core/logger';
+import {
+  jsonlFailDisposition,
+  parseJsonlLine,
+  truncateJsonlMessage,
+  type JsonlTranslator,
+} from '../runner/jsonl-translator';
 
 export type GrokFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
@@ -26,7 +32,7 @@ export interface ProtocolDriftState {
  * Pre-tool commentary and `thought` lines are dropped rather than streamed,
  * so Feishu only gets the final answer unless the operator turns tools on.
  */
-export class GrokJsonlTranslator {
+export class GrokJsonlTranslator implements JsonlTranslator {
   private sessionId: string | undefined;
   private terminal = false;
   private pendingText = '';
@@ -37,7 +43,13 @@ export class GrokJsonlTranslator {
     anomalies: 0,
   };
 
-  translate(raw: unknown): AgentEvent[] {
+  translate(line: string): AgentEvent[] {
+    const parsed = parseJsonlLine(line);
+    if (parsed === undefined) return [];
+    return this.translateParsed(parsed);
+  }
+
+  private translateParsed(raw: unknown): AgentEvent[] {
     if (this.terminal) return [];
     if (!isRecord(raw) || typeof raw.type !== 'string') {
       this.drift.anomalies++;
@@ -85,11 +97,17 @@ export class GrokJsonlTranslator {
     return [...this.finalTextEvents(), this.doneEvent(reason)];
   }
 
-  fail(message: string): AgentEvent[] {
+  fail(error: unknown): AgentEvent[] {
     if (this.terminal) return [];
+    const disposition = jsonlFailDisposition(error);
+    if (disposition.mode === 'stop') return this.finish('interrupted');
     this.terminal = true;
     return this.flushPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
+      {
+        type: 'error',
+        message: truncateJsonlMessage(disposition.message),
+        terminationReason: disposition.terminationReason,
+      },
     ]);
   }
 

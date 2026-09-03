@@ -24,7 +24,7 @@ const RESULT = {
 };
 
 function collect(translator: CursorJsonlTranslator, lines: unknown[]): AgentEvent[] {
-  return lines.flatMap((line) => translator.translate(line));
+  return lines.flatMap((line) => translator.translate(JSON.stringify(line)));
 }
 
 describe('CursorJsonlTranslator', () => {

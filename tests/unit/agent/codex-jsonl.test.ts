@@ -5,19 +5,19 @@ describe('Codex JSONL translator', () => {
   it('translates thread, text, command execution, usage, and completion events', () => {
     const t = new CodexJsonlTranslator();
 
-    expect(t.translate({ type: 'thread.started', thread_id: 'thread-1' })).toEqual([
+    expect(t.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }))).toEqual([
       { type: 'system', threadId: 'thread-1' },
     ]);
-    expect(t.translate({ type: 'turn.started' })).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'turn.started' }))).toEqual([]);
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'item.started',
         item: {
           id: 'cmd-1',
           type: 'command_execution',
           command: 'pwd',
         },
-      }),
+      })),
     ).toEqual([
       {
         type: 'tool_use',
@@ -27,7 +27,7 @@ describe('Codex JSONL translator', () => {
       },
     ]);
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'item.completed',
         item: {
           id: 'cmd-1',
@@ -35,7 +35,7 @@ describe('Codex JSONL translator', () => {
           output: '/repo\n',
           exit_code: 0,
         },
-      }),
+      })),
     ).toEqual([
       {
         type: 'tool_result',
@@ -44,9 +44,9 @@ describe('Codex JSONL translator', () => {
         isError: false,
       },
     ]);
-    expect(t.translate({ type: 'agent_message', message: 'hello' })).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'hello' }))).toEqual([]);
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'turn.completed',
         usage: {
           input_tokens: 12,
@@ -54,7 +54,7 @@ describe('Codex JSONL translator', () => {
           cached_input_tokens: 5,
           reasoning_output_tokens: 7,
         },
-      }),
+      })),
     ).toEqual([
       { type: 'final_text', content: 'hello' },
       {
@@ -70,8 +70,8 @@ describe('Codex JSONL translator', () => {
 
   it('does not add Claude session ids to Codex system or done events', () => {
     const t = new CodexJsonlTranslator();
-    const system = t.translate({ type: 'thread.started', thread_id: 'thread-1' })[0];
-    const done = t.translate({ type: 'turn.completed' }).at(-1);
+    const system = t.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }))[0];
+    const done = t.translate(JSON.stringify({ type: 'turn.completed' })).at(-1);
 
     expect(system).not.toHaveProperty('sessionId');
     expect(done).not.toHaveProperty('sessionId');
@@ -81,16 +81,16 @@ describe('Codex JSONL translator', () => {
     const t = new CodexJsonlTranslator();
 
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'item.completed',
         item: {
           id: 'msg-1',
           type: 'agent_message',
           text: 'hello from item',
         },
-      }),
+      })),
     ).toEqual([]);
-    expect(t.translate({ type: 'turn.completed' })).toEqual([
+    expect(t.translate(JSON.stringify({ type: 'turn.completed' }))).toEqual([
       { type: 'final_text', content: 'hello from item' },
       { type: 'done', terminationReason: 'normal' },
     ]);
@@ -103,13 +103,13 @@ describe('Codex JSONL translator', () => {
     const t = new CodexJsonlTranslator();
 
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'item.completed',
         item: { id: 'msg-1', type: 'agent_message', text: 'hello world' },
-      }),
+      })),
     ).toEqual([]);
-    expect(t.translate({ type: 'agent_message', message: 'hello world' })).toEqual([]);
-    expect(t.translate({ type: 'turn.completed' })).toEqual([
+    expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'hello world' }))).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'turn.completed' }))).toEqual([
       { type: 'final_text', content: 'hello world' },
       { type: 'done', terminationReason: 'normal' },
     ]);
@@ -118,15 +118,15 @@ describe('Codex JSONL translator', () => {
   it('streams earlier agent messages but reserves the last one as the final answer', () => {
     const t = new CodexJsonlTranslator();
 
-    expect(t.translate({ type: 'agent_message', message: 'progress one' })).toEqual([]);
-    expect(t.translate({ type: 'agent_message', message: 'progress two' })).toEqual([
+    expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'progress one' }))).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'progress two' }))).toEqual([
       { type: 'text', delta: 'progress one' },
     ]);
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'item.started',
         item: { id: 'cmd-after-progress', type: 'command_execution', command: 'pwd' },
-      }),
+      })),
     ).toEqual([
       { type: 'text', delta: 'progress two' },
       {
@@ -136,8 +136,8 @@ describe('Codex JSONL translator', () => {
         input: { command: 'pwd' },
       },
     ]);
-    expect(t.translate({ type: 'agent_message', message: 'final answer' })).toEqual([]);
-    expect(t.translate({ type: 'turn.completed' })).toEqual([
+    expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'final answer' }))).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'turn.completed' }))).toEqual([
       { type: 'final_text', content: 'final answer' },
       { type: 'done', terminationReason: 'normal' },
     ]);
@@ -147,14 +147,14 @@ describe('Codex JSONL translator', () => {
     const t = new CodexJsonlTranslator();
 
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'item.completed',
         item: {
           id: 'cmd-no-code',
           type: 'command_execution',
           output: 'done',
         },
-      }),
+      })),
     ).toEqual([
       {
         type: 'tool_result',
@@ -169,10 +169,10 @@ describe('Codex JSONL translator', () => {
     const t = new CodexJsonlTranslator();
 
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'turn.failed',
         error: { message: 'command denied' },
-      }),
+      })),
     ).toEqual([
       {
         type: 'error',
@@ -180,25 +180,25 @@ describe('Codex JSONL translator', () => {
         terminationReason: 'failed',
       },
     ]);
-    expect(t.translate({ type: 'error', message: 'late raw error' })).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'error', message: 'late raw error' }))).toEqual([]);
     expect(t.finish()).toEqual([]);
   });
 
   it('keeps raw error events non-terminal so retrying runs can continue', () => {
     const t = new CodexJsonlTranslator();
 
-    expect(t.translate({ type: 'thread.started', thread_id: 'thread-retry' })).toEqual([
+    expect(t.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-retry' }))).toEqual([
       { type: 'system', threadId: 'thread-retry' },
     ]);
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'error',
         error: { message: 'Reconnecting... 2/5 (timeout waiting for child process to exit)' },
-      }),
+      })),
     ).toEqual([]);
     expect(t.terminalEmitted()).toBe(false);
-    expect(t.translate({ type: 'agent_message', message: 'after retry' })).toEqual([]);
-    expect(t.translate({ type: 'turn.completed' })).toEqual([
+    expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'after retry' }))).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'turn.completed' }))).toEqual([
       { type: 'final_text', content: 'after retry' },
       { type: 'done', threadId: 'thread-retry', terminationReason: 'normal' },
     ]);
@@ -207,12 +207,12 @@ describe('Codex JSONL translator', () => {
   it('still treats turn.failed as terminal after a raw error event', () => {
     const t = new CodexJsonlTranslator();
 
-    expect(t.translate({ type: 'error', message: 'Reconnecting... 2/5' })).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'error', message: 'Reconnecting... 2/5' }))).toEqual([]);
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'turn.failed',
         error: { message: 'model stopped' },
-      }),
+      })),
     ).toEqual([
       {
         type: 'error',
@@ -221,13 +221,13 @@ describe('Codex JSONL translator', () => {
       },
     ]);
     expect(t.terminalEmitted()).toBe(true);
-    expect(t.translate({ type: 'agent_message', message: 'too late' })).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'agent_message', message: 'too late' }))).toEqual([]);
   });
 
   it('preserves the latest raw error detail when the stream ends without a terminal event', () => {
     const t = new CodexJsonlTranslator();
 
-    expect(t.translate({ type: 'error', message: 'transport failed' })).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'error', message: 'transport failed' }))).toEqual([]);
     expect(t.finish()).toEqual([
       {
         type: 'error',
@@ -240,9 +240,9 @@ describe('Codex JSONL translator', () => {
   it('tracks protocol drift while ignoring unknown and anomalous events', () => {
     const t = new CodexJsonlTranslator();
 
-    expect(t.translate({ type: 'unknown.future', value: 1 })).toEqual([]);
+    expect(t.translate(JSON.stringify({ type: 'unknown.future', value: 1 }))).toEqual([]);
     expect(
-      t.translate({
+      t.translate(JSON.stringify({
         type: 'item.completed',
         item: {
           id: 'cmd-late',
@@ -250,7 +250,7 @@ describe('Codex JSONL translator', () => {
           output: 'late',
           exit_code: 1,
         },
-      }),
+      })),
     ).toEqual([
       {
         type: 'tool_result',
@@ -267,7 +267,7 @@ describe('Codex JSONL translator', () => {
 
   it('emits a failed terminal event on EOF without a terminal event', () => {
     const t = new CodexJsonlTranslator();
-    t.translate({ type: 'thread.started', thread_id: 'thread-1' });
+    t.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-1' }));
 
     expect(t.finish()).toEqual([
       {
@@ -281,13 +281,13 @@ describe('Codex JSONL translator', () => {
 
   it('lets stop and timeout override EOF terminal reason', () => {
     const stopped = new CodexJsonlTranslator();
-    stopped.translate({ type: 'thread.started', thread_id: 'thread-stop' });
+    stopped.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-stop' }));
     expect(stopped.finish('interrupted')).toEqual([
       { type: 'done', threadId: 'thread-stop', terminationReason: 'interrupted' },
     ]);
 
     const timedOut = new CodexJsonlTranslator();
-    timedOut.translate({ type: 'thread.started', thread_id: 'thread-timeout' });
+    timedOut.translate(JSON.stringify({ type: 'thread.started', thread_id: 'thread-timeout' }));
     expect(timedOut.finish('timeout')).toEqual([
       { type: 'done', threadId: 'thread-timeout', terminationReason: 'timeout' },
     ]);

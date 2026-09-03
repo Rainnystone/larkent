@@ -1,4 +1,10 @@
 import type { AgentEvent } from '../types';
+import {
+  jsonlFailDisposition,
+  parseJsonlLine,
+  truncateJsonlMessage,
+  type JsonlTranslator,
+} from '../runner/jsonl-translator';
 
 interface ContentBlock {
   type: string;
@@ -81,5 +87,50 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
       };
     }
     yield { type: 'done', sessionId: evt.session_id, terminationReason: 'normal' };
+  }
+}
+
+export class ClaudeJsonlTranslator implements JsonlTranslator {
+  private terminal = false;
+  private sessionId: string | undefined;
+
+  translate(line: string): AgentEvent[] {
+    const parsed = parseJsonlLine(line);
+    if (parsed === undefined) return [];
+    const events = [...translateEvent(parsed)];
+    for (const event of events) {
+      if (event.type === 'system' && event.sessionId) this.sessionId = event.sessionId;
+      if (event.type === 'done' || event.type === 'error') this.terminal = true;
+    }
+    return events;
+  }
+
+  finish(reason: 'interrupted' | 'timeout' | 'failed' = 'failed'): AgentEvent[] {
+    if (this.terminal) return [];
+    if (reason === 'interrupted' || reason === 'timeout') {
+      this.terminal = true;
+      return [
+        {
+          type: 'done',
+          ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+          terminationReason: reason,
+        },
+      ];
+    }
+    return [];
+  }
+
+  fail(error: unknown): AgentEvent[] {
+    if (this.terminal) return [];
+    const disposition = jsonlFailDisposition(error);
+    if (disposition.mode === 'stop') return this.finish('interrupted');
+    this.terminal = true;
+    return [
+      {
+        type: 'error',
+        message: truncateJsonlMessage(disposition.message),
+        terminationReason: disposition.terminationReason,
+      },
+    ];
   }
 }

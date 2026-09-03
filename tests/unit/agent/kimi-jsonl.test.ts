@@ -13,7 +13,7 @@ const RESUME_HINT = {
 };
 
 function collect(translator: KimiJsonlTranslator, lines: unknown[]): AgentEvent[] {
-  return lines.flatMap((line) => translator.translate(line));
+  return lines.flatMap((line) => translator.translate(JSON.stringify(line)));
 }
 
 describe('KimiJsonlTranslator', () => {
@@ -140,7 +140,7 @@ describe('KimiJsonlTranslator', () => {
 
   it('finish(failed) surfaces an error and carries no session when none was seen', () => {
     const t = new KimiJsonlTranslator();
-    expect([...collect(t, [VERSION_LINE]), ...t.finish()]).toEqual([
+    expect([...collect(t, [VERSION_LINE]), ...t.finish('failed')]).toEqual([
       {
         type: 'error',
         message: 'kimi stream ended before a terminal event',

@@ -7,6 +7,8 @@ export {
   type AgentDescriptor,
   type AgentKind,
 } from './registry';
+export type { JsonlTranslator } from './runner/jsonl-translator';
+export { runJsonlCli } from './runner/jsonl-cli-runner';
 export { ClaudeAdapter } from './claude/adapter';
 export { CodexAdapter } from './codex/adapter';
 export { CursorAdapter } from './cursor/adapter';

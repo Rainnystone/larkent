@@ -1,3 +1,12 @@
+import { ClaudeJsonlTranslator } from './claude/stream-json';
+import { CodexJsonlTranslator } from './codex/jsonl';
+import { CursorJsonlTranslator } from './cursor/jsonl';
+import { GrokJsonlTranslator } from './grok/jsonl';
+import { KimiJsonlTranslator } from './kimi/jsonl';
+import type { JsonlTranslator } from './runner/jsonl-translator';
+
+export type { JsonlTranslator } from './runner/jsonl-translator';
+
 export const AGENT_KINDS = ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
 
@@ -50,6 +59,7 @@ export interface AgentDescriptor {
   readonly detectionOrder: number;
   readonly upgradeWorkspacePermissionsToFull: boolean;
   readonly inheritCodexHomeWhenIsolated: boolean;
+  readonly createTranslator: () => JsonlTranslator;
 }
 
 const DEFAULT_MODEL_OPTION: AgentModelOption = {
@@ -90,6 +100,7 @@ const CLAUDE: AgentDescriptor = {
   detectionOrder: 1,
   upgradeWorkspacePermissionsToFull: true,
   inheritCodexHomeWhenIsolated: false,
+  createTranslator: () => new ClaudeJsonlTranslator(),
 };
 
 const CODEX: AgentDescriptor = {
@@ -122,6 +133,7 @@ const CODEX: AgentDescriptor = {
   detectionOrder: 2,
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: true,
+  createTranslator: () => new CodexJsonlTranslator(),
 };
 
 const KIMI: AgentDescriptor = {
@@ -152,6 +164,7 @@ const KIMI: AgentDescriptor = {
   detectionOrder: 3,
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: false,
+  createTranslator: () => new KimiJsonlTranslator(),
 };
 
 const GROK: AgentDescriptor = {
@@ -185,6 +198,7 @@ const GROK: AgentDescriptor = {
   detectionOrder: 0,
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: false,
+  createTranslator: () => new GrokJsonlTranslator(),
 };
 
 const CURSOR: AgentDescriptor = {
@@ -217,6 +231,7 @@ const CURSOR: AgentDescriptor = {
   detectionOrder: 4,
   upgradeWorkspacePermissionsToFull: false,
   inheritCodexHomeWhenIsolated: false,
+  createTranslator: () => new CursorJsonlTranslator(),
 };
 
 const DESCRIPTORS = {

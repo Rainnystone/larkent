@@ -1,5 +1,11 @@
 import type { AgentEvent } from '../types';
 import { log } from '../../core/logger';
+import {
+  jsonlFailDisposition,
+  parseJsonlLine,
+  truncateJsonlMessage,
+  type JsonlTranslator,
+} from '../runner/jsonl-translator';
 
 export type CodexFinishReason = 'failed' | 'interrupted' | 'timeout';
 
@@ -8,7 +14,7 @@ export interface ProtocolDriftState {
   anomalies: number;
 }
 
-export class CodexJsonlTranslator {
+export class CodexJsonlTranslator implements JsonlTranslator {
   private threadId: string | undefined;
   private terminal = false;
   private lastNonTerminalError: string | undefined;
@@ -19,7 +25,13 @@ export class CodexJsonlTranslator {
     anomalies: 0,
   };
 
-  translate(raw: unknown): AgentEvent[] {
+  translate(line: string): AgentEvent[] {
+    const parsed = parseJsonlLine(line);
+    if (parsed === undefined) return [];
+    return this.translateParsed(parsed);
+  }
+
+  private translateParsed(raw: unknown): AgentEvent[] {
     if (this.terminal) return [];
     if (!isRecord(raw) || typeof raw.type !== 'string') {
       this.drift.anomalies++;
@@ -70,11 +82,17 @@ export class CodexJsonlTranslator {
     ]);
   }
 
-  fail(message: string): AgentEvent[] {
+  fail(error: unknown): AgentEvent[] {
     if (this.terminal) return [];
+    const disposition = jsonlFailDisposition(error);
+    if (disposition.mode === 'stop') return this.finish('interrupted');
     this.terminal = true;
     return this.prependPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
+      {
+        type: 'error',
+        message: truncateJsonlMessage(disposition.message),
+        terminationReason: disposition.terminationReason,
+      },
     ]);
   }
 

@@ -1,5 +1,11 @@
 import type { AgentEvent } from '../types';
 import { log } from '../../core/logger';
+import {
+  jsonlFailDisposition,
+  parseJsonlLine,
+  truncateJsonlMessage,
+  type JsonlTranslator,
+} from '../runner/jsonl-translator';
 
 export type KimiFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
@@ -25,7 +31,7 @@ export interface ProtocolDriftState {
  * commentary before/between tool calls) are forwarded as `text` deltas; the
  * last one is held back and becomes the run's `final_text`.
  */
-export class KimiJsonlTranslator {
+export class KimiJsonlTranslator implements JsonlTranslator {
   private sessionId: string | undefined;
   private version: string | undefined;
   private terminal = false;
@@ -36,7 +42,13 @@ export class KimiJsonlTranslator {
     anomalies: 0,
   };
 
-  translate(raw: unknown): AgentEvent[] {
+  translate(line: string): AgentEvent[] {
+    const parsed = parseJsonlLine(line);
+    if (parsed === undefined) return [];
+    return this.translateParsed(parsed);
+  }
+
+  private translateParsed(raw: unknown): AgentEvent[] {
     if (this.terminal) return [];
     if (!isRecord(raw) || typeof raw.role !== 'string') {
       this.drift.anomalies++;
@@ -57,7 +69,7 @@ export class KimiJsonlTranslator {
     }
   }
 
-  finish(reason: KimiFinishReason = 'failed'): AgentEvent[] {
+  finish(reason: KimiFinishReason = 'normal'): AgentEvent[] {
     if (this.terminal) return [];
     this.terminal = true;
     if (reason === 'failed') {
@@ -82,11 +94,17 @@ export class KimiJsonlTranslator {
     return events;
   }
 
-  fail(message: string): AgentEvent[] {
+  fail(error: unknown): AgentEvent[] {
     if (this.terminal) return [];
+    const disposition = jsonlFailDisposition(error);
+    if (disposition.mode === 'stop') return this.finish('interrupted');
     this.terminal = true;
     return this.prependPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
+      {
+        type: 'error',
+        message: truncateJsonlMessage(disposition.message),
+        terminationReason: disposition.terminationReason,
+      },
     ]);
   }
 
@@ -214,8 +232,4 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
 }

@@ -1,5 +1,11 @@
 import type { AgentEvent } from '../types';
 import { log } from '../../core/logger';
+import {
+  jsonlFailDisposition,
+  parseJsonlLine,
+  truncateJsonlMessage,
+  type JsonlTranslator,
+} from '../runner/jsonl-translator';
 
 export type CursorFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
@@ -23,7 +29,7 @@ export interface ProtocolDriftState {
  * is held back as `final_text`. `result.result` concatenates every assistant
  * segment without separators, so it is never used as the reply body.
  */
-export class CursorJsonlTranslator {
+export class CursorJsonlTranslator implements JsonlTranslator {
   private sessionId: string | undefined;
   private cwd: string | undefined;
   private model: string | undefined;
@@ -35,7 +41,13 @@ export class CursorJsonlTranslator {
     anomalies: 0,
   };
 
-  translate(raw: unknown): AgentEvent[] {
+  translate(line: string): AgentEvent[] {
+    const parsed = parseJsonlLine(line);
+    if (parsed === undefined) return [];
+    return this.translateParsed(parsed);
+  }
+
+  private translateParsed(raw: unknown): AgentEvent[] {
     if (this.terminal) return [];
     if (!isRecord(raw) || typeof raw.type !== 'string') {
       this.drift.anomalies++;
@@ -85,11 +97,17 @@ export class CursorJsonlTranslator {
     return events;
   }
 
-  fail(message: string): AgentEvent[] {
+  fail(error: unknown): AgentEvent[] {
     if (this.terminal) return [];
+    const disposition = jsonlFailDisposition(error);
+    if (disposition.mode === 'stop') return this.finish('interrupted');
     this.terminal = true;
     return this.prependPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
+      {
+        type: 'error',
+        message: truncateJsonlMessage(disposition.message),
+        terminationReason: disposition.terminationReason,
+      },
     ]);
   }
 
@@ -295,8 +313,4 @@ function recordValue(value: unknown): Record<string, unknown> | undefined {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
 }
