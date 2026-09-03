@@ -262,6 +262,64 @@ describe('profile logger observability', () => {
     delete process.env.LARK_CHANNEL_TELEMETRY_MODULE;
   });
 
+  it('redacts resumeHandle on the telemetry path like sessionId and threadId', async () => {
+    const tmp = await createTmpProfile('logger-resume-handle-redact-');
+    cleanups.push(tmp.cleanup);
+    const logsDir = join(tmp.profile, 'logs');
+    const adapterPath = join(tmp.root, 'telemetry-adapter.mjs');
+    await writeFile(
+      adapterPath,
+      `
+        globalThis.__bridgeResumeHandleEvents = [];
+        export function createAdapter() {
+          return {
+            emit(event) { globalThis.__bridgeResumeHandleEvents.push(event); },
+            recordError() {},
+            recordMetric() {},
+          };
+        }
+      `,
+    );
+    process.env.LARK_CHANNEL_TELEMETRY_MODULE = pathToFileURL(adapterPath).href;
+    await loadTelemetryAdapter({
+      version: 'test',
+      appId: 'cli_secret_app',
+      tenant: 'feishu',
+      hostname: 'host',
+    });
+
+    configureLogger({
+      logsDir,
+      now: () => new Date('2026-05-25T00:00:00.000Z'),
+    });
+
+    const resumeHandle = 'opaque-resume-handle-ABCDEF';
+    log.info('session', 'resume', {
+      resumeHandle,
+      sessionId: 'sess_1234567890',
+      threadId: 'thread_1234567890',
+    });
+    await flushLogger();
+
+    const localText = await readFile(join(logsDir, 'bridge-20260525.jsonl'), 'utf8');
+    const localEntry = JSON.parse(localText.trim()) as Record<string, unknown>;
+    expect(localEntry.resumeHandle).toBe(resumeHandle);
+    expect(localEntry.sessionId).toBe('sess_1234567890');
+    expect(localEntry.threadId).toBe('thread_1234567890');
+
+    const globals = globalThis as typeof globalThis & {
+      __bridgeResumeHandleEvents?: Array<{ fields?: Record<string, unknown> }>;
+    };
+    const telemetryText = JSON.stringify(globals.__bridgeResumeHandleEvents);
+    expect(telemetryText).not.toContain(resumeHandle);
+    expect(telemetryText).not.toContain('sess_1234567890');
+    expect(telemetryText).not.toContain('thread_1234567890');
+    expect(telemetryText).toContain('...ABCDEF');
+    expect(telemetryText).toContain('...567890');
+
+    delete process.env.LARK_CHANNEL_TELEMETRY_MODULE;
+  });
+
   it('sanitizes optional telemetry metric tags', async () => {
     const tmp = await createTmpProfile('logger-telemetry-metric-');
     cleanups.push(tmp.cleanup);

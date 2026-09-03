@@ -6,6 +6,7 @@ import { log } from '../core/logger';
 import { isAgentKind, type AgentKind } from '../agent/registry';
 import {
   CATALOG_SCHEMA_VERSION,
+  UnsupportedCatalogSchemaError,
   upgradeCatalogDocument,
   type CatalogEntryV2,
 } from './migrations';
@@ -56,6 +57,7 @@ export function sessionCatalogKey(input: SessionCatalogIdentity): string {
 export class SessionCatalog {
   private data = new Map<string, SessionCatalogEntry>();
   private saving: Promise<void> = Promise.resolve();
+  private persistFrozen = false;
   private readonly path: string;
 
   constructor(path = `${paths.sessionsFile}.catalog.json`) {
@@ -63,15 +65,37 @@ export class SessionCatalog {
   }
 
   async load(): Promise<void> {
+    let raw: unknown;
     try {
-      const raw = JSON.parse(await readFile(this.path, 'utf8')) as unknown;
-      const { document, upgraded } = upgradeCatalogDocument(raw);
-      this.data = new Map(document.entries.map((entry) => [entry.key, { ...entry }]));
-      if (upgraded) await this.persist();
+      raw = JSON.parse(await readFile(this.path, 'utf8')) as unknown;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
       log.fail('session-catalog', err, { step: 'load' });
       this.data.clear();
+      return;
+    }
+
+    let document: { entries: SessionCatalogEntry[] };
+    let upgraded: boolean;
+    try {
+      ({ document, upgraded } = upgradeCatalogDocument(raw));
+    } catch (err) {
+      log.fail('session-catalog', err, { step: 'load' });
+      if (err instanceof UnsupportedCatalogSchemaError) {
+        this.persistFrozen = true;
+        return;
+      }
+      this.data.clear();
+      return;
+    }
+
+    this.persistFrozen = false;
+    this.data = new Map(document.entries.map((entry) => [entry.key, { ...entry }]));
+    if (!upgraded) return;
+    try {
+      await this.persist();
+    } catch (err) {
+      log.fail('session-catalog', err, { step: 'persist' });
     }
   }
 
@@ -173,6 +197,10 @@ export class SessionCatalog {
   }
 
   private async persist(): Promise<void> {
+    if (this.persistFrozen) {
+      log.warn('session-catalog', 'persist-skipped', { reason: 'unsupported-schema' });
+      return;
+    }
     await mkdir(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
     const payload = `${JSON.stringify(
