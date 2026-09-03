@@ -1,4 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import { writeScriptedJsonlExecutable, type ScriptedJsonlExecutable } from './fake-executable.js';
 
@@ -202,13 +201,6 @@ export async function installKindCli(
     lines: jsonlScript(kind, 'success').lines,
   });
   return { kind, fake, binaryName };
-}
-
-export async function writeJsonlScriptFile(dir: string, script: JsonlScript): Promise<string> {
-  await mkdir(dir, { recursive: true });
-  const file = join(dir, 'script.json');
-  await writeFile(file, `${JSON.stringify(script)}\n`, 'utf8');
-  return file;
 }
 
 export function withPathPrefix(dir: string, run: () => Promise<void> | void): Promise<void> {

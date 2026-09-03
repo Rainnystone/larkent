@@ -15,7 +15,6 @@ import {
   jsonlScript,
   pinAgentKind,
   stabilizePinSnapshot,
-  writeJsonlScriptFile,
   type PinAgentKind,
 } from '../../helpers/scripted-jsonl-cli.js';
 import { createTmpProfile } from '../../helpers/tmp-profile.js';
@@ -88,15 +87,12 @@ async function startParityBot(kind: PinAgentKind): Promise<{
   const cwd = await realpath(tmp.workspace);
   const binDir = join(tmp.root, 'bin');
   const installed = await installKindCli(binDir, kind);
-  const scriptFile = await writeJsonlScriptFile(join(tmp.root, 'scripts'), jsonlScript(kind, 'success'));
-  setEnv('LARKENT_FAKE_JSONL', scriptFile);
   setEnv('PATH', `${binDir}${delimiter}${process.env.PATH ?? ''}`);
-  if (kind !== 'claude' && kind !== 'codex') {
-    setEnv(envBinVarName(kind), installed.fake.path);
-  } else {
+  if (kind === 'codex') {
     setEnv(envBinVarName(kind), undefined);
+  } else {
+    setEnv(envBinVarName(kind), installed.fake.path);
   }
-  if (kind === 'cursor') setEnv('LARK_CHANNEL_CURSOR_BIN', installed.fake.path);
 
   const profileConfig = createDefaultProfileConfig({
     agentKind: kind,
@@ -143,7 +139,7 @@ async function startParityBot(kind: PinAgentKind): Promise<{
     await Promise.all([sessions.flush(), catalog.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
-  return { channel, cwd, scriptFile, recordPath: installed.fake.recordPath };
+  return { channel, cwd, scriptFile: installed.fake.scriptPath, recordPath: installed.fake.recordPath };
 }
 
 function setEnv(name: string, value: string | undefined): void {

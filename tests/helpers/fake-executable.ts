@@ -1,5 +1,5 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 
 export interface ScriptedJsonlExecutableOptions {
   lines?: readonly unknown[];
@@ -13,6 +13,7 @@ export interface ScriptedJsonlExecutableOptions {
 export interface ScriptedJsonlExecutable {
   path: string;
   recordPath: string;
+  scriptPath: string;
 }
 
 export async function writeVersionExecutable(
@@ -51,19 +52,12 @@ export async function writeScriptedJsonlExecutable(
   options: ScriptedJsonlExecutableOptions = {},
 ): Promise<ScriptedJsonlExecutable> {
   await mkdir(root, { recursive: true });
-  if (process.platform === 'win32') {
-    const scriptName = isCmd(name) ? name.slice(0, -4) : name;
-    const script = join(root, `${scriptName}.mjs`);
-    const cmd = join(root, isCmd(name) ? name : `${name}.CMD`);
-    const recordPath = `${cmd}.argv.json`;
-    await writeScriptedJsonlExecutableFile(script, recordPath, options);
-    await writeFile(cmd, `@echo off\r\n"${process.execPath}" "${script}" %*\r\n`, { mode: 0o755 });
-    return { path: cmd, recordPath };
-  }
-  const file = join(root, name);
+  const base = isCmd(name) ? name.replace(/\.cmd$/i, '') : name;
+  const file = join(root, process.platform === 'win32' ? `${base}.mjs` : base);
   const recordPath = `${file}.argv.json`;
+  const scriptPath = scriptPathFor(file);
   await writeScriptedJsonlExecutableFile(file, recordPath, options);
-  return { path: file, recordPath };
+  return { path: file, recordPath, scriptPath };
 }
 
 export async function writeScriptedJsonlExecutableFile(
@@ -71,17 +65,48 @@ export async function writeScriptedJsonlExecutableFile(
   recordPath: string,
   options: ScriptedJsonlExecutableOptions = {},
 ): Promise<void> {
+  const scriptPath = scriptPathFor(file);
+  if (isCmd(file)) {
+    const nodeSource = join(dirname(file), `${basename(file).replace(/\.cmd$/i, '')}.mjs`);
+    await writeNodeSource(nodeSource, recordPath, scriptPath, options);
+    await writeFile(
+      file,
+      `@echo off\r\n${JSON.stringify(process.execPath)} ${JSON.stringify(nodeSource)} %*\r\n`,
+      { mode: 0o755 },
+    );
+    return;
+  }
+  await writeNodeSource(file, recordPath, scriptPath, options);
+  await chmod(file, 0o755);
+}
+
+export function scriptPathFor(file: string): string {
+  return `${file}.script.json`;
+}
+
+async function writeNodeSource(
+  file: string,
+  recordPath: string,
+  scriptPath: string,
+  options: ScriptedJsonlExecutableOptions,
+): Promise<void> {
   const version = options.version ?? '0.0.0-pin';
   const helpText = options.helpText ?? 'Usage: fake-cli';
   const lines = options.lines ?? [];
   const stderr = options.stderr ?? '';
   const exitCode = options.exitCode ?? 0;
   const hang = options.hang === true;
+  const shebang = process.platform === 'win32' || file.endsWith('.mjs') ? '#!/usr/bin/env node' : `#!${process.execPath}`;
+  await writeFile(
+    scriptPath,
+    `${JSON.stringify({ lines, stderr, exitCode, hang })}\n`,
+  );
   const source = [
-    `#!${process.execPath}`,
-    'import { readFileSync, writeFileSync } from "node:fs";',
+    shebang,
+    'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
     'const argv = process.argv.slice(2);',
     `const recordPath = ${JSON.stringify(recordPath)};`,
+    `const scriptPath = ${JSON.stringify(scriptPath)};`,
     'writeFileSync(recordPath, JSON.stringify({',
     '  argv,',
     '  cwd: process.cwd(),',
@@ -91,7 +116,6 @@ export async function writeScriptedJsonlExecutableFile(
     '    LARK_CHANNEL_HOME: process.env.LARK_CHANNEL_HOME,',
     '    LARK_CHANNEL_CONFIG: process.env.LARK_CHANNEL_CONFIG,',
     '    LARKSUITE_CLI_CONFIG_DIR: process.env.LARKSUITE_CLI_CONFIG_DIR,',
-    '    LARKENT_FAKE_JSONL: process.env.LARKENT_FAKE_JSONL,',
     '  },',
     '}));',
     'if (argv.includes("--version")) {',
@@ -106,9 +130,8 @@ export async function writeScriptedJsonlExecutableFile(
     `let stderr = ${JSON.stringify(stderr)};`,
     `let exitCode = ${JSON.stringify(exitCode)};`,
     `let hang = ${JSON.stringify(hang)};`,
-    'const scriptFile = process.env.LARKENT_FAKE_JSONL;',
-    'if (scriptFile) {',
-    '  const script = JSON.parse(readFileSync(scriptFile, "utf8"));',
+    'if (existsSync(scriptPath)) {',
+    '  const script = JSON.parse(readFileSync(scriptPath, "utf8"));',
     '  if (Array.isArray(script.lines)) lines = script.lines;',
     '  if (typeof script.stderr === "string") stderr = script.stderr;',
     '  if (typeof script.exitCode === "number") exitCode = script.exitCode;',
@@ -123,7 +146,6 @@ export async function writeScriptedJsonlExecutableFile(
     '}',
   ].join('\n');
   await writeFile(file, source, { mode: 0o755 });
-  await chmod(file, 0o755);
 }
 
 function isCmd(path: string): boolean {

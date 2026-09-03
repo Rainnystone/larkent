@@ -18,8 +18,6 @@ const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
 describe('P4 profile load parity', () => {
   it('loads env-var kimi and grok profiles to the same runtime adapter as today', async () => {
     const root = await loadRootConfig(join(fixtureRoot, 'env-var/config.json'));
-    // Current loader accepts schemaVersion 2 only. This fixture has no per-kind
-    // binaryPath; kimi/grok binaries come from LARK_CHANNEL_*_BIN at runtime.
     expect(root?.schemaVersion).toBe(2);
     expect(root?.profiles.kimi?.agentKind).toBe('kimi');
     expect(root?.profiles.grok?.agentKind).toBe('grok');

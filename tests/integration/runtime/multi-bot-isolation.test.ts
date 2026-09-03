@@ -8,13 +8,7 @@ import { Supervisor } from '../../../src/runtime/supervisor.js';
 import { readAndPrune } from '../../../src/runtime/registry.js';
 import { resolveAppPaths } from '../../../src/config/app-paths.js';
 import { createRecordingLarkChannel, type RecordingLarkChannel } from '../../helpers/recording-lark-channel.js';
-import {
-  installKindCli,
-  jsonlScript,
-  writeJsonlScriptFile,
-  withEnvBin,
-  withPathPrefix,
-} from '../../helpers/scripted-jsonl-cli.js';
+import { installKindCli, withEnvBin, withPathPrefix } from '../../helpers/scripted-jsonl-cli.js';
 import { createTmpProfile } from '../../helpers/tmp-profile.js';
 
 const sdkMock = vi.hoisted(() => ({
@@ -46,7 +40,6 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  delete process.env.LARKENT_FAKE_JSONL;
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
@@ -57,10 +50,7 @@ describe('P6 multi-bot isolation', () => {
     const binDir = join(tmp.root, 'bin');
     const kimi = await installKindCli(binDir, 'kimi');
     const grok = await installKindCli(binDir, 'grok');
-    const scriptDir = join(tmp.root, 'scripts');
-    const scriptFile = await writeJsonlScriptFile(scriptDir, jsonlScript('kimi', 'success'));
     const previousAppSecret = process.env.APP_SECRET;
-    process.env.LARKENT_FAKE_JSONL = scriptFile;
     process.env.APP_SECRET = 'pin-secret';
 
     const kimiWorkspace = join(tmp.root, 'ws-kimi');
