@@ -306,6 +306,13 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     kind: agentKind,
     ...(binaryPath ? { binaryPath } : {}),
   };
+  const codex = raw.codex
+    ? normalizeCodex(
+        agentKind === 'codex' && binaryPath
+          ? { ...raw.codex, binaryPath }
+          : raw.codex,
+      )
+    : undefined;
 
   return {
     schemaVersion: PROFILE_SCHEMA_VERSION,
@@ -322,7 +329,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     sandbox,
     permissions,
     permissionSource,
-    ...(raw.codex ? { codex: normalizeCodex(raw.codex) } : {}),
+    ...(codex ? { codex } : {}),
     attachments: {
       maxCount: numberOr(raw.attachments?.maxCount, 10),
       maxBytes: numberOr(raw.attachments?.maxBytes, 100 * 1024 * 1024),

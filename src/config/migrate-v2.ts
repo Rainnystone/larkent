@@ -15,7 +15,12 @@ import {
   type CodexConfig,
   type RootConfig,
 } from './profile-schema';
-import { PROFILE_SCHEMA_VERSION, assertSupportedProfileSchemaVersion, isKnownProfileSchemaVersion, profileSchemaVersionOf } from './migrations';
+import {
+  PROFILE_SCHEMA_VERSION,
+  assertSupportedProfileSchemaVersion,
+  isKnownProfileSchemaVersion,
+  profileSchemaVersionOf,
+} from './migrations';
 import { markPermissionDefaultsMigration, saveRootConfig } from './profile-store';
 import type { AppConfig } from './schema';
 import { isAgentKind, unknownAgentKindMessage } from '../agent/registry';
@@ -109,10 +114,7 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   }
   assertSupportedProfileSchemaVersion(schemaVersion);
 
-  await assertNoActiveOldProcesses([
-    paths.userRegistryFile,
-    join(paths.rootDir, 'processes.json'),
-  ]);
+  await assertNoActiveBridgeProcesses(paths.rootDir);
 
   const legacy = parsed as LegacyConfig;
   const app = legacy.accounts?.app ?? legacy.app;
@@ -168,6 +170,14 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
     await rm(paths.activeProfileFile, { force: true }).catch(() => {});
     throw err;
   }
+}
+
+export async function assertNoActiveBridgeProcesses(rootDir: string): Promise<void> {
+  const paths = resolveAppPaths({ rootDir });
+  await assertNoActiveOldProcesses([
+    paths.userRegistryFile,
+    join(paths.rootDir, 'processes.json'),
+  ]);
 }
 
 async function assertNoActiveOldProcesses(registryFiles: string[]): Promise<void> {

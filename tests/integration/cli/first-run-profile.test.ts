@@ -118,6 +118,25 @@ describe('first-run profile bootstrap', () => {
     await expect(realpath(workspace)).resolves.toBe(profile.workspaces.default);
   });
 
+  it('pins a non-Codex env binary onto agent.binaryPath and leaves PATH-only profiles unpinned', async () => {
+    const root = await makeRoot();
+    const envBin = await writeVersionExecutable(root, 'env-kimi', 'kimi 0.0.0-env');
+    const accounts = { app: { id: 'cli_kimi', secret: '${APP_SECRET}', tenant: 'feishu' as const } };
+    const oldKimi = process.env.LARK_CHANNEL_KIMI_BIN;
+    process.env.LARK_CHANNEL_KIMI_BIN = envBin;
+    try {
+      const pinned = await createBootstrapProfileConfig({ agentKind: 'kimi', accounts });
+      expect(pinned.agent).toEqual({ kind: 'kimi', binaryPath: envBin });
+    } finally {
+      if (oldKimi === undefined) delete process.env.LARK_CHANNEL_KIMI_BIN;
+      else process.env.LARK_CHANNEL_KIMI_BIN = oldKimi;
+    }
+
+    const pathOnly = await createBootstrapProfileConfig({ agentKind: 'claude', accounts });
+    expect(pathOnly.agent).toEqual({ kind: 'claude' });
+    expect(pathOnly.agent).not.toHaveProperty('binaryPath');
+  });
+
   it('leaves workspaces empty when neither explicit nor managed workspace is provided', async () => {
     await expect(
       createBootstrapProfileConfig({

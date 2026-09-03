@@ -69,6 +69,7 @@ import {
 } from '../session/codex-history';
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
+import { resolveProfileBinary } from '../runtime/agent-runtime';
 import { readUiSidecar } from '../ui/sidecar';
 import type { SessionStore } from '../session/store';
 import { resolveWorkingDirectory } from '../policy/workspace';
@@ -739,8 +740,8 @@ async function listCodexResumeHistory(
   limit: number,
 ): Promise<CodexThreadHistoryEntry[]> {
   const codex = ctx.controls.profileConfig.codex;
-  const binary = codex?.binaryPath;
-  if (!binary) return [];
+  const binary = resolveProfileBinary(ctx.controls.profileConfig);
+  if (!binary || !codex) return [];
 
   const provider = ctx.codexHistoryProvider ?? listCodexThreadHistory;
   try {

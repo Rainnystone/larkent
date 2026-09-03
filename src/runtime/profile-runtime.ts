@@ -13,6 +13,7 @@ import { setSecret } from '../config/keystore';
 import { resolveAppPaths, type AppPaths } from '../config/app-paths';
 import {
   ActiveBridgeMigrationConflictError,
+  assertNoActiveBridgeProcesses,
   collectLegacyDefaultWorkspace,
   migrateV1ToV2,
   type MigrateV2Options,
@@ -183,6 +184,12 @@ export async function resolveProfileRuntime(
     }
     const persistUpgrade = loadedRoot.upgraded || runtimeUpgrade.changed || defaultWorkspaceUpgrade.changed;
     if (persistUpgrade) {
+      if (loadedRoot.upgraded) {
+        await withActiveBridgeMigrationHandling(
+          () => assertNoActiveBridgeProcesses(appPaths.rootDir),
+          opts.handleActiveBridgeMigrationConflict,
+        );
+      }
       await saveRootConfig(rootConfig, configPath);
       profileConfig = rootConfig.profiles[profile]!;
       log.info('profile', 'legacy-runtime-defaults-upgraded', {
@@ -435,9 +442,16 @@ async function migrateV1ToV2WithActiveBridgeHandling(
   options: MigrateV2Options,
   handler: ResolveProfileRuntimeOptions['handleActiveBridgeMigrationConflict'],
 ): Promise<void> {
+  await withActiveBridgeMigrationHandling(() => migrateV1ToV2(options), handler);
+}
+
+async function withActiveBridgeMigrationHandling(
+  work: () => Promise<unknown>,
+  handler: ResolveProfileRuntimeOptions['handleActiveBridgeMigrationConflict'],
+): Promise<void> {
   for (;;) {
     try {
-      await migrateV1ToV2(options);
+      await work();
       return;
     } catch (err) {
       if (!(err instanceof ActiveBridgeMigrationConflictError) || !handler) throw err;

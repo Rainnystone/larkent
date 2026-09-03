@@ -375,6 +375,18 @@ describe('profile schema', () => {
     });
   });
 
+  it('aligns Codex history with agent.binaryPath when the two fields disagree', () => {
+    const cfg = normalizeProfileConfig({
+      schemaVersion: 3,
+      agent: { kind: 'codex', binaryPath: '/opt/pinned/codex-a' },
+      agentKind: 'codex',
+      accounts: { app },
+      codex: { binaryPath: '/opt/pinned/codex-b', inheritCodexHome: true },
+    });
+    expect(cfg.agent.binaryPath).toBe('/opt/pinned/codex-a');
+    expect(cfg.codex?.binaryPath).toBe('/opt/pinned/codex-a');
+  });
+
   it('defaults Codex permissions to full/full and derives danger-full-access for Codex runtime', () => {
     const cfg = createDefaultProfileConfig({
       agentKind: 'codex',

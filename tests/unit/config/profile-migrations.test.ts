@@ -1,3 +1,4 @@
+import { spawn, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { copyFile, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -9,7 +10,8 @@ import {
   upgradeProfileRecord,
   upgradeRootConfigDocument,
 } from '../../../src/config/migrations.js';
-import { migrateV1ToV2 } from '../../../src/config/migrate-v2.js';
+import { ActiveBridgeMigrationConflictError, migrateV1ToV2 } from '../../../src/config/migrate-v2.js';
+import { createBootstrapProfileConfig } from '../../../src/cli/profile-bootstrap.js';
 import { normalizeProfileConfig } from '../../../src/config/profile-schema.js';
 import { loadRootConfig, loadRootConfigWithMeta, saveRootConfig } from '../../../src/config/profile-store.js';
 import { createRuntimeAgent, resolveProfileBinary } from '../../../src/runtime/agent-runtime.js';
@@ -19,8 +21,10 @@ import { adapterDisplayName, withEnvBin, withIsolatedPath } from '../../helpers/
 
 const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
 const roots: string[] = [];
+const childProcesses: ChildProcess[] = [];
 
 afterEach(async () => {
+  await Promise.all(childProcesses.splice(0).map((child) => killChild(child)));
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
 
@@ -235,6 +239,64 @@ describe('profile v2 to v3 migrations', () => {
     expect(await readFile(dest, 'utf8')).toBe(payload);
   });
 
+  it('does not persist v3 while another bridge process is registered', async () => {
+    const dest = await copyFixture('env-var');
+    const rootDir = join(dest, '..');
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000);'], { stdio: 'ignore' });
+    childProcesses.push(child);
+    if (!child.pid) throw new Error('failed to spawn live process');
+    await writeFile(
+      join(rootDir, 'processes.json'),
+      `${JSON.stringify({
+        entries: [
+          {
+            id: 'live',
+            pid: child.pid,
+            appId: 'cli_kimi_env',
+            tenant: 'feishu',
+            profileName: 'kimi',
+            agentKind: 'kimi',
+            configPath: dest,
+            startedAt: new Date().toISOString(),
+            version: '0.1.32',
+          },
+        ],
+      }, null, 2)}\n`,
+    );
+    const before = await readFile(dest, 'utf8');
+    await expect(
+      resolveProfileRuntime({ config: dest, profile: 'kimi', allowBootstrap: false }),
+    ).rejects.toBeInstanceOf(ActiveBridgeMigrationConflictError);
+    expect(await readFile(dest, 'utf8')).toBe(before);
+    expect(JSON.parse(before).schemaVersion).toBe(2);
+  });
+
+  it('pins an env-only non-Codex binary onto a new profile so spawn does not reread the env var', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'profile-env-pin-'));
+    roots.push(dir);
+    const envBin = await writeVersionExecutable(dir, 'env-kimi', 'kimi 0.0.0-env');
+    const accounts = { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' as const } };
+
+    await withEnvBin('kimi', envBin, async () => {
+      const profile = await createBootstrapProfileConfig({ agentKind: 'kimi', accounts });
+      expect(profile.agent.binaryPath).toBe(envBin);
+
+      await withEnvBin('kimi', join(dir, 'missing-after-pin'), async () => {
+        await withIsolatedPath(join(dir, 'empty-path'), async () => {
+          const agent = createRuntimeAgent(profile, { profileDir: join(dir, 'kimi') });
+          await expect(agent.checkAvailability?.()).resolves.toEqual({
+            ok: true,
+            version: 'kimi 0.0.0-env',
+          });
+        });
+      });
+    });
+
+    const pathOnly = await createBootstrapProfileConfig({ agentKind: 'kimi', accounts });
+    expect(pathOnly.agent).toEqual({ kind: 'kimi' });
+    expect(pathOnly.agent).not.toHaveProperty('binaryPath');
+  });
+
   it('lets two same-kind profiles spawn distinct binaryPath values', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'profile-two-binaries-'));
     roots.push(dir);
@@ -289,3 +351,12 @@ describe('profile v2 to v3 migrations', () => {
     expect(existsSync(join(process.cwd(), 'src/agent/cursor/binary.ts'))).toBe(false);
   });
 });
+
+async function killChild(child: ChildProcess): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  child.kill('SIGKILL');
+  await new Promise<void>((resolve) => {
+    child.once('exit', () => resolve());
+    setTimeout(resolve, 500);
+  });
+}

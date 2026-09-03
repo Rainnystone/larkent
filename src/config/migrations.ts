@@ -25,6 +25,18 @@ export class UnsupportedProfileSchemaError extends Error {
   }
 }
 
+export class UnsupportedProcessRegistrySchemaError extends Error {
+  readonly schemaVersion: unknown;
+
+  constructor(schemaVersion: unknown) {
+    super(
+      `unsupported process registry schemaVersion ${String(schemaVersion)}; expected ${PROCESS_REGISTRY_SCHEMA_VERSION}`,
+    );
+    this.name = 'UnsupportedProcessRegistrySchemaError';
+    this.schemaVersion = schemaVersion;
+  }
+}
+
 export function profileSchemaVersionOf(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   return (raw as { schemaVersion?: unknown }).schemaVersion;
@@ -43,6 +55,11 @@ export function assertSupportedProfileSchemaVersion(schemaVersion: unknown): voi
     return;
   }
   throw new UnsupportedProfileSchemaError(schemaVersion);
+}
+
+export function assertSupportedProcessRegistrySchemaVersion(schemaVersion: unknown): void {
+  if (schemaVersion === undefined || schemaVersion === PROCESS_REGISTRY_SCHEMA_VERSION) return;
+  throw new UnsupportedProcessRegistrySchemaError(schemaVersion);
 }
 
 export function upgradeRootConfigDocument(raw: unknown): ProfileUpgradeResult<Record<string, unknown>> {

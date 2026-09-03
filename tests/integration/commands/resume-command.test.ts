@@ -34,6 +34,7 @@ interface Harness {
   pending: PendingQueue;
   run(content: string, options?: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' }): Promise<boolean>;
   dispatchResumeArg(arg: string): Promise<void>;
+  codexHistoryBinaries: string[];
 }
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -264,6 +265,20 @@ describe('agent-aware resume commands', () => {
 
     expect(lastMarkdown(h.channel)).toContain('请先使用 /cd');
   });
+
+  it('lists Codex history with agent.binaryPath when it differs from nested codex.binaryPath', async () => {
+    const h = await createHarness('codex');
+    h.controls.profileConfig.agent = { kind: 'codex', binaryPath: '/opt/pinned/codex-a' };
+    if (h.controls.profileConfig.codex) {
+      h.controls.profileConfig.codex = {
+        ...h.controls.profileConfig.codex,
+        binaryPath: '/opt/pinned/codex-b',
+      };
+    }
+
+    await expect(h.run('/resume')).resolves.toBe(true);
+    expect(h.codexHistoryBinaries).toEqual(['/opt/pinned/codex-a']);
+  });
 });
 
 async function createHarness(
@@ -277,6 +292,7 @@ async function createHarness(
   const catalog = new SessionCatalog(join(tmp.profile, 'session-catalog.json'));
   const claudeHistory: SessionSummary[] = [];
   const codexHistory: CodexThreadHistoryEntry[] = [];
+  const codexHistoryBinaries: string[] = [];
   const activeRuns = new ActiveRuns();
   const pending = new PendingQueue(60_000, () => {});
   const agent = createFakeAgent();
@@ -321,7 +337,10 @@ async function createHarness(
       activeRuns,
       controls,
       claudeHistoryProvider: async () => claudeHistory,
-      codexHistoryProvider: async () => codexHistory,
+      codexHistoryProvider: async (input) => {
+        codexHistoryBinaries.push(input.binary);
+        return codexHistory;
+      },
     });
 
   const dispatchResumeArg = (arg: string): Promise<void> =>
@@ -358,6 +377,7 @@ async function createHarness(
     pending,
     run,
     dispatchResumeArg,
+    codexHistoryBinaries,
   };
 }
 

@@ -16,7 +16,10 @@ import * as lockfile from 'proper-lockfile';
 import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
 import type { AgentKind } from '../config/profile-schema';
-import { PROCESS_REGISTRY_SCHEMA_VERSION } from '../config/migrations';
+import {
+  PROCESS_REGISTRY_SCHEMA_VERSION,
+  assertSupportedProcessRegistrySchemaVersion,
+} from '../config/migrations';
 import { isAgentKind } from '../agent/registry';
 import type { TenantBrand } from '../config/schema';
 import { writeFileAtomic } from '../platform/atomic-write';
@@ -368,19 +371,21 @@ function readRaw(path: string): RegistryFile {
 }
 
 function readRegistryFile(path: string): RegistryFile | undefined {
+  let parsed: Partial<RegistryFile>;
   try {
-    const text = readFileSync(path, 'utf8');
-    const parsed = JSON.parse(text) as Partial<RegistryFile>;
-    if (!parsed || !Array.isArray(parsed.entries)) return { ...EMPTY };
-    return {
-      schemaVersion:
-        parsed.schemaVersion === undefined ? PROCESS_REGISTRY_SCHEMA_VERSION : parsed.schemaVersion,
-      entries: parsed.entries.filter(isValidEntry),
-    };
+    parsed = JSON.parse(readFileSync(path, 'utf8')) as Partial<RegistryFile>;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     return { ...EMPTY };
   }
+  if (!parsed || !Array.isArray(parsed.entries)) return { ...EMPTY };
+  assertSupportedProcessRegistrySchemaVersion(parsed.schemaVersion);
+  return {
+    schemaVersion: parsed.schemaVersion === undefined
+      ? PROCESS_REGISTRY_SCHEMA_VERSION
+      : parsed.schemaVersion,
+    entries: parsed.entries.filter(isValidEntry),
+  };
 }
 
 function legacyRegistryFile(path: string): string | undefined {

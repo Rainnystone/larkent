@@ -74,6 +74,25 @@ describe('P7 preflight and detection', () => {
     });
   });
 
+  it('does not treat an unrelated PATH binary named agent as Cursor', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pin-detect-agent-'));
+    await writeVersionExecutable(dir, 'agent', 'agent 1.0.0');
+
+    await withEnvBin('grok', undefined, async () => {
+      await withEnvBin('claude', undefined, async () => {
+        await withEnvBin('codex', undefined, async () => {
+          await withEnvBin('kimi', undefined, async () => {
+            await withEnvBin('cursor', undefined, async () => {
+              await withIsolatedPath(dir, async () => {
+                await expect(detectInstalledAgents()).resolves.toEqual([]);
+              });
+            });
+          });
+        });
+      });
+    });
+  });
+
   it('honors LARK_CHANNEL_*_BIN over PATH names', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-detect-env-'));
     const kimi = await writeVersionExecutable(dir, 'kimi-custom', 'kimi 0.0.0-pin');

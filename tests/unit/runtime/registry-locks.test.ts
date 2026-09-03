@@ -11,6 +11,7 @@ import {
   unregisterSync,
   type ProcessEntry,
 } from '../../../src/runtime/registry';
+import { UnsupportedProcessRegistrySchemaError } from '../../../src/config/migrations';
 
 const roots: string[] = [];
 
@@ -213,6 +214,30 @@ describe('registry and runtime lock integration', () => {
       const persisted = JSON.parse(await readFile(registryFile, 'utf8')) as { entries: ProcessEntry[] };
       expect(persisted.entries.map((item) => item.id)).toEqual(['locked']);
     });
+  });
+
+  it('refuses to mutate an unsupported process-registry schemaVersion', async () => {
+    const root = await makeRoot();
+    const registryFile = join(root, 'registry', 'processes.json');
+    const payload = {
+      schemaVersion: 2,
+      entries: [entry({ id: 'keep-me' })],
+    };
+    await writeJson(registryFile, payload);
+
+    await expect(
+      register({
+        appId: 'cli_new',
+        tenant: 'feishu',
+        profileName: 'codex-dev',
+        agentKind: 'codex',
+        configPath: join(root, 'config.json'),
+        version: '0.1.32',
+        registryFile,
+      }),
+    ).rejects.toBeInstanceOf(UnsupportedProcessRegistrySchemaError);
+    expect(JSON.parse(await readFile(registryFile, 'utf8'))).toEqual(payload);
+    expect(() => readAndPrune(registryFile)).toThrow(UnsupportedProcessRegistrySchemaError);
   });
 
   it('uses the registry file lock from sync unregister paths', async () => {

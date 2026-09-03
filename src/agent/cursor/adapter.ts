@@ -1,4 +1,4 @@
-import { resolveFirstAvailableBinary } from '../../cli/agent-detection';
+import { resolveCursorBinary } from '../../cli/agent-detection';
 import { mergeProcessEnv } from '../../platform/spawn';
 import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
@@ -49,9 +49,9 @@ export class CursorAdapter implements AgentAdapter {
   async checkAvailability(): Promise<AgentAvailability> {
     if (!this.explicitBinary) {
       try {
-        this.binary = await resolveFirstAvailableBinary(descriptorFor('cursor').binaryNames);
+        this.binary = await resolveCursorBinary();
       } catch {
-        // Keep the default name so preflight can emit agent-binary-not-found.
+        this.binary = descriptorFor('cursor').binaryNames[0] ?? 'cursor-agent';
       }
     }
     return checkAgentAvailability({

@@ -4,7 +4,7 @@ import { AgentPreflightError } from '../agent/preflight';
 import { createDefaultProfileConfig, type AgentKind, type ProfileConfig } from '../config/profile-schema';
 import type { AppConfig } from '../config/schema';
 import { resolveWorkingDirectory } from '../policy/workspace';
-import { resolveExecutablePath } from './agent-detection';
+import { resolveEnvPinnedBinary, resolveExecutablePath } from './agent-detection';
 
 export interface BootstrapProfileInput {
   agentKind: AgentKind;
@@ -13,6 +13,7 @@ export interface BootstrapProfileInput {
   secrets?: AppConfig['secrets'];
   workspace?: string;
   defaultWorkspace?: string;
+  binaryPath?: string;
   codexBinaryPath?: string;
   profileDir?: string;
 }
@@ -29,8 +30,12 @@ export async function createBootstrapProfileConfig(
     input.agentKind === 'codex'
       ? await createBootstrapCodexConfig(input.codexBinaryPath)
       : undefined;
+  const binaryPath =
+    input.binaryPath
+    ?? (input.agentKind === 'codex' ? undefined : await resolveEnvPinnedBinary(input.agentKind));
   const profile = createDefaultProfileConfig({
     agentKind: input.agentKind,
+    ...(binaryPath ? { binaryPath } : {}),
     accounts: input.accounts,
     preferences: {
       showToolCalls: false,
