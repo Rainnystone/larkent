@@ -19,7 +19,7 @@ import { GrokAdapter } from '../../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../../src/agent/kimi/adapter.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
-import { writeVersionExecutable } from '../../helpers/fake-executable.js';
+import { writeScriptedJsonlExecutable, writeVersionExecutable } from '../../helpers/fake-executable.js';
 import {
   PIN_AGENT_KINDS,
   adapterDisplayName,
@@ -147,7 +147,7 @@ async function createDoctorHarness(
           displayName: adapterDisplayName(kind),
           events: [[{ type: 'text', delta: 'OK' }, { type: 'done', terminationReason: 'normal' }]],
         })
-      : missingAdapter(kind);
+      : await missingAdapter(kind, tmp.root);
   const controls = {
     profile: `${kind}-${mode}-${Date.now()}`,
     profileConfig,
@@ -190,8 +190,16 @@ async function createDoctorHarness(
   return { channel, run };
 }
 
-function missingAdapter(kind: PinAgentKind) {
-  const missing = join(tmpdir(), `missing-${kind}-${Date.now()}`);
+async function missingAdapter(kind: PinAgentKind, root: string) {
+  if (process.platform === 'win32' && kind === 'claude') {
+    const fake = await writeScriptedJsonlExecutable(join(root, 'missing-bin'), 'claude', {
+      lines: [],
+      stderr: 'missing command\n',
+      exitCode: 1,
+    });
+    return new ClaudeAdapter({ binary: fake.path });
+  }
+  const missing = join(root, `missing-${kind}`);
   switch (kind) {
     case 'claude':
       return new ClaudeAdapter({ binary: missing });

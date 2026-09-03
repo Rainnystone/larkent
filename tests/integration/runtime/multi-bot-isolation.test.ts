@@ -40,7 +40,9 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
+  for (const cleanup of cleanups.splice(0).reverse()) {
+    await cleanup();
+  }
 });
 
 describe('P6 multi-bot isolation', () => {

@@ -31,6 +31,12 @@ describe('scripted JSONL fake executables', () => {
     expect(source.startsWith('#!')).toBe(true);
     const script = JSON.parse(await readFile(fake.scriptPath, 'utf8')) as { lines: unknown[] };
     expect(script.lines).toEqual([{ type: 'text', data: 'ok' }]);
+    if (process.platform === 'win32') {
+      expect(fake.path.endsWith('.mjs')).toBe(true);
+      const launcher = await readFile(join(dir, 'grok.CMD'), 'utf8');
+      expect(launcher.startsWith('@echo off')).toBe(true);
+      expect(launcher).toContain(fake.path);
+    }
   });
 
   it('records grok argv through spawn, including a rules blob with angle brackets', async () => {
