@@ -123,12 +123,24 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     abortHandler = undefined;
   };
 
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+  let silentExitTimer: ReturnType<typeof setTimeout> | undefined;
+  const clearTimers = (): void => {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (totalTimer) clearTimeout(totalTimer);
+    if (silentExitTimer) clearTimeout(silentExitTimer);
+  };
+
   let cleanupPromise: Promise<void> | undefined;
+  const childHasExited = (): boolean =>
+    !child.pid || child.exitCode !== null || child.signalCode !== null;
   const runCleanup = (): Promise<void> => {
     cleanupPromise ??= (async () => {
-      if (child.pid && child.exitCode === null && child.signalCode === null) {
+      if (!childHasExited()) {
         await waitForExitCode(child);
       }
+      clearTimers();
       detachAbort();
       await input.cleanup?.();
     })();
@@ -167,8 +179,6 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
 
   const idleMs = input.timeouts?.idleMs;
   const totalMs = input.timeouts?.totalMs;
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let totalTimer: ReturnType<typeof setTimeout> | undefined;
   const armIdle = (): void => {
     if (!idleMs || idleMs === Number.POSITIVE_INFINITY) return;
     if (idleTimer) clearTimeout(idleTimer);
@@ -231,7 +241,6 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     child.stdin.end();
   }
 
-  let silentExitTimer: ReturnType<typeof setTimeout> | undefined;
   if (input.emptyStdoutDestroyMs && input.emptyStdoutDestroyMs > 0) {
     const closeSilentStdout = (): void => {
       silentExitTimer = setTimeout(() => {
@@ -266,12 +275,6 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     }
   }
 
-  const clearTimers = (): void => {
-    if (idleTimer) clearTimeout(idleTimer);
-    if (totalTimer) clearTimeout(totalTimer);
-    if (silentExitTimer) clearTimeout(silentExitTimer);
-  };
-
   return {
     runId: input.runId,
     events: iterateEvents({
@@ -286,9 +289,10 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
       failNonzeroAfterTerminal: input.failNonzeroAfterTerminal === true,
       successFinish: input.successFinish,
       cleanup: async () => {
-        clearTimers();
         detachAbort();
-        await runCleanup();
+        if (childHasExited()) {
+          await runCleanup();
+        }
       },
     }),
     async stop() {

@@ -366,6 +366,66 @@ process.exit(0);
     expect(() => controller.abort()).not.toThrow();
   });
 
+  it('does not hang the iterator when the child stays alive after a terminal JSONL line', async () => {
+    const fake = await createFakeClaude({
+      lines: [{ type: 'result', session_id: 'sess-hang-tail' }],
+      hang: true,
+    });
+    cleanup.push(fake.dir);
+    const run = runJsonlCli({
+      runId: 'run-hang-tail',
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: wrapParsedTranslator(
+        {
+          translate: (parsed) => {
+            const row = parsed as { type?: string; session_id?: string };
+            return row.type === 'result'
+              ? [{ type: 'done' as const, sessionId: row.session_id, terminationReason: 'normal' as const }]
+              : [];
+          },
+        },
+        'hang-tail',
+      ),
+      spawnName: 'hang-tail',
+      stopGraceMs: 50,
+    });
+
+    const events: AgentEvent[] = [];
+    let consumeSettled = false;
+    const consume = (async () => {
+      try {
+        for await (const event of run.events) {
+          events.push(event);
+          if (event.type === 'done' || event.type === 'error') break;
+        }
+      } finally {
+        consumeSettled = true;
+      }
+    })();
+
+    try {
+      await Promise.race([
+        consume,
+        new Promise((_, reject) => {
+          setTimeout(() => reject(new Error('iterator hung after terminal event')), 400);
+        }),
+      ]);
+      expect(consumeSettled).toBe(true);
+      expect(events).toEqual([
+        { type: 'done', sessionId: 'sess-hang-tail', terminationReason: 'normal' },
+      ]);
+      expect(await run.waitForExit(50)).toBe(false);
+      await run.stop();
+      expect(await run.waitForExit(1_000)).toBe(true);
+    } finally {
+      await run.stop().catch(() => {});
+      await run.waitForExit(1_000);
+    }
+  });
+
   it('keeps the first stop reason when abort overlaps an in-flight idle kill', async () => {
     const fake = await createFakeRunnerBinary(`
 process.on('SIGTERM', () => {});
