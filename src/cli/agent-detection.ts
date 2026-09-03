@@ -21,9 +21,7 @@ export async function resolveExecutablePath(command: string): Promise<string> {
       try {
         await access(candidate, constants.X_OK);
         return candidate;
-      } catch {
-        // Continue searching PATH.
-      }
+      } catch {}
     }
   }
   throw new Error(`executable not found: ${command}`);
@@ -78,9 +76,7 @@ export async function detectInstalledAgents(): Promise<DetectedAgent[]> {
         kind,
         binaryPath: await resolveDetectedBinary(kind, envCommand),
       });
-    } catch {
-      // Missing agents are reported by the caller based on the final count.
-    }
+    } catch {}
   }
   return detected;
 }
