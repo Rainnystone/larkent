@@ -89,6 +89,36 @@ describe('policy fingerprint', () => {
     );
   });
 
+  it('pins golden hashes for representative FingerprintInputV2 values for all five kinds', () => {
+    const shared = {
+      cwdRealpath: '/repo/pin',
+      sandbox: 'danger-full-access' as const,
+      accessPolicyDigest: digestOf('access-pin'),
+      resourceScopeDigest: digestOf('scope-pin'),
+      attachmentPolicyShapeDigest: digestOf('attachments-pin'),
+    };
+
+    const golden = {
+      claude: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      kimi: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      grok: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      cursor: policyFingerprint({ ...shared, inheritCodexHome: false }),
+      codex: policyFingerprint({
+        ...shared,
+        codexHome: '/state/codex-home',
+        inheritCodexHome: true,
+      }),
+    };
+
+    expect(golden).toEqual({
+      claude: 'fjPD7eP2aPRy3wCTFsivSQ',
+      kimi: 'fjPD7eP2aPRy3wCTFsivSQ',
+      grok: 'fjPD7eP2aPRy3wCTFsivSQ',
+      cursor: 'fjPD7eP2aPRy3wCTFsivSQ',
+      codex: 'V3nDu8JkeWrhmqWwgYyqSQ',
+    });
+  });
+
   it('sorts access and resource allowlists so ordering does not change digests', () => {
     const profile = createDefaultProfileConfig({
       agentKind: 'claude',

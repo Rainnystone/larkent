@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fkimi\u001f/PINNED_CWD\u001fPINNED_FP",
+    "scopeId": "chat-1",
+    "agentId": "kimi",
+    "cwdRealpath": "/PINNED_CWD",
+    "policyFingerprint": "PINNED_FP",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "sessionId": "sess-v1-kimi"
+  }
+]
