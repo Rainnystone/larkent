@@ -87,7 +87,7 @@ describe('profile runtime resolver', () => {
       profiles?: Record<string, unknown>;
       accounts?: unknown;
     };
-    expect(recovered.schemaVersion).toBe(2);
+    expect(recovered.schemaVersion).toBe(3);
     expect(recovered.profiles?.codex).toBeTruthy();
     expect(recovered.accounts).toBeUndefined();
     await expect(readFile(backupFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });

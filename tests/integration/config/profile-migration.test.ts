@@ -79,7 +79,7 @@ describe('profile v2 migration', () => {
     expect(await readJson(join(root, 'config.json.bak'))).toEqual(legacyConfig);
 
     const next = (await readJson(join(root, 'config.json'))) as RootConfig;
-    expect(next.schemaVersion).toBe(2);
+    expect(next.schemaVersion).toBe(3);
     expect(next.activeProfile).toBe('claude');
     expect(next.secrets).toEqual(legacyConfig.secrets);
     expect(next.profiles.claude?.access).toEqual({
@@ -183,7 +183,7 @@ describe('profile v2 migration', () => {
       }),
     ]);
     const next = (await readJson(join(root, 'config.json'))) as RootConfig;
-    expect(next.schemaVersion).toBe(2);
+    expect(next.schemaVersion).toBe(3);
     expect(next.activeProfile).toBe('claude');
   });
 
@@ -213,7 +213,7 @@ describe('profile v2 migration', () => {
 
     expect(isProcessAlive(pid)).toBe(false);
     const next = (await readJson(join(root, 'config.json'))) as RootConfig;
-    expect(next.schemaVersion).toBe(2);
+    expect(next.schemaVersion).toBe(3);
     expect(next.activeProfile).toBe('claude');
     await expect(stat(join(root, 'config.json.bak'))).resolves.toBeDefined();
   });
@@ -239,7 +239,7 @@ describe('profile v2 migration', () => {
 
     expect(result).toEqual({ migrated: true, profile: 'claude' });
     const next = (await readJson(join(root, 'config.json'))) as RootConfig;
-    expect(next.schemaVersion).toBe(2);
+    expect(next.schemaVersion).toBe(3);
   });
 
   it('keeps repeated migration on an existing v2 config as a no-op even with active registry entries', async () => {
@@ -347,7 +347,7 @@ describe('profile v2 migration', () => {
     expect(runtime.profile).toBe('claude');
     expect(runtime.profileConfig.accounts.app.id).toBe('cli_test');
     const next = (await readJson(join(root, 'config.json'))) as RootConfig;
-    expect(next.schemaVersion).toBe(2);
+    expect(next.schemaVersion).toBe(3);
   });
 
   it('imports a concrete legacy workspace as the default working directory', async () => {

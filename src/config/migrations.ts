@@ -1,4 +1,5 @@
-import { isAgentKind, type AgentKind } from '../agent/registry';
+import { isAbsolute } from 'node:path';
+import { isAgentKind, unknownAgentKindMessage, type AgentKind } from '../agent/registry';
 
 export const PROFILE_SCHEMA_VERSION = 3;
 export const PROCESS_REGISTRY_SCHEMA_VERSION = 1;
@@ -27,7 +28,7 @@ export function upgradeRootConfigDocument(raw: unknown): ProfileUpgradeResult<Re
     };
   }
   if (root.schemaVersion !== 2) {
-    throw new Error('profile schemaVersion must be 2 or 3');
+    throw unsupportedSchemaVersion(root.schemaVersion);
   }
   const profiles = upgradeProfilesMap(root.profiles, true);
   return {
@@ -54,7 +55,7 @@ export function upgradeProfileRecord(raw: unknown): ProfileUpgradeResult<Record<
     };
   }
   if (profile.schemaVersion !== 2) {
-    throw new Error('profile schemaVersion must be 2 or 3');
+    throw unsupportedSchemaVersion(profile.schemaVersion);
   }
   return {
     document: upgradeProfileV2(profile),
@@ -82,10 +83,10 @@ function upgradeProfilesMap(
 function upgradeProfileV2(profile: Record<string, unknown>): Record<string, unknown> {
   const kind = profile.agentKind;
   if (!isAgentKind(kind)) {
-    throw new Error(`unsupported agent: ${String(kind)}`);
+    throw new Error(unknownAgentKindMessage(kind));
   }
   const codex = isRecord(profile.codex) ? profile.codex : undefined;
-  const binaryPath = typeof codex?.binaryPath === 'string' ? codex.binaryPath : undefined;
+  const binaryPath = absoluteBinaryPath(codex?.binaryPath);
   const agent: ProfileAgentV3 = {
     kind,
     ...(binaryPath ? { binaryPath } : {}),
@@ -107,13 +108,24 @@ function currentAgent(profile: Record<string, unknown>): ProfileAgentV3 {
   }
   if (isAgentKind(profile.agentKind)) {
     const codex = isRecord(profile.codex) ? profile.codex : undefined;
-    const binaryPath = typeof codex?.binaryPath === 'string' ? codex.binaryPath : undefined;
+    const binaryPath = absoluteBinaryPath(codex?.binaryPath);
     return {
       kind: profile.agentKind,
       ...(binaryPath ? { binaryPath } : {}),
     };
   }
-  throw new Error(`unsupported agent: ${String(profile.agentKind)}`);
+  throw new Error(unknownAgentKindMessage(profile.agentKind));
+}
+
+function absoluteBinaryPath(value: unknown): string | undefined {
+  return typeof value === 'string' && isAbsolute(value) ? value : undefined;
+}
+
+function unsupportedSchemaVersion(version: unknown): never {
+  if (version === 1) {
+    throw new Error('profile schemaVersion 1 cannot be upgraded here; run migrateV1ToV2');
+  }
+  throw new Error(`unsupported profile schemaVersion ${String(version)}; expected 2 or 3`);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

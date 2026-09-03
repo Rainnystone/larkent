@@ -18,32 +18,36 @@ const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
 describe('P4 profile load parity', () => {
   it('loads env-var kimi and grok profiles to the same runtime adapter as today', async () => {
     const root = await loadRootConfig(join(fixtureRoot, 'env-var/config.json'));
-    expect(root?.schemaVersion).toBe(2);
+    expect(root?.schemaVersion).toBe(3);
     expect(root?.profiles.kimi?.agentKind).toBe('kimi');
     expect(root?.profiles.grok?.agentKind).toBe('grok');
+    expect(root?.profiles.kimi?.agent).toEqual({ kind: 'kimi' });
+    expect(root?.profiles.grok?.agent).toEqual({ kind: 'grok' });
     expect(root?.profiles.kimi?.codex).toBeUndefined();
     expect(root?.profiles.grok?.codex).toBeUndefined();
     expect(root?.profiles.kimi).not.toHaveProperty('binaryPath');
     expect(root?.profiles.grok).not.toHaveProperty('binaryPath');
 
     const dir = await mkdtemp(join(tmpdir(), 'pin-env-bin-'));
-    const kimiBin = await writeVersionExecutable(dir, 'kimi', 'kimi 0.0.0-pin');
-    const grokBin = await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
+    await writeVersionExecutable(dir, 'kimi', 'kimi 0.0.0-pin');
+    await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
 
-    await withEnvBin('kimi', kimiBin, async () => {
-      await withEnvBin('grok', grokBin, async () => {
-        const kimiAgent = createRuntimeAgent(root!.profiles.kimi!, {
-          profileDir: join(dir, 'profiles', 'kimi'),
+    await withEnvBin('kimi', undefined, async () => {
+      await withEnvBin('grok', undefined, async () => {
+        await withIsolatedPath(dir, async () => {
+          const kimiAgent = createRuntimeAgent(root!.profiles.kimi!, {
+            profileDir: join(dir, 'profiles', 'kimi'),
+          });
+          const grokAgent = createRuntimeAgent(root!.profiles.grok!, {
+            profileDir: join(dir, 'profiles', 'grok'),
+          });
+          expect(kimiAgent.id).toBe('kimi');
+          expect(kimiAgent.displayName).toBe(adapterDisplayName('kimi'));
+          expect(grokAgent.id).toBe('grok');
+          expect(grokAgent.displayName).toBe(adapterDisplayName('grok'));
+          await expect(kimiAgent.isAvailable()).resolves.toBe(true);
+          await expect(grokAgent.isAvailable()).resolves.toBe(true);
         });
-        const grokAgent = createRuntimeAgent(root!.profiles.grok!, {
-          profileDir: join(dir, 'profiles', 'grok'),
-        });
-        expect(kimiAgent.id).toBe('kimi');
-        expect(kimiAgent.displayName).toBe(adapterDisplayName('kimi'));
-        expect(grokAgent.id).toBe('grok');
-        expect(grokAgent.displayName).toBe(adapterDisplayName('grok'));
-        await expect(kimiAgent.isAvailable()).resolves.toBe(true);
-        await expect(grokAgent.isAvailable()).resolves.toBe(true);
       });
     });
   });
@@ -68,6 +72,10 @@ describe('P4 profile load parity', () => {
   it('loads a Codex binaryPath profile to the stored binary path', async () => {
     const root = await loadRootConfig(join(fixtureRoot, 'codex-binary-path/config.json'));
     expect(root?.profiles.codex?.agentKind).toBe('codex');
+    expect(root?.profiles.codex?.agent).toEqual({
+      kind: 'codex',
+      binaryPath: '/opt/pinned/codex',
+    });
     expect(root?.profiles.codex?.codex).toMatchObject({
       binaryPath: '/opt/pinned/codex',
       inheritCodexHome: true,

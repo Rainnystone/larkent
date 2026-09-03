@@ -112,7 +112,7 @@ describe('profile store canonical serialization', () => {
     } as unknown as RootConfig & { extra?: true; preferences: any }, configPath);
 
     const saved = JSON.parse(await readFile(configPath, 'utf8'));
-    expect(saved.schemaVersion).toBe(2);
+    expect(saved.schemaVersion).toBe(3);
     expect(saved.activeProfile).toBe('codex');
     expect(saved.secrets).toEqual(rootSecrets);
     expect(saved.preferences).toEqual({});
