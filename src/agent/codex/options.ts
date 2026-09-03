@@ -74,7 +74,7 @@ export function codexPolicyInputs(options: unknown): Record<string, unknown> {
   const parsed = parseCodexAgentOptions(options, false);
   return {
     codexHome: parsed.codexHome ?? null,
-    inheritCodexHome: parsed.inheritCodexHome === true,
+    inheritCodexHome: parsed.inheritCodexHome !== false,
   };
 }
 
