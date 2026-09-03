@@ -11,7 +11,7 @@ import {
   cursorVersionedHelpText,
   installKindCli,
   withEnvBin,
-  withPathPrefix,
+  withIsolatedPath,
 } from '../../helpers/scripted-jsonl-cli.js';
 
 const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
@@ -52,7 +52,7 @@ describe('P4 profile load parity', () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-path-claude-'));
     await writeVersionExecutable(dir, 'claude', 'claude 0.0.0-pin');
     await withEnvBin('claude', undefined, async () => {
-      await withPathPrefix(dir, async () => {
+      await withIsolatedPath(dir, async () => {
         const agent = createRuntimeAgent(root!.profiles.claude!, {
           profileDir: join(dir, 'profiles', 'claude'),
         });
@@ -84,7 +84,7 @@ describe('P4 profile load parity', () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-cursor-agent-'));
     const agentBin = await writeVersionExecutable(dir, 'agent', 'cursor-agent 2026.08.28-pin');
     await withEnvBin('cursor', undefined, async () => {
-      await withPathPrefix(dir, async () => {
+      await withIsolatedPath(dir, async () => {
         await expect(resolveCursorBinary()).resolves.toBe(agentBin);
         const agent = createRuntimeAgent(root!.profiles.cursor!, {
           profileDir: join(dir, 'profiles', 'cursor'),

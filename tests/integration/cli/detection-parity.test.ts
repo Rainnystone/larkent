@@ -26,7 +26,7 @@ import {
   cursorVersionedHelpText,
   pinAgentKind,
   withEnvBin,
-  withPathPrefix,
+  withIsolatedPath,
   type PinAgentKind,
 } from '../../helpers/scripted-jsonl-cli.js';
 import { createTmpProfile } from '../../helpers/tmp-profile.js';
@@ -60,7 +60,7 @@ describe('P7 preflight and detection', () => {
         await withEnvBin('codex', undefined, async () => {
           await withEnvBin('kimi', undefined, async () => {
             await withEnvBin('cursor', undefined, async () => {
-              await withPathPrefix(dir, async () => {
+              await withIsolatedPath(dir, async () => {
                 await expect(detectInstalledAgents()).resolves.toEqual([
                   { kind: 'grok', binaryPath: grok },
                   { kind: 'claude', binaryPath: claude },
@@ -82,7 +82,7 @@ describe('P7 preflight and detection', () => {
         await withEnvBin('claude', 'missing-claude', async () => {
           await withEnvBin('codex', 'missing-codex', async () => {
             await withEnvBin('cursor', 'missing-cursor', async () => {
-              await withPathPrefix(dir, async () => {
+              await withIsolatedPath(dir, async () => {
                 await expect(detectInstalledAgents()).resolves.toEqual([
                   { kind: 'kimi', binaryPath: kimi },
                 ]);

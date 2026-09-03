@@ -222,6 +222,23 @@ export function withPathPrefix(dir: string, run: () => Promise<void> | void): Pr
     });
 }
 
+export function withIsolatedPath(dir: string, run: () => Promise<void> | void): Promise<void> {
+  const previous = process.env.PATH;
+  process.env.PATH = isolatedPathValue(dir);
+  return Promise.resolve()
+    .then(run)
+    .finally(() => {
+      if (previous === undefined) delete process.env.PATH;
+      else process.env.PATH = previous;
+    });
+}
+
+function isolatedPathValue(dir: string): string {
+  if (process.platform !== 'win32') return dir;
+  const systemRoot = process.env.SystemRoot ?? 'C:\\Windows';
+  return [dir, join(systemRoot, 'System32'), systemRoot].join(delimiter);
+}
+
 export function withEnvBin(
   kind: PinAgentKind,
   value: string | undefined,
@@ -243,10 +260,12 @@ export function stabilizePinSnapshot(value: unknown, replacements: ReadonlyArray
   let text = JSON.stringify(value);
   for (const [from, to] of replacements) {
     text = text.split(from).join(to);
+    text = text.split(JSON.stringify(from).slice(1, -1)).join(to);
   }
   text = text.replace(
     /[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/gi,
     '<uuid>',
   );
+  text = text.replace(/[0-9a-f]{8}-[0-9a-f]{3}\b/gi, '<nonce>');
   return JSON.parse(text) as unknown;
 }

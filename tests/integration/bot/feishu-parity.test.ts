@@ -1,5 +1,5 @@
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { dirname, delimiter, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
@@ -90,7 +90,7 @@ async function startParityBot(kind: PinAgentKind): Promise<{
   const installed = await installKindCli(binDir, kind);
   const scriptFile = await writeJsonlScriptFile(join(tmp.root, 'scripts'), jsonlScript(kind, 'success'));
   setEnv('LARKENT_FAKE_JSONL', scriptFile);
-  setEnv('PATH', `${binDir}:${process.env.PATH ?? ''}`);
+  setEnv('PATH', `${binDir}${delimiter}${process.env.PATH ?? ''}`);
   if (kind !== 'claude' && kind !== 'codex') {
     setEnv(envBinVarName(kind), installed.fake.path);
   } else {
