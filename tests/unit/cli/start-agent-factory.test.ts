@@ -104,6 +104,25 @@ describe('start runtime agent factory', () => {
     expect(() => assertReconnectAgentKindUnchanged('claude', 'codex')).toThrow(/agent kind/i);
     expect(() => assertReconnectAgentKindUnchanged('codex', 'codex')).not.toThrow();
   });
+
+  it('creates a Cursor adapter without pinning cursor-agent when LARK_CHANNEL_CURSOR_BIN is unset', () => {
+    const prev = process.env.LARK_CHANNEL_CURSOR_BIN;
+    delete process.env.LARK_CHANNEL_CURSOR_BIN;
+    try {
+      const agent = createRuntimeAgent(
+        createDefaultProfileConfig({
+          agentKind: 'cursor',
+          accounts: appAccount(),
+        }),
+        { profileDir: tmpdir() },
+      );
+      expect(agent.id).toBe('cursor');
+      expect(agent.displayName).toBe('Cursor CLI');
+    } finally {
+      if (prev === undefined) delete process.env.LARK_CHANNEL_CURSOR_BIN;
+      else process.env.LARK_CHANNEL_CURSOR_BIN = prev;
+    }
+  });
 });
 
 function appAccount() {

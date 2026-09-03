@@ -1,3 +1,5 @@
+import type { CodexSandboxMode } from '../../config/permissions';
+
 export interface BuildCursorArgsInput {
   /**
    * Full prompt text (bridge system prompt already prefixed by the caller).
@@ -10,6 +12,26 @@ export interface BuildCursorArgsInput {
   sessionId?: string;
   /** Forwarded to `--model`. Omitted uses the account default. */
   model?: string;
+  /**
+   * Policy sandbox from RunExecutor. Cursor's unattended flags disable its
+   * own sandbox so lark-cli can use the network; restricted modes are not
+   * mapped (enabled Cursor sandbox would block those calls).
+   */
+  sandbox?: CodexSandboxMode;
+}
+
+/**
+ * Cursor print mode always runs `--force --sandbox disabled`. That is full
+ * host access, so reject read-only / workspace-write rather than silently
+ * ignoring the profile ceiling.
+ */
+export function assertCursorSandbox(sandbox?: CodexSandboxMode): void {
+  if (sandbox && sandbox !== 'danger-full-access') {
+    throw new Error(
+      `Cursor CLI only supports full access; received sandbox ${sandbox}. ` +
+        'Restricted modes are not mapped onto Cursor --sandbox because enabling it would block lark-cli network calls.',
+    );
+  }
 }
 
 /**
@@ -20,6 +42,7 @@ export interface BuildCursorArgsInput {
  * `--trust` skips the workspace trust dialog (headless-only flag).
  */
 export function buildCursorArgs(input: BuildCursorArgsInput): string[] {
+  assertCursorSandbox(input.sandbox);
   const args = [
     '-p',
     '--output-format',

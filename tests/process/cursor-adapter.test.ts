@@ -155,6 +155,33 @@ describe('CursorAdapter process contract', () => {
     expect(record.argv.at(-1)).toContain('## user_message\n\ncontinue');
   });
 
+  it('fails when cursor exits 0 without a result event', async () => {
+    const fake = await createFakeCursor({
+      lines: [
+        {
+          type: 'assistant',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'orphan' }] },
+        },
+      ],
+    });
+    cleanup.push(fake.dir);
+
+    const run = new CursorAdapter({ binary: fake.path }).run({
+      runId: 'run-no-result',
+      prompt: 'hi',
+      cwd: fake.dir,
+    });
+
+    expect(await collect(run.events)).toEqual([
+      { type: 'text', delta: 'orphan\n\n' },
+      {
+        type: 'error',
+        message: 'cursor stream ended before a terminal event',
+        terminationReason: 'failed',
+      },
+    ]);
+  });
+
   it('includes stderr when the process exits non-zero without a result line', async () => {
     const fake = await createFakeCursor({
       lines: [
@@ -227,6 +254,17 @@ describe('CursorAdapter process contract', () => {
     expect(() =>
       new CursorAdapter({ binary: 'unused' }).run({ runId: 'run-no-cwd', prompt: 'hi' }),
     ).toThrow(/cwd is required/);
+  });
+
+  it('refuses restricted sandbox before spawn', () => {
+    expect(() =>
+      new CursorAdapter({ binary: 'unused' }).run({
+        runId: 'run-ro',
+        prompt: 'hi',
+        cwd: tmpdir(),
+        sandbox: 'read-only',
+      }),
+    ).toThrow(/only supports full access/);
   });
 });
 

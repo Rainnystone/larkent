@@ -66,7 +66,9 @@ export function createRuntimeAgent(
   }
   if (profileConfig.agentKind === 'cursor') {
     return new CursorAdapter({
-      binary: process.env.LARK_CHANNEL_CURSOR_BIN ?? 'cursor-agent',
+      ...(process.env.LARK_CHANNEL_CURSOR_BIN
+        ? { binary: process.env.LARK_CHANNEL_CURSOR_BIN }
+        : {}),
       larkChannel,
     });
   }

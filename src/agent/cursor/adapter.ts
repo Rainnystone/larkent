@@ -1,4 +1,5 @@
 import type { Readable, Writable } from 'node:stream';
+import { resolveCursorBinary } from '../../cli/agent-detection';
 import { log } from '../../core/logger';
 import { mergeProcessEnv, spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import { SpawnFailed } from '../../runtime/errors';
@@ -12,7 +13,7 @@ import type {
   AgentRun,
   AgentRunOptions,
 } from '../types';
-import { buildCursorArgs } from './argv';
+import { assertCursorSandbox, buildCursorArgs } from './argv';
 import { CursorJsonlTranslator, type CursorFinishReason } from './jsonl';
 
 export interface CursorAdapterOptions {
@@ -36,12 +37,14 @@ export class CursorAdapter implements AgentAdapter {
   readonly id = 'cursor';
   readonly displayName = 'Cursor CLI';
 
-  private readonly binary: string;
+  private binary: string;
+  private readonly explicitBinary: boolean;
   private readonly defaultStopGraceMs: number;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: CursorAdapterOptions = {}) {
+    this.explicitBinary = Boolean(opts.binary ?? process.env.LARK_CHANNEL_CURSOR_BIN);
     this.binary = opts.binary ?? process.env.LARK_CHANNEL_CURSOR_BIN ?? 'cursor-agent';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
@@ -56,6 +59,13 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   async checkAvailability(): Promise<AgentAvailability> {
+    if (!this.explicitBinary) {
+      try {
+        this.binary = await resolveCursorBinary();
+      } catch {
+        // Keep the default name so preflight can emit agent-binary-not-found.
+      }
+    }
     return checkAgentAvailability({
       agentId: 'cursor',
       agentName: 'Cursor CLI',
@@ -64,7 +74,8 @@ export class CursorAdapter implements AgentAdapter {
     });
   }
 
-  async prepareRun(): Promise<void> {
+  async prepareRun(opts: AgentRunOptions): Promise<void> {
+    assertCursorSandbox(opts.sandbox);
     const availability = await this.checkAvailability();
     if (!availability.ok) {
       throw new SpawnFailed(
@@ -80,11 +91,13 @@ export class CursorAdapter implements AgentAdapter {
     if (!opts.cwd) {
       throw new Error('cwd is required for CursorAdapter.run');
     }
+    assertCursorSandbox(opts.sandbox);
 
     const args = buildCursorArgs({
       prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
       ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
       ...(opts.model ? { model: opts.model } : {}),
+      ...(opts.sandbox ? { sandbox: opts.sandbox } : {}),
     });
     const child = spawnProcess(this.binary, args, {
       cwd: opts.cwd,
@@ -293,7 +306,10 @@ async function* createEventStream(
     return;
   }
 
-  yield* translator.finish('normal');
+  if (!translator.terminalEmitted()) {
+    yield* translator.fail('cursor stream ended before a terminal event');
+    return;
+  }
 }
 
 async function waitForExitCode(child: CursorChild): Promise<number | null> {

@@ -6,7 +6,12 @@ import {
   createDefaultProfileConfig,
   type RootConfig,
 } from '../../../src/config/profile-schema';
-import { createRootConfig, loadRootConfig, saveRootConfig } from '../../../src/config/profile-store';
+import {
+  agentKindFromString,
+  createRootConfig,
+  loadRootConfig,
+  saveRootConfig,
+} from '../../../src/config/profile-store';
 
 const roots: string[] = [];
 
@@ -257,5 +262,14 @@ describe('profile store canonical serialization', () => {
     const root = createRootConfig('claude', profile);
 
     expect(root.migrations?.permissionDefaultsV1).toEqual(['claude']);
+  });
+});
+
+describe('agentKindFromString', () => {
+  it('treats omitted and empty values as unset so callers can default', () => {
+    expect(agentKindFromString(undefined)).toBeUndefined();
+    expect(agentKindFromString('')).toBeUndefined();
+    expect(agentKindFromString('cursor')).toBe('cursor');
+    expect(() => agentKindFromString('nope')).toThrow(/unsupported agent/);
   });
 });

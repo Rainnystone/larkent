@@ -304,6 +304,6 @@ export function agentKindFromString(value: string | undefined): AgentKind | unde
     value === 'cursor'
   )
     return value;
-  if (value === undefined) return undefined;
+  if (value === undefined || value === '') return undefined;
   throw new Error(`unsupported agent: ${value}`);
 }

@@ -45,4 +45,14 @@ describe('buildCursorArgs', () => {
     const args = buildCursorArgs({ prompt });
     expect(args.at(-1)).toBe(prompt);
   });
+
+  it('rejects restricted sandbox modes instead of silently disabling Cursor sandbox', () => {
+    expect(() => buildCursorArgs({ prompt: 'hi', sandbox: 'read-only' })).toThrow(
+      /only supports full access/,
+    );
+    expect(() => buildCursorArgs({ prompt: 'hi', sandbox: 'workspace-write' })).toThrow(
+      /only supports full access/,
+    );
+    expect(() => buildCursorArgs({ prompt: 'hi', sandbox: 'danger-full-access' })).not.toThrow();
+  });
 });
