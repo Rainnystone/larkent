@@ -63,14 +63,16 @@ describe('profile v2 to v3 migrations', () => {
     const first = JSON.parse(afterFirst) as {
       profiles: Record<string, { schemaVersion: number; agent?: { binaryPath?: string } }>;
     };
-    expect(first.profiles.kimi.schemaVersion).toBe(PROFILE_SCHEMA_VERSION);
-    expect(first.profiles.kimi.agent).not.toHaveProperty('binaryPath');
+    const kimi = first.profiles.kimi;
+    expect(kimi).toBeDefined();
+    expect(kimi?.schemaVersion).toBe(PROFILE_SCHEMA_VERSION);
+    expect(kimi?.agent).not.toHaveProperty('binaryPath');
 
     await loadRootConfig(dest, { persistUpgrades: true });
     const afterSecond = await readFile(dest, 'utf8');
     expect(afterSecond).toBe(afterFirst);
 
-    const again = upgradeProfileToCurrent(first.profiles.kimi);
+    const again = upgradeProfileToCurrent(kimi);
     expect(again.changed).toBe(false);
   });
 

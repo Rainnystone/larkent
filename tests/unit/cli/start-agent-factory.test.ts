@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import {
   assertReconnectAgentKindUnchanged,
   createRuntimeAgent,
-} from '../../../src/cli/commands/start.js';
+} from '../../../src/runtime/agent-runtime.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { createRuntimeProfileConfig } from '../../../src/runtime/profile-runtime.js';
 import { writeVersionExecutable } from '../../helpers/fake-executable.js';
