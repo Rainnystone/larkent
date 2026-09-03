@@ -356,6 +356,77 @@ describe('JsonlCliRunner abort and timeouts', () => {
     await collect(handle.events);
     expect(calls).toEqual(['cleanup']);
   });
+
+  it('total timeout emits an error event and does not leak the child', async () => {
+    const fake = await createFakeCli({ lines: [], hang: true });
+    cleanup.push(fake.dir);
+    const handle = runJsonlCli({
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: new RecordingTranslator(),
+      signal: new AbortController().signal,
+      timeouts: { idleMs: 0, totalMs: 40 },
+      name: 'probe',
+      stopGraceMs: 50,
+    });
+    const events = await collect(handle.events);
+    expect(events).toEqual([
+      {
+        type: 'error',
+        message: 'probe total timeout',
+        terminationReason: 'timeout',
+      },
+    ]);
+    expect(await handle.waitForExit(1_000)).toBe(true);
+  });
+
+  it('runs cleanup after abort', async () => {
+    const fake = await createFakeCli({ lines: [], hang: true });
+    cleanup.push(fake.dir);
+    const calls: string[] = [];
+    const controller = new AbortController();
+    const handle = runJsonlCli({
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: new RecordingTranslator(),
+      cleanup: async () => {
+        calls.push('cleanup');
+      },
+      signal: controller.signal,
+      timeouts: { idleMs: 0, totalMs: 0 },
+      name: 'probe',
+      stopGraceMs: 50,
+    });
+    const iterator = handle.events[Symbol.asyncIterator]();
+    controller.abort();
+    await iterator.next();
+    expect(await handle.waitForExit(1_000)).toBe(true);
+    expect(calls).toEqual(['cleanup']);
+  });
+
+  it('drives two JSONL dialects through runJsonlCli', async () => {
+    for (const kind of ['claude', 'grok'] as const) {
+      const fake = await createFakeCli({ lines: FRESH_LINES[kind] });
+      cleanup.push(fake.dir);
+      const events = await collect(
+        runJsonlCli({
+          binaryPath: fake.path,
+          argv: [],
+          cwd: fake.dir,
+          env: process.env,
+          translator: descriptorFor(kind).createTranslator(),
+          signal: new AbortController().signal,
+          timeouts: { idleMs: 0, totalMs: 0 },
+          name: kind,
+        }),
+      );
+      expect(events, kind).toEqual(FRESH_EVENTS[kind]);
+    }
+  });
 });
 
 describe('kind-specific argv and env extras', () => {

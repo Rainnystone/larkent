@@ -95,6 +95,7 @@ export class ClaudeJsonlTranslator implements JsonlTranslator {
   private sessionId: string | undefined;
 
   translate(line: string): AgentEvent[] {
+    if (this.terminal) return [];
     const parsed = parseJsonlLine(line);
     if (parsed === undefined) return [];
     const events = [...translateEvent(parsed)];

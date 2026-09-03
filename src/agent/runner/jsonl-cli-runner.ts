@@ -131,7 +131,6 @@ function startJsonlCli(input: JsonlCliRunnerInput): JsonlCliSession {
   });
 
   const stderrChunks: Buffer[] = [];
-  const stdout = attachLineQueue(child.stdout);
   let runtimeError: Error | null = null;
   let stderrBuffer = '';
   let killReason: JsonlAbortKind | undefined;
@@ -159,6 +158,11 @@ function startJsonlCli(input: JsonlCliRunnerInput): JsonlCliSession {
       void kill('timeout');
     }, input.timeouts.idleMs);
   };
+
+  const stdout = attachLineQueue(child.stdout, () => {
+    sawStdout = true;
+    armIdle();
+  });
 
   if (input.timeouts.totalMs > 0) {
     totalTimer = setTimeout(() => {
@@ -210,16 +214,6 @@ function startJsonlCli(input: JsonlCliRunnerInput): JsonlCliSession {
   } else {
     child.stdin.end();
   }
-
-  const originalNext = stdout.nextLine;
-  stdout.nextLine = (): string | undefined => {
-    const line = originalNext();
-    if (line !== undefined) {
-      sawStdout = true;
-      armIdle();
-    }
-    return line;
-  };
 
   async function kill(reason: JsonlAbortKind): Promise<void> {
     if (killReason === undefined) killReason = reason;
@@ -329,7 +323,12 @@ async function* streamJsonlCli(
     for (;;) {
       let line = stdout.nextLine();
       while (line !== undefined) {
-        yield* translator.translate(line);
+        for (const event of translator.translate(line)) {
+          yield event;
+          if (event.type === 'done' || event.type === 'error') {
+            return;
+          }
+        }
         line = stdout.nextLine();
       }
       if (stdout.closed()) break;
@@ -384,11 +383,15 @@ async function waitForExitCode(child: JsonlChild): Promise<number | null> {
   });
 }
 
-function attachLineQueue(stream: Readable): LineQueue {
+function attachLineQueue(stream: Readable, onLine?: () => void): LineQueue {
   const lines: string[] = [];
   let closed = false;
   let notify: (() => void) | undefined;
   let buffer = '';
+  const pushLine = (line: string): void => {
+    lines.push(line);
+    onLine?.();
+  };
   const settle = (): void => {
     const current = notify;
     notify = undefined;
@@ -400,7 +403,7 @@ function attachLineQueue(stream: Readable): LineQueue {
     while (nl !== -1) {
       const line = buffer.slice(0, nl).trim();
       buffer = buffer.slice(nl + 1);
-      if (line) lines.push(line);
+      if (line) pushLine(line);
       nl = buffer.indexOf('\n');
     }
     settle();
@@ -410,7 +413,7 @@ function attachLineQueue(stream: Readable): LineQueue {
     closed = true;
     const tail = buffer.trim();
     buffer = '';
-    if (tail) lines.push(tail);
+    if (tail) pushLine(tail);
     settle();
   };
   stream.on('end', close);
