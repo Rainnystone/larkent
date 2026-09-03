@@ -73,7 +73,7 @@ export class KimiAdapter implements AgentAdapter {
       binaryPath: this.binary,
       argv: buildKimiArgs({
         prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
-        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+        ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,
@@ -83,7 +83,7 @@ export class KimiAdapter implements AgentAdapter {
       spawnName: 'kimi',
       successFinish: 'normal',
       logFields: {
-        hasSession: Boolean(opts.sessionId),
+        hasSession: Boolean(opts.resumeHandle),
         promptChars: opts.prompt.length,
         model: opts.model,
       },

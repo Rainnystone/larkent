@@ -28,7 +28,6 @@ export interface AgentDescriptor {
   readonly sessionKind: AgentSessionKind;
   readonly promptInjection: PromptInjectionMode;
   readonly supportsNativeHistory: boolean;
-  readonly usesNativeSessionId: boolean;
   readonly requireInstalled: boolean;
   readonly missingInstallMessage: string;
   capability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability;
@@ -57,7 +56,6 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     sessionKind: 'claude-session',
     promptInjection: 'append-system-prompt',
     supportsNativeHistory: true,
-    usesNativeSessionId: true,
     requireInstalled: false,
     missingInstallMessage: '未检测到 Claude Code CLI（claude）。请先安装并登录后再创建 claude profile。',
     capability: (profile) => claudeCapability(profile),
@@ -85,7 +83,6 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     sessionKind: 'codex-thread',
     promptInjection: 'stdin-prefix',
     supportsNativeHistory: false,
-    usesNativeSessionId: false,
     requireInstalled: false,
     missingInstallMessage: '未检测到 Codex CLI（codex）。请先安装并登录后再创建 codex profile。',
     capability: (profile) => {
@@ -113,7 +110,6 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     sessionKind: 'kimi-session',
     promptInjection: 'argv-prefix',
     supportsNativeHistory: false,
-    usesNativeSessionId: true,
     requireInstalled: false,
     missingInstallMessage: '未检测到 Kimi Code CLI（kimi）。请先安装并登录后再创建 kimi profile。',
     capability: (profile) => kimiCapability(profile),
@@ -135,7 +131,6 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     sessionKind: 'grok-session',
     promptInjection: 'append-system-prompt',
     supportsNativeHistory: true,
-    usesNativeSessionId: true,
     requireInstalled: true,
     missingInstallMessage:
       '未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。',
@@ -160,7 +155,6 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     sessionKind: 'cursor-session',
     promptInjection: 'argv-prefix',
     supportsNativeHistory: true,
-    usesNativeSessionId: true,
     requireInstalled: true,
     missingInstallMessage:
       '未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。',

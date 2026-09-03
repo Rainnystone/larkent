@@ -19,7 +19,7 @@ describe('GrokJsonlTranslator', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [{ type: 'text', data: 'OK' }, END]);
     expect(events).toEqual([
-      { type: 'system', sessionId: SESSION },
+      { type: 'system', resumeHandle: SESSION },
       {
         type: 'usage',
         inputTokens: 10,
@@ -27,7 +27,7 @@ describe('GrokJsonlTranslator', () => {
         cachedInputTokens: 2,
       },
       { type: 'final_text', content: 'OK' },
-      { type: 'done', sessionId: SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
     expect(t.terminalEmitted()).toBe(true);
   });
@@ -69,9 +69,9 @@ describe('GrokJsonlTranslator', () => {
     expect(events).toEqual([
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
       { type: 'tool_result', id: 'call_1', output: '{"lines":3}', isError: false },
-      { type: 'system', sessionId: SESSION },
+      { type: 'system', resumeHandle: SESSION },
       { type: 'final_text', content: 'Done.' },
-      { type: 'done', sessionId: SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
   });
 

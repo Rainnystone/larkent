@@ -74,7 +74,7 @@ export class GrokAdapter implements AgentAdapter {
       argv: buildGrokArgs({
         prompt: opts.prompt,
         rules: buildBridgeSystemPrompt(this.botIdentity),
-        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+        ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,
@@ -87,7 +87,7 @@ export class GrokAdapter implements AgentAdapter {
       spawnName: 'grok',
       missingTerminalOnSuccess: 'grok exited before a terminal streaming-json end event',
       logFields: {
-        hasSession: Boolean(opts.sessionId),
+        hasSession: Boolean(opts.resumeHandle),
         promptChars: opts.prompt.length,
         model: opts.model,
       },

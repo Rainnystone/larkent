@@ -119,17 +119,6 @@ export function capabilityForProfile(
   return builders[profile.agentKind](profile);
 }
 
-export function usesNativeSessionId(agentId: AgentCapabilityId): boolean {
-  const native: Record<AgentKind, boolean> = {
-    claude: true,
-    codex: false,
-    kimi: true,
-    grok: true,
-    cursor: true,
-  };
-  return native[agentId];
-}
-
 export function codexCapability(profile: Pick<ProfileConfig, 'permissions'>): AgentCapability {
   const maxAccess = profile.permissions.maxAccess;
   return {

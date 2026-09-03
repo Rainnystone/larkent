@@ -7,7 +7,7 @@ import { ProcessPool } from '../../../src/bot/process-pool.js';
 import { startRunFlow, type StartRunFlowInput } from '../../../src/bot/run-flow.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
-import { SessionCatalog, sessionCatalogKey, type SessionCatalogEntry } from '../../../src/session/catalog.js';
+import { SessionCatalog, sessionCatalogKey } from '../../../src/session/catalog.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
@@ -37,7 +37,17 @@ describe('P2 catalog v1 resume continuity', () => {
     await drain(probe.execution.subscribe());
 
     const fixturePath = join(fixtureRoot, `catalog-v1-${pinned}.json`);
-    const raw = JSON.parse(await readFile(fixturePath, 'utf8')) as SessionCatalogEntry[];
+    const raw = JSON.parse(await readFile(fixturePath, 'utf8')) as Array<{
+      agentId: string;
+      status: string;
+      sessionId?: string;
+      threadId?: string;
+      scopeId: string;
+      cwdRealpath: string;
+      policyFingerprint: string;
+      key: string;
+      updatedAt: number;
+    }>;
     expect(Array.isArray(raw)).toBe(true);
     expect(raw).toHaveLength(1);
     const template = raw[0]!;
@@ -51,20 +61,17 @@ describe('P2 catalog v1 resume continuity', () => {
       expect(template.threadId).toBeUndefined();
     }
 
-    const materialized: SessionCatalogEntry[] = raw.map((entry) => {
-      const next: SessionCatalogEntry = {
-        ...entry,
+    const materialized = raw.map((entry) => ({
+      ...entry,
+      cwdRealpath,
+      policyFingerprint: probe.policy.policyFingerprint,
+      key: sessionCatalogKey({
+        scopeId: entry.scopeId,
+        agentId: pinned,
         cwdRealpath,
         policyFingerprint: probe.policy.policyFingerprint,
-        key: sessionCatalogKey({
-          scopeId: entry.scopeId,
-          agentId: entry.agentId,
-          cwdRealpath,
-          policyFingerprint: probe.policy.policyFingerprint,
-        }),
-      };
-      return next;
-    });
+      }),
+    }));
     await writeFile(join(h.tmp.profile, 'sessions.json.catalog.json'), `${JSON.stringify(materialized, null, 2)}\n`);
     await h.catalog.load();
 
@@ -75,15 +82,9 @@ describe('P2 catalog v1 resume continuity', () => {
       policyFingerprint: probe.policy.policyFingerprint,
     });
     expect(loaded).toBeDefined();
-    if (pinned === 'codex') {
-      expect(loaded?.threadId).toBe('thread-v1-codex');
-      expect(loaded?.sessionId).toBeUndefined();
-      expect(loaded).not.toHaveProperty('sessionId');
-    } else {
-      expect(loaded?.sessionId).toBe(`sess-v1-${pinned}`);
-      expect(loaded?.threadId).toBeUndefined();
-      expect(loaded).not.toHaveProperty('threadId');
-    }
+    expect(loaded?.resumeHandle).toBe(pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`);
+    expect(loaded).not.toHaveProperty('sessionId');
+    expect(loaded).not.toHaveProperty('threadId');
 
     const resumed = await start(h);
     expect(resumed.ok).toBe(true);
@@ -92,13 +93,9 @@ describe('P2 catalog v1 resume continuity', () => {
     expect(resumed.resumeFrom).toBe(handle);
     const resumeOpts = h.agent.runOptions[1];
     expect(resumeOpts).toBeDefined();
-    if (pinned === 'codex') {
-      expect(resumeOpts?.threadId).toBe('thread-v1-codex');
-      expect(resumeOpts?.sessionId).toBeUndefined();
-    } else {
-      expect(resumeOpts?.sessionId).toBe(handle);
-      expect(resumeOpts?.threadId).toBeUndefined();
-    }
+    expect(resumeOpts?.resumeHandle).toBe(handle);
+    expect(resumeOpts).not.toHaveProperty('sessionId');
+    expect(resumeOpts).not.toHaveProperty('threadId');
   }, 20_000);
 
   it('keeps committed v1 catalog files loadable without rewriting the fixture bytes', async () => {
@@ -115,11 +112,11 @@ describe('P2 catalog v1 resume continuity', () => {
       expect(entries[0]?.agentId).toBe(pinned);
       expect(entries[0]?.cwdRealpath).toBe('/PINNED_CWD');
       expect(entries[0]?.policyFingerprint).toBe('PINNED_FP');
-      if (pinned === 'codex') {
-        expect(entries[0]?.threadId).toBe('thread-v1-codex');
-      } else {
-        expect(entries[0]?.sessionId).toBe(`sess-v1-${pinned}`);
-      }
+      expect(entries[0]?.resumeHandle).toBe(
+        pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`,
+      );
+      expect(entries[0]).not.toHaveProperty('sessionId');
+      expect(entries[0]).not.toHaveProperty('threadId');
     }
   });
 });

@@ -18,8 +18,7 @@ export interface RunExecutorDeps {
 export interface SubmitRunInput {
   scopeId: string;
   policy: RunPolicyAllow;
-  sessionId?: string;
-  threadId?: string;
+  resumeHandle?: string;
   model?: string;
   images?: readonly string[];
   stopGraceMs?: number;
@@ -97,8 +96,7 @@ export class RunExecutor {
       runId,
       prompt: input.policy.prompt,
       cwd: input.policy.cwdRealpath,
-      sessionId: input.sessionId,
-      threadId: input.threadId,
+      resumeHandle: input.resumeHandle,
       model: input.model,
       images: input.images,
       sandbox: input.policy.sandbox,

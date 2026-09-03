@@ -100,9 +100,9 @@ describe('comment run flow', () => {
     await handleCommentMention(h.deps(event({ commentId: 'comment-1', replyId: 'reply-1' })));
 
     expect(h.agent.runOptions).toHaveLength(3);
-    expect(h.agent.runOptions[0]?.sessionId).toBeUndefined();
-    expect(h.agent.runOptions[1]?.sessionId).toBe('session-one');
-    expect(h.agent.runOptions[2]?.sessionId).toBe('session-two');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    expect(h.agent.runOptions[1]?.resumeHandle).toBe('session-one');
+    expect(h.agent.runOptions[2]?.resumeHandle).toBe('session-two');
     expect(h.sessions.resumeFor(docSessionScope('doc-token'), await realpath(h.tmp.workspace))).toBe('session-three');
     expect(h.sessions.resumeFor('doc:doc-token', await realpath(h.tmp.workspace))).toBeUndefined();
   });
@@ -119,9 +119,9 @@ describe('comment run flow', () => {
     await handleCommentMention(h.deps(event({ commentId: 'comment-1', replyId: 'reply-1' })));
 
     expect(h.agent.runOptions).toHaveLength(3);
-    expect(h.agent.runOptions[0]?.threadId).toBeUndefined();
-    expect(h.agent.runOptions[1]?.threadId).toBe('thread-one');
-    expect(h.agent.runOptions[2]?.threadId).toBe('thread-two');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    expect(h.agent.runOptions[1]?.resumeHandle).toBe('thread-one');
+    expect(h.agent.runOptions[2]?.resumeHandle).toBe('thread-two');
   });
 
   it('keeps Codex pre-tool progress text out of every comment reply', async () => {
@@ -151,8 +151,8 @@ describe('comment run flow', () => {
     const second = handleCommentMention(h.deps(event({ commentId: 'comment-2', replyId: 'reply-2' })));
     await waitFor(() => h.agent.runOptions.length === 2);
 
-    expect(h.agent.runOptions[0]?.threadId).toBe('seed-thread');
-    expect(h.agent.runOptions[1]?.threadId).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBe('seed-thread');
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
 
     h.agent.finishRun(0);
     h.agent.finishRun(1);
@@ -248,8 +248,8 @@ async function createHarness(options: {
       {
         type: 'system',
         ...(agentKind === 'codex'
-          ? { threadId: threadIds[index] ?? `thread-${index}` }
-          : { sessionId: sessionIds[index] ?? `session-${index}` }),
+          ? { resumeHandle: threadIds[index] ?? `thread-${index}` }
+          : { resumeHandle: sessionIds[index] ?? `session-${index}` }),
         cwd: tmp.workspace,
       },
       agentKind === 'codex'
@@ -258,8 +258,8 @@ async function createHarness(options: {
       {
         type: 'done',
         ...(agentKind === 'codex'
-          ? { threadId: threadIds[index] ?? `thread-${index}` }
-          : { sessionId: sessionIds[index] ?? `session-${index}` }),
+          ? { resumeHandle: threadIds[index] ?? `thread-${index}` }
+          : { resumeHandle: sessionIds[index] ?? `session-${index}` }),
         terminationReason: 'normal',
       },
     ]);
@@ -490,7 +490,7 @@ async function seedCodexCatalog(
     agentId: 'codex',
     cwdRealpath,
     policyFingerprint: policy.policyFingerprint,
-    threadId,
+    resumeHandle: threadId,
   });
 }
 
@@ -537,13 +537,13 @@ class BlockingAgentAdapter implements AgentAdapter {
     done: Promise<void>,
     isStopped: () => boolean,
   ): AsyncIterable<AgentEvent> {
-    yield { type: 'system', threadId: this.threadIds[index] ?? `thread-${index}` };
+    yield { type: 'system', resumeHandle: this.threadIds[index] ?? `thread-${index}` };
     yield { type: 'text', delta: `answer ${index}` };
     await done;
     if (!isStopped()) {
       yield {
         type: 'done',
-        threadId: this.threadIds[index] ?? `thread-${index}`,
+        resumeHandle: this.threadIds[index] ?? `thread-${index}`,
         terminationReason: 'normal',
       };
     }
@@ -572,7 +572,7 @@ function profile(defaultWorkspace: string, agentKind: 'claude' | 'codex' = 'clau
 
 function codexRunWithProgress(threadId: string, progress: string, finalAnswer: string): AgentEvent[] {
   return [
-    { type: 'system', threadId },
+    { type: 'system', resumeHandle: threadId },
     { type: 'text', delta: progress },
     {
       type: 'tool_use',
@@ -582,7 +582,7 @@ function codexRunWithProgress(threadId: string, progress: string, finalAnswer: s
     },
     { type: 'tool_result', id: `${threadId}-tool`, output: 'doc body', isError: false },
     { type: 'final_text', content: finalAnswer },
-    { type: 'done', threadId, terminationReason: 'normal' },
+    { type: 'done', resumeHandle: threadId, terminationReason: 'normal' },
   ];
 }
 

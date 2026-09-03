@@ -17,9 +17,9 @@ describe('Claude stream-json translator', () => {
         model: 'sonnet',
       }),
     ]).toEqual([
-      { type: 'system', sessionId: 'sess-1', cwd: '/repo', model: 'sonnet' },
+      { type: 'system', resumeHandle: 'sess-1', cwd: '/repo', model: 'sonnet' },
     ]);
-    expect([...translateEvent({ type: 'system', subtype: 'init', session_id: 'sess-1' })][0]).not.toHaveProperty('threadId');
+    expect([...translateEvent({ type: 'system', subtype: 'init', session_id: 'sess-1' })][0]).not.toHaveProperty('sessionId');
   });
 
   it('translates assistant text, thinking, and tool_use blocks in order', () => {
@@ -78,9 +78,9 @@ describe('Claude stream-json translator', () => {
       }),
     ]).toEqual([
       { type: 'usage', inputTokens: 12, outputTokens: 34, cachedInputTokens: 5, costUsd: 0.1234 },
-      { type: 'done', sessionId: 'sess-2', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'sess-2', terminationReason: 'normal' },
     ]);
-    expect([...translateEvent({ type: 'result', session_id: 'sess-2' })][0]).not.toHaveProperty('threadId');
+    expect([...translateEvent({ type: 'result', session_id: 'sess-2' })][0]).not.toHaveProperty('sessionId');
   });
 
   it('ignores unknown, empty, and incomplete raw events', () => {

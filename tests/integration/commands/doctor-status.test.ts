@@ -74,8 +74,7 @@ describe('/status and /doctor diagnostics', () => {
     expect(h.agent.runOptions).toHaveLength(1);
     const opts = h.agent.runOptions[0]!;
     await expect(realpath(h.tmp.workspace)).resolves.toBe(opts.cwd);
-    expect(opts.sessionId).toBeUndefined();
-    expect(opts.threadId).toBeUndefined();
+    expect(opts.resumeHandle).toBeUndefined();
     expect(opts.images).toBeUndefined();
     expect(opts.permissionMode).toBe('plan');
     expect(opts.prompt).toContain('OK');

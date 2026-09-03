@@ -1,5 +1,6 @@
-import { usesNativeSessionId, type AgentCapability } from '../agent/capability';
+import { descriptorFor } from '../agent/registry';
 import { resolveModelArg } from '../agent/models';
+import type { AgentCapability } from '../agent/capability';
 import type { AgentEvent } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
 import type { AccessDecision } from '../policy/access';
@@ -111,8 +112,6 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   }
 
   let resumeFrom: string | undefined;
-  let sessionId: string | undefined;
-  let threadId: string | undefined;
   if (input.sessionCatalog) {
     const catalogEntry = input.sessionCatalog.activeFor({
       scopeId: input.scopeId,
@@ -120,17 +119,10 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       cwdRealpath: workspace.cwdRealpath,
       policyFingerprint: policy.policyFingerprint,
     });
-    if (catalogEntry && usesNativeSessionId(catalogEntry.agentId)) {
-      sessionId = catalogEntry.sessionId;
-      resumeFrom = sessionId;
-    } else if (catalogEntry?.agentId === 'codex') {
-      threadId = catalogEntry.threadId;
-      resumeFrom = threadId;
-    }
+    resumeFrom = catalogEntry?.resumeHandle;
   }
-  if (!resumeFrom && usesNativeSessionId(input.capability.agentId)) {
+  if (!resumeFrom && descriptorFor(input.capability.agentId).resume.label === 'session') {
     resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
-    sessionId = resumeFrom;
     const stale = input.sessions.getRaw(input.scopeId);
     if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
       input.sessions.clear(input.scopeId);
@@ -142,8 +134,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     execution = await input.executor.submit({
       scopeId: input.scopeId,
       policy,
-      sessionId,
-      threadId,
+      resumeHandle: resumeFrom,
       model: resolveModelArg(
         input.profileConfig.agentKind,
         input.profileConfig.preferences.model,
@@ -187,26 +178,16 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
 }
 
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
-  if (input.event.type !== 'system') return;
-  if (usesNativeSessionId(input.capability.agentId) && input.event.sessionId) {
-    const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
-    input.sessions.set(input.scopeId, input.event.sessionId, cwdRealpath);
-    input.sessionCatalog?.upsertActive({
-      scopeId: input.scopeId,
-      agentId: input.capability.agentId,
-      cwdRealpath,
-      policyFingerprint: input.policy.policyFingerprint,
-      sessionId: input.event.sessionId,
-    });
-    return;
+  if (input.event.type !== 'system' || !input.event.resumeHandle) return;
+  const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
+  if (descriptorFor(input.capability.agentId).resume.label === 'session') {
+    input.sessions.set(input.scopeId, input.event.resumeHandle, cwdRealpath);
   }
-  if (input.capability.agentId === 'codex' && input.event.threadId) {
-    input.sessionCatalog?.upsertActive({
-      scopeId: input.scopeId,
-      agentId: 'codex',
-      cwdRealpath: input.policy.cwdRealpath,
-      policyFingerprint: input.policy.policyFingerprint,
-      threadId: input.event.threadId,
-    });
-  }
+  input.sessionCatalog?.upsertActive({
+    scopeId: input.scopeId,
+    agentId: input.capability.agentId,
+    cwdRealpath,
+    policyFingerprint: input.policy.policyFingerprint,
+    resumeHandle: input.event.resumeHandle,
+  });
 }

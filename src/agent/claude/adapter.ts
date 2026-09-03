@@ -62,7 +62,7 @@ export class ClaudeAdapter implements AgentAdapter {
       argv: buildClaudeArgs({
         systemPromptFile: systemPromptFile.path,
         permissionMode: opts.permissionMode,
-        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+        ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,
@@ -78,7 +78,7 @@ export class ClaudeAdapter implements AgentAdapter {
       emptyStdoutDestroyMs: 50,
       failNonzeroAfterTerminal: true,
       logFields: {
-        hasSession: Boolean(opts.sessionId),
+        hasSession: Boolean(opts.resumeHandle),
         promptChars: opts.prompt.length,
         model: opts.model,
       },

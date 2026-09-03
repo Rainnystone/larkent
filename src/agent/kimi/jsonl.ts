@@ -76,7 +76,7 @@ export class KimiJsonlTranslator {
     }
     events.push({
       type: 'done',
-      ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+      ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
       terminationReason: reason,
     });
     return events;
@@ -111,7 +111,7 @@ export class KimiJsonlTranslator {
           return [];
         }
         this.sessionId = sessionId;
-        return [{ type: 'system', sessionId }];
+        return [{ type: 'system', resumeHandle: sessionId }];
       }
       default:
         this.drift.unknownEvents++;

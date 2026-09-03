@@ -46,9 +46,9 @@ describe('RunExecutor', () => {
 
   it('fans out one agent event stream to multiple consumers without spawning twice', async () => {
     const events = [
-      { type: 'system' as const, sessionId: 'sess-1', cwd: '/repo' },
+      { type: 'system' as const, resumeHandle: 'sess-1', cwd: '/repo' },
       { type: 'text' as const, delta: 'hello' },
-      { type: 'done' as const, sessionId: 'sess-1', terminationReason: 'normal' as const },
+      { type: 'done' as const, resumeHandle: 'sess-1', terminationReason: 'normal' as const },
     ];
     const h = await createHarness({ events });
     const execution = await h.executor.submit({

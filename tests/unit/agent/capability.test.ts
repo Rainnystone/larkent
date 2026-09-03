@@ -7,7 +7,6 @@ import {
   cursorCapability,
   grokCapability,
   kimiCapability,
-  usesNativeSessionId,
 } from '../../../src/agent/capability';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 
@@ -156,14 +155,6 @@ describe('agent capability contract', () => {
 
     expect(grokCapability(profile).permissions.maxAccess).toBe('workspace');
     expect(capabilityForProfile(profile).agentId).toBe('grok');
-  });
-
-  it('treats grok like claude/kimi for native session ids', () => {
-    expect(usesNativeSessionId('grok')).toBe(true);
-    expect(usesNativeSessionId('claude')).toBe(true);
-    expect(usesNativeSessionId('kimi')).toBe(true);
-    expect(usesNativeSessionId('cursor')).toBe(true);
-    expect(usesNativeSessionId('codex')).toBe(false);
   });
 
   it('defines Cursor capability with session-id resume and argv prompt injection', () => {

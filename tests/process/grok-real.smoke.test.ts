@@ -27,7 +27,7 @@ describe.skipIf(!RUN)('GrokAdapter real binary smoke', () => {
     const system = first.find((e) => e.type === 'system');
     const finalText = first.find((e) => e.type === 'final_text');
     const done = first.find((e) => e.type === 'done');
-    expect(system?.sessionId).toMatch(
+    expect(system?.resumeHandle).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
     );
     expect(finalText?.content).toContain('BRIDGE-SMOKE-1');
@@ -38,7 +38,7 @@ describe.skipIf(!RUN)('GrokAdapter real binary smoke', () => {
         runId: 'r2',
         prompt: 'What exact token did I ask you to reply with earlier? Answer with just the token.',
         cwd: dir,
-        sessionId: system!.sessionId!,
+        resumeHandle: system!.resumeHandle!,
       }).events,
     );
     const secondFinal = second.find((e) => e.type === 'final_text');

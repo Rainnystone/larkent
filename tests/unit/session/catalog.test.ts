@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -6,6 +6,7 @@ import {
   SessionCatalog,
   sessionCatalogKey,
 } from '../../../src/session/catalog.js';
+import { CATALOG_SCHEMA_VERSION } from '../../../src/session/migrations.js';
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -25,15 +26,16 @@ describe('agent-aware session catalog', () => {
     ).toBe('chat-1\x1fclaude\x1f/repo\x1ffp-1');
   });
 
-  it('stores Claude sessions and Codex threads in isolated active entries', async () => {
-    const catalog = new SessionCatalog(await path());
+  it('stores Claude and Codex handles in isolated active entries', async () => {
+    const file = await path();
+    const catalog = new SessionCatalog(file);
 
     catalog.upsertActive({
       scopeId: 'chat-1',
       agentId: 'claude',
       cwdRealpath: '/repo',
       policyFingerprint: 'fp-1',
-      sessionId: 'sess-1',
+      resumeHandle: 'sess-1',
       now: 1000,
     });
     catalog.upsertActive({
@@ -41,7 +43,7 @@ describe('agent-aware session catalog', () => {
       agentId: 'codex',
       cwdRealpath: '/repo',
       policyFingerprint: 'fp-1',
-      threadId: 'thread-1',
+      resumeHandle: 'thread-1',
       now: 2000,
     });
 
@@ -52,7 +54,7 @@ describe('agent-aware session catalog', () => {
         cwdRealpath: '/repo',
         policyFingerprint: 'fp-1',
       }),
-    ).toMatchObject({ sessionId: 'sess-1', agentId: 'claude' });
+    ).toMatchObject({ resumeHandle: 'sess-1', agentId: 'claude' });
     expect(
       catalog.activeFor({
         scopeId: 'chat-1',
@@ -60,11 +62,20 @@ describe('agent-aware session catalog', () => {
         cwdRealpath: '/repo',
         policyFingerprint: 'fp-1',
       }),
-    ).toMatchObject({ threadId: 'thread-1', agentId: 'codex' });
+    ).toMatchObject({ resumeHandle: 'thread-1', agentId: 'codex' });
     await catalog.flush();
+    const persisted = JSON.parse(await readFile(file, 'utf8')) as {
+      schemaVersion: number;
+      entries: Array<{ resumeHandle: string }>;
+    };
+    expect(persisted.schemaVersion).toBe(CATALOG_SCHEMA_VERSION);
+    expect(persisted.entries.map((entry) => entry.resumeHandle).sort()).toEqual([
+      'sess-1',
+      'thread-1',
+    ]);
   });
 
-  it('rejects mismatched Claude/Codex identity fields and does not auto-resume damaged entries', async () => {
+  it('rejects missing resumeHandle and does not auto-resume damaged entries', async () => {
     const catalog = new SessionCatalog(await path());
 
     expect(() =>
@@ -73,20 +84,10 @@ describe('agent-aware session catalog', () => {
         agentId: 'claude',
         cwdRealpath: '/repo',
         policyFingerprint: 'fp-1',
-        threadId: 'thread-wrong',
+        resumeHandle: '',
         now: 1000,
       }),
-    ).toThrow(/Claude.*sessionId/i);
-    expect(() =>
-      catalog.upsertActive({
-        scopeId: 'chat-1',
-        agentId: 'codex',
-        cwdRealpath: '/repo',
-        policyFingerprint: 'fp-1',
-        sessionId: 'sess-wrong',
-        now: 1000,
-      }),
-    ).toThrow(/Codex.*threadId/i);
+    ).toThrow(/resumeHandle/);
 
     await catalog.replaceForTest([
       {
@@ -100,7 +101,7 @@ describe('agent-aware session catalog', () => {
         agentId: 'codex',
         cwdRealpath: '/repo',
         policyFingerprint: 'fp-1',
-        sessionId: 'sess-damaged',
+        resumeHandle: '',
         status: 'active',
         updatedAt: 1000,
       },
@@ -124,14 +125,14 @@ describe('agent-aware session catalog', () => {
       cwdRealpath: '/repo',
       policyFingerprint: 'fp-1',
     };
-    catalog.upsertActive({ ...base, agentId: 'claude', sessionId: 'sess-1', now: 1000 });
-    catalog.upsertActive({ ...base, agentId: 'codex', threadId: 'thread-1', now: 1000 });
+    catalog.upsertActive({ ...base, agentId: 'claude', resumeHandle: 'sess-1', now: 1000 });
+    catalog.upsertActive({ ...base, agentId: 'codex', resumeHandle: 'thread-1', now: 1000 });
 
     expect(catalog.archiveActive({ ...base, agentId: 'claude', now: 2000 })).toBe(true);
 
     expect(catalog.activeFor({ ...base, agentId: 'claude' })).toBeUndefined();
     expect(catalog.activeFor({ ...base, agentId: 'codex' })).toMatchObject({
-      threadId: 'thread-1',
+      resumeHandle: 'thread-1',
     });
     expect(catalog.entries().filter((entry) => entry.status === 'archived')).toHaveLength(1);
     await catalog.flush();
@@ -159,7 +160,7 @@ describe('agent-aware session catalog', () => {
       maxEntriesPerProfile: 1000,
     });
 
-    expect(catalog.entries().some((item) => item.sessionId === 'old')).toBe(false);
+    expect(catalog.entries().some((item) => item.resumeHandle === 'old')).toBe(false);
     expect(catalog.entries().filter((item) => item.scopeId === 'chat-1')).toHaveLength(20);
     expect(catalog.entries()).toHaveLength(1000);
     await catalog.flush();
@@ -174,7 +175,7 @@ async function path(): Promise<string> {
 
 function entry(
   scopeId: string,
-  sessionId: string,
+  resumeHandle: string,
   updatedAt: number,
   policyFingerprint = 'fp-1',
 ) {
@@ -187,7 +188,7 @@ function entry(
   return {
     key: sessionCatalogKey(identity),
     ...identity,
-    sessionId,
+    resumeHandle,
     status: 'active' as const,
     updatedAt,
   };

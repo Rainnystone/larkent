@@ -85,7 +85,7 @@ export class CursorAdapter implements AgentAdapter {
       binaryPath: this.binary,
       argv: buildCursorArgs({
         prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
-        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+        ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
         ...(opts.sandbox ? { sandbox: opts.sandbox } : {}),
       }),
@@ -96,7 +96,7 @@ export class CursorAdapter implements AgentAdapter {
       spawnName: 'cursor',
       missingTerminalOnSuccess: 'cursor stream ended before a terminal event',
       logFields: {
-        hasSession: Boolean(opts.sessionId),
+        hasSession: Boolean(opts.resumeHandle),
         promptChars: opts.prompt.length,
         model: opts.model,
       },

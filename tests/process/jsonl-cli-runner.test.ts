@@ -52,11 +52,11 @@ describe('runJsonlCli', () => {
       {
         name: 'claude-like',
         lines: [{ type: 'result', session_id: 's1' }],
-        events: [{ type: 'done', sessionId: 's1', terminationReason: 'normal' }],
+        events: [{ type: 'done', resumeHandle: 's1', terminationReason: 'normal' }],
         translate: (parsed: unknown) => {
           const row = parsed as { type?: string; session_id?: string };
           if (row.type === 'result') {
-            return [{ type: 'done' as const, sessionId: row.session_id, terminationReason: 'normal' as const }];
+            return [{ type: 'done' as const, resumeHandle: row.session_id, terminationReason: 'normal' as const }];
           }
           return [];
         },
@@ -497,7 +497,7 @@ describe('ClaudeAdapter process contract', () => {
 
     expect(run.runId).toBe('run-fresh');
     expect(await collect(run.events)).toEqual([
-      { type: 'done', sessionId: 'sess-fresh', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'sess-fresh', terminationReason: 'normal' },
     ]);
     const record = await readClaudeRecord(fake.recordPath);
 
@@ -573,12 +573,12 @@ describe('ClaudeAdapter process contract', () => {
       runId: 'run-resume',
       prompt: 'continue',
       cwd: fake.dir,
-      sessionId: 'sess-old',
+      resumeHandle: 'sess-old',
       model: 'sonnet',
     });
 
     expect(await collect(run.events)).toEqual([
-      { type: 'done', sessionId: 'sess-resumed', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'sess-resumed', terminationReason: 'normal' },
     ]);
     const record = await readClaudeRecord(fake.recordPath);
 
@@ -658,7 +658,7 @@ describe('ClaudeAdapter process contract', () => {
 
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: 'done', sessionId: 'sess-tail', terminationReason: 'normal' },
+      value: { type: 'done', resumeHandle: 'sess-tail', terminationReason: 'normal' },
     });
     expect(await run.waitForExit(10)).toBe(false);
     expect(await run.waitForExit(1_000)).toBe(true);
@@ -802,9 +802,9 @@ describe('CodexAdapter process contract', () => {
 
     expect(run.runId).toBe('run-fresh');
     expect(await collect(run.events)).toEqual([
-      { type: 'system', threadId: 'thread-fresh' },
+      { type: 'system', resumeHandle: 'thread-fresh' },
       { type: 'final_text', content: 'hello user' },
-      { type: 'done', threadId: 'thread-fresh', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'thread-fresh', terminationReason: 'normal' },
     ]);
     const record = await readCodexRecord(fake.recordPath);
 
@@ -905,7 +905,7 @@ describe('CodexAdapter process contract', () => {
       runId: 'run-resume',
       prompt: 'continue',
       cwd,
-      threadId: 'thread-old',
+      resumeHandle: 'thread-old',
       images: [image],
     });
 
@@ -1081,9 +1081,9 @@ describe('CodexAdapter process contract', () => {
     });
 
     expect(await collect(run.events)).toEqual([
-      { type: 'system', threadId: 'thread-retry' },
+      { type: 'system', resumeHandle: 'thread-retry' },
       { type: 'final_text', content: 'after retry' },
-      { type: 'done', threadId: 'thread-retry', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'thread-retry', terminationReason: 'normal' },
     ]);
   });
 
@@ -1139,13 +1139,13 @@ describe('CodexAdapter process contract', () => {
 
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: 'system', threadId: 'thread-stop' },
+      value: { type: 'system', resumeHandle: 'thread-stop' },
     });
     expect(await run.waitForExit(10)).toBe(false);
     await run.stop();
     expect(await iterator.next()).toEqual({
       done: false,
-      value: { type: 'done', threadId: 'thread-stop', terminationReason: 'interrupted' },
+      value: { type: 'done', resumeHandle: 'thread-stop', terminationReason: 'interrupted' },
     });
     await iterator.return?.();
   });
@@ -1275,9 +1275,9 @@ describe('KimiAdapter process contract', () => {
 
     expect(run.runId).toBe('run-fresh');
     expect(await collect(run.events)).toEqual([
-      { type: 'system', sessionId: 'session_fake' },
+      { type: 'system', resumeHandle: 'session_fake' },
       { type: 'final_text', content: 'OK' },
-      { type: 'done', sessionId: 'session_fake', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'session_fake', terminationReason: 'normal' },
     ]);
     const record = await readKimiRecord(fake.recordPath);
 
@@ -1338,7 +1338,7 @@ describe('KimiAdapter process contract', () => {
       runId: 'run-resume',
       prompt: 'continue',
       cwd: fake.dir,
-      sessionId: 'session_old',
+      resumeHandle: 'session_old',
       model: 'kimi-code/kimi-for-coding',
     });
 
@@ -1377,9 +1377,9 @@ describe('KimiAdapter process contract', () => {
     expect(await collect(run.events)).toEqual([
       { type: 'tool_use', id: 'tool_1', name: 'Bash', input: { command: 'echo hi' } },
       { type: 'tool_result', id: 'tool_1', output: 'hi\n', isError: false },
-      { type: 'system', sessionId: 'session_fake' },
+      { type: 'system', resumeHandle: 'session_fake' },
       { type: 'final_text', content: 'done' },
-      { type: 'done', sessionId: 'session_fake', terminationReason: 'normal' },
+      { type: 'done', resumeHandle: 'session_fake', terminationReason: 'normal' },
     ]);
   });
 
@@ -1553,9 +1553,9 @@ describe('GrokAdapter process contract', () => {
 
     expect(run.runId).toBe('run-fresh');
     expect(await collect(run.events)).toEqual([
-      { type: 'system', sessionId: GROK_SESSION },
+      { type: 'system', resumeHandle: GROK_SESSION },
       { type: 'final_text', content: 'OK' },
-      { type: 'done', sessionId: GROK_SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: GROK_SESSION, terminationReason: 'normal' },
     ]);
     const record = await readGrokRecord(fake.recordPath);
 
@@ -1626,7 +1626,7 @@ describe('GrokAdapter process contract', () => {
       runId: 'run-resume',
       prompt: 'continue',
       cwd: fake.dir,
-      sessionId: GROK_SESSION,
+      resumeHandle: GROK_SESSION,
       model: 'grok-build',
     });
 
@@ -1673,9 +1673,9 @@ describe('GrokAdapter process contract', () => {
         input: { command: 'echo hi' },
       },
       { type: 'tool_result', id: 'call_1', output: '{"stdout":"hi\\n"}', isError: false },
-      { type: 'system', sessionId: GROK_SESSION },
+      { type: 'system', resumeHandle: GROK_SESSION },
       { type: 'final_text', content: 'done' },
-      { type: 'done', sessionId: GROK_SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: GROK_SESSION, terminationReason: 'normal' },
     ]);
   });
 
@@ -1894,9 +1894,9 @@ describe('CursorAdapter process contract', () => {
 
     expect(run.runId).toBe('run-fresh');
     expect(await collect(run.events)).toEqual([
-      { type: 'system', sessionId: CURSOR_SESSION, cwd: '/tmp', model: 'Composer 2.5' },
+      { type: 'system', resumeHandle: CURSOR_SESSION, cwd: '/tmp', model: 'Composer 2.5' },
       { type: 'final_text', content: 'OK' },
-      { type: 'done', sessionId: CURSOR_SESSION, terminationReason: 'normal' },
+      { type: 'done', resumeHandle: CURSOR_SESSION, terminationReason: 'normal' },
     ]);
     const record = await readCursorRecord(fake.recordPath);
 
@@ -1976,7 +1976,7 @@ describe('CursorAdapter process contract', () => {
       runId: 'run-resume',
       prompt: 'continue',
       cwd: fake.dir,
-      sessionId: 'session_old',
+      resumeHandle: 'session_old',
       model: 'composer-2.5',
     });
 

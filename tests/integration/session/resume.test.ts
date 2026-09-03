@@ -36,7 +36,7 @@ describe('agent-aware run-flow resume', () => {
       agentId: 'claude',
       cwdRealpath: first.cwdRealpath,
       policyFingerprint: first.policy.policyFingerprint,
-      sessionId: 'sess-catalog',
+      resumeHandle: 'sess-catalog',
       now: 1000,
     });
 
@@ -46,8 +46,7 @@ describe('agent-aware run-flow resume', () => {
     if (!second.ok) throw new Error('expected resumed run');
     expect(second.resumeFrom).toBe('sess-catalog');
     expect(h.agent.runOptions[1]).toMatchObject({
-      sessionId: 'sess-catalog',
-      threadId: undefined,
+      resumeHandle: 'sess-catalog',
     });
   });
 
@@ -62,8 +61,7 @@ describe('agent-aware run-flow resume', () => {
     if (!run.ok) throw new Error('expected resumed legacy run');
     expect(run.resumeFrom).toBe('legacy-session');
     expect(h.agent.runOptions[0]).toMatchObject({
-      sessionId: 'legacy-session',
-      threadId: undefined,
+      resumeHandle: 'legacy-session',
     });
   });
 
@@ -80,7 +78,7 @@ describe('agent-aware run-flow resume', () => {
       agentId: 'codex',
       cwdRealpath: probe.cwdRealpath,
       policyFingerprint: probe.policy.policyFingerprint,
-      threadId: 'thread-catalog',
+      resumeHandle: 'thread-catalog',
       now: 1000,
     });
 
@@ -90,8 +88,7 @@ describe('agent-aware run-flow resume', () => {
     if (!resumed.ok) throw new Error('expected resumed run');
     expect(resumed.resumeFrom).toBe('thread-catalog');
     expect(h.agent.runOptions[1]).toMatchObject({
-      sessionId: undefined,
-      threadId: 'thread-catalog',
+      resumeHandle: 'thread-catalog',
     });
   });
 
@@ -106,7 +103,7 @@ describe('agent-aware run-flow resume', () => {
       agentId: 'claude',
       cwdRealpath: first.cwdRealpath,
       policyFingerprint: 'stale-fingerprint',
-      sessionId: 'sess-stale',
+      resumeHandle: 'sess-stale',
       now: 1000,
     });
 
@@ -115,10 +112,7 @@ describe('agent-aware run-flow resume', () => {
     expect(second.ok).toBe(true);
     if (!second.ok) throw new Error('expected fresh run');
     expect(second.resumeFrom).toBeUndefined();
-    expect(h.agent.runOptions[1]).toMatchObject({
-      sessionId: undefined,
-      threadId: undefined,
-    });
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
   });
 
   it('records system session identifiers into the agent-aware catalog', async () => {
@@ -134,7 +128,7 @@ describe('agent-aware run-flow resume', () => {
       sessionCatalog: claude.catalog,
       capability: claudeCapability(claude.profileConfig),
       policy: claudeRun.policy,
-      event: { type: 'system', sessionId: 'sess-recorded', cwd: claudeRun.cwdRealpath },
+      event: { type: 'system', resumeHandle: 'sess-recorded', cwd: claudeRun.cwdRealpath },
     });
 
     expect(
@@ -144,7 +138,7 @@ describe('agent-aware run-flow resume', () => {
         cwdRealpath: claudeRun.cwdRealpath,
         policyFingerprint: claudeRun.policy.policyFingerprint,
       }),
-    ).toMatchObject({ sessionId: 'sess-recorded' });
+    ).toMatchObject({ resumeHandle: 'sess-recorded' });
     expect(claude.sessions.resumeFor('chat-1', claudeRun.cwdRealpath)).toBe('sess-recorded');
 
     const codex = await createHarness('codex');
@@ -159,7 +153,7 @@ describe('agent-aware run-flow resume', () => {
       sessionCatalog: codex.catalog,
       capability: codexCapability(codex.profileConfig),
       policy: codexRun.policy,
-      event: { type: 'system', threadId: 'thread-recorded' },
+      event: { type: 'system', resumeHandle: 'thread-recorded' },
     });
 
     expect(
@@ -169,7 +163,7 @@ describe('agent-aware run-flow resume', () => {
         cwdRealpath: codexRun.cwdRealpath,
         policyFingerprint: codexRun.policy.policyFingerprint,
       }),
-    ).toMatchObject({ threadId: 'thread-recorded' });
+    ).toMatchObject({ resumeHandle: 'thread-recorded' });
     expect(codex.sessions.getRaw('chat-1')).toBeUndefined();
   });
 });

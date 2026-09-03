@@ -165,7 +165,7 @@ describe('Claude cloud-doc comment regression', () => {
         },
         { type: 'tool_result', id: 'tool-1', output: 'doc body', isError: false },
         { type: 'text', delta: '最终评审结论。' },
-        { type: 'done', sessionId: 'comment-session', terminationReason: 'normal' },
+        { type: 'done', resumeHandle: 'comment-session', terminationReason: 'normal' },
       ],
     });
 
@@ -261,9 +261,9 @@ async function createCommentHarness(options: {
   };
 
   const agentEvents = options.agentEvents ?? [
-    { type: 'system', sessionId: 'comment-session', cwd: tmp.workspace },
+    { type: 'system', resumeHandle: 'comment-session', cwd: tmp.workspace },
     { type: 'text', delta: options.agentText ?? '' },
-    { type: 'done', sessionId: 'comment-session', terminationReason: 'normal' },
+    { type: 'done', resumeHandle: 'comment-session', terminationReason: 'normal' },
   ];
   const agent = new FakeAgentAdapter({ events: agentEvents });
   const sessions = new SessionStore(`${tmp.profile}/sessions.json`);

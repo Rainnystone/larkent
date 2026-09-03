@@ -3,10 +3,14 @@ import { open, readFile, rename, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { paths } from '../config/paths';
 import { log } from '../core/logger';
-import { usesNativeSessionId, type AgentCapabilityId } from '../agent/capability';
-import { descriptorFor } from '../agent/registry';
+import { isAgentKind, type AgentKind } from '../agent/registry';
+import {
+  CATALOG_SCHEMA_VERSION,
+  upgradeCatalogDocument,
+  type CatalogEntryV2,
+} from './migrations';
 
-export type CatalogAgentId = AgentCapabilityId;
+export type CatalogAgentId = AgentKind;
 export type SessionCatalogStatus = 'active' | 'archived';
 
 export interface SessionCatalogIdentity {
@@ -16,19 +20,11 @@ export interface SessionCatalogIdentity {
   policyFingerprint: string;
 }
 
-export interface SessionCatalogEntry extends SessionCatalogIdentity {
-  key: string;
-  status: SessionCatalogStatus;
-  updatedAt: number;
-  sessionId?: string;
-  threadId?: string;
-  lastSummary?: string;
-}
+export type SessionCatalogEntry = CatalogEntryV2;
 
 export interface UpsertSessionCatalogInput extends SessionCatalogIdentity {
   now?: number;
-  sessionId?: string;
-  threadId?: string;
+  resumeHandle: string;
   lastSummary?: string;
 }
 
@@ -69,16 +65,9 @@ export class SessionCatalog {
   async load(): Promise<void> {
     try {
       const raw = JSON.parse(await readFile(this.path, 'utf8')) as unknown;
-      if (!Array.isArray(raw)) {
-        this.data.clear();
-        return;
-      }
-      this.data.clear();
-      for (const item of raw) {
-        const entry = normalizeEntry(item);
-        if (!entry) continue;
-        this.data.set(entry.key, entry);
-      }
+      const { document, upgraded } = upgradeCatalogDocument(raw);
+      this.data = new Map(document.entries.map((entry) => [entry.key, { ...entry }]));
+      if (upgraded) await this.persist();
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
       log.fail('session-catalog', err, { step: 'load' });
@@ -111,8 +100,7 @@ export class SessionCatalog {
       policyFingerprint: input.policyFingerprint,
       status: 'active',
       updatedAt: input.now ?? Date.now(),
-      ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-      ...(input.threadId ? { threadId: input.threadId } : {}),
+      resumeHandle: input.resumeHandle,
       ...(input.lastSummary ? { lastSummary: input.lastSummary } : {}),
     };
     this.data.set(key, entry);
@@ -187,7 +175,11 @@ export class SessionCatalog {
   private async persist(): Promise<void> {
     await mkdir(dirname(this.path), { recursive: true });
     const tmp = `${this.path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-    const payload = `${JSON.stringify(this.entries(), null, 2)}\n`;
+    const payload = `${JSON.stringify(
+      { schemaVersion: CATALOG_SCHEMA_VERSION, entries: this.entries() },
+      null,
+      2,
+    )}\n`;
     const fh = await open(tmp, 'w', 0o600);
     try {
       await fh.writeFile(payload, 'utf8');
@@ -209,38 +201,6 @@ export class SessionCatalog {
   }
 }
 
-function normalizeEntry(input: unknown): SessionCatalogEntry | undefined {
-  if (!input || typeof input !== 'object') return undefined;
-  const raw = input as Partial<SessionCatalogEntry>;
-  if (
-    typeof raw.key !== 'string' ||
-    typeof raw.scopeId !== 'string' ||
-    (raw.agentId !== 'claude' &&
-      raw.agentId !== 'codex' &&
-      raw.agentId !== 'kimi' &&
-      raw.agentId !== 'grok' &&
-      raw.agentId !== 'cursor') ||
-    typeof raw.cwdRealpath !== 'string' ||
-    typeof raw.policyFingerprint !== 'string' ||
-    (raw.status !== 'active' && raw.status !== 'archived') ||
-    typeof raw.updatedAt !== 'number'
-  ) {
-    return undefined;
-  }
-  return {
-    key: raw.key,
-    scopeId: raw.scopeId,
-    agentId: raw.agentId,
-    cwdRealpath: raw.cwdRealpath,
-    policyFingerprint: raw.policyFingerprint,
-    status: raw.status,
-    updatedAt: raw.updatedAt,
-    ...(typeof raw.sessionId === 'string' ? { sessionId: raw.sessionId } : {}),
-    ...(typeof raw.threadId === 'string' ? { threadId: raw.threadId } : {}),
-    ...(typeof raw.lastSummary === 'string' ? { lastSummary: raw.lastSummary } : {}),
-  };
-}
-
 function matchesIdentity(entry: SessionCatalogEntry, input: SessionCatalogIdentity): boolean {
   return (
     entry.scopeId === input.scopeId &&
@@ -252,23 +212,11 @@ function matchesIdentity(entry: SessionCatalogEntry, input: SessionCatalogIdenti
 }
 
 function isValidAgentEntry(entry: SessionCatalogEntry): boolean {
-  if (usesNativeSessionId(entry.agentId)) {
-    return Boolean(entry.sessionId) && !entry.threadId;
-  }
-  return Boolean(entry.threadId) && !entry.sessionId;
+  return Boolean(entry.resumeHandle) && isAgentKind(entry.agentId);
 }
 
 function assertAgentIdentity(input: UpsertSessionCatalogInput): void {
-  if (usesNativeSessionId(input.agentId)) {
-    if (!input.sessionId || input.threadId) {
-      const label = descriptorFor(input.agentId).displayName.replace(/ (Code|CLI|Build)$/, '');
-      throw new Error(
-        `${label} catalog entries require sessionId and must not include threadId`,
-      );
-    }
-    return;
-  }
-  if (!input.threadId || input.sessionId) {
-    throw new Error('Codex catalog entries require threadId and must not include sessionId');
+  if (!input.resumeHandle) {
+    throw new Error('catalog entries require resumeHandle');
   }
 }
