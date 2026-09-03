@@ -97,3 +97,31 @@ describe('Supervisor', () => {
     expect(started.filter((p) => p === 'claude')).toHaveLength(1);
   });
 });
+
+describe('Supervisor heterogeneous profiles', () => {
+  it('hosts kimi and grok together without mixing agent kinds', async () => {
+    await mkdir(join(root, 'profiles', 'kimi'), { recursive: true });
+    await mkdir(join(root, 'profiles', 'grok'), { recursive: true });
+    const rc = (await loadRootConfig(join(root, 'config.json')))!;
+    rc.profiles.kimi = createDefaultProfileConfig({
+      agentKind: 'kimi',
+      accounts: { app: app('cli_kimi') },
+    });
+    rc.profiles.grok = createDefaultProfileConfig({
+      agentKind: 'grok',
+      accounts: { app: app('cli_grok') },
+    });
+    await saveRootConfig(rc, join(root, 'config.json'));
+
+    await sup.startProfile('kimi');
+    await sup.startProfile('grok');
+    const hosted = sup.list().filter((row) => row.profile === 'kimi' || row.profile === 'grok');
+    expect(hosted).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ profile: 'kimi', agentKind: 'kimi', online: true }),
+        expect.objectContaining({ profile: 'grok', agentKind: 'grok', online: true }),
+      ]),
+    );
+    expect(started).toEqual(expect.arrayContaining(['kimi', 'grok']));
+  });
+});

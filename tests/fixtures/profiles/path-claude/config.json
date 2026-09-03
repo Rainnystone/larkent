@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "activeProfile": "claude",
+  "profiles": {
+    "claude": {
+      "schemaVersion": 2,
+      "agentKind": "claude",
+      "mode": "team",
+      "accounts": {
+        "app": {
+          "id": "cli_path_claude",
+          "secret": "secret",
+          "tenant": "feishu"
+        }
+      },
+      "workspaces": {}
+    }
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "activeProfile": "kimi",
+  "profiles": {
+    "kimi": {
+      "schemaVersion": 2,
+      "agentKind": "kimi",
+      "mode": "team",
+      "accounts": {
+        "app": {
+          "id": "cli_env_kimi",
+          "secret": "secret",
+          "tenant": "feishu"
+        }
+      },
+      "workspaces": {}
+    }
+  }
+}

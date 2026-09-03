@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fkimi\u001f/repo/project\u001fpin-fp-kimi",
+    "scopeId": "chat-1",
+    "agentId": "kimi",
+    "cwdRealpath": "/repo/project",
+    "policyFingerprint": "pin-fp-kimi",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "sessionId": "sess-v1-kimi"
+  }
+]

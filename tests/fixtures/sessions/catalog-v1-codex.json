@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fcodex\u001f/repo/project\u001fpin-fp-codex",
+    "scopeId": "chat-1",
+    "agentId": "codex",
+    "cwdRealpath": "/repo/project",
+    "policyFingerprint": "pin-fp-codex",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "threadId": "thread-v1-codex"
+  }
+]

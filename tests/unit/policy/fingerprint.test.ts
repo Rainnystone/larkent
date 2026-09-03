@@ -130,6 +130,38 @@ describe('policy fingerprint', () => {
       }),
     );
   });
+
+  it('pins golden hashes for representative FingerprintInputV2 values for all five kinds', () => {
+    const shared = {
+      cwdRealpath: '/repo/project',
+      sandbox: 'danger-full-access' as const,
+      accessPolicyDigest: digestOf('access'),
+      resourceScopeDigest: digestOf('scope'),
+      attachmentPolicyShapeDigest: digestOf('attachments'),
+    };
+    const goldens: Record<string, { input: FingerprintInputV2; hash: string }> = {
+      claude: { input: { ...shared, inheritCodexHome: false }, hash: 'U2Kkmm7iEU9Ol99NXdjeWw' },
+      kimi: { input: { ...shared, inheritCodexHome: false }, hash: 'U2Kkmm7iEU9Ol99NXdjeWw' },
+      grok: { input: { ...shared, inheritCodexHome: false }, hash: 'U2Kkmm7iEU9Ol99NXdjeWw' },
+      cursor: { input: { ...shared, inheritCodexHome: false }, hash: 'U2Kkmm7iEU9Ol99NXdjeWw' },
+      codex: {
+        input: { ...shared, codexHome: '/state/codex-home', inheritCodexHome: false },
+        hash: 'Uje6Rp7bY0Q6CG5G5RbdFQ',
+      },
+    };
+
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const) {
+      expect(policyFingerprint(goldens[kind].input), kind).toBe(goldens[kind].hash);
+    }
+
+    expect(
+      policyFingerprint({
+        ...shared,
+        codexHome: '/state/codex-home',
+        inheritCodexHome: true,
+      }),
+    ).toBe('nWIMYOnwVyhodoeJ-JUYwg');
+  });
 });
 
 function baseInput(): FingerprintInputV2 {

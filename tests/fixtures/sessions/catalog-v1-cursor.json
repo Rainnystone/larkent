@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fcursor\u001f/repo/project\u001fpin-fp-cursor",
+    "scopeId": "chat-1",
+    "agentId": "cursor",
+    "cwdRealpath": "/repo/project",
+    "policyFingerprint": "pin-fp-cursor",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "sessionId": "sess-v1-cursor"
+  }
+]

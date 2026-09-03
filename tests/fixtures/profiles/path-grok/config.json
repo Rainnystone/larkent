@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "activeProfile": "grok",
+  "profiles": {
+    "grok": {
+      "schemaVersion": 2,
+      "agentKind": "grok",
+      "mode": "team",
+      "accounts": {
+        "app": {
+          "id": "cli_path_grok",
+          "secret": "secret",
+          "tenant": "feishu"
+        }
+      },
+      "workspaces": {}
+    }
+  }
+}

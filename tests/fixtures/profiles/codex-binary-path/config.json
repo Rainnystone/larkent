@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 2,
+  "activeProfile": "codex",
+  "profiles": {
+    "codex": {
+      "schemaVersion": 2,
+      "agentKind": "codex",
+      "mode": "team",
+      "accounts": {
+        "app": {
+          "id": "cli_codex_bin",
+          "secret": "secret",
+          "tenant": "feishu"
+        }
+      },
+      "codex": {
+        "binaryPath": "/opt/pin/codex",
+        "codexHome": "/state/codex-home",
+        "inheritCodexHome": false
+      },
+      "workspaces": {}
+    }
+  }
+}

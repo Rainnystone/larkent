@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 2,
+  "activeProfile": "cursor",
+  "profiles": {
+    "cursor": {
+      "schemaVersion": 2,
+      "agentKind": "cursor",
+      "mode": "team",
+      "accounts": {
+        "app": {
+          "id": "cli_cursor_agent",
+          "secret": "secret",
+          "tenant": "feishu"
+        }
+      },
+      "workspaces": {}
+    }
+  }
+}

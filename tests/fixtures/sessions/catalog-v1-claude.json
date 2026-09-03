@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fclaude\u001f/repo/project\u001fpin-fp-claude",
+    "scopeId": "chat-1",
+    "agentId": "claude",
+    "cwdRealpath": "/repo/project",
+    "policyFingerprint": "pin-fp-claude",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "sessionId": "sess-v1-claude"
+  }
+]

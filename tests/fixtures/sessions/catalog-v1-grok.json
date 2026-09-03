@@ -1,0 +1,12 @@
+[
+  {
+    "key": "chat-1\u001fgrok\u001f/repo/project\u001fpin-fp-grok",
+    "scopeId": "chat-1",
+    "agentId": "grok",
+    "cwdRealpath": "/repo/project",
+    "policyFingerprint": "pin-fp-grok",
+    "status": "active",
+    "updatedAt": 1700000000000,
+    "sessionId": "sess-v1-grok"
+  }
+]
