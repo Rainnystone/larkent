@@ -53,18 +53,15 @@ export async function writeScriptedJsonlExecutable(
 ): Promise<ScriptedJsonlExecutable> {
   await mkdir(root, { recursive: true });
   const base = isCmd(name) ? name.replace(/\.cmd$/i, '') : name;
-  const file = join(root, process.platform === 'win32' ? `${base}.mjs` : base);
-  const recordPath = `${file}.argv.json`;
-  const scriptPath = scriptPathFor(file);
-  await writeScriptedJsonlExecutableFile(file, recordPath, options);
+  const nodeSource = join(root, process.platform === 'win32' ? `${base}.mjs` : base);
+  const path = process.platform === 'win32' ? join(root, `${base}.CMD`) : nodeSource;
+  const recordPath = `${nodeSource}.argv.json`;
+  const scriptPath = scriptPathFor(nodeSource);
+  await writeScriptedJsonlExecutableFile(nodeSource, recordPath, options);
   if (process.platform === 'win32') {
-    await writeFile(
-      join(root, `${base}.CMD`),
-      `@echo off\r\n${JSON.stringify(process.execPath)} ${JSON.stringify(file)} %*\r\n`,
-      { mode: 0o755 },
-    );
+    await writeFile(path, cmdLauncher(nodeSource), { mode: 0o755 });
   }
-  return { path: file, recordPath, scriptPath };
+  return { path, recordPath, scriptPath };
 }
 
 export async function writeScriptedJsonlExecutableFile(
@@ -74,13 +71,9 @@ export async function writeScriptedJsonlExecutableFile(
 ): Promise<void> {
   const scriptPath = scriptPathFor(file);
   if (isCmd(file)) {
-    const nodeSource = join(dirname(file), `${basename(file).replace(/\.cmd$/i, '')}.mjs`);
+    const nodeSource = nodeSourceForCmd(file);
     await writeNodeSource(nodeSource, recordPath, scriptPath, options);
-    await writeFile(
-      file,
-      `@echo off\r\n${JSON.stringify(process.execPath)} ${JSON.stringify(nodeSource)} %*\r\n`,
-      { mode: 0o755 },
-    );
+    await writeFile(file, cmdLauncher(nodeSource), { mode: 0o755 });
     return;
   }
   await writeNodeSource(file, recordPath, scriptPath, options);
@@ -88,7 +81,15 @@ export async function writeScriptedJsonlExecutableFile(
 }
 
 export function scriptPathFor(file: string): string {
-  return `${file}.script.json`;
+  return `${isCmd(file) ? nodeSourceForCmd(file) : file}.script.json`;
+}
+
+function nodeSourceForCmd(file: string): string {
+  return join(dirname(file), `${basename(file).replace(/\.cmd$/i, '')}.mjs`);
+}
+
+function cmdLauncher(nodeSource: string): string {
+  return `@echo off\r\n"${process.execPath}" "${nodeSource}" %*\r\n`;
 }
 
 async function writeNodeSource(
