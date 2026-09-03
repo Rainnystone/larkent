@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
@@ -58,10 +58,15 @@ describe('P5 slash command parity', () => {
     expect(modelHandled).toBe(false);
     expect(h.channel.sent).toHaveLength(resumeSent.length + statusSent.length);
 
+    const root = await realpath(h.tmp.root);
+    const replacements: ReadonlyArray<readonly [string, string]> = [
+      [root, '<tmp-root>'],
+      [h.tmp.root, '<tmp-root>'],
+    ];
     assertGoldenFile(join(process.cwd(), 'tests/fixtures/goldens/slash', `${kind}.json`), {
       kind,
-      resume: { handled: resumeHandled, sent: sanitizePinValue(resumeSent, [[h.tmp.root, '<tmp-root>']]) },
-      status: { handled: statusHandled, sent: sanitizePinValue(statusSent, [[h.tmp.root, '<tmp-root>']]) },
+      resume: { handled: resumeHandled, sent: sanitizePinValue(resumeSent, replacements) },
+      status: { handled: statusHandled, sent: sanitizePinValue(statusSent, replacements) },
       history: { handled: historyHandled },
       model: { handled: modelHandled },
     });
@@ -74,6 +79,7 @@ async function createHarness(kind: PinnedAgentKind): Promise<{
   run(content: string): Promise<boolean>;
 }> {
   const tmp = await createTmpProfile(`slash-parity-${kind}-`);
+  const workspace = await realpath(tmp.workspace);
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
@@ -82,8 +88,8 @@ async function createHarness(kind: PinnedAgentKind): Promise<{
     id: kind,
     displayName: pinnedDisplayName(kind),
   });
-  const profileConfig = appConfig(kind, tmp.workspace);
-  workspaces.setCwd('chat-1', tmp.workspace);
+  const profileConfig = appConfig(kind, workspace);
+  workspaces.setCwd('chat-1', workspace);
   const controls = {
     profile: kind,
     profileConfig,
@@ -97,7 +103,7 @@ async function createHarness(kind: PinnedAgentKind): Promise<{
     cfg: profileConfig,
     processId: 'proc-1',
   } satisfies Controls;
-  const identity = await commandIdentity(kind, profileConfig, controls, tmp.workspace);
+  const identity = await commandIdentity(kind, profileConfig, controls, workspace);
   if (kind === 'codex') {
     catalog.upsertActive({ ...identity, threadId: 'thread-v1-codex', now: 1_700_000_000_000 });
   } else {

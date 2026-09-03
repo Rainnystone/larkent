@@ -1,4 +1,5 @@
 import type { NormalizedMessage } from '@larksuite/channel';
+import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
@@ -112,7 +113,14 @@ async function captureParity(kind: PinnedAgentKind, scenario: ScriptedScenario):
   await waitForQuietCalls(channel);
 
   expect(channel.calls.length).toBeGreaterThan(0);
-  return sanitizePinValue(channel.calls, [[tmp.root, '<tmp-root>'], [tmp.workspace, '<workspace>']]);
+  const root = await realpath(tmp.root);
+  const workspace = await realpath(tmp.workspace);
+  return sanitizePinValue(channel.calls, [
+    [root, '<tmp-root>'],
+    [tmp.root, '<tmp-root>'],
+    [workspace, '<workspace>'],
+    [tmp.workspace, '<workspace>'],
+  ]);
 }
 
 function p2pMessage(messageId: string, content: string): NormalizedMessage {
