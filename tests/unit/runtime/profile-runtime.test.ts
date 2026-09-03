@@ -551,6 +551,47 @@ describe('profile runtime resolver', () => {
     expect(runtime.profileConfig.workspaces.default).toBe(workspaceRealpath);
   });
 
+  it('derives agentKind from a kind-named profile when converting a complete AppConfig', async () => {
+    const root = await tmpRoot();
+    await writeFile(
+      join(root, 'config.json'),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        accounts: { app },
+        preferences: {},
+      }, null, 2)}\n`,
+    );
+
+    const runtime = await resolveProfileRuntime({
+      config: join(root, 'config.json'),
+      profile: 'kimi',
+      allowBootstrap: false,
+    });
+
+    expect(runtime.profile).toBe('kimi');
+    expect(runtime.profileConfig.agentKind).toBe('kimi');
+  });
+
+  it('throws when converting a complete AppConfig if the profile name is not a kind', async () => {
+    const root = await tmpRoot();
+    await writeFile(
+      join(root, 'config.json'),
+      `${JSON.stringify({
+        schemaVersion: 2,
+        accounts: { app },
+        preferences: {},
+      }, null, 2)}\n`,
+    );
+
+    await expect(
+      resolveProfileRuntime({
+        config: join(root, 'config.json'),
+        profile: 'team',
+        allowBootstrap: false,
+      }),
+    ).rejects.toThrow(/unknown agent kind team; expected one of: claude, codex, kimi, grok, cursor/);
+  });
+
   it('resolves the active Codex profile from a v2 root config', async () => {
     const root = await tmpRoot();
     await writeProfileRoot(root, 'codex-dev', {

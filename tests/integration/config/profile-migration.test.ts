@@ -417,6 +417,26 @@ describe('profile v2 migration', () => {
     });
     expect(next.profiles.codex).not.toHaveProperty('sandbox');
   });
+
+  it('derives agentKind from a profile name that is already a kind', async () => {
+    const root = await makeRoot();
+    await writeJson(join(root, 'config.json'), legacyConfigFixture());
+
+    const result = await migrateV1ToV2({ rootDir: root, profile: 'kimi' });
+    const next = (await readJson(join(root, 'config.json'))) as RootConfig;
+
+    expect(result).toEqual({ migrated: true, profile: 'kimi' });
+    expect(next.profiles.kimi?.agentKind).toBe('kimi');
+  });
+
+  it('throws when migrating without a kind and the profile name is not a kind', async () => {
+    const root = await makeRoot();
+    await writeJson(join(root, 'config.json'), legacyConfigFixture());
+
+    await expect(migrateV1ToV2({ rootDir: root, profile: 'team' })).rejects.toThrow(
+      /unknown agent kind team; expected one of: claude, codex, kimi, grok, cursor/,
+    );
+  });
 });
 
 function legacyConfigFixture(): unknown {

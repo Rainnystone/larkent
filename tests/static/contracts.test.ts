@@ -75,6 +75,15 @@ describe('static architecture contracts', () => {
     expect(stray, stray.join('\n')).toEqual([]);
   });
 
+  it('does not fall through a missing AgentKind to claude', () => {
+    const migrate = read('src/config/migrate-v2.ts');
+    const runtime = read('src/runtime/profile-runtime.ts');
+    expect(migrate).not.toMatch(/opts\.agentKind \?\? ['"]claude['"]/);
+    expect(runtime).not.toMatch(/requestedAgent \?\? ['"]claude['"]/);
+    expect(migrate).toContain('requireAgentKind(opts.agentKind ?? profile)');
+    expect(runtime).toContain('requireAgentKind(requestedAgent ?? profile)');
+  });
+
   it('starts the onboard wizard with no selected agent kind', () => {
     const source = read('web/src/views/OnboardWizard.tsx');
     expect(source).toMatch(/useState<AgentKind \| "">\(""\)/);

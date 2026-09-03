@@ -35,6 +35,9 @@ describe('agent registry', () => {
     expect(parseAgentKind(undefined)).toBeUndefined();
     expect(parseAgentKind('')).toBeUndefined();
     expect(parseAgentKind('cursor')).toBe('cursor');
+    expect(() => requireAgentKind(undefined)).toThrow(
+      /unknown agent kind undefined; expected one of: claude, codex, kimi, grok, cursor/,
+    );
   });
 
   it('throws at profile load for agentKind nope and lists AGENT_KINDS', () => {

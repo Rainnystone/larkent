@@ -8,7 +8,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
-import { descriptorFor, isAgentKind } from '../agent/registry';
+import { descriptorFor, isAgentKind, requireAgentKind } from '../agent/registry';
 import { resolveAppPaths } from './app-paths';
 import {
   createDefaultProfileConfig,
@@ -120,7 +120,7 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   const legacyDefaultWorkspace = opts.workspace
     ? await resolveBootstrapWorkspace(opts.workspace)
     : await collectLegacyDefaultWorkspace(paths.rootDir);
-  const agentKind = opts.agentKind ?? 'claude';
+  const agentKind = requireAgentKind(opts.agentKind ?? profile);
   const profileConfig = createDefaultProfileConfig({
     agentKind,
     accounts: { app },

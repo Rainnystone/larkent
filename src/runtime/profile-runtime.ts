@@ -34,6 +34,7 @@ import {
   agentKindHelpList,
   descriptorFor,
   isAgentKind,
+  requireAgentKind,
   type AgentKind,
 } from '../agent/registry';
 import {
@@ -198,7 +199,7 @@ export async function resolveProfileRuntime(
     assertBootstrapAppMatchesExistingConfig(opts, profile, existing);
     const cfg = await maybeMigratePlaintextSecret(existing, configPath, appPaths);
     const profileConfig = createRuntimeProfileConfig({
-      agentKind: requestedAgent ?? 'claude',
+      agentKind: requireAgentKind(requestedAgent ?? profile),
       accounts: cfg.accounts,
       preferences: cfg.preferences,
       secrets: cfg.secrets,
