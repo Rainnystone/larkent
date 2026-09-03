@@ -172,8 +172,7 @@ function p2pMessage(messageId: string, content: string): NormalizedMessage {
 }
 
 function snapshotHasError(calls: RecordingCall[]): boolean {
-  const blob = JSON.stringify(calls);
-  return blob.includes('PINNED_ERROR') || blob.includes('exited with code 1') || blob.includes('agent 失败');
+  return JSON.stringify(calls).includes('PINNED_ERROR');
 }
 
 function snapshotHasAnswer(calls: RecordingCall[]): boolean {

@@ -1,6 +1,6 @@
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { spawnProcessSync } from '../../../src/platform/spawn.js';
 import { writeScriptedJsonlExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
@@ -39,6 +39,24 @@ describe('scripted JSONL fake executables', () => {
     const version = spawnProcessSync(fake.path, ['--version'], { encoding: 'utf8' });
     expect(version.status).toBe(0);
     expect(String(version.stdout)).toContain('0.0.0-pin');
+  });
+
+  it('PATH-resolves the base name so ClaudeAdapter can spawn claude', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'pin-path-claude-'));
+    const fake = await writeScriptedJsonlExecutable(dir, 'claude', {
+      lines: [{ type: 'end', stopReason: 'end_turn' }],
+    });
+    const previous = process.env.PATH;
+    process.env.PATH = `${dir}${delimiter}${previous ?? ''}`;
+    try {
+      const result = spawnProcessSync('claude', ['--version'], { encoding: 'utf8' });
+      expect(result.status).toBe(0);
+      expect(String(result.stdout)).toContain('0.0.0-pin');
+      expect(fake.path.toLowerCase().endsWith('.cmd')).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.PATH;
+      else process.env.PATH = previous;
+    }
   });
 
   it('records grok argv through spawn, including a rules blob with angle brackets', async () => {
