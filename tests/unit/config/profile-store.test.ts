@@ -92,7 +92,7 @@ describe('profile store canonical serialization', () => {
     };
 
     await saveRootConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProfile: 'codex',
       preferences: { messageReply: 'text' },
       secrets: rootSecrets,
@@ -152,7 +152,7 @@ describe('profile store canonical serialization', () => {
     });
 
     await saveRootConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProfile: 'codex',
       preferences: {},
       profiles: { codex: profile },
@@ -179,7 +179,7 @@ describe('profile store canonical serialization', () => {
     });
 
     await saveRootConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProfile: 'claude',
       preferences: {},
       profiles: { claude: profile },
@@ -201,7 +201,7 @@ describe('profile store canonical serialization', () => {
     profile.access.chatRequireMention = { oc_open: false, oc_strict: true };
 
     await saveRootConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProfile: 'claude',
       preferences: {},
       profiles: { claude: profile },
@@ -235,7 +235,7 @@ describe('profile store canonical serialization', () => {
     };
 
     await saveRootConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProfile: 'claude',
       preferences: {},
       profiles: { claude: profile },

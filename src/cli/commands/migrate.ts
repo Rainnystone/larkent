@@ -13,6 +13,7 @@ import {
 import { legacyPaths, paths } from '../../config/paths';
 import {
   assertSupportedProfileSchemaVersion,
+  isKnownProfileSchemaVersion,
   isLegacyProfileSchemaVersion,
   profileSchemaVersionOf,
 } from '../../config/migrations';
@@ -237,11 +238,11 @@ async function migrateConfigShape(path: string): Promise<void> {
 }
 
 function isRootConfigV2(value: unknown): value is RootConfig {
-  const schemaVersion = (value as Partial<RootConfig>).schemaVersion;
+  const schemaVersion = profileSchemaVersionOf(value);
   return Boolean(
     value &&
       typeof value === 'object' &&
-      (schemaVersion === 2 || schemaVersion === 3) &&
+      isKnownProfileSchemaVersion(schemaVersion) &&
       (value as Partial<RootConfig>).profiles &&
       typeof (value as Partial<RootConfig>).profiles === 'object',
   );

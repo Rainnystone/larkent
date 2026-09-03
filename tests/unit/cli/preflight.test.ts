@@ -648,7 +648,7 @@ describe('lark-cli preflight', () => {
       },
     };
     await saveRootConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProfile: 'codex',
       preferences: {},
       profiles: { codex: profileConfig },
@@ -1150,7 +1150,7 @@ describe('lark-cli preflight', () => {
       },
     };
     await saveRootConfig({
-      schemaVersion: 2,
+      schemaVersion: 3,
       activeProfile: 'codex',
       preferences: {},
       profiles: { codex: profileConfig },

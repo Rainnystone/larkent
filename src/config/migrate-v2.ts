@@ -15,7 +15,7 @@ import {
   type CodexConfig,
   type RootConfig,
 } from './profile-schema';
-import { PROFILE_SCHEMA_VERSION, assertSupportedProfileSchemaVersion } from './migrations';
+import { PROFILE_SCHEMA_VERSION, assertSupportedProfileSchemaVersion, isKnownProfileSchemaVersion, profileSchemaVersionOf } from './migrations';
 import { markPermissionDefaultsMigration, saveRootConfig } from './profile-store';
 import type { AppConfig } from './schema';
 import { isAgentKind, unknownAgentKindMessage } from '../agent/registry';
@@ -103,8 +103,8 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   }
 
   const parsed = JSON.parse(rawConfig) as LegacyConfig | RootConfig;
-  const schemaVersion = (parsed as RootConfig).schemaVersion;
-  if (schemaVersion === 2 || schemaVersion === PROFILE_SCHEMA_VERSION) {
+  const schemaVersion = profileSchemaVersionOf(parsed);
+  if (isKnownProfileSchemaVersion(schemaVersion)) {
     return { migrated: false, profile: (parsed as RootConfig).activeProfile ?? profile };
   }
   assertSupportedProfileSchemaVersion(schemaVersion);

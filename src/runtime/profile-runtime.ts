@@ -153,7 +153,7 @@ export async function resolveProfileRuntime(
 
   const loadedRoot = await loadRootConfigWithMeta(configPath);
   let rootConfig = loadedRoot?.root;
-  if (rootConfig) {
+  if (loadedRoot && rootConfig) {
     if (!explicitProfile && !activeProfile) {
       profile = rootConfig.activeProfile;
       appPaths = resolveAppPaths({ rootDir, profile });

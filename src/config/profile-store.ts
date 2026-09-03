@@ -13,6 +13,7 @@ import type { AppConfig } from './schema';
 import {
   PROFILE_SCHEMA_VERSION,
   assertSupportedProfileSchemaVersion,
+  isKnownProfileSchemaVersion,
   profileSchemaVersionOf,
   upgradeRootConfigDocument,
 } from './migrations';
@@ -200,7 +201,7 @@ export function isRootConfig(value: unknown): value is RootConfig {
   if (!value || typeof value !== 'object') return false;
   const root = value as Partial<RootConfig>;
   return (
-    (root.schemaVersion === 2 || root.schemaVersion === PROFILE_SCHEMA_VERSION) &&
+    isKnownProfileSchemaVersion(profileSchemaVersionOf(value)) &&
     Boolean(root.profiles && typeof root.profiles === 'object')
   );
 }
