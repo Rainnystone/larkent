@@ -100,7 +100,7 @@ export class ClaudeJsonlTranslator implements JsonlTranslator {
     if (parsed === undefined) return [];
     const events = [...translateEvent(parsed)];
     for (const event of events) {
-      if (event.type === 'system' && event.sessionId) this.sessionId = event.sessionId;
+      if (event.type === 'system' && event.resumeHandle) this.sessionId = event.resumeHandle;
       if (event.type === 'done' || event.type === 'error') this.terminal = true;
     }
     return events;
@@ -113,7 +113,7 @@ export class ClaudeJsonlTranslator implements JsonlTranslator {
       return [
         {
           type: 'done',
-          ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+          ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
           terminationReason: reason,
         },
       ];
