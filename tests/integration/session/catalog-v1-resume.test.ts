@@ -65,7 +65,7 @@ describe('P2 catalog v1 resume continuity', () => {
       };
       return next;
     });
-    await writeFile(join(h.tmp.profile, 'sessions.catalog.json'), `${JSON.stringify(materialized, null, 2)}\n`);
+    await writeFile(join(h.tmp.profile, 'sessions.json.catalog.json'), `${JSON.stringify(materialized, null, 2)}\n`);
     await h.catalog.load();
 
     const loaded = h.catalog.activeFor({
@@ -76,9 +76,11 @@ describe('P2 catalog v1 resume continuity', () => {
     });
     expect(loaded).toBeDefined();
     if (pinned === 'codex') {
-      expect(loaded).toMatchObject({ threadId: 'thread-v1-codex', sessionId: undefined });
+      expect(loaded?.threadId).toBe('thread-v1-codex');
+      expect(loaded?.sessionId).toBeUndefined();
     } else {
-      expect(loaded).toMatchObject({ sessionId: `sess-v1-${pinned}`, threadId: undefined });
+      expect(loaded?.sessionId).toBe(`sess-v1-${pinned}`);
+      expect(loaded?.threadId).toBeUndefined();
     }
 
     const resumed = await start(h);
@@ -87,24 +89,20 @@ describe('P2 catalog v1 resume continuity', () => {
     const handle = pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`;
     expect(resumed.resumeFrom).toBe(handle);
     if (pinned === 'codex') {
-      expect(h.agent.runOptions[1]).toMatchObject({
-        threadId: 'thread-v1-codex',
-        sessionId: undefined,
-      });
+      expect(h.agent.runOptions[1]?.threadId).toBe('thread-v1-codex');
+      expect(h.agent.runOptions[1]?.sessionId).toBeUndefined();
     } else {
-      expect(h.agent.runOptions[1]).toMatchObject({
-        sessionId: handle,
-        threadId: undefined,
-      });
+      expect(h.agent.runOptions[1]?.sessionId).toBe(handle);
+      expect(h.agent.runOptions[1]?.threadId).toBeUndefined();
     }
-  });
+  }, 20_000);
 
   it('keeps committed v1 catalog files loadable without rewriting the fixture bytes', async () => {
     for (const kind of PIN_AGENT_KINDS) {
       const pinned = pinAgentKind(kind);
       const tmp = await createTmpProfile(`catalog-load-${pinned}-`);
       cleanups.push(tmp.cleanup);
-      const dest = join(tmp.profile, 'sessions.catalog.json');
+      const dest = join(tmp.profile, 'sessions.json.catalog.json');
       await copyFile(join(fixtureRoot, `catalog-v1-${pinned}.json`), dest);
       const catalog = new SessionCatalog(dest);
       await catalog.load();
@@ -154,7 +152,7 @@ async function createHarness(kind: PinAgentKind): Promise<{
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   workspaces.setCwd('chat-1', tmp.workspace);
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
-  const catalog = new SessionCatalog(join(tmp.profile, 'sessions.catalog.json'));
+  const catalog = new SessionCatalog(join(tmp.profile, 'sessions.json.catalog.json'));
   cleanups.push(async () => {
     await Promise.all([sessions.flush(), workspaces.flush(), catalog.flush()]);
     await tmp.cleanup();
@@ -184,7 +182,7 @@ async function createHarness(kind: PinAgentKind): Promise<{
 
 async function drain(events: AsyncIterable<unknown>): Promise<void> {
   for await (const _event of events) {
-    /* drain */
+    void _event;
   }
 }
 

@@ -1,0 +1,59 @@
+{
+  "success": [
+    {
+      "op": "send",
+      "chatId": "oc_dm",
+      "content": {
+        "card": {
+          "schema": "2.0",
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "已完成"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "PINNED_ANSWER"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "replyTo": "om_success"
+      }
+    }
+  ],
+  "error": [
+    {
+      "op": "send",
+      "chatId": "oc_dm",
+      "content": {
+        "card": {
+          "schema": "2.0",
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "出错"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "⚠️ agent 失败：codex exited with code 1: PINNED_ERROR",
+                "text_size": "notation"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "replyTo": "om_error"
+      }
+    }
+  ]
+}

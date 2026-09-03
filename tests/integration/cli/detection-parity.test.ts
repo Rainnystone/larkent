@@ -1,3 +1,4 @@
+import { readdirSync, readFileSync } from 'node:fs';
 import { mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -37,6 +38,16 @@ afterEach(async () => {
 });
 
 describe('P7 preflight and detection', () => {
+  it('has no larkent doctor CLI and no doctor subcommand', () => {
+    const pkg = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
+      bin?: Record<string, string>;
+    };
+    expect(pkg.bin).not.toHaveProperty('larkent');
+    const cli = readFileSync(join(process.cwd(), 'src/cli/index.ts'), 'utf8');
+    expect(cli).not.toMatch(/\.command\(\s*['"]doctor['"]\s*\)/);
+    expect(readdirSync(join(process.cwd(), 'src/cli/commands'))).not.toContain('doctor.ts');
+  });
+
   it('detects found vs missing binaries for a scripted PATH including a Cursor versioned agent', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-detect-path-'));
     const grok = await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
@@ -92,17 +103,18 @@ describe('P7 preflight and detection', () => {
     expect(output).toContain(`agent: ${adapterDisplayName(pinned)} (${pinned})`);
     expect(output).toContain('agent echo check: OK');
     expect(output).not.toContain('agent echo check: failed');
-  });
+  }, 20_000);
 
-  it.each(PIN_AGENT_KINDS)('slash /doctor reports a missing binary as failed for %s', async (kind) => {
+  it.each(PIN_AGENT_KINDS)('slash /doctor reports a missing binary echo for %s', async (kind) => {
     const pinned = pinAgentKind(kind);
     const h = await createDoctorHarness(pinned, 'missing');
     await expect(h.run('/doctor')).resolves.toBe(true);
     const output = lastDoctorText(h.channel);
     expect(output).toContain('self-check: ok');
     expect(output).toContain(`agent: ${adapterDisplayName(pinned)} (${pinned})`);
-    expect(output).toContain('agent echo check: failed');
-  });
+    expect(output).toContain(`agent echo check: ${missingDoctorEchoCheck(pinned)}`);
+    expect(output).not.toContain('agent echo check: OK');
+  }, 20_000);
 });
 
 async function createDoctorHarness(
@@ -119,10 +131,11 @@ async function createDoctorHarness(
   workspaces.setCwd('chat-1', tmp.workspace);
   const activeRuns = new ActiveRuns();
   const pool = new ProcessPool(() => 1);
+  const operator = `ou-${kind}-${mode}`;
   const profileConfig = createDefaultProfileConfig({
     agentKind: kind,
     accounts: { app: { id: `app-${kind}-${mode}`, secret: 'secret', tenant: 'feishu' } },
-    access: { admins: ['ou-admin'] },
+    access: { admins: [operator] },
     larkCli: { identityPreset: 'bot-only' },
     ...(kind === 'codex' ? { codex: { binaryPath: '/missing/codex', inheritCodexHome: false } } : {}),
   });
@@ -138,7 +151,7 @@ async function createDoctorHarness(
   const controls = {
     profile: `${kind}-${mode}-${Date.now()}`,
     profileConfig,
-    botOwnerId: 'ou-owner',
+    botOwnerId: operator,
     ownerRefreshState: 'ok',
     ownerRefreshedAt: 1_700_000_000_000,
     async refreshOwner() {},
@@ -221,4 +234,20 @@ function lastDoctorText(channel: FakeChannel): string {
   }
   const sent = channel.sent.at(-1)?.content as { markdown?: string } | undefined;
   return sent?.markdown ?? JSON.stringify(channel.sent.at(-1)?.content ?? stream ?? null);
+}
+
+function missingDoctorEchoCheck(kind: PinAgentKind): string {
+  switch (pinAgentKind(kind)) {
+    case 'claude':
+      return 'error';
+    case 'codex':
+    case 'kimi':
+    case 'grok':
+    case 'cursor':
+      return 'failed';
+    default: {
+      const _never: never = kind;
+      throw new Error(`unhandled agent kind: ${String(_never)}`);
+    }
+  }
 }

@@ -46,6 +46,7 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
+  delete process.env.LARKENT_FAKE_JSONL;
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
@@ -58,22 +59,26 @@ describe('P6 multi-bot isolation', () => {
     const grok = await installKindCli(binDir, 'grok');
     const scriptDir = join(tmp.root, 'scripts');
     const scriptFile = await writeJsonlScriptFile(scriptDir, jsonlScript('kimi', 'success'));
+    const previousAppSecret = process.env.APP_SECRET;
     process.env.LARKENT_FAKE_JSONL = scriptFile;
+    process.env.APP_SECRET = 'pin-secret';
 
     const kimiWorkspace = join(tmp.root, 'ws-kimi');
     const grokWorkspace = join(tmp.root, 'ws-grok');
     await mkdir(kimiWorkspace, { recursive: true });
     await mkdir(grokWorkspace, { recursive: true });
+    await mkdir(join(tmp.root, 'profiles', 'kimi-bot'), { recursive: true });
+    await mkdir(join(tmp.root, 'profiles', 'grok-bot'), { recursive: true });
 
     const kimiProfile = createDefaultProfileConfig({
       agentKind: 'kimi',
-      accounts: { app: { id: 'cli_bot_a', secret: 'secret', tenant: 'feishu' } },
+      accounts: { app: { id: 'cli_bot_a', secret: '${APP_SECRET}', tenant: 'feishu' } },
       access: { allowedUsers: ['ou_user'] },
     });
     kimiProfile.workspaces.default = kimiWorkspace;
     const grokProfile = createDefaultProfileConfig({
       agentKind: 'grok',
-      accounts: { app: { id: 'cli_bot_b', secret: 'secret', tenant: 'feishu' } },
+      accounts: { app: { id: 'cli_bot_b', secret: '${APP_SECRET}', tenant: 'feishu' } },
       access: { allowedUsers: ['ou_user'] },
     });
     grokProfile.workspaces.default = grokWorkspace;
@@ -91,40 +96,43 @@ describe('P6 multi-bot isolation', () => {
     });
     cleanups.push(() => sup.shutdown());
 
-    await withEnvBin('kimi', kimi.fake.path, async () => {
-      await withEnvBin('grok', grok.fake.path, async () => {
-        await withPathPrefix(binDir, async () => {
-          await sup.startProfile('kimi-bot');
-          await sup.startProfile('grok-bot');
+    try {
+      await withEnvBin('kimi', kimi.fake.path, async () => {
+        await withEnvBin('grok', grok.fake.path, async () => {
+          await withPathPrefix(binDir, async () => {
+            await sup.startProfile('kimi-bot');
+            await sup.startProfile('grok-bot');
 
-          const channelA = sdkMock.channels.get('cli_bot_a');
-          const channelB = sdkMock.channels.get('cli_bot_b');
-          expect(channelA).toBeDefined();
-          expect(channelB).toBeDefined();
+            const channelA = sdkMock.channels.get('cli_bot_a');
+            const channelB = sdkMock.channels.get('cli_bot_b');
+            expect(channelA).toBeDefined();
+            expect(channelB).toBeDefined();
 
-          await channelA!.handlers.message?.(mention('om_a', 'oc_a', 'hello from A'));
-          await waitFor(async () => fileExists(kimi.fake.recordPath), 10_000);
+            await channelA!.handlers.message?.(mention('om_a', 'oc_a', 'hello from A'));
+            await waitFor(async () => fileExists(kimi.fake.recordPath), 10_000);
 
-          expect(await fileExists(grok.fake.recordPath)).toBe(false);
-          expect(channelB!.callLog.filter((call) => call.op === 'send' || call.op === 'stream')).toEqual([]);
+            expect(await fileExists(grok.fake.recordPath)).toBe(false);
+            expect(channelB!.callLog.filter((call) => call.op === 'send' || call.op === 'stream')).toEqual([]);
 
-          const kimiPaths = resolveAppPaths({ rootDir: tmp.root, profile: 'kimi-bot' });
-          const grokPaths = resolveAppPaths({ rootDir: tmp.root, profile: 'grok-bot' });
-          expect(kimiPaths.sessionsFile).not.toBe(grokPaths.sessionsFile);
-          expect(kimiPaths.profileLockFile).not.toBe(grokPaths.profileLockFile);
-          await expect(access(kimiPaths.profileLockFile)).resolves.toBeUndefined();
-          await expect(access(grokPaths.profileLockFile)).resolves.toBeUndefined();
+            const kimiPaths = resolveAppPaths({ rootDir: tmp.root, profile: 'kimi-bot' });
+            const grokPaths = resolveAppPaths({ rootDir: tmp.root, profile: 'grok-bot' });
+            expect(kimiPaths.sessionsFile).not.toBe(grokPaths.sessionsFile);
+            expect(kimiPaths.profileLockFile).not.toBe(grokPaths.profileLockFile);
+            await expect(access(kimiPaths.profileLockFile)).resolves.toBeUndefined();
+            await expect(access(grokPaths.profileLockFile)).resolves.toBeUndefined();
 
-          const registry = readAndPrune(kimiPaths.userRegistryFile);
-          expect(registry.map((entry) => entry.profileName).sort()).toEqual(['grok-bot', 'kimi-bot']);
-          expect(registry.map((entry) => entry.agentKind).sort()).toEqual(['grok', 'kimi']);
-          expect(new Set(registry.map((entry) => entry.appId))).toEqual(new Set(['cli_bot_a', 'cli_bot_b']));
+            const registry = readAndPrune(kimiPaths.userRegistryFile);
+            expect(registry.map((entry) => entry.profileName).sort()).toEqual(['grok-bot', 'kimi-bot']);
+            expect(registry.map((entry) => entry.agentKind).sort()).toEqual(['grok', 'kimi']);
+            expect(new Set(registry.map((entry) => entry.appId))).toEqual(new Set(['cli_bot_a', 'cli_bot_b']));
+          });
         });
       });
-    });
-
-    delete process.env.LARKENT_FAKE_JSONL;
-  });
+    } finally {
+      if (previousAppSecret === undefined) delete process.env.APP_SECRET;
+      else process.env.APP_SECRET = previousAppSecret;
+    }
+  }, 30_000);
 });
 
 function mention(messageId: string, chatId: string, content: string): NormalizedMessage {

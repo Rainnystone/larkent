@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -31,25 +32,50 @@ describe('P5 slash command parity', () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
-  it.each(PIN_AGENT_KINDS)('snapshots /resume /status /history /model text for %s', async (kind) => {
+  it('keeps /history and /model out of slash handlers', () => {
+    const source = readFileSync(join(process.cwd(), 'src/commands/index.ts'), 'utf8');
+    const table = source.slice(source.indexOf('const handlers:'), source.indexOf('const ADMIN_COMMANDS'));
+    expect(table).toContain("'/resume': handleResume");
+    expect(table).toContain("'/status': handleStatus");
+    expect(table).not.toContain("'/history'");
+    expect(table).not.toContain("'/model'");
+  });
+
+  it.each(PIN_AGENT_KINDS)('snapshots /resume and /status text for %s', async (kind) => {
     const pinned = pinAgentKind(kind);
     const h = await createHarness(pinned);
     const cwd = await realpath(h.tmp.workspace);
     const snapshot: Record<string, unknown> = {};
 
-    for (const command of ['/resume', '/status', '/history', '/model'] as const) {
+    for (const command of ['/resume', '/status'] as const) {
       h.channel.sent.length = 0;
       h.channel.streams.length = 0;
       const handled = await h.run(command);
-      snapshot[command] = stabilizePinSnapshot(
+      snapshot[command] = stabilizeSlashSnapshot(
         {
           handled,
           sent: h.channel.sent.map((item) => item.content),
           streams: h.channel.streams,
         },
-        [[cwd, '<cwd>']],
+        cwd,
       );
     }
+
+    for (const missing of ['/history', '/model'] as const) {
+      h.channel.sent.length = 0;
+      h.channel.streams.length = 0;
+      const handled = await h.run(missing);
+      expect(handled).toBe(false);
+      expect(h.channel.sent).toEqual([]);
+      expect(h.channel.streams).toEqual([]);
+    }
+
+    await expect(h.run('/help')).resolves.toBe(true);
+    const help = JSON.stringify(h.channel.sent);
+    expect(help).toContain('/resume');
+    expect(help).toContain('/status');
+    expect(help).not.toMatch(/\/history\b/);
+    expect(help).not.toMatch(/\/model\b/);
 
     await expectGolden(join(goldenRoot, `${pinned}.json`), snapshot);
   });
@@ -196,4 +222,13 @@ async function expectGolden(path: string, actual: unknown): Promise<void> {
   }
   const expected = JSON.parse(await readFile(path, 'utf8')) as unknown;
   expect(actual).toEqual(expected);
+}
+
+function stabilizeSlashSnapshot(value: unknown, cwd: string): unknown {
+  const snap = stabilizePinSnapshot(value, [[cwd, '<cwd>']]);
+  const text = JSON.stringify(snap)
+    .replace(/\/resume use [0-9a-f-]{8,36}/gi, '/resume use <nonce>')
+    .replace(/"arg":"[0-9a-f-]{8,36}"/gi, '"arg":"<nonce>"')
+    .replace(/`[0-9a-f]{8}…`/gi, '`<nonce>…`');
+  return JSON.parse(text) as unknown;
 }

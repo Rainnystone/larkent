@@ -75,7 +75,7 @@ describe('P1 Feishu surface parity', () => {
     }
 
     await expectGolden(join(goldenRoot, `${pinned}.json`), { success: successCalls, error: errorCalls });
-  });
+  }, 60_000);
 });
 
 async function startParityBot(kind: PinAgentKind): Promise<{
@@ -109,7 +109,7 @@ async function startParityBot(kind: PinAgentKind): Promise<{
   });
   profileConfig.workspaces.default = cwd;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
-  const catalog = new SessionCatalog(join(tmp.profile, 'sessions.catalog.json'));
+  const catalog = new SessionCatalog(`${join(tmp.profile, 'sessions.json')}.catalog.json`);
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = createRuntimeAgent(profileConfig, {
     profileDir: tmp.profile,

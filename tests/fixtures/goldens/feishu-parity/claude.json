@@ -1,0 +1,151 @@
+{
+  "success": [
+    {
+      "op": "stream",
+      "chatId": "oc_dm",
+      "inputKind": "card",
+      "cardUpdates": [
+        {
+          "schema": "2.0",
+          "config": {
+            "streaming_mode": true,
+            "summary": {
+              "content": "正在输出"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "PINNED_ANSWER"
+              },
+              {
+                "tag": "markdown",
+                "content": "✍️ 正在输出",
+                "text_size": "notation"
+              },
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "⏹ 终止"
+                },
+                "type": "danger",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "cmd": "stop"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "schema": "2.0",
+          "config": {
+            "streaming_mode": true,
+            "summary": {
+              "content": "正在输出"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "PINNED_ANSWER"
+              },
+              {
+                "tag": "markdown",
+                "content": "✍️ 正在输出",
+                "text_size": "notation"
+              },
+              {
+                "tag": "button",
+                "text": {
+                  "tag": "plain_text",
+                  "content": "⏹ 终止"
+                },
+                "type": "danger",
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "cmd": "stop"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "schema": "2.0",
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "已完成"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "PINNED_ANSWER"
+              }
+            ]
+          }
+        },
+        {
+          "schema": "2.0",
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "已完成"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "PINNED_ANSWER"
+              }
+            ]
+          }
+        }
+      ],
+      "markdownContents": []
+    }
+  ],
+  "error": [
+    {
+      "op": "send",
+      "chatId": "oc_dm",
+      "content": {
+        "card": {
+          "schema": "2.0",
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "出错"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "⚠️ agent 失败：claude exited with code 1: PINNED_ERROR",
+                "text_size": "notation"
+              }
+            ]
+          }
+        }
+      },
+      "options": {
+        "replyTo": "om_error"
+      }
+    }
+  ]
+}

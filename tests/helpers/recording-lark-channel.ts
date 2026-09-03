@@ -17,6 +17,7 @@ export interface RecordingLarkChannel extends FakeChannel {
   getAppInfo(): Promise<{ ownerId: string }>;
   addReaction(messageId: string, emojiType: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
+  recallMessage(messageId: string): Promise<void>;
   snapshotCalls(): RecordingCall[];
 }
 
@@ -25,6 +26,7 @@ export type RecordingCall =
   | { op: 'stream'; chatId: string; inputKind: 'card' | 'markdown' | 'other'; cardUpdates: unknown[]; markdownContents: string[] }
   | { op: 'reaction.create'; messageId: string; emojiType: string }
   | { op: 'reaction.delete'; messageId: string; reactionId: string }
+  | { op: 'recall'; messageId: string }
   | { op: 'raw'; method: string };
 
 export function createRecordingLarkChannel(): RecordingLarkChannel {
@@ -90,6 +92,9 @@ export function createRecordingLarkChannel(): RecordingLarkChannel {
     },
     async removeReaction(messageId, reactionId) {
       callLog.push({ op: 'reaction.delete', messageId, reactionId });
+    },
+    async recallMessage(messageId) {
+      callLog.push({ op: 'recall', messageId });
     },
     snapshotCalls() {
       return structuredClone(callLog);
