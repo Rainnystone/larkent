@@ -113,6 +113,8 @@ describe('JsonlCliRunner collapse', () => {
     }
   });
 });
+
+describe.each(AGENT_KINDS)('JsonlCliRunner %s process contract', (kind) => {
   const cleanup: string[] = [];
   const oldCodexHome = process.env.CODEX_HOME;
   const oldAppSecret = process.env.APP_SECRET;
