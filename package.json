@@ -1,7 +1,7 @@
 {
   "name": "lark-channel-bridge",
   "version": "0.7.0",
-  "description": "Bridge Feishu/Lark messenger with local Grok Build (and other CLI coding agents)",
+  "description": "Bridge Feishu/Lark bots to CLI coding agents",
   "type": "module",
   "packageManager": "pnpm@10.33.0",
   "publishConfig": {
@@ -10,12 +10,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zarazhangrui/feishu-claude-code-bridge.git"
+    "url": "git+https://github.com/Rainnystone/larkent-for-grokbot.git"
   },
   "bugs": {
-    "url": "https://github.com/zarazhangrui/feishu-claude-code-bridge/issues"
+    "url": "https://github.com/Rainnystone/larkent-for-grokbot/issues"
   },
-  "homepage": "https://github.com/zarazhangrui/feishu-claude-code-bridge#readme",
+  "homepage": "https://github.com/Rainnystone/larkent-for-grokbot#readme",
   "bin": {
     "lark-channel-bridge": "./bin/lark-channel-bridge.mjs"
   },
