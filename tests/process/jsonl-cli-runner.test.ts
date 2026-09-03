@@ -424,8 +424,13 @@ describe('JsonlCliRunner abort and timeouts', () => {
       stopGraceMs: 50,
     });
     const events = await collect(handle.events);
-    expect(events[0]).toMatchObject({ type: 'error', terminationReason: 'failed' });
-    expect(events[0]?.message).toMatch(/exited with code 1/);
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'error',
+        terminationReason: 'failed',
+        message: expect.stringMatching(/exited with code 1/),
+      }),
+    ]);
     expect(await handle.waitForExit(1_000)).toBe(true);
     await killHeldPid(fake.holderPidPath);
   }, 5_000);
