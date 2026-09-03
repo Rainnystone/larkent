@@ -15,7 +15,7 @@ describe('scripted JSONL fake executables', () => {
     });
     const launcher = await readFile(file, 'utf8');
     expect(launcher.startsWith('@echo off')).toBe(true);
-    expect(launcher).toContain(process.execPath);
+    expect(launcher).toContain(JSON.stringify(process.execPath));
     expect(launcher).toContain('grok.mjs');
     expect(launcher).not.toContain('import {');
   });
@@ -35,7 +35,7 @@ describe('scripted JSONL fake executables', () => {
       expect(fake.path.endsWith('.mjs')).toBe(true);
       const launcher = await readFile(join(dir, 'grok.CMD'), 'utf8');
       expect(launcher.startsWith('@echo off')).toBe(true);
-      expect(launcher).toContain(fake.path);
+      expect(launcher).toContain(JSON.stringify(fake.path));
     }
   });
 
