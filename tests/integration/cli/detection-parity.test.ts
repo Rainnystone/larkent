@@ -76,6 +76,7 @@ describe.sequential('P7 detection and /doctor parity', () => {
     const cursorAgent = await writeScriptedJsonlExecutable(join(cursorRoot, 'agent'), {
       lines: scriptedJsonlLines('cursor', 'doctor'),
       version: 'cursor-agent 2026.08.28',
+      help: 'Usage: --output-format stream-json --approve-mcps',
     });
     await writeScriptedJsonlExecutable(join(otherRoot, 'agent'), {
       lines: [],
@@ -112,15 +113,14 @@ describe.sequential('P7 detection and /doctor parity', () => {
     const found = await doctorRun(kind, 'found');
     expect(found.handled).toBe(true);
     expect(found.report).toContain(`agent: ${pinnedDisplayName(kind)} (${kind})`);
-    expect(found.report).toContain('agent echo check');
-    expect(found.report).toMatch(/agent echo check: OK|agent echo check: pending|agent echo check: empty/);
+    expect(found.report).toMatch(/agent echo check: OK/);
     expect(found.report).not.toContain('larkent doctor');
 
     const missing = await doctorRun(kind, 'missing');
     expect(missing.handled).toBe(true);
     expect(missing.report).toContain(`agent: ${pinnedDisplayName(kind)} (${kind})`);
-    expect(missing.report).toMatch(/agent echo check: failed|agent echo check: empty|agent echo check: pending/);
-    expect(missing.report).not.toContain(scriptedBinaryName(kind));
+    expect(missing.report).toMatch(/agent echo check: (failed|error)/);
+    expect(missing.report).not.toContain('larkent doctor');
   });
 });
 
@@ -202,7 +202,7 @@ function doctorMessage(kind: PinnedAgentKind, scenario: string): NormalizedMessa
     messageId: `om-doctor-${kind}-${scenario}`,
     chatId: 'chat-1',
     chatType: 'p2p',
-    senderId: `ou-owner-${kind}-${scenario}`,
+    senderId: 'ou-owner',
     senderName: 'Owner',
     content: '/doctor',
     resources: [],

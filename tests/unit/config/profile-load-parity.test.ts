@@ -127,6 +127,7 @@ describe.sequential('P4 profile load parity', () => {
     const agentBin = await writeScriptedJsonlExecutable(join(binDir, 'agent'), {
       lines: scriptedJsonlLines('cursor', 'happy'),
       version: 'cursor-agent 2026.08.28',
+      help: 'Usage: --output-format stream-json --approve-mcps',
     });
     await withProcessEnv({ ...BIN_ENV, PATH: binDir }, async () => {
       await expect(detectInstalledAgents()).resolves.toEqual([{ kind: 'cursor', binaryPath: agentBin.path }]);

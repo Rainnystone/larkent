@@ -1,0 +1,188 @@
+{
+  "kind": "claude",
+  "happy": [
+    {
+      "chatId": "oc_dm",
+      "content": {
+        "body": {
+          "elements": [
+            {
+              "content": "🧠 正在思考",
+              "tag": "markdown",
+              "text_size": "notation"
+            },
+            {
+              "behaviors": [
+                {
+                  "type": "callback",
+                  "value": {
+                    "cmd": "stop"
+                  }
+                }
+              ],
+              "tag": "button",
+              "text": {
+                "content": "⏹ 终止",
+                "tag": "plain_text"
+              },
+              "type": "danger"
+            }
+          ]
+        },
+        "config": {
+          "streaming_mode": true,
+          "summary": {
+            "content": "思考中"
+          }
+        },
+        "schema": "2.0"
+      },
+      "mode": "card",
+      "op": "stream",
+      "options": {
+        "replyTo": "om_claude_happy"
+      },
+      "updates": [
+        {
+          "body": {
+            "elements": [
+              {
+                "content": "PIN_ANSWER",
+                "tag": "markdown"
+              },
+              {
+                "content": "✍️ 正在输出",
+                "tag": "markdown",
+                "text_size": "notation"
+              },
+              {
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "cmd": "stop"
+                    }
+                  }
+                ],
+                "tag": "button",
+                "text": {
+                  "content": "⏹ 终止",
+                  "tag": "plain_text"
+                },
+                "type": "danger"
+              }
+            ]
+          },
+          "config": {
+            "streaming_mode": true,
+            "summary": {
+              "content": "正在输出"
+            }
+          },
+          "schema": "2.0"
+        },
+        {
+          "body": {
+            "elements": [
+              {
+                "content": "PIN_ANSWER",
+                "tag": "markdown"
+              },
+              {
+                "content": "✍️ 正在输出",
+                "tag": "markdown",
+                "text_size": "notation"
+              },
+              {
+                "behaviors": [
+                  {
+                    "type": "callback",
+                    "value": {
+                      "cmd": "stop"
+                    }
+                  }
+                ],
+                "tag": "button",
+                "text": {
+                  "content": "⏹ 终止",
+                  "tag": "plain_text"
+                },
+                "type": "danger"
+              }
+            ]
+          },
+          "config": {
+            "streaming_mode": true,
+            "summary": {
+              "content": "正在输出"
+            }
+          },
+          "schema": "2.0"
+        },
+        {
+          "body": {
+            "elements": [
+              {
+                "content": "PIN_ANSWER",
+                "tag": "markdown"
+              }
+            ]
+          },
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "已完成"
+            }
+          },
+          "schema": "2.0"
+        },
+        {
+          "body": {
+            "elements": [
+              {
+                "content": "PIN_ANSWER",
+                "tag": "markdown"
+              }
+            ]
+          },
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "已完成"
+            }
+          },
+          "schema": "2.0"
+        }
+      ]
+    }
+  ],
+  "error": [
+    {
+      "chatId": "oc_dm",
+      "content": {
+        "card": {
+          "body": {
+            "elements": [
+              {
+                "content": "⚠️ agent 失败：claude exited with code 1: boom",
+                "tag": "markdown",
+                "text_size": "notation"
+              }
+            ]
+          },
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "出错"
+            }
+          },
+          "schema": "2.0"
+        }
+      },
+      "op": "send",
+      "options": {
+        "replyTo": "om_claude_error"
+      }
+    }
+  ]
+}

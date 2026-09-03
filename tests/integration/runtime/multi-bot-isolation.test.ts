@@ -92,6 +92,7 @@ describe.sequential('P6 multi-bot isolation', () => {
 
     await withProcessEnv(
       {
+        APP_SECRET: 'pin-secret',
         [envBinVar(kindA)]: fakeA.path,
         [envBinVar(kindB)]: fakeB.path,
       },
@@ -159,7 +160,7 @@ describe.sequential('P6 multi-bot isolation', () => {
 function profileFor(kind: 'kimi' | 'grok' | 'cursor', appId: string, workspace: string) {
   const profile = createDefaultProfileConfig({
     agentKind: kind,
-    accounts: { app: { id: appId, secret: 'secret', tenant: 'feishu' } },
+    accounts: { app: { id: appId, secret: '${APP_SECRET}', tenant: 'feishu' } },
   });
   profile.workspaces.default = workspace;
   return profile;

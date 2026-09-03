@@ -1,0 +1,60 @@
+{
+  "kind": "grok",
+  "happy": [
+    {
+      "chatId": "oc_dm",
+      "content": {
+        "card": {
+          "body": {
+            "elements": [
+              {
+                "content": "PIN_ANSWER",
+                "tag": "markdown"
+              }
+            ]
+          },
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "已完成"
+            }
+          },
+          "schema": "2.0"
+        }
+      },
+      "op": "send",
+      "options": {
+        "replyTo": "om_grok_happy"
+      }
+    }
+  ],
+  "error": [
+    {
+      "chatId": "oc_dm",
+      "content": {
+        "card": {
+          "body": {
+            "elements": [
+              {
+                "content": "⚠️ agent 失败：grok exited with code 1: boom",
+                "tag": "markdown",
+                "text_size": "notation"
+              }
+            ]
+          },
+          "config": {
+            "streaming_mode": false,
+            "summary": {
+              "content": "出错"
+            }
+          },
+          "schema": "2.0"
+        }
+      },
+      "op": "send",
+      "options": {
+        "replyTo": "om_grok_error"
+      }
+    }
+  ]
+}

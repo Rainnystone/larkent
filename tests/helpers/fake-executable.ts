@@ -63,7 +63,7 @@ export async function writeScriptedJsonlExecutable(
   await mkdir(dirname(file), { recursive: true });
   const recordPath = `${file}.argv.jsonl`;
   const version = options.version ?? 'scripted-jsonl 0.0.0';
-  const help = options.help ?? 'Usage: --output-format stream-json --approve-mcps';
+  const help = options.help ?? 'Usage: scripted-jsonl --version';
   const lines = JSON.stringify(options.lines);
   const record = JSON.stringify(recordPath);
   const stderr = options.stderr ? `process.stderr.write(${JSON.stringify(options.stderr)});` : '';

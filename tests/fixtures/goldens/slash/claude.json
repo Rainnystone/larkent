@@ -1,0 +1,156 @@
+{
+  "kind": "claude",
+  "resume": {
+    "handled": true,
+    "sent": [
+      {
+        "chatId": "chat-1",
+        "content": {
+          "card": {
+            "config": {
+              "update_multi": true,
+              "wide_screen_mode": true
+            },
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "content": "当前 cwd：`<tmp-root>/workspace`",
+                  "tag": "lark_md"
+                }
+              },
+              {
+                "tag": "hr"
+              },
+              {
+                "tag": "div",
+                "text": {
+                  "content": "**1.** pin resume preview  ← 当前\n`sess-v1-…` · 2 小时前 · 3 条",
+                  "tag": "lark_md"
+                }
+              },
+              {
+                "actions": [
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "已是当前会话",
+                      "tag": "plain_text"
+                    },
+                    "type": "default",
+                    "value": {
+                      "arg": "<resume-nonce>",
+                      "cmd": "resume.use"
+                    }
+                  }
+                ],
+                "tag": "action"
+              }
+            ],
+            "header": {
+              "title": {
+                "content": "🔁 恢复历史会话",
+                "tag": "plain_text"
+              }
+            }
+          }
+        },
+        "options": {
+          "replyTo": "om-slash--resume"
+        }
+      }
+    ]
+  },
+  "status": {
+    "handled": true,
+    "sent": [
+      {
+        "chatId": "chat-1",
+        "content": {
+          "card": {
+            "config": {
+              "update_multi": true,
+              "wide_screen_mode": true
+            },
+            "elements": [
+              {
+                "tag": "div",
+                "text": {
+                  "content": "🧭 **scope**: `chat-1`\n🧩 **profile**: claude\n📁 **cwd**: `<tmp-root>/workspace`\n🔗 **session**: `sess-v1-…`\n🤖 **agent**: Claude Code\n🛡 **permission**: bypassPermissions\n🔐 **lark-cli**: user-missing\n🏃 **active run**: no\n🚦 **queue**: unknown\n👤 **owner API**: ok owner=present refreshed=2023-11-14T22:13:20.000Z",
+                  "tag": "lark_md"
+                }
+              },
+              {
+                "tag": "hr"
+              },
+              {
+                "actions": [
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "🆕 新会话",
+                      "tag": "plain_text"
+                    },
+                    "type": "primary",
+                    "value": {
+                      "cmd": "new"
+                    }
+                  },
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "🔁 恢复会话",
+                      "tag": "plain_text"
+                    },
+                    "type": "default",
+                    "value": {
+                      "cmd": "resume"
+                    }
+                  },
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "📂 工作目录",
+                      "tag": "plain_text"
+                    },
+                    "type": "default",
+                    "value": {
+                      "cmd": "ws.list"
+                    }
+                  },
+                  {
+                    "tag": "button",
+                    "text": {
+                      "content": "💡 帮助",
+                      "tag": "plain_text"
+                    },
+                    "type": "default",
+                    "value": {
+                      "cmd": "help"
+                    }
+                  }
+                ],
+                "tag": "action"
+              }
+            ],
+            "header": {
+              "title": {
+                "content": "📊 当前状态",
+                "tag": "plain_text"
+              }
+            }
+          }
+        },
+        "options": {
+          "replyTo": "om-slash--status"
+        }
+      }
+    ]
+  },
+  "history": {
+    "handled": false
+  },
+  "model": {
+    "handled": false
+  }
+}

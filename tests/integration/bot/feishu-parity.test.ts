@@ -23,10 +23,11 @@ import { writeScriptedJsonlExecutable } from '../../helpers/fake-executable.js';
 import { createTmpProfile } from '../../helpers/tmp-profile.js';
 
 const sdkMock = vi.hoisted(() => ({
-  channel: undefined as RecordingLarkChannel | undefined,
-  createLarkChannel: vi.fn(() => {
-    if (!sdkMock.channel) throw new Error('recording channel not configured');
-    return sdkMock.channel;
+  channels: new Map<string, RecordingLarkChannel>(),
+  createLarkChannel: vi.fn((opts: { appId?: string }) => {
+    const channel = sdkMock.channels.get(opts.appId ?? '');
+    if (!channel) throw new Error(`recording channel missing for ${opts.appId}`);
+    return channel;
   }),
 }));
 
@@ -43,12 +44,12 @@ import { startChannel } from '../../../src/bot/channel.js';
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
-  sdkMock.channel = undefined;
+  sdkMock.channels.clear();
   sdkMock.createLarkChannel.mockClear();
   await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
 });
 
-describe('P1 Feishu surface parity', () => {
+describe.sequential('P1 Feishu surface parity', () => {
   it.each(PINNED_AGENT_KINDS)('pins channel-call sequence for %s', async (kind) => {
     const happy = await captureParity(kind, 'happy');
     const error = await captureParity(kind, 'error');
@@ -63,7 +64,8 @@ describe('P1 Feishu surface parity', () => {
 async function captureParity(kind: PinnedAgentKind, scenario: ScriptedScenario): Promise<unknown> {
   const tmp = await createTmpProfile(`feishu-parity-${kind}-${scenario}-`);
   const channel = createRecordingLarkChannel();
-  sdkMock.channel = channel;
+  const appId = `cli_pin_${kind}_${scenario}`;
+  sdkMock.channels.set(appId, channel);
   const fake = await writeScriptedJsonlExecutable(join(tmp.root, 'bin', kind), {
     lines: scriptedJsonlLines(kind, scenario),
     version: scriptedVersion(kind),
@@ -71,7 +73,7 @@ async function captureParity(kind: PinnedAgentKind, scenario: ScriptedScenario):
   });
   const profileConfig = createDefaultProfileConfig({
     agentKind: kind,
-    accounts: { app: { id: `cli_${kind}`, secret: 'secret', tenant: 'feishu' } },
+    accounts: { app: { id: appId, secret: 'secret', tenant: 'feishu' } },
     preferences: { messageReply: 'card' },
     ...(kind === 'codex' ? { codex: { binaryPath: fake.path } } : {}),
   });
