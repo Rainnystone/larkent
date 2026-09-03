@@ -158,7 +158,7 @@ describe('agent capability contract', () => {
     expect(capabilityForProfile(profile).agentId).toBe('grok');
   });
 
-  it('reads replyMode from the descriptor', () => {
+  it('reads replyMode and resume.label from the descriptor', () => {
     expect(descriptorFor('grok').replyMode).toBe('final-answer');
     expect(descriptorFor('claude').replyMode).toBe('stream-deltas');
     expect(descriptorFor('kimi').replyMode).toBe('final-answer');

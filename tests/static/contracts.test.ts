@@ -84,6 +84,24 @@ describe('static architecture contracts', () => {
     expect(runtime).toContain('requireAgentKind(requestedAgent ?? profile)');
   });
 
+  it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
+    const forbidden = [
+      /\busesNativeSessionId\b/,
+      /\busesFinalAnswerReply\b/,
+    ];
+    const files = [...collectTsFiles('src'), ...collectTsFiles('web/src')].filter(
+      (file) => file.endsWith('.ts') || file.endsWith('.tsx'),
+    );
+    const stray: string[] = [];
+    for (const file of files) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+  });
+
   it('starts the onboard wizard with no selected agent kind', () => {
     const source = read('web/src/views/OnboardWizard.tsx');
     expect(source).toMatch(/useState<AgentKind \| "">\(""\)/);
