@@ -326,7 +326,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] Store and pass `resumeHandle` only in shared code. Drop `sessionId` and `threadId` from shared events and catalog entries.
 - [ ] Move reply mode onto the descriptor. Delete `usesFinalAnswerReply` and `usesNativeSessionId` from shared code.
-- [ ] Give `sessions.catalog.json` a `schemaVersion`. Missing means 1. Upgrade v1 to v2 in `src/session/migrations.ts` by folding `sessionId` and `threadId` into `resumeHandle`, then write back.
+- [ ] Give `sessions.json.catalog.json` a `schemaVersion`. Missing means 1. Upgrade v1 to v2 in `src/session/migrations.ts` by folding `sessionId` and `threadId` into `resumeHandle`, then write back.
 - [ ] Code after the loader sees only the current shape. No `threadId ?? sessionId` outside `migrations.ts`.
 
 **You see.**
@@ -456,7 +456,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 - [ ] Split run input into shared fields plus an opaque `agentOptions` bag. The descriptor validates the bag at profile load.
 - [ ] Shared types stop naming `codexHome`, `inheritCodexHome`, `CodexSandboxMode`, and `ClaudePermissionMode`.
-- [ ] `descriptor.policyInputs` feeds the fingerprint. Aim for hash stability. If Codex cannot reproduce `{ codexHome, inheritCodexHome }` in the same key order, bump to V3 and re-fingerprint stored sessions in the catalog upgrade. The PR-0 golden test decides.
+- [ ] `descriptor.policyInputs` feeds the fingerprint. Hashes stay on `FingerprintInputV2`. Codex must reproduce `{ codexHome, inheritCodexHome }` in the same canonical form. A V3 bump is forbidden because the catalog stores only the digest.
 - [ ] Do not weaken PR-0 goldens. Add cases if the version bumps.
 
 **You see.**
@@ -473,11 +473,11 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
 
-- [ ] Lane 1. Regression lane against trunk. Run P3 fingerprint goldens at trunk and head. If trunk lacks the pin test, record that and gate hash equality or an explicit version bump plus catalog re-fingerprint. Save `pr5-l1-regression.png`. Pass when the golden test decides and exits 0.
+- [ ] Lane 1. Regression lane against trunk. Run P3 fingerprint goldens at trunk and head. If trunk lacks the pin test, record that and gate hash equality with no version bump. Save `pr5-l1-regression.png`. Pass when the golden test decides and exits 0.
 - [ ] Lane 2. Shared types no longer name `codexHome`, `inheritCodexHome`, `CodexSandboxMode`, or `ClaudePermissionMode`. Save `pr5-l2-private-options.png`. Pass when those names live only under the owning adapter and `migrations.ts`.
-- [ ] Lane 3. `descriptor.policyInputs` feeds the fingerprint. Save `pr5-l3-policy-inputs.png`. Pass when Codex inputs still produce `{ codexHome, inheritCodexHome }` in the same key order, or the test asserts a V3 bump and re-fingerprint.
+- [ ] Lane 3. `descriptor.policyInputs` feeds the fingerprint. Save `pr5-l3-policy-inputs.png`. Pass when Codex inputs still produce `{ codexHome, inheritCodexHome }` in the same canonical form and the hash matches the PR-0 golden.
 - [ ] Lane 4. P1 goldens still match. Save `pr5-l4-p1.png`. Pass when Feishu sequences match.
-- [ ] Lane 5. P2 resume still works after any re-fingerprint. Save `pr5-l5-p2.png`. Pass when old catalogs resume.
+- [ ] Lane 5. P2 resume still works with the stable V2 hash. Save `pr5-l5-p2.png`. Pass when old catalogs resume.
 - [ ] Lane 6. P4 profile load still green. Save `pr5-l6-p4.png`. Pass when profile fixtures load.
 - [ ] Lane 7. P5 slash snapshots still match. Save `pr5-l7-p5.png`. Pass when slash goldens match.
 - [ ] Lane 8. P6 isolation still holds. Save `pr5-l8-p6.png`. Pass when isolation assertions hold.
@@ -606,6 +606,10 @@ Existing JSDoc and narrating comments in adapters. Each owner runs `/no-comments
 Cloud spawn. If `environment: "cloud"` fails from this VM, owners run as local background subagents in git worktrees. Record that fallback on PR #3.
 
 Spec P5 named `/history` and `/model`. Those handlers do not exist. A PR-0 that adds them is a finding. Pin current slash behavior instead.
+
+Codex review on PR #3. Twelve threads. Spec contract comments land on PR #3 before the next implementation owner starts. Implementation-PR Codex and Bugbot comments are that owner's job before STACK-READY.
+
+Models. Every Task call uses a Cursor Grok 4.6 slug. No Claude, Kimi, or GPT.
 
 ## Appendix D. Links and reading list
 

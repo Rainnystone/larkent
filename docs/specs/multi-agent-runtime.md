@@ -16,7 +16,7 @@ One bridge codebase runs any number of Feishu/Lark bots on one machine. Each bot
 | `claude` | Claude Code | `--output-format stream-json` |
 | `codex` | Codex CLI | `exec --json` |
 | `kimi` | Kimi Code | `--output-format stream-json` |
-| `grok` | Grok Build | `--output-format stream-json` |
+| `grok` | Grok Build | `--output-format streaming-json` |
 | `cursor` | Cursor CLI (`agent`) | `--output-format stream-json` |
 
 No agent is the default. No agent is the special case. Adding a sixth agent touches one directory plus one registry line.
@@ -53,17 +53,17 @@ These are the observable behaviors that must be byte-for-byte or semantically id
 
 P1. **Feishu surface parity.** For each of the five kinds, a fake CLI (`tests/helpers/fake-executable.ts`, extend to emit a scripted JSONL stream) driven through the bot produces the same sequence of channel calls (card create, card update, final message, error card). Golden files per kind under `tests/static/` or `tests/integration/bot/`. Parameterize one test over all five kinds; do not write five tests.
 
-P2. **Resume continuity.** A session started under the current code with a stored `sessionId` (four kinds) or `threadId` (codex) must still resume after upgrade. Fixture `sessions.catalog.json` files in the old shape are committed as test data and must load and resume.
+P2. **Resume continuity.** A session started under the current code with a stored `sessionId` (four kinds) or `threadId` (codex) must still resume after upgrade. Fixture files use the deployed catalog name `sessions.json.catalog.json` (that is `${appPaths.sessionsFile}.catalog.json`). Old-shape fixtures are committed as test data and must load and resume.
 
-P3. **Policy fingerprint stability.** `tests/unit/policy/fingerprint.test.ts` gains golden hashes for representative `FingerprintInputV2` values for all five kinds, including a codex input with `codexHome` and `inheritCodexHome`. Hashes must not change, or the fingerprint version bumps and the test asserts the bump plus the documented migration.
+P3. **Policy fingerprint stability.** `tests/unit/policy/fingerprint.test.ts` gains golden hashes for representative `FingerprintInputV2` values for all five kinds, including a codex input with `codexHome` and `inheritCodexHome`. Hashes must not change. The catalog stores only the digest, not the inputs, so a V3 re-fingerprint of stored sessions is impossible and is forbidden. Keep `FingerprintInputV2` byte-stable.
 
 P4. **Profile load parity.** Existing profile directories (fixtures for all five kinds, including the current three binary path conventions) load to the same effective runtime configuration.
 
-P5. **Slash command parity.** `/resume`, `/status`, `/history`, `/model` behave identically per kind. Snapshot the command output text per kind.
+P5. **Slash command parity.** Pin the commands that exist today. `src/commands/index.ts` registers `/resume` and `/status`. It does not register `/history` or `/model`. Snapshot `/resume` and `/status` per kind. Also snapshot that `/history` and `/model` stay absent. Do not add those handlers in this program.
 
 P6. **Multi-bot isolation.** One supervisor process with two or more profiles of different kinds: a mention in bot A's chat never reaches bot B's agent; sessions, locks, and registry entries stay per profile. This test likely exists in `tests/integration/runtime/`; extend it to cover all five kinds pairwise or at least two heterogeneous pairs.
 
-P7. **Preflight and detection.** `larkent doctor` / onboarding detection reports the same found and missing binaries for the same PATH and profile.
+P7. **Preflight and detection.** There is no `larkent` binary and no `doctor` CLI subcommand. Pin `detectInstalledAgents` in `src/cli/agent-detection.ts` (the onboarding PATH probe) and the in-chat `/doctor` handler in `src/commands/index.ts` (`handleDoctor`). For the same PATH and profile, detection found/missing must match the fixture. `/doctor` keeps its current per-profile echo behavior. Do not invent a CLI doctor in this program.
 
 ---
 
@@ -85,10 +85,24 @@ export interface AgentDescriptor {
   readonly replyMode: 'stream-deltas' | 'final-answer';
   readonly resume: { flag: string; label: string }; // e.g. { flag: '--resume', label: 'session' } / { flag: 'resume', label: 'thread' }
   readonly buildArgv(run: AgentRunInput): string[];
-  readonly translate: JsonlTranslator;          // JSONL line -> AgentEvent[]
+  readonly createTranslator(): JsonlTranslator; // per-run instance; never a shared function
+  readonly prepareRun?(run: AgentRunInput): Promise<JsonlPrepareResult>; // temp files, env
   readonly agentOptionsSchema: Schema;          // validates profile.agent.options for this kind
   readonly policyInputs(options: AgentOptions): Record<string, unknown>; // feeds fingerprint
+  readonly mapEffectiveAccess(access: EffectiveAccess): unknown; // per-run sandbox / permissionMode
   readonly preflight?(binaryPath: string): Promise<PreflightDiagnostic[]>;
+}
+
+export interface JsonlTranslator {
+  translate(line: string): AgentEvent[];
+  finish(): AgentEvent[];   // Kimi emits its final event here
+  fail(error: unknown): AgentEvent[];
+}
+
+export interface JsonlPrepareResult {
+  argv: string[];
+  env?: NodeJS.ProcessEnv;
+  cleanup(): Promise<void>;  // always run, including on error
 }
 
 export const AGENT_REGISTRY: ReadonlyMap<AgentKind, AgentDescriptor>;
@@ -111,17 +125,18 @@ export interface JsonlCliRunnerInput {
   argv: string[];
   cwd: string;
   env: NodeJS.ProcessEnv;
-  stdin?: string;                 // prompt when the CLI reads from stdin
-  translate: JsonlTranslator;
+  stdin?: string;
+  translator: JsonlTranslator;     // per-run instance from descriptor.createTranslator()
+  cleanup?: () => Promise<void>;   // from prepareRun; runner always calls it
   signal: AbortSignal;
   timeouts: { idleMs: number; totalMs: number };
 }
 export function runJsonlCli(input: JsonlCliRunnerInput): AsyncIterable<AgentEvent>;
 ```
 
-All five adapters use it. Each adapter shrinks to `argv.ts` (pure), `translate.ts` (pure, JSONL line to events), and a descriptor export. No adapter spawns a process. Process tests in `tests/process/*-adapter.test.ts` become one parameterized suite driven by the registry plus per-kind JSONL fixtures. The five real smoke tests stay.
+All five adapters use it. Each adapter shrinks to `argv.ts` (pure), a per-run translator class with `translate`/`finish`/`fail`, optional `prepareRun`/`cleanup`, and a descriptor export. No adapter spawns a process. Process tests in `tests/process/*-adapter.test.ts` become one parameterized suite driven by the registry plus per-kind JSONL fixtures. The three real smoke tests (`grok`, `kimi`, `cursor`) stay. Claude and Codex have no real smoke tests today. Do not add them in this program.
 
-Claude's `stream-json.ts` and codex's `jsonl.ts` are translators already; they move under the same interface rather than staying as separate runners.
+Claude's `stream-json.ts` and Codex/Kimi/Grok/Cursor `jsonl.ts` translators already hold session, pending text, and tool-call state. They move under `createTranslator()`. A descriptor-level shared function is forbidden because concurrent profiles would leak state and Kimi would drop its final event.
 
 ### 4.3 Events and resume
 
@@ -147,11 +162,13 @@ export interface AgentRunInput {
   resumeHandle?: string;
   model?: string;
   attachments: Attachment[];
+  botIdentity: AgentBotIdentity;   // per-profile openId and name; never on the shared descriptor
+  effectiveAccess: EffectiveAccess; // per-run clamp from run-policy; not a static profile default
   agentOptions: unknown;   // validated by descriptor.agentOptionsSchema at profile load
 }
 ```
 
-`CodexSandboxMode`, `ClaudePermissionMode`, `codexHome`, `inheritCodexHome` and any future per-agent knobs live inside `agentOptions` and inside the owning adapter. Shared code never names them. Finding F4 and C5.
+`CodexSandboxMode`, `ClaudePermissionMode`, `codexHome`, `inheritCodexHome` and any future per-agent knobs live inside `agentOptions` and inside the owning adapter. Shared code never names those types. The per-run access clamp is `effectiveAccess`. The descriptor maps it through `mapEffectiveAccess` so Codex still gets a sandbox mode and Claude still gets a permission mode without those names leaking into `src/bot`. Each profile keeps its own adapter instance (or equivalent bound identity). Mutating a shared descriptor to inject identity is forbidden.
 
 ### 4.5 Profile
 
@@ -167,12 +184,14 @@ One convention for binary location, for all kinds. The current three conventions
 ### 4.6 Persisted state
 
 Every on-disk shape the bridge owns gets an explicit `schemaVersion`:
-- profile `config.json` (or equivalent)
-- `sessions.catalog.json`
+- profile `config.json` (already `schemaVersion: 2` today)
+- session catalog at `${sessionsFile}.catalog.json`, deployed name `sessions.json.catalog.json`
+- `sessions.json` (`SessionStore`, including idle-timeout overrides)
+- `workspaces.json`
 - process registry entries
 - runtime lock metadata
 
-Current on-disk files have no version field. Treat "no field" as version 1.
+Missing `schemaVersion` means 1 except for profiles, which already ship as 2.
 
 ---
 
@@ -185,8 +204,8 @@ The work is sequenced and coupled, so `autopilot-stack` is the right terminal pl
 | PR-0 | Pin harness. Tests P1 to P7. Old-shape fixtures committed. No production code change. | none | `tests/**`, `tests/helpers/fake-executable.ts` |
 | PR-1 | Registry and descriptor (C1). Introduce `src/agent/registry.ts`; migrate every enumeration and `if` chain; remove `claude` fallthroughs; wizard reads registry; static contract test for zero stray unions. | PR-0 | `src/agent/*`, `src/runtime/agent-runtime.ts`, `src/runtime/profile-runtime.ts`, `src/runtime/registry.ts`, `src/runtime/locks.ts`, `src/commands/index.ts`, `src/cli/agent-detection.ts`, `src/config/profile-schema.ts`, `web/src/lib/types.ts`, `web/src/views/OnboardWizard.tsx` |
 | PR-2 | JsonlCliRunner (C2). Runner module; all five adapters migrated; parameterized process suite replaces five copies. | PR-1 | `src/agent/runner/`, `src/agent/<kind>/adapter.ts`, `tests/process/` |
-| PR-3 | Unified resume handle (C3) and reply mode on descriptor. `sessionId`/`threadId` gone from shared code; catalog schema v2 with one-shot upgrade. | PR-1 | `src/agent/types.ts`, `src/bot/run-flow.ts`, `src/bot/comments.ts`, `src/bot/channel.ts`, `src/commands/index.ts`, `src/session/**` |
-| PR-4 | Binary path in profile (C4). `agent.binaryPath` for all kinds; delete `cursor/binary.ts` special case and env-var path; detection uses `descriptor.binaryNames`; profile schema v2 with one-shot upgrade. | PR-1 | `src/config/profile-schema.ts`, `src/cli/agent-detection.ts`, `src/agent/cursor/binary.ts`, `src/runtime/profile-runtime.ts` |
+| PR-3 | Unified resume handle (C3) and reply mode on descriptor. Agent resume `sessionId`/`threadId` gone from shared agent code; catalog schema v2 with one-shot upgrade. Feishu `thread_id` and QR `sessionId` stay. | PR-1 | `src/agent/types.ts`, `src/bot/run-flow.ts`, `src/bot/comments.ts`, `src/bot/channel.ts`, `src/commands/index.ts`, `src/session/**` |
+| PR-4 | Binary path in profile (C4). `agent.binaryPath` for all kinds; delete `cursor/binary.ts` special case and env-var path; detection uses `descriptor.binaryNames`; profile schema **v2 to v3** (profiles are already v2). | PR-1 | `src/config/profile-schema.ts`, `src/cli/agent-detection.ts`, `src/agent/cursor/binary.ts`, `src/runtime/profile-runtime.ts` |
 | PR-5 | Private run options (C5). `agentOptions` bag; `descriptor.policyInputs` feeds the fingerprint; shared types stop naming codex/claude fields. Fingerprint golden test decides whether a version bump is needed. | PR-2, PR-3, PR-4 | `src/agent/types.ts`, `src/policy/fingerprint.ts`, `src/runtime/profile-runtime.ts` |
 | PR-6 | Docs and README reframing (section 8). Delete dead code the static test now flags. | PR-5 | `README.md`, `README.zh.md`, `CONTEXT.md` |
 
@@ -207,10 +226,11 @@ The pattern that satisfies both:
 5. Upgrade steps for a version are deleted two minor releases after they ship. The deletion is a normal PR; the CHANGELOG states the oldest version that can still be upgraded in place.
 
 Concretely for this program:
-- `sessions.catalog.json` v1 -> v2: `threadId` and `sessionId` both fold into `resumeHandle`. Codex entries keep resuming.
-- profile v1 -> v2: env-var binary, `cursor` special resolution, and PATH detection all resolve to an explicit `agent.binaryPath` written back at first load, or left absent when detection is preferred. Record which in the upgrade test.
-- lock metadata and process registry: add `schemaVersion`, no field changes expected. `isValidEntry` / `isRuntimeLockMeta` accept `isAgentKind()` instead of a literal list.
-- policy fingerprint: goal is hash stability. If `descriptor.policyInputs` for codex reproduces exactly `{ codexHome, inheritCodexHome }` in the same key order, `FingerprintInputV2` holds. If not achievable cleanly, bump to V3 and the catalog upgrade re-fingerprints stored sessions so they still match. The golden test in PR-0 is the arbiter.
+- Catalog `sessions.json.catalog.json` v1 -> v2: `threadId` and `sessionId` both fold into `resumeHandle`. Codex entries keep resuming.
+- Profile **v2 -> v3** (not v1 -> v2). Today's `ProfileConfig.schemaVersion` is already 2 (`src/config/profile-store.ts` accepts only 2). The new `agent: { kind, binaryPath, options }` block is v3. Loader runs the existing v1->v2 path, then v2->v3 in `src/config/migrations.ts`.
+- `sessions.json` and `workspaces.json` gain `schemaVersion`. Idle-timeout overrides in `SessionStore` survive the upgrade.
+- Lock metadata and process registry: add `schemaVersion`, no field changes expected. `isValidEntry` / `isRuntimeLockMeta` accept `isAgentKind()` instead of a literal list.
+- Policy fingerprint: **V2 hashes stay byte-stable**. `descriptor.policyInputs` for Codex must reproduce `{ codexHome, inheritCodexHome }` in the same canonical form as `FingerprintInputV2`. Do not bump to V3. The catalog cannot re-fingerprint stored sessions because it stores only the digest.
 
 ---
 
@@ -221,7 +241,7 @@ Gates every link must pass: `pnpm ci:local` (diff check, tests, typecheck, build
 Live floor (for the swarm at STACK-READY, not for CI):
 - Start one supervisor with at least two heterogeneous profiles using fake CLIs. Mention each bot in its own Feishu chat (a Feishu test app exists in the operator's tenant; ask the operator for credentials, do not read them from the vault). Confirm isolation and resume across a restart.
 - Run the three real smoke tests (`grok`, `kimi`, `cursor`) where the binary is present on the verifier machine; skip with reason where absent.
-- Load a profile directory and a `sessions.catalog.json` copied from the operator's current deployment (redacted) and confirm the upgrade writes v2 and resumes.
+- Load a profile directory and a `sessions.json.catalog.json` copied from the operator's current deployment (redacted) and confirm the upgrade writes catalog v2 and resumes.
 
 What the swarm should distrust: PR bodies claiming "no behavior change". Diff each link against the pin tests; a pin test that was edited in the same link is a finding.
 
@@ -237,7 +257,9 @@ README and README.zh must say this in the first paragraph and stop presenting Gr
 
 ## 9. Risks and open items
 
-- **Fingerprint drift** is the one change that silently breaks resume for every user. PR-0's golden test exists so the team finds out in CI, not in Feishu.
+- **Fingerprint drift** is the one change that silently breaks resume for every user. PR-0's golden test exists so the team finds out in CI, not in Feishu. V3 re-hash of stored catalog rows is not a migration. It is data loss.
+- **Review comments (Codex, Bugbot, security).** Triage per `pstack/skills/poteto-mode/references/bugbot-triage.md`. Spec-PR comments that change the contract land on PR #3 before the next implementation owner starts. Implementation-PR comments are that owner's job before STACK-READY. P1 correctness always fixes. P2 spec accuracy always fixes on the spec. Nitpicks dismiss with a concrete reason.
+- **Models.** Every owner and swarm worker in this program is a Cursor Grok 4.6 model. No Claude, Kimi, or GPT dispatch.
 - **Cursor CLI binary special case** (`src/agent/cursor/binary.ts`) exists because the CLI installs as `agent` in a versioned directory. `descriptor.binaryNames` plus `agent.binaryPath` must cover that install layout; the P7 fixture should include it.
 - **Web console types.** `web/src/lib/types.ts` duplicates the union because the console builds separately. Pick one: a shared `src/agent/kinds.ts` consumed by both bundles, or a generated file. Do not leave two declarations.
 - **`.planning/`** holds local planning-with-files state and is gitignored. Not part of this program.
