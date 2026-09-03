@@ -1,5 +1,6 @@
 import { ClaudeAdapter } from '../agent/claude/adapter';
 import { CodexAdapter } from '../agent/codex/adapter';
+import { codexAdapterAgentOptions } from '../agent/codex/options';
 import { CursorAdapter } from '../agent/cursor/adapter';
 import { GrokAdapter } from '../agent/grok/adapter';
 import { KimiAdapter } from '../agent/kimi/adapter';
@@ -41,20 +42,16 @@ export function createRuntimeAgent(
   const explicitBinary = resolveProfileBinary(profileConfig);
   const defaultBinary = descriptorFor(kind).binaryNames[0] ?? kind;
   const factories: Record<AgentKind, () => AgentAdapter> = {
-    claude: () => new ClaudeAdapter({ binary: explicitBinary ?? defaultBinary, larkChannel }),
+    claude: () => new ClaudeAdapter({ binary: explicitBinary ?? defaultBinary, agentOptions: profileConfig.agent.options, larkChannel }),
     codex: () => {
-      const codex = profileConfig.codex;
-      const binary = explicitBinary ?? codex?.binaryPath;
+      const binary = explicitBinary ?? profileConfig.codex?.binaryPath;
       if (!binary) {
         throw new Error('codex profile requires codex.binaryPath');
       }
       return new CodexAdapter({
         binary,
         profileStateDir: appPaths.profileDir,
-        ...(codex?.codexHome ? { codexHome: codex.codexHome } : {}),
-        inheritCodexHome: codex?.inheritCodexHome === true,
-        ignoreUserConfig: codex?.ignoreUserConfig === true,
-        ignoreRules: codex?.ignoreRules !== false,
+        agentOptions: codexAdapterAgentOptions(profileConfig),
         sandbox: profileConfig.sandbox.defaultMode,
         larkChannel,
       });
@@ -62,16 +59,19 @@ export function createRuntimeAgent(
     kimi: () =>
       new KimiAdapter({
         binary: explicitBinary ?? defaultBinary,
+        agentOptions: profileConfig.agent.options,
         larkChannel,
       }),
     grok: () =>
       new GrokAdapter({
         binary: explicitBinary ?? defaultBinary,
+        agentOptions: profileConfig.agent.options,
         larkChannel,
       }),
     cursor: () =>
       new CursorAdapter({
         ...(explicitBinary ? { binary: explicitBinary } : {}),
+        agentOptions: profileConfig.agent.options,
         larkChannel,
       }),
   };

@@ -189,8 +189,6 @@ async function catalogIdentity(
     capability,
     profileConfig,
     now: 1_700_000_000_000,
-    codexHome: profileConfig.codex?.codexHome,
-    inheritCodexHome: profileConfig.codex?.inheritCodexHome,
   });
   if (!policy.ok) throw new Error(policy.rejectReason.userVisible);
   return {

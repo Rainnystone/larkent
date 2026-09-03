@@ -4,6 +4,7 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { capabilityForProfile } from '../agent/capability';
+import { codexThreadHistoryEnv } from '../agent/codex/options';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
@@ -739,9 +740,8 @@ async function listCodexResumeHistory(
   cwd: string,
   limit: number,
 ): Promise<CodexThreadHistoryEntry[]> {
-  const codex = ctx.controls.profileConfig.codex;
   const binary = resolveProfileBinary(ctx.controls.profileConfig);
-  if (!binary || !codex) return [];
+  if (!binary) return [];
 
   const provider = ctx.codexHistoryProvider ?? listCodexThreadHistory;
   try {
@@ -750,10 +750,7 @@ async function listCodexResumeHistory(
       cwd,
       limit,
       profileStateDir: commandProfilePaths(ctx).profileDir,
-      ...(codex.codexHome ? { codexHome: codex.codexHome } : {}),
-      ...(codex.inheritCodexHome !== undefined
-        ? { inheritCodexHome: codex.inheritCodexHome }
-        : {}),
+      ...codexThreadHistoryEnv(ctx.controls.profileConfig),
     });
   } catch (err) {
     log.warn('session', 'codex-history-failed', {

@@ -10,7 +10,13 @@ import {
   type AgentSessionKind,
   type PromptInjectionMode,
 } from './capability';
+import { claudeAgentOptionsSchema, claudePolicyInputs, mapClaudeEffectiveAccess } from './claude/options';
+import { codexAgentOptionsSchema, codexPolicyInputs, mapCodexEffectiveAccess } from './codex/options';
+import { cursorAgentOptionsSchema, cursorPolicyInputs, mapCursorEffectiveAccess } from './cursor/options';
+import { grokAgentOptionsSchema, grokPolicyInputs, mapGrokEffectiveAccess } from './grok/options';
+import { kimiAgentOptionsSchema, kimiPolicyInputs, mapKimiEffectiveAccess } from './kimi/options';
 import type { ModelOption } from './models';
+import type { AgentOptionsSchema, EffectiveAccess } from './types';
 
 export const AGENT_KINDS = ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const;
 export type AgentKind = (typeof AGENT_KINDS)[number];
@@ -30,6 +36,9 @@ export interface AgentDescriptor {
   readonly supportsNativeHistory: boolean;
   readonly requireInstalled: boolean;
   readonly missingInstallMessage: string;
+  readonly agentOptionsSchema: AgentOptionsSchema;
+  readonly policyInputs: (options: unknown) => Record<string, unknown>;
+  readonly mapEffectiveAccess: (access: EffectiveAccess) => unknown;
   capability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability;
   runtimeAccess(profile: ProfileConfig): { label: string; value: string };
 }
@@ -58,6 +67,9 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     supportsNativeHistory: true,
     requireInstalled: false,
     missingInstallMessage: '未检测到 Claude Code CLI（claude）。请先安装并登录后再创建 claude profile。',
+    agentOptionsSchema: claudeAgentOptionsSchema,
+    policyInputs: claudePolicyInputs,
+    mapEffectiveAccess: mapClaudeEffectiveAccess,
     capability: (profile) => claudeCapability(profile),
     runtimeAccess: (profile) => ({
       label: 'permission',
@@ -85,6 +97,9 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     supportsNativeHistory: false,
     requireInstalled: false,
     missingInstallMessage: '未检测到 Codex CLI（codex）。请先安装并登录后再创建 codex profile。',
+    agentOptionsSchema: codexAgentOptionsSchema,
+    policyInputs: codexPolicyInputs,
+    mapEffectiveAccess: mapCodexEffectiveAccess,
     capability: (profile) => {
       if (!profile) {
         throw new Error('codex capability requires a profile');
@@ -112,6 +127,9 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     supportsNativeHistory: false,
     requireInstalled: false,
     missingInstallMessage: '未检测到 Kimi Code CLI（kimi）。请先安装并登录后再创建 kimi profile。',
+    agentOptionsSchema: kimiAgentOptionsSchema,
+    policyInputs: kimiPolicyInputs,
+    mapEffectiveAccess: mapKimiEffectiveAccess,
     capability: (profile) => kimiCapability(profile),
     runtimeAccess: () => ({ label: 'permission', value: 'auto (kimi -p)' }),
   },
@@ -134,6 +152,9 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     requireInstalled: true,
     missingInstallMessage:
       '未检测到 Grok Build CLI（grok）。请先安装并登录后再创建 grok profile。',
+    agentOptionsSchema: grokAgentOptionsSchema,
+    policyInputs: grokPolicyInputs,
+    mapEffectiveAccess: mapGrokEffectiveAccess,
     capability: (profile) => grokCapability(profile),
     runtimeAccess: () => ({
       label: 'permission',
@@ -158,6 +179,9 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     requireInstalled: true,
     missingInstallMessage:
       '未检测到 Cursor CLI（cursor-agent / agent）。请先安装并登录后再创建 cursor profile。',
+    agentOptionsSchema: cursorAgentOptionsSchema,
+    policyInputs: cursorPolicyInputs,
+    mapEffectiveAccess: mapCursorEffectiveAccess,
     capability: (profile) => cursorCapability(profile),
     runtimeAccess: () => ({ label: 'permission', value: 'force (cursor --force)' }),
   },

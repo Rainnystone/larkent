@@ -15,6 +15,7 @@ import { GrokJsonlTranslator } from './jsonl';
 
 export interface GrokAdapterOptions {
   binary?: string;
+  agentOptions?: unknown;
   stopGraceMs?: number;
   larkChannel?: LarkChannelEnvContext;
 }

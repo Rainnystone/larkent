@@ -1,4 +1,4 @@
-import { CLAUDE_DEFAULT_PERMISSION_MODE, type ClaudePermissionMode } from '../types';
+import { CLAUDE_DEFAULT_PERMISSION_MODE, type ClaudePermissionMode } from './options';
 
 export interface BuildClaudeArgsInput {
   systemPromptFile: string;

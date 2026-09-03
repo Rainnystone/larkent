@@ -15,6 +15,7 @@ import { KimiJsonlTranslator } from './jsonl';
 
 export interface KimiAdapterOptions {
   binary?: string;
+  agentOptions?: unknown;
   stopGraceMs?: number;
   larkChannel?: LarkChannelEnvContext;
 }

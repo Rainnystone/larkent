@@ -37,8 +37,6 @@ export async function commandSessionCatalogIdentity(input: {
     capability,
     profileConfig: input.controls.profileConfig,
     now: Date.now(),
-    codexHome: input.controls.profileConfig.codex?.codexHome,
-    inheritCodexHome: input.controls.profileConfig.codex?.inheritCodexHome,
   });
   if (!policy.ok) return undefined;
   return {

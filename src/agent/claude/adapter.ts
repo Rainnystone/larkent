@@ -8,15 +8,19 @@ import { checkAgentAvailability, type AgentAvailability } from '../preflight';
 import { runJsonlCli, wrapParsedTranslator } from '../runner/jsonl-cli-runner';
 import { translateEvent } from './stream-json';
 import {
+  mergeAgentOptions,
+  runAgentOptions,
   type AgentAdapter,
   type AgentBotIdentity,
   type AgentRun,
   type AgentRunOptions,
 } from '../types';
+import { CLAUDE_DEFAULT_PERMISSION_MODE, parseClaudeAgentOptions } from './options';
 import { buildClaudeArgs } from './argv';
 
 export interface ClaudeAdapterOptions {
   binary?: string;
+  agentOptions?: unknown;
   larkChannel?: LarkChannelEnvContext;
 }
 
@@ -26,11 +30,13 @@ export class ClaudeAdapter implements AgentAdapter {
 
   private readonly binary: string;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
+  private readonly profileOptions: unknown;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: ClaudeAdapterOptions = {}) {
     this.binary = opts.binary ?? 'claude';
     this.larkChannel = opts.larkChannel;
+    this.profileOptions = opts.agentOptions;
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -55,13 +61,17 @@ export class ClaudeAdapter implements AgentAdapter {
       throw new Error('cwd is required for ClaudeAdapter.run');
     }
 
+    const parsed = parseClaudeAgentOptions(
+      mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
+      false,
+    );
     const systemPromptFile = writeSystemPromptFile(buildBridgeSystemPrompt(this.botIdentity));
     return runJsonlCli({
       runId: opts.runId,
       binaryPath: this.binary,
       argv: buildClaudeArgs({
         systemPromptFile: systemPromptFile.path,
-        permissionMode: opts.permissionMode,
+        permissionMode: parsed.permissionMode ?? CLAUDE_DEFAULT_PERMISSION_MODE,
         ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
       }),

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { descriptorFor, type AgentKind } from '../agent/registry';
 import type { ProfileConfig, SandboxMode } from '../config/profile-schema';
 import { canonicalizeJcs } from '../session/jcs';
 
@@ -41,6 +42,24 @@ export function policyFingerprint(input: FingerprintInputV2): string {
     attachmentPolicyShapeDigest: input.attachmentPolicyShapeDigest,
     codexHome: input.codexHome ?? null,
     inheritCodexHome: input.inheritCodexHome,
+  });
+}
+
+export function policyFingerprintFromAgentOptions(
+  shared: Omit<FingerprintInputV2, 'codexHome' | 'inheritCodexHome'>,
+  kind: AgentKind,
+  options: unknown,
+): string {
+  return digestCanonical({
+    version: 2,
+    cwdRealpath: shared.cwdRealpath,
+    sandbox: shared.sandbox,
+    accessPolicyDigest: shared.accessPolicyDigest,
+    resourceScopeDigest: shared.resourceScopeDigest,
+    attachmentPolicyShapeDigest: shared.attachmentPolicyShapeDigest,
+    codexHome: null,
+    inheritCodexHome: false,
+    ...descriptorFor(kind).policyInputs(options),
   });
 }
 

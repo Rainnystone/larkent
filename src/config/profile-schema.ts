@@ -13,7 +13,8 @@ import {
   type PermissionConfig,
   type PermissionSource,
 } from './permissions';
-import { isAgentKind, unknownAgentKindMessage, type AgentKind } from '../agent/registry';
+import { isAgentKind, unknownAgentKindMessage, descriptorFor, type AgentKind } from '../agent/registry';
+import { omitEmptyAgentOptions } from '../agent/types';
 import { PROFILE_SCHEMA_VERSION, upgradeProfileRecord } from './migrations';
 
 export type { AgentKind } from '../agent/registry';
@@ -147,6 +148,7 @@ export interface LarkCliConfig {
 export interface ProfileAgentConfig {
   kind: AgentKind;
   binaryPath?: string;
+  options?: unknown;
 }
 
 export interface ProfileConfig {
@@ -215,13 +217,15 @@ export interface CreateDefaultProfileConfigInput {
   codex?: CodexConfig;
   secrets?: SecretsConfig;
   larkCli?: LarkCliConfig;
+  options?: unknown;
 }
 
 export function createDefaultProfileConfig(
   input: CreateDefaultProfileConfigInput,
 ): ProfileConfig {
+  const { options, ...rest } = input;
   return normalizeProfileConfig({
-    ...input,
+    ...rest,
     schemaVersion: PROFILE_SCHEMA_VERSION,
     agent: {
       kind: input.agentKind,
@@ -230,6 +234,7 @@ export function createDefaultProfileConfig(
         : input.codex?.binaryPath && isAbsolute(input.codex.binaryPath)
           ? { binaryPath: input.codex.binaryPath }
           : {}),
+      ...(options !== undefined ? { options } : {}),
     },
   });
 }
@@ -241,7 +246,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const upgraded = upgradeProfileRecord(input).document;
   const raw = upgraded as {
     schemaVersion?: unknown;
-    agent?: { kind?: unknown; binaryPath?: unknown };
+    agent?: { kind?: unknown; binaryPath?: unknown; options?: unknown };
     agentKind?: unknown;
     mode?: unknown;
     accounts?: unknown;
@@ -302,9 +307,13 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
       : agentKind === 'codex' && typeof raw.codex?.binaryPath === 'string' && isAbsolute(raw.codex.binaryPath)
         ? raw.codex.binaryPath
         : undefined;
+  const options = omitEmptyAgentOptions(
+    descriptorFor(agentKind).agentOptionsSchema.parse(raw.agent?.options ?? {}),
+  );
   const agent: ProfileAgentConfig = {
     kind: agentKind,
     ...(binaryPath ? { binaryPath } : {}),
+    ...(options !== undefined ? { options } : {}),
   };
   const codex = raw.codex
     ? normalizeCodex(
