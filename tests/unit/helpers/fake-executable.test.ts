@@ -7,7 +7,7 @@ import { writeScriptedJsonlExecutable, writeScriptedJsonlExecutableFile } from '
 import { stabilizePinSnapshot } from '../../helpers/scripted-jsonl-cli.js';
 
 describe('scripted JSONL fake executables', () => {
-  it('writes a cmd file as a node launcher, not a shebang script', async () => {
+  it('writes a cmd file as a launcher, not a shebang script', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-cmd-wrapper-'));
     const file = join(dir, 'grok.CMD');
     await writeScriptedJsonlExecutableFile(file, join(dir, 'argv.json'), {
@@ -15,22 +15,18 @@ describe('scripted JSONL fake executables', () => {
     });
     const launcher = await readFile(file, 'utf8');
     expect(launcher.startsWith('@echo off')).toBe(true);
-    expect(launcher).toContain(process.execPath);
-    expect(launcher).toContain('grok.mjs');
+    expect(launcher).toMatch(/grok\.mjs/i);
     expect(launcher).not.toContain('import {');
   });
 
-  it('installs a spawnable command and a rewriteable JSONL script sidecar', async () => {
+  it('returns a node script path so spawn does not go through cmd.exe', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-script-path-'));
     const fake = await writeScriptedJsonlExecutable(dir, 'grok', {
       lines: [{ type: 'text', data: 'ok' }],
     });
-    expect(fake.path.toLowerCase().endsWith('.cmd')).toBe(process.platform === 'win32');
-    expect(fake.scriptPath.endsWith('.script.json')).toBe(true);
-    const nodeSource = fake.path.toLowerCase().endsWith('.cmd')
-      ? fake.path.replace(/\.cmd$/i, '.mjs')
-      : fake.path;
-    const source = await readFile(nodeSource, 'utf8');
+    expect(fake.path.toLowerCase().endsWith('.cmd')).toBe(false);
+    expect(fake.scriptPath).toBe(`${fake.path}.script.json`);
+    const source = await readFile(fake.path, 'utf8');
     expect(source.startsWith('#!')).toBe(true);
     const script = JSON.parse(await readFile(fake.scriptPath, 'utf8')) as { lines: unknown[] };
     expect(script.lines).toEqual([{ type: 'text', data: 'ok' }]);
@@ -45,12 +41,9 @@ describe('scripted JSONL fake executables', () => {
       lines: [{ type: 'end', stopReason: 'end_turn' }],
     });
     const rules = 'before\n<bridge_context>\nafter';
-    const nodeSource = fake.path.toLowerCase().endsWith('.cmd')
-      ? fake.path.replace(/\.cmd$/i, '.mjs')
-      : fake.path;
     const result = spawnProcessSync(
-      process.execPath,
-      [nodeSource, '-p', 'please succeed', '--output-format', 'streaming-json', '--rules', rules],
+      fake.path,
+      ['-p', 'please succeed', '--output-format', 'streaming-json', '--rules', rules],
       { encoding: 'utf8' },
     );
     expect(result.status).toBe(0);

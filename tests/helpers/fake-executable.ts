@@ -53,14 +53,10 @@ export async function writeScriptedJsonlExecutable(
 ): Promise<ScriptedJsonlExecutable> {
   await mkdir(root, { recursive: true });
   const base = isCmd(name) ? name.replace(/\.cmd$/i, '') : name;
-  const nodeSource = join(root, process.platform === 'win32' ? `${base}.mjs` : base);
-  const path = process.platform === 'win32' ? join(root, `${base}.CMD`) : nodeSource;
-  const recordPath = `${nodeSource}.argv.json`;
-  const scriptPath = scriptPathFor(nodeSource);
-  await writeScriptedJsonlExecutableFile(nodeSource, recordPath, options);
-  if (process.platform === 'win32') {
-    await writeFile(path, cmdLauncher(nodeSource), { mode: 0o755 });
-  }
+  const path = join(root, process.platform === 'win32' ? `${base}.mjs` : base);
+  const recordPath = `${path}.argv.json`;
+  const scriptPath = scriptPathFor(path);
+  await writeScriptedJsonlExecutableFile(path, recordPath, options);
   return { path, recordPath, scriptPath };
 }
 
