@@ -192,7 +192,7 @@ async function createDoctorHarness(
 
 function missingAdapter(kind: PinAgentKind) {
   const missing = join(tmpdir(), `missing-${kind}-${Date.now()}`);
-  switch (pinAgentKind(kind)) {
+  switch (kind) {
     case 'claude':
       return new ClaudeAdapter({ binary: missing });
     case 'codex':
@@ -237,7 +237,7 @@ function lastDoctorText(channel: FakeChannel): string {
 }
 
 function missingDoctorEchoCheck(kind: PinAgentKind): string {
-  switch (pinAgentKind(kind)) {
+  switch (kind) {
     case 'claude':
       return 'error';
     case 'codex':

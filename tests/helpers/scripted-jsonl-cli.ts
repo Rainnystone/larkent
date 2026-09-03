@@ -48,7 +48,7 @@ export function pinAgentKind(kind: PinAgentKind): PinAgentKind {
 }
 
 export function defaultBinaryName(kind: PinAgentKind): string {
-  switch (pinAgentKind(kind)) {
+  switch (kind) {
     case 'claude':
       return 'claude';
     case 'codex':
@@ -67,7 +67,7 @@ export function defaultBinaryName(kind: PinAgentKind): string {
 }
 
 export function envBinVarName(kind: PinAgentKind): string {
-  switch (pinAgentKind(kind)) {
+  switch (kind) {
     case 'claude':
       return 'LARK_CHANNEL_CLAUDE_BIN';
     case 'codex':
@@ -86,7 +86,7 @@ export function envBinVarName(kind: PinAgentKind): string {
 }
 
 export function adapterDisplayName(kind: PinAgentKind): string {
-  switch (pinAgentKind(kind)) {
+  switch (kind) {
     case 'claude':
       return 'Claude Code';
     case 'codex':
@@ -108,7 +108,7 @@ export function jsonlScript(kind: PinAgentKind, scenario: 'success' | 'error'): 
   if (scenario === 'error') {
     return { lines: [], stderr: `${PIN_ERROR}\n`, exitCode: 1 };
   }
-  switch (pinAgentKind(kind)) {
+  switch (kind) {
     case 'claude':
       return {
         lines: [
