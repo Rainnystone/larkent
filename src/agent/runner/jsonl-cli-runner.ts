@@ -1,4 +1,5 @@
 import type { Readable, Writable } from 'node:stream';
+import { StringDecoder } from 'node:string_decoder';
 import { log } from '../../core/logger';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import type { AgentEvent, AgentRun } from '../types';
@@ -47,11 +48,13 @@ export function wrapParsedTranslator(
 ): JsonlTranslator {
   return {
     translate(line: string): AgentEvent[] {
+      let parsed: unknown;
       try {
-        return [...inner.translate(JSON.parse(line))];
+        parsed = JSON.parse(line);
       } catch {
         return [];
       }
+      return [...inner.translate(parsed)];
     },
     finish(reason?: JsonlFinishReason): AgentEvent[] {
       return inner.finish ? [...inner.finish(reason)] : [];
@@ -88,30 +91,9 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     stdoutNotify = undefined;
     notify?.();
   };
+  const stdoutDecoder = new StringDecoder('utf8');
   let stdoutBuffer = '';
   let sawStdout = false;
-  child.stdout.on('data', (chunk: Buffer) => {
-    sawStdout = true;
-    stdoutBuffer += chunk.toString('utf8');
-    let nl = stdoutBuffer.indexOf('\n');
-    while (nl !== -1) {
-      const line = stdoutBuffer.slice(0, nl).trim();
-      stdoutBuffer = stdoutBuffer.slice(nl + 1);
-      if (line) stdoutLines.push(line);
-      nl = stdoutBuffer.indexOf('\n');
-      onStdoutSettled();
-    }
-  });
-  const closeStdout = (): void => {
-    if (stdoutClosed) return;
-    stdoutClosed = true;
-    const tail = stdoutBuffer.trim();
-    stdoutBuffer = '';
-    if (tail) stdoutLines.push(tail);
-    onStdoutSettled();
-  };
-  child.stdout.on('end', closeStdout);
-  child.stdout.on('close', closeStdout);
 
   const stderrChunks: Buffer[] = [];
   let runtimeError: Error | null = null;
@@ -134,21 +116,108 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   });
 
   let stopReason: JsonlFinishReason | undefined;
-  let cleaned = false;
-  const runCleanup = async (): Promise<void> => {
-    if (cleaned) return;
-    cleaned = true;
-    await input.cleanup?.();
+  let abortHandler: (() => void) | undefined;
+  const detachAbort = (): void => {
+    if (!abortHandler || !input.signal) return;
+    input.signal.removeEventListener('abort', abortHandler);
+    abortHandler = undefined;
   };
+
+  let cleanupPromise: Promise<void> | undefined;
+  const runCleanup = (): Promise<void> => {
+    cleanupPromise ??= (async () => {
+      if (child.pid && child.exitCode === null && child.signalCode === null) {
+        await waitForExitCode(child);
+      }
+      detachAbort();
+      await input.cleanup?.();
+    })();
+    return cleanupPromise;
+  };
+  const scheduleCleanup = (): void => {
+    void runCleanup().catch(() => {});
+  };
+
+  const stopChild = async (reason: JsonlFinishReason): Promise<void> => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    stopReason = reason;
+    log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
+    child.kill('SIGTERM');
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          log.warn('agent', 'stop-sigkill', {
+            pid: child.pid ?? null,
+            graceMs: stopGraceMs,
+            reason: 'grace-period-expired',
+          });
+          child.kill('SIGKILL');
+        }
+        resolve();
+      }, stopGraceMs);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+    });
+  };
+
+  const idleMs = input.timeouts?.idleMs;
+  const totalMs = input.timeouts?.totalMs;
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let totalTimer: ReturnType<typeof setTimeout> | undefined;
+  const armIdle = (): void => {
+    if (!idleMs || idleMs === Number.POSITIVE_INFINITY) return;
+    if (idleTimer) clearTimeout(idleTimer);
+    idleTimer = setTimeout(() => {
+      void stopChild('timeout');
+    }, idleMs);
+  };
+  if (totalMs && totalMs !== Number.POSITIVE_INFINITY) {
+    totalTimer = setTimeout(() => {
+      void stopChild('timeout');
+    }, totalMs);
+  }
+  armIdle();
+
+  const enqueueStdoutLine = (line: string): void => {
+    if (!line) return;
+    stdoutLines.push(line);
+    armIdle();
+  };
+
+  child.stdout.on('data', (chunk: Buffer) => {
+    sawStdout = true;
+    stdoutBuffer += stdoutDecoder.write(chunk);
+    let nl = stdoutBuffer.indexOf('\n');
+    while (nl !== -1) {
+      const line = stdoutBuffer.slice(0, nl).trim();
+      stdoutBuffer = stdoutBuffer.slice(nl + 1);
+      enqueueStdoutLine(line);
+      nl = stdoutBuffer.indexOf('\n');
+      onStdoutSettled();
+    }
+  });
+  const closeStdout = (): void => {
+    if (stdoutClosed) return;
+    stdoutClosed = true;
+    stdoutBuffer += stdoutDecoder.end();
+    const tail = stdoutBuffer.trim();
+    stdoutBuffer = '';
+    enqueueStdoutLine(tail);
+    onStdoutSettled();
+  };
+  child.stdout.on('end', closeStdout);
+  child.stdout.on('close', closeStdout);
 
   child.on('error', (err) => {
     runtimeError = err;
     closeStdout();
-    void runCleanup();
+    scheduleCleanup();
   });
   child.on('exit', (code, signal) => {
     log.info('agent', 'exit', { pid: child.pid ?? null, code, signal });
-    void runCleanup();
+    scheduleCleanup();
   });
   child.stdin.on('error', (err) => {
     log.warn('agent', 'stdin-error', { message: err.message });
@@ -183,61 +252,16 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     },
   };
 
-  const stopChild = async (reason: JsonlFinishReason): Promise<void> => {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    stopReason = reason;
-    log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
-    child.kill('SIGTERM');
-    await new Promise<void>((resolve) => {
-      const timer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) {
-          log.warn('agent', 'stop-sigkill', {
-            pid: child.pid ?? null,
-            graceMs: stopGraceMs,
-            reason: 'grace-period-expired',
-          });
-          child.kill('SIGKILL');
-        }
-        resolve();
-      }, stopGraceMs);
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
-    });
-  };
-
   if (input.signal) {
     if (input.signal.aborted) {
       void stopChild('interrupted');
     } else {
-      input.signal.addEventListener(
-        'abort',
-        () => {
-          void stopChild('interrupted');
-        },
-        { once: true },
-      );
+      abortHandler = () => {
+        void stopChild('interrupted');
+      };
+      input.signal.addEventListener('abort', abortHandler, { once: true });
     }
   }
-
-  const idleMs = input.timeouts?.idleMs;
-  const totalMs = input.timeouts?.totalMs;
-  let idleTimer: ReturnType<typeof setTimeout> | undefined;
-  let totalTimer: ReturnType<typeof setTimeout> | undefined;
-  const armIdle = (): void => {
-    if (!idleMs || idleMs === Number.POSITIVE_INFINITY) return;
-    if (idleTimer) clearTimeout(idleTimer);
-    idleTimer = setTimeout(() => {
-      void stopChild('timeout');
-    }, idleMs);
-  };
-  if (totalMs && totalMs !== Number.POSITIVE_INFINITY) {
-    totalTimer = setTimeout(() => {
-      void stopChild('timeout');
-    }, totalMs);
-  }
-  armIdle();
 
   const clearTimers = (): void => {
     if (idleTimer) clearTimeout(idleTimer);
@@ -258,9 +282,9 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
       missingTerminalOnSuccess: input.missingTerminalOnSuccess,
       failNonzeroAfterTerminal: input.failNonzeroAfterTerminal === true,
       successFinish: input.successFinish,
-      onLine: armIdle,
       cleanup: async () => {
         clearTimers();
+        detachAbort();
         await runCleanup();
       },
     }),
@@ -301,7 +325,6 @@ async function* iterateEvents(input: {
   missingTerminalOnSuccess?: string;
   failNonzeroAfterTerminal: boolean;
   successFinish?: JsonlFinishReason;
-  onLine: () => void;
   cleanup: () => Promise<void>;
 }): AsyncGenerator<AgentEvent> {
   try {
@@ -318,7 +341,6 @@ async function* iterateEvents(input: {
     for (;;) {
       let line = input.stdout.nextLine();
       while (line !== undefined) {
-        input.onLine();
         yield* input.translator.translate(line);
         line = input.stdout.nextLine();
       }
@@ -376,7 +398,14 @@ async function waitForExitCode(child: CliChild): Promise<number | null> {
     return child.exitCode;
   }
   return new Promise<number | null>((resolve) => {
-    child.once('exit', (code) => resolve(code));
+    const onExit = (code: number | null): void => {
+      resolve(code);
+    };
+    child.once('exit', onExit);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      child.removeListener('exit', onExit);
+      resolve(child.exitCode);
+    }
   });
 }
 

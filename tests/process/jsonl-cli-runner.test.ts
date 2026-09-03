@@ -1,3 +1,4 @@
+import { getEventListeners } from 'node:events';
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,24 @@ async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]>
   for await (const event of events) out.push(event);
   return out;
 }
+
+describe('wrapParsedTranslator', () => {
+  it('skips invalid JSON and lets translator exceptions propagate', () => {
+    const translator = wrapParsedTranslator(
+      {
+        translate(parsed: unknown) {
+          const row = parsed as { boom?: boolean };
+          if (row.boom) throw new Error('translator-boom');
+          return [{ type: 'text', delta: 'ok' }];
+        },
+      },
+      'wrap',
+    );
+    expect(translator.translate('not-json')).toEqual([]);
+    expect(translator.translate('{"ok":true}')).toEqual([{ type: 'text', delta: 'ok' }]);
+    expect(() => translator.translate('{"boom":true}')).toThrow(/translator-boom/);
+  });
+});
 
 describe('runJsonlCli', () => {
   const cleanup: string[] = [];
@@ -132,7 +151,230 @@ describe('runJsonlCli', () => {
     expect(await pending).toEqual([{ type: 'done', terminationReason: 'interrupted' }]);
     expect(await run.waitForExit(1_000)).toBe(true);
   });
+
+  it('decodes JSONL stdout when a chunk splits a multibyte UTF-8 character', async () => {
+    const fake = await createFakeRunnerBinary(`
+import { setTimeout as delay } from 'node:timers/promises';
+const payload = JSON.stringify({ type: 'assistant', text: '你好世界' }) + '\\n';
+const buf = Buffer.from(payload, 'utf8');
+const splitAt = buf.indexOf(Buffer.from('你', 'utf8')) + 1;
+process.stdout.write(buf.subarray(0, splitAt));
+await delay(20);
+process.stdout.write(buf.subarray(splitAt));
+process.exit(0);
+`);
+    cleanup.push(fake.dir);
+    const run = runJsonlCli({
+      runId: 'run-utf8',
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: wrapParsedTranslator(
+        {
+          translate: (parsed) => {
+            const row = parsed as { type?: string; text?: string };
+            return row.type === 'assistant' && row.text
+              ? [{ type: 'text' as const, delta: row.text }]
+              : [];
+          },
+          finish: () => [{ type: 'done' as const, terminationReason: 'normal' as const }],
+        },
+        'utf8',
+      ),
+      spawnName: 'utf8',
+      successFinish: 'normal',
+    });
+    expect(await collect(run.events)).toEqual([
+      { type: 'text', delta: '你好世界' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+  });
+
+  it('resets idle timeout when a complete stdout line is enqueued', async () => {
+    const fake = await createFakeRunnerBinary(`
+import { setTimeout as delay } from 'node:timers/promises';
+for (const n of [1, 2, 3, 4, 5, 6]) {
+  console.log(JSON.stringify({ n }));
+  await delay(40);
+}
+process.exit(0);
+`);
+    cleanup.push(fake.dir);
+    const run = runJsonlCli({
+      runId: 'run-idle-enqueue',
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: wrapParsedTranslator(
+        {
+          translate: (parsed) => [{ type: 'text' as const, delta: String((parsed as { n: number }).n) }],
+          finish: () => [{ type: 'done' as const, terminationReason: 'normal' as const }],
+        },
+        'idle-enqueue',
+      ),
+      spawnName: 'idle-enqueue',
+      timeouts: { idleMs: 70 },
+      stopGraceMs: 50,
+      successFinish: 'normal',
+    });
+    const events: AgentEvent[] = [];
+    for await (const event of run.events) {
+      events.push(event);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+    expect(events).toEqual([
+      { type: 'text', delta: '1' },
+      { type: 'text', delta: '2' },
+      { type: 'text', delta: '3' },
+      { type: 'text', delta: '4' },
+      { type: 'text', delta: '5' },
+      { type: 'text', delta: '6' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+  });
+
+  it('awaits the same in-flight cleanup from exit and generator finally', async () => {
+    const fake = await createFakeClaude({
+      lines: [{ type: 'result', session_id: 's-clean' }],
+    });
+    cleanup.push(fake.dir);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started = 0;
+    let finished = 0;
+    const run = runJsonlCli({
+      runId: 'run-shared-cleanup',
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: wrapParsedTranslator(
+        {
+          translate: (parsed) => {
+            const row = parsed as { type?: string; session_id?: string };
+            return row.type === 'result'
+              ? [{ type: 'done' as const, sessionId: row.session_id, terminationReason: 'normal' as const }]
+              : [];
+          },
+        },
+        'shared-cleanup',
+      ),
+      cleanup: async () => {
+        started += 1;
+        await gate;
+        finished += 1;
+      },
+      spawnName: 'shared-cleanup',
+    });
+    const pending = collect(run.events);
+    let collectDone = false;
+    void pending.then(() => {
+      collectDone = true;
+    });
+    const deadline = Date.now() + 2_000;
+    while (started === 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(started).toBe(1);
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(collectDone).toBe(false);
+    expect(finished).toBe(0);
+    release();
+    expect(await pending).toEqual([
+      { type: 'done', sessionId: 's-clean', terminationReason: 'normal' },
+    ]);
+    expect(started).toBe(1);
+    expect(finished).toBe(1);
+  });
+
+  it('does not run adapter cleanup until the child has exited', async () => {
+    const fake = await createFakeClaude({
+      lines: [{ type: 'result', session_id: 'sess-tail' }],
+      exitDelayMs: 150,
+    });
+    cleanup.push(fake.dir);
+    let cleaned = false;
+    const run = runJsonlCli({
+      runId: 'run-cleanup-after-exit',
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: wrapParsedTranslator(
+        {
+          translate: (parsed) => {
+            const row = parsed as { type?: string; session_id?: string };
+            return row.type === 'result'
+              ? [{ type: 'done' as const, sessionId: row.session_id, terminationReason: 'normal' as const }]
+              : [];
+          },
+        },
+        'cleanup-after-exit',
+      ),
+      cleanup: () => {
+        cleaned = true;
+      },
+      spawnName: 'cleanup-after-exit',
+    });
+    const iterator = run.events[Symbol.asyncIterator]();
+    expect(await iterator.next()).toEqual({
+      done: false,
+      value: { type: 'done', sessionId: 'sess-tail', terminationReason: 'normal' },
+    });
+    expect(cleaned).toBe(false);
+    expect(await run.waitForExit(10)).toBe(false);
+    expect(cleaned).toBe(false);
+    expect(await run.waitForExit(1_000)).toBe(true);
+    await iterator.return?.();
+    expect(cleaned).toBe(true);
+  });
+
+  it('removes abort listeners after a completed run', async () => {
+    const fake = await createFakeClaude({
+      lines: [{ type: 'result', session_id: 's-abort-detach' }],
+    });
+    cleanup.push(fake.dir);
+    const controller = new AbortController();
+    const run = runJsonlCli({
+      runId: 'run-abort-detach',
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: wrapParsedTranslator(
+        {
+          translate: (parsed) => {
+            const row = parsed as { type?: string; session_id?: string };
+            return row.type === 'result'
+              ? [{ type: 'done' as const, sessionId: row.session_id, terminationReason: 'normal' as const }]
+              : [];
+          },
+        },
+        'abort-detach',
+      ),
+      spawnName: 'abort-detach',
+      signal: controller.signal,
+    });
+    expect(await collect(run.events)).toEqual([
+      { type: 'done', sessionId: 's-abort-detach', terminationReason: 'normal' },
+    ]);
+    expect(getEventListeners(controller.signal, 'abort')).toEqual([]);
+    expect(() => controller.abort()).not.toThrow();
+  });
 });
+
+async function createFakeRunnerBinary(body: string): Promise<FakeBinary> {
+  const dir = await mkdtemp(join(tmpdir(), 'jsonl-runner-test-'));
+  const path = join(dir, 'fake-cli.mjs');
+  const recordPath = join(dir, 'argv.json');
+  await writeFile(path, `#!/usr/bin/env node\n${body}\n`, 'utf8');
+  await chmod(path, 0o755);
+  return { path, dir, recordPath };
+}
 
 
 interface FakeBinary {
