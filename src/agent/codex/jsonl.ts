@@ -78,7 +78,7 @@ export class CodexJsonlTranslator implements JsonlTranslator {
       ]);
     }
     return this.prependPendingText([
-      { type: 'done', threadId: this.threadId, terminationReason: reason },
+      { type: 'done', resumeHandle: this.threadId, terminationReason: reason },
     ]);
   }
 
@@ -111,7 +111,7 @@ export class CodexJsonlTranslator implements JsonlTranslator {
       return [];
     }
     this.threadId = threadId;
-    return [{ type: 'system', threadId }];
+    return [{ type: 'system', resumeHandle: threadId }];
   }
 
   private translateItemStarted(raw: Record<string, unknown>): AgentEvent[] {
@@ -188,7 +188,7 @@ export class CodexJsonlTranslator implements JsonlTranslator {
         ),
       });
     }
-    events.push({ type: 'done', threadId: this.threadId, terminationReason: 'normal' });
+    events.push({ type: 'done', resumeHandle: this.threadId, terminationReason: 'normal' });
     return events;
   }
 

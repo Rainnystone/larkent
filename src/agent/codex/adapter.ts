@@ -97,7 +97,7 @@ export class CodexAdapter implements AgentAdapter {
       argv: buildCodexArgs({
         cwd: opts.cwd,
         sandbox: opts.sandbox ?? this.sandbox,
-        threadId: opts.threadId,
+        threadId: opts.resumeHandle,
         images: opts.images,
         ignoreUserConfig: this.ignoreUserConfig,
         ignoreRules: this.ignoreRules,

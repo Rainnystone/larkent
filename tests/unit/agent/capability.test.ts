@@ -7,8 +7,8 @@ import {
   cursorCapability,
   grokCapability,
   kimiCapability,
-  usesNativeSessionId,
 } from '../../../src/agent/capability';
+import { descriptorFor } from '../../../src/agent/registry';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 
 describe('agent capability contract', () => {
@@ -158,12 +158,14 @@ describe('agent capability contract', () => {
     expect(capabilityForProfile(profile).agentId).toBe('grok');
   });
 
-  it('treats grok like claude/kimi for native session ids', () => {
-    expect(usesNativeSessionId('grok')).toBe(true);
-    expect(usesNativeSessionId('claude')).toBe(true);
-    expect(usesNativeSessionId('kimi')).toBe(true);
-    expect(usesNativeSessionId('cursor')).toBe(true);
-    expect(usesNativeSessionId('codex')).toBe(false);
+  it('reads reply mode from the descriptor instead of a native-session helper', () => {
+    expect(descriptorFor('grok').replyMode).toBe('final-answer');
+    expect(descriptorFor('claude').replyMode).toBe('stream-deltas');
+    expect(descriptorFor('kimi').replyMode).toBe('final-answer');
+    expect(descriptorFor('cursor').replyMode).toBe('final-answer');
+    expect(descriptorFor('codex').replyMode).toBe('final-answer');
+    expect(descriptorFor('claude').resume.label).toBe('session');
+    expect(descriptorFor('codex').resume.label).toBe('thread');
   });
 
   it('defines Cursor capability with session-id resume and argv prompt injection', () => {

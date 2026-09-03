@@ -6,7 +6,7 @@ import type {
 import { createLarkChannel } from '@larksuite/channel';
 import { dirname, join } from 'node:path';
 import { capabilityForProfile } from '../agent/capability';
-import { descriptorFor, type AgentKind } from '../agent/registry';
+import { descriptorFor } from '../agent/registry';
 import { modelLabel, normalizeModelSelection, resolveModelArg } from '../agent/models';
 import {
   buildAgentPrompt,
@@ -79,17 +79,6 @@ import {
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
-
-/**
- * Agents whose runs end with a single final answer instead of streamed text
- * deltas (codex, kimi, grok, cursor) can't rely on the progress stream carrying the reply —
- * nothing opens it. They send the answer at the end via sendFinalReply under
- * final-answer-only semantics, and skip the streaming fallbacks that would
- * double-post it.
- */
-function usesFinalAnswerReply(agentKind: AgentKind): boolean {
-  return descriptorFor(agentKind).replyMode === 'final-answer';
-}
 
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
@@ -840,6 +829,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
   const chatId = firstMsg.chatId;
   const threadId = firstMsg.threadId;
+  const finalAnswerReply =
+    descriptorFor(controls.profileConfig.agentKind).replyMode === 'final-answer';
 
   const resourceItems = batch.flatMap((m) =>
     m.resources.map((r) => ({ messageId: m.messageId, resource: r })),
@@ -1005,7 +996,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const handle = execution.handle;
   const eventStream = execution.subscribe();
   if (flow.resumeFrom) {
-    log.info('session', 'resume', { sessionId: flow.resumeFrom, cwd });
+    log.info('session', 'resume', { resumeHandle: flow.resumeFrom, cwd });
   } else {
     log.info('session', 'fresh', { cwd });
   }
@@ -1018,8 +1009,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       policy: flow.policy,
       event: evt,
     });
-    if (evt.type === 'system' && evt.sessionId) {
-      log.info('session', 'set', { sessionId: evt.sessionId });
+    if (evt.type === 'system' && evt.resumeHandle) {
+      log.info('session', 'set', { resumeHandle: evt.resumeHandle });
     }
     // Ground truth for "which model is actually running": claude reports the
     // model it loaded in its init event. Logging requested-vs-actual reveals
@@ -1030,9 +1021,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         requested: requestedModel ?? 'default',
         actual: evt.model,
       });
-    }
-    if (evt.type === 'system' && evt.threadId) {
-      log.info('session', 'set-thread', { threadId: evt.threadId });
     }
   };
 
@@ -1178,7 +1166,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           renderDone,
           producerStarted: () => producerStarted,
           fallback: async (state) => {
-            if (usesFinalAnswerReply(controls.profileConfig.agentKind)) return;
+            if (finalAnswerReply) return;
             if (renderText(filterForPrefs(state)).trim() === '') return;
             await channel.send(
               chatId,
@@ -1188,11 +1176,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           },
         });
       } catch (err) {
-        if (!usesFinalAnswerReply(controls.profileConfig.agentKind)) throw err;
+        if (!finalAnswerReply) throw err;
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
-      if (usesFinalAnswerReply(controls.profileConfig.agentKind)) {
+      if (finalAnswerReply) {
         await sendFinalReply({
           channel,
           chatId,
@@ -1243,7 +1231,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           renderDone,
           producerStarted: () => producerStarted,
           fallback: async (state) => {
-            if (usesFinalAnswerReply(controls.profileConfig.agentKind)) return;
+            if (finalAnswerReply) return;
             const body = renderText(filterForPrefs(state));
             if (body.trim()) {
               await channel.send(chatId, { markdown: body }, sendOpts);
@@ -1251,11 +1239,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           },
         });
       } catch (err) {
-        if (!usesFinalAnswerReply(controls.profileConfig.agentKind)) throw err;
+        if (!finalAnswerReply) throw err;
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
-      if (usesFinalAnswerReply(controls.profileConfig.agentKind)) {
+      if (finalAnswerReply) {
         await sendFinalReply({
           channel,
           chatId,
@@ -1282,7 +1270,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         channel,
         chatId,
         scope,
-        state: usesFinalAnswerReply(controls.profileConfig.agentKind)
+        state: finalAnswerReply
           ? finalAnswerOnlyState(filterForPrefs(finalState))
           : filterForPrefs(finalState),
         replyMode,

@@ -70,7 +70,7 @@ export class GrokAdapter implements AgentAdapter {
       argv: buildGrokArgs({
         prompt: opts.prompt,
         rules: buildBridgeSystemPrompt(this.botIdentity),
-        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+        ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,

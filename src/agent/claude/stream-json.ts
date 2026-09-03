@@ -40,7 +40,7 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
   if (evt.type === 'system' && evt.subtype === 'init') {
     yield {
       type: 'system',
-      sessionId: evt.session_id,
+      resumeHandle: evt.session_id,
       cwd: evt.cwd,
       model: evt.model,
     };
@@ -86,7 +86,7 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
         costUsd: evt.total_cost_usd,
       };
     }
-    yield { type: 'done', sessionId: evt.session_id, terminationReason: 'normal' };
+    yield { type: 'done', resumeHandle: evt.session_id, terminationReason: 'normal' };
   }
 }
 

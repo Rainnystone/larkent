@@ -4,7 +4,7 @@ import type { ClaudePermissionMode, CodexSandboxMode } from '../config/permissio
 export type { ClaudePermissionMode } from '../config/permissions';
 
 export type AgentEvent =
-  | { type: 'system'; sessionId?: string; threadId?: string; cwd?: string; model?: string }
+  | { type: 'system'; resumeHandle?: string; cwd?: string; model?: string }
   | { type: 'text'; delta: string }
   | { type: 'final_text'; content: string }
   | { type: 'thinking'; delta: string }
@@ -20,8 +20,7 @@ export type AgentEvent =
     }
   | {
       type: 'done';
-      sessionId?: string;
-      threadId?: string;
+      resumeHandle?: string;
       terminationReason: 'normal' | 'interrupted' | 'timeout';
     }
   | { type: 'error'; message: string; terminationReason: 'failed' | 'interrupted' | 'timeout' };
@@ -32,8 +31,7 @@ export interface AgentRunOptions {
   runId: string;
   prompt: string;
   cwd?: string;
-  sessionId?: string;
-  threadId?: string;
+  resumeHandle?: string;
   model?: string;
   images?: readonly string[];
   sandbox?: CodexSandboxMode;

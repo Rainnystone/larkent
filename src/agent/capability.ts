@@ -82,13 +82,6 @@ export function capabilityForProfile(
   };
 }
 
-export function usesNativeSessionId(agentId: AgentCapabilityId): boolean {
-  if (!isAgentKind(agentId)) {
-    throw new Error(unknownAgentKindMessage(agentId));
-  }
-  return descriptorFor(agentId).resume.label === 'session';
-}
-
 export function codexCapability(profile: Pick<ProfileConfig, 'permissions'>): AgentCapability {
   return capabilityForProfile({ agentKind: 'codex', permissions: profile.permissions });
 }

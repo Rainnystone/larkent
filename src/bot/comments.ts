@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { CommentEvent, LarkChannel } from '@larksuite/channel';
-import { capabilityForProfile, usesNativeSessionId } from '../agent/capability';
+import { capabilityForProfile } from '../agent/capability';
 import { descriptorFor } from '../agent/registry';
 import type { AgentAdapter, AgentEvent } from '../agent/types';
 import { getAgentStopGraceMs } from '../config/schema';
@@ -240,20 +240,17 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             policyFingerprint: policy.policyFingerprint,
           })
         : undefined;
-      const sessionId =
-        canResumeAgentSession &&
-        usesNativeSessionId(capability.agentId)
-          ? sessions.resumeFor(docSessionScopeId, cwdRealpath) ??
-            sessions.resumeFor(legacyDocSessionScopeId, cwdRealpath)
-          : undefined;
-      const threadId =
-        descriptorFor(capability.agentId).resume.label === 'thread'
-          ? catalogEntry?.threadId
-          : undefined;
+      const resumeHandle = canResumeAgentSession
+        ? catalogEntry?.resumeHandle ??
+          (descriptorFor(capability.agentId).resumeHistory === 'codex-thread'
+            ? undefined
+            : sessions.resumeFor(docSessionScopeId, cwdRealpath) ??
+              sessions.resumeFor(legacyDocSessionScopeId, cwdRealpath))
+        : undefined;
       log.info('comment', 'session', {
         commentScopeId: runScopeId,
         sessionScopeId: agentSessionScopeId,
-        resume: Boolean(sessionId ?? threadId),
+        resume: Boolean(resumeHandle),
         sessionScopeActive: agentSessionRun.wasActive,
         cwd: cwdRealpath,
       });
@@ -261,8 +258,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       const execution = await deps.executor.submit({
         scopeId: runScopeId,
         policy,
-        sessionId,
-        threadId,
+        resumeHandle,
         stopGraceMs: getAgentStopGraceMs(controls.cfg),
         observability: {
           profile: controls.profile,
@@ -330,8 +326,12 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             policy,
             event: e,
           });
-          if (usesNativeSessionId(capability.agentId) && e.type === 'system' && e.sessionId) {
-            sessions.set(docSessionScopeId, e.sessionId, policy.cwdRealpath);
+          if (
+            descriptorFor(capability.agentId).resumeHistory !== 'codex-thread' &&
+            e.type === 'system' &&
+            e.resumeHandle
+          ) {
+            sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath);
           }
           switch (e.type) {
             case 'text':

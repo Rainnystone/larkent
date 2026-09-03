@@ -153,6 +153,7 @@ const ID_KEYS = new Set([
   'sourceMessageId',
   'sessionId',
   'threadId',
+  'resumeHandle',
   'docToken',
   'fileToken',
   'fileKey',

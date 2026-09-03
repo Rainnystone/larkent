@@ -79,7 +79,7 @@ export class CursorAdapter implements AgentAdapter {
       binaryPath: this.binary,
       argv: buildCursorArgs({
         prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
-        ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+        ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
         ...(opts.sandbox ? { sandbox: opts.sandbox } : {}),
       }),

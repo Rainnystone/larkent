@@ -1,4 +1,4 @@
-import { usesNativeSessionId, type AgentCapability } from '../agent/capability';
+import type { AgentCapability } from '../agent/capability';
 import { descriptorFor } from '../agent/registry';
 import { resolveModelArg } from '../agent/models';
 import type { AgentEvent } from '../agent/types';
@@ -111,9 +111,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     };
   }
 
-  let resumeFrom: string | undefined;
-  let sessionId: string | undefined;
-  let threadId: string | undefined;
+  let resumeHandle: string | undefined;
   if (input.sessionCatalog) {
     const catalogEntry = input.sessionCatalog.activeFor({
       scopeId: input.scopeId,
@@ -121,19 +119,12 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       cwdRealpath: workspace.cwdRealpath,
       policyFingerprint: policy.policyFingerprint,
     });
-    if (catalogEntry && usesNativeSessionId(catalogEntry.agentId)) {
-      sessionId = catalogEntry.sessionId;
-      resumeFrom = sessionId;
-    } else if (catalogEntry && descriptorFor(catalogEntry.agentId).resume.label === 'thread') {
-      threadId = catalogEntry.threadId;
-      resumeFrom = threadId;
-    }
+    resumeHandle = catalogEntry?.resumeHandle;
   }
-  if (!resumeFrom && usesNativeSessionId(input.capability.agentId)) {
-    resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
-    sessionId = resumeFrom;
+  if (!resumeHandle && usesSessionStore(input.capability.agentId)) {
+    resumeHandle = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
     const stale = input.sessions.getRaw(input.scopeId);
-    if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
+    if (!resumeHandle && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
       input.sessions.clear(input.scopeId);
     }
   }
@@ -143,8 +134,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     execution = await input.executor.submit({
       scopeId: input.scopeId,
       policy,
-      sessionId,
-      threadId,
+      resumeHandle,
       model: resolveModelArg(
         input.profileConfig.agentKind,
         input.profileConfig.preferences.model,
@@ -183,31 +173,26 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
     execution,
     policy,
     cwdRealpath: workspace.cwdRealpath,
-    ...(resumeFrom ? { resumeFrom } : {}),
+    ...(resumeHandle ? { resumeFrom: resumeHandle } : {}),
   };
 }
 
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
   if (input.event.type !== 'system') return;
-  if (usesNativeSessionId(input.capability.agentId) && input.event.sessionId) {
-    const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
-    input.sessions.set(input.scopeId, input.event.sessionId, cwdRealpath);
-    input.sessionCatalog?.upsertActive({
-      scopeId: input.scopeId,
-      agentId: input.capability.agentId,
-      cwdRealpath,
-      policyFingerprint: input.policy.policyFingerprint,
-      sessionId: input.event.sessionId,
-    });
-    return;
+  if (!input.event.resumeHandle) return;
+  const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
+  if (usesSessionStore(input.capability.agentId)) {
+    input.sessions.set(input.scopeId, input.event.resumeHandle, cwdRealpath);
   }
-  if (descriptorFor(input.capability.agentId).resume.label === 'thread' && input.event.threadId) {
-    input.sessionCatalog?.upsertActive({
-      scopeId: input.scopeId,
-      agentId: input.capability.agentId,
-      cwdRealpath: input.policy.cwdRealpath,
-      policyFingerprint: input.policy.policyFingerprint,
-      threadId: input.event.threadId,
-    });
-  }
+  input.sessionCatalog?.upsertActive({
+    scopeId: input.scopeId,
+    agentId: input.capability.agentId,
+    cwdRealpath,
+    policyFingerprint: input.policy.policyFingerprint,
+    resumeHandle: input.event.resumeHandle,
+  });
+}
+
+function usesSessionStore(agentId: AgentCapability['agentId']): boolean {
+  return descriptorFor(agentId).resumeHistory !== 'codex-thread';
 }

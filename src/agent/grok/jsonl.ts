@@ -193,7 +193,7 @@ export class GrokJsonlTranslator implements JsonlTranslator {
     const sessionId = stringValue(raw.sessionId) ?? stringValue(raw.session_id);
     if (sessionId) this.sessionId = sessionId;
     const events: AgentEvent[] = [];
-    if (sessionId) events.push({ type: 'system', sessionId });
+    if (sessionId) events.push({ type: 'system', resumeHandle: sessionId });
     const usage = this.usageEvent(raw);
     if (usage && !sameUsage(usage, this.lastUsage)) events.push(usage);
     events.push(...this.finalTextEvents());
@@ -250,7 +250,7 @@ export class GrokJsonlTranslator implements JsonlTranslator {
   private doneEvent(reason: 'normal' | 'interrupted' | 'timeout'): AgentEvent {
     return {
       type: 'done',
-      ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+      ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
       terminationReason: reason,
     };
   }

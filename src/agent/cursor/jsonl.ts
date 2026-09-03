@@ -91,7 +91,7 @@ export class CursorJsonlTranslator implements JsonlTranslator {
     }
     events.push({
       type: 'done',
-      ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+      ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
       terminationReason: reason,
     });
     return events;
@@ -133,7 +133,7 @@ export class CursorJsonlTranslator implements JsonlTranslator {
     return [
       {
         type: 'system',
-        ...(this.sessionId ? { sessionId: this.sessionId } : {}),
+        ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
         ...(this.cwd ? { cwd: this.cwd } : {}),
         ...(this.model ? { model: this.model } : {}),
       },

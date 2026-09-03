@@ -58,7 +58,7 @@ export class ClaudeAdapter implements AgentAdapter {
       argv: buildClaudeArgs({
         permissionMode: opts.permissionMode,
         systemPromptFile: prepared.path,
-        sessionId: opts.sessionId,
+        sessionId: opts.resumeHandle,
         model: opts.model,
       }),
       cwd: opts.cwd,
