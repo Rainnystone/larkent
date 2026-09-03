@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { QRCodeSVG } from "qrcode.react";
 import { CheckCircle2 } from "lucide-react";
 import { apiGet, apiPost } from "@/lib/api";
-import type { AgentKind, OnboardAgentChoice, OnboardState } from "@/lib/types";
+import type { AgentKind, OnboardAgentChoice } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { toast } from "@/components/ui/sonner";
+import {
+  EMPTY_ONBOARD_SNAPSHOT,
+  loadOnboardWizardSnapshot,
+  mergeOnboardSnapshot,
+  type OnboardWizardSnapshot,
+} from "./onboard-wizard-state";
 
 type Phase = "loading" | "waiting" | "confirm" | "creating" | "error";
 
@@ -33,19 +39,31 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
   const [existing, setExisting] = useState<string[]>([]);
   const [qr, setQr] = useState<{ sessionId: string; qrUrl: string; expireIn: number } | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
+  const [stateError, setStateError] = useState<string | null>(null);
 
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const scanned = useRef(false);
+  const snapshotRef = useRef<OnboardWizardSnapshot>(EMPTY_ONBOARD_SNAPSHOT);
+
+  function applySnapshot(incoming: OnboardWizardSnapshot) {
+    const merged = mergeOnboardSnapshot(snapshotRef.current, incoming);
+    snapshotRef.current = merged;
+    setDetected(merged.detected);
+    setExisting(merged.existing);
+    setAgentKinds(merged.agentKinds);
+    setStateError(merged.error);
+    setAgentKind((current) =>
+      merged.agentKinds.some((choice) => choice.kind === current) ? current : "",
+    );
+  }
+
+  async function loadOnboardState() {
+    applySnapshot(await loadOnboardWizardSnapshot(apiGet));
+  }
 
   useEffect(() => {
-    apiGet<OnboardState>("/api/onboard/state")
-      .then((s) => {
-        setDetected(s.detectedAgents);
-        setExisting(s.profiles);
-        setAgentKinds(s.agentKinds);
-        setAgentKind("");
-      })
-      .catch(() => {});
+    void loadOnboardState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selected = agentKinds.find((choice) => choice.kind === agentKind);
@@ -87,8 +105,12 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
     if (s.status === "scanned" && !scanned.current) {
       scanned.current = true;
       stopPolling();
+      if (snapshotRef.current.agentKinds.length === 0) {
+        await loadOnboardState();
+      }
+      const snapshot = snapshotRef.current;
       setBotName(s.botName ?? "");
-      setProfileName(s.suggestedProfile || uniqueName(agentKind || "bot", existing));
+      setProfileName(s.suggestedProfile || uniqueName(agentKind || "bot", snapshot.existing));
       setPhase("confirm");
     } else if (s.status === "error") {
       stopPolling();
@@ -98,7 +120,7 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
   }
 
   async function confirmCreate() {
-    if (!qr || !agentKind) return;
+    if (!qr || !agentKind || agentKinds.length === 0) return;
     if (missingRequired) {
       toast.error(selected?.displayName
         ? `未检测到 ${selected.displayName}。请先安装并登录后再创建 ${agentKind} profile。`
@@ -134,19 +156,30 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
         </div>
         <div className="space-y-1.5">
           <Label>AI Agent</Label>
-          <Select
-            value={agentKind || undefined}
-            onValueChange={(v) => setAgentKind(v as AgentKind)}
-          >
-            <SelectTrigger><SelectValue placeholder="选择 agent" /></SelectTrigger>
-            <SelectContent>
-              {agentKinds.map((choice) => (
-                <SelectItem key={choice.kind} value={choice.kind}>
-                  {choice.displayName}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          {agentKinds.length === 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm text-destructive">
+                {stateError ? `无法加载 agent 列表：${stateError}` : "无法加载 agent 列表"}
+              </p>
+              <Button variant="outline" size="sm" onClick={() => void loadOnboardState()}>
+                重试
+              </Button>
+            </div>
+          ) : (
+            <Select
+              value={agentKind || undefined}
+              onValueChange={(v) => setAgentKind(v as AgentKind)}
+            >
+              <SelectTrigger><SelectValue placeholder="选择 agent" /></SelectTrigger>
+              <SelectContent>
+                {agentKinds.map((choice) => (
+                  <SelectItem key={choice.kind} value={choice.kind}>
+                    {choice.displayName}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
         </div>
         <div className="space-y-1.5">
           <Label>Profile 名称</Label>
@@ -169,6 +202,7 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
             onClick={confirmCreate}
             disabled={
               phase === "creating" ||
+              agentKinds.length === 0 ||
               !agentKind ||
               !profileName.trim() ||
               existing.includes(profileName.trim()) ||
@@ -205,6 +239,12 @@ export function OnboardWizard({ onCreated }: { onCreated: (profile: string) => v
         )}
         {(phase === "error" || phase === "waiting") && (
           <Button variant="outline" size="sm" onClick={generate}>重新生成</Button>
+        )}
+        {stateError && agentKinds.length === 0 && (
+          <div className="space-y-2 text-center">
+            <p className="text-sm text-destructive">无法加载 agent 列表：{stateError}</p>
+            <Button variant="outline" size="sm" onClick={() => void loadOnboardState()}>重试</Button>
+          </div>
         )}
       </div>
       <p className="text-center text-xs text-muted-foreground">扫码人会成为应用 owner，自动豁免访问控制。</p>
