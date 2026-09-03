@@ -11,7 +11,12 @@ import {
   type PromptInjectionMode,
 } from './capability';
 import { claudeAgentOptionsSchema, claudePolicyInputs, mapClaudeEffectiveAccess } from './claude/options';
-import { codexAgentOptionsSchema, codexPolicyInputs, mapCodexEffectiveAccess } from './codex/options';
+import {
+  codexAgentOptionsSchema,
+  codexPolicyInputs,
+  codexThreadHistoryEnv,
+  mapCodexEffectiveAccess,
+} from './codex/options';
 import { cursorAgentOptionsSchema, cursorPolicyInputs, mapCursorEffectiveAccess } from './cursor/options';
 import { grokAgentOptionsSchema, grokPolicyInputs, mapGrokEffectiveAccess } from './grok/options';
 import { kimiAgentOptionsSchema, kimiPolicyInputs, mapKimiEffectiveAccess } from './kimi/options';
@@ -39,6 +44,7 @@ export interface AgentDescriptor {
   readonly agentOptionsSchema: AgentOptionsSchema;
   readonly policyInputs: (options: unknown) => Record<string, unknown>;
   readonly mapEffectiveAccess: (access: EffectiveAccess) => unknown;
+  readonly historyEnv?: (profile: ProfileConfig) => Record<string, unknown>;
   capability(profile?: Pick<ProfileConfig, 'permissions'>): AgentCapability;
   runtimeAccess(profile: ProfileConfig): { label: string; value: string };
 }
@@ -100,6 +106,7 @@ const DESCRIPTORS: Record<AgentKind, AgentDescriptor> = {
     agentOptionsSchema: codexAgentOptionsSchema,
     policyInputs: codexPolicyInputs,
     mapEffectiveAccess: mapCodexEffectiveAccess,
+    historyEnv: (profile) => codexThreadHistoryEnv(profile),
     capability: (profile) => {
       if (!profile) {
         throw new Error('codex capability requires a profile');

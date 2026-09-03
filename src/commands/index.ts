@@ -4,7 +4,6 @@ import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
 import type { LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import { capabilityForProfile } from '../agent/capability';
-import { codexThreadHistoryEnv } from '../agent/codex/options';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
@@ -744,13 +743,16 @@ async function listCodexResumeHistory(
   if (!binary) return [];
 
   const provider = ctx.codexHistoryProvider ?? listCodexThreadHistory;
+  const historyEnv = descriptorFor(ctx.controls.profileConfig.agentKind).historyEnv?.(
+    ctx.controls.profileConfig,
+  );
   try {
     return await provider({
       binary,
       cwd,
       limit,
       profileStateDir: commandProfilePaths(ctx).profileDir,
-      ...codexThreadHistoryEnv(ctx.controls.profileConfig),
+      ...historyEnv,
     });
   } catch (err) {
     log.warn('session', 'codex-history-failed', {
