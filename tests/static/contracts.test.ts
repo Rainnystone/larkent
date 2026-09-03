@@ -72,4 +72,13 @@ describe('static architecture contracts', () => {
       expect(source, file).not.toMatch(strayUnion);
     }
   });
+
+  it('spawns agent CLIs only from JsonlCliRunner', () => {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const) {
+      for (const file of collectTsFiles(`src/agent/${kind}`)) {
+        expect(read(file), file).not.toMatch(/\bspawnProcess\b/);
+      }
+    }
+    expect(read('src/agent/runner/jsonl-cli-runner.ts')).toMatch(/\bspawnProcess\b/);
+  });
 });
