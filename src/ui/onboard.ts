@@ -2,7 +2,6 @@ import { detectInstalledAgents } from '../cli/agent-detection';
 import { resolveAppPaths } from '../config/app-paths';
 import { setSecret } from '../config/keystore';
 import {
-  agentKindFromString,
   createRootConfig,
   loadRootConfig,
   readActiveProfile,
@@ -10,7 +9,13 @@ import {
   withConfigFileLock,
   writeActiveProfile,
 } from '../config/profile-store';
-import { descriptorFor, type AgentKind } from '../agent/registry';
+import {
+  agentKindHelpList,
+  descriptorFor,
+  isAgentKind,
+  unknownAgentKindMessage,
+  type AgentKind,
+} from '../agent/registry';
 import { secretKeyForApp, type AppConfig, type TenantBrand } from '../config/schema';
 import { buildEncryptedAccountConfig } from '../config/store';
 import { createBootstrapProfileConfig } from '../cli/profile-bootstrap';
@@ -78,10 +83,14 @@ export interface CreateProfileInput {
  */
 export async function onboardCreate(body: unknown, rootDir?: string) {
   const fv = asRecord(body);
-  const agentKind = agentKindFromString(String(fv.agentKind ?? ''));
-  if (!agentKind) {
-    throw new HttpError(400, 'agentKind is required');
+  const rawKind = String(fv.agentKind ?? '').trim();
+  if (!rawKind) {
+    throw new HttpError(400, `agentKind is required; expected one of: ${agentKindHelpList()}`);
   }
+  if (!isAgentKind(rawKind)) {
+    throw new HttpError(400, unknownAgentKindMessage(rawKind));
+  }
+  const agentKind = rawKind;
   const input: CreateProfileInput = {
     profile: String(fv.profile ?? '').trim() || agentKind,
     agentKind,

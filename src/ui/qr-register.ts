@@ -1,9 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { registerApp } from '@larksuite/channel';
 import { resolveAppPaths } from '../config/app-paths';
-import { agentKindFromString, loadRootConfig } from '../config/profile-store';
+import { loadRootConfig } from '../config/profile-store';
 import type { TenantBrand } from '../config/schema';
-import { agentKindHelpList } from '../agent/registry';
+import {
+  agentKindHelpList,
+  isAgentKind,
+  unknownAgentKindMessage,
+} from '../agent/registry';
 import { validateAppCredentials } from '../utils/feishu-auth';
 import { log } from '../core/logger';
 import { HttpError } from './http';
@@ -152,10 +156,14 @@ export async function finishQrRegistration(
   if (s.status === 'error') throw new HttpError(400, s.error ?? '扫码创建失败');
   if (!s.app) throw new HttpError(409, '尚未完成扫码');
 
-  const agentKind = agentKindFromString(String(fv.agentKind ?? ''));
-  if (!agentKind) {
+  const rawKind = String(fv.agentKind ?? '').trim();
+  if (!rawKind) {
     throw new HttpError(400, `agentKind is required; expected one of: ${agentKindHelpList()}`);
   }
+  if (!isAgentKind(rawKind)) {
+    throw new HttpError(400, unknownAgentKindMessage(rawKind));
+  }
+  const agentKind = rawKind;
   const profile = String(fv.profile ?? '').trim() || s.suggestedProfile || agentKind;
   const created = await writeNewProfile(
     { profile, agentKind, appId: s.app.appId, appSecret: s.app.appSecret, tenant: s.app.tenant },

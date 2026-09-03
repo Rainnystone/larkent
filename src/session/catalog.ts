@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import { paths } from '../config/paths';
 import { log } from '../core/logger';
 import { usesNativeSessionId, type AgentCapabilityId } from '../agent/capability';
-import { descriptorFor } from '../agent/registry';
+import { descriptorFor, isAgentKind } from '../agent/registry';
 
 export type CatalogAgentId = AgentCapabilityId;
 export type SessionCatalogStatus = 'active' | 'archived';
@@ -215,11 +215,7 @@ function normalizeEntry(input: unknown): SessionCatalogEntry | undefined {
   if (
     typeof raw.key !== 'string' ||
     typeof raw.scopeId !== 'string' ||
-    (raw.agentId !== 'claude' &&
-      raw.agentId !== 'codex' &&
-      raw.agentId !== 'kimi' &&
-      raw.agentId !== 'grok' &&
-      raw.agentId !== 'cursor') ||
+    !isAgentKind(raw.agentId) ||
     typeof raw.cwdRealpath !== 'string' ||
     typeof raw.policyFingerprint !== 'string' ||
     (raw.status !== 'active' && raw.status !== 'archived') ||

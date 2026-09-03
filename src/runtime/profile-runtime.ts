@@ -29,6 +29,7 @@ import {
   writeActiveProfile,
 } from '../config/profile-store';
 import {
+  AGENT_KINDS,
   agentKindCliUnion,
   agentKindHelpList,
   descriptorFor,
@@ -602,20 +603,23 @@ async function selectDetectedAgent(
     ? await selector(detected)
     : await promptForDetectedAgentSelection(detected);
   if (!selected) return undefined;
-  return detected.some((agent) => agent.kind === selected) ? selected : undefined;
+  return isAgentKind(selected) ? selected : undefined;
 }
 
 async function promptForDetectedAgentSelection(detected: DetectedAgent[]): Promise<AgentKind | undefined> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) return undefined;
+  const detectedByKind = new Map(detected.map((agent) => [agent.kind, agent]));
   p.intro('选择本地 agent');
   const selected = await p.select<AgentKind>({
-    message: '检测到多个本地 agent，本次要初始化哪一个？',
-    options: detected.map((agent) => ({
-      value: agent.kind,
-      label: displayAgentKind(agent.kind),
-      hint: agent.binaryPath,
-    })),
-    initialValue: detected[0]?.kind,
+    message: '选择要初始化的 agent',
+    options: AGENT_KINDS.map((kind) => {
+      const binaryPath = detectedByKind.get(kind)?.binaryPath;
+      return {
+        value: kind,
+        label: displayAgentKind(kind),
+        ...(binaryPath ? { hint: binaryPath } : {}),
+      };
+    }),
   });
   if (p.isCancel(selected)) {
     p.cancel('已取消 agent 选择。');
