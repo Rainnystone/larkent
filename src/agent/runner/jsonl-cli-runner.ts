@@ -1,3 +1,4 @@
+import { StringDecoder } from 'node:string_decoder';
 import type { Readable, Writable } from 'node:stream';
 import { log } from '../../core/logger';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
@@ -49,6 +50,7 @@ interface LineQueue {
   nextLine(): string | undefined;
   closed(): boolean;
   wait(): Promise<void>;
+  waitUntilClosed(): Promise<void>;
   close(): void;
 }
 
@@ -141,13 +143,21 @@ function startJsonlCli(input: JsonlCliRunnerInput): JsonlCliSession {
   let silentExitTimer: ReturnType<typeof setTimeout> | undefined;
   let sawStdout = false;
 
-  const clearTimers = (): void => {
+  const clearIdleAndTotal = (): void => {
     if (idleTimer) clearTimeout(idleTimer);
     if (totalTimer) clearTimeout(totalTimer);
-    if (silentExitTimer) clearTimeout(silentExitTimer);
     idleTimer = undefined;
     totalTimer = undefined;
+  };
+
+  const clearSilentExit = (): void => {
+    if (silentExitTimer) clearTimeout(silentExitTimer);
     silentExitTimer = undefined;
+  };
+
+  const clearTimers = (): void => {
+    clearIdleAndTotal();
+    clearSilentExit();
   };
 
   const armIdle = (): void => {
@@ -173,7 +183,7 @@ function startJsonlCli(input: JsonlCliRunnerInput): JsonlCliSession {
   armIdle();
 
   const cleanupOnce = once(async () => {
-    clearTimers();
+    clearIdleAndTotal();
     if (input.cleanup) await input.cleanup();
   });
 
@@ -218,7 +228,7 @@ function startJsonlCli(input: JsonlCliRunnerInput): JsonlCliSession {
   async function kill(reason: JsonlAbortKind): Promise<void> {
     if (killReason === undefined) killReason = reason;
     if (child.exitCode !== null || child.signalCode !== null) {
-      stdout.close();
+      await drainStdout(stdout);
       return;
     }
     log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
@@ -240,7 +250,7 @@ function startJsonlCli(input: JsonlCliRunnerInput): JsonlCliSession {
         resolve();
       });
     });
-    stdout.close();
+    await drainStdout(stdout);
   }
 
   const onAbort = (): void => {
@@ -385,6 +395,8 @@ async function waitForExitCode(child: JsonlChild): Promise<number | null> {
 
 function attachLineQueue(stream: Readable, onLine?: () => void): LineQueue {
   const lines: string[] = [];
+  const decoder = new StringDecoder('utf8');
+  const endWaiters: Array<() => void> = [];
   let closed = false;
   let notify: (() => void) | undefined;
   let buffer = '';
@@ -397,8 +409,8 @@ function attachLineQueue(stream: Readable, onLine?: () => void): LineQueue {
     notify = undefined;
     current?.();
   };
-  stream.on('data', (chunk: Buffer) => {
-    buffer += chunk.toString('utf8');
+  const consume = (text: string): void => {
+    buffer += text;
     let nl = buffer.indexOf('\n');
     while (nl !== -1) {
       const line = buffer.slice(0, nl).trim();
@@ -406,15 +418,20 @@ function attachLineQueue(stream: Readable, onLine?: () => void): LineQueue {
       if (line) pushLine(line);
       nl = buffer.indexOf('\n');
     }
+  };
+  stream.on('data', (chunk: Buffer) => {
+    consume(decoder.write(chunk));
     settle();
   });
   const close = (): void => {
     if (closed) return;
-    closed = true;
+    consume(decoder.end());
     const tail = buffer.trim();
     buffer = '';
     if (tail) pushLine(tail);
+    closed = true;
     settle();
+    for (const waiter of endWaiters.splice(0)) waiter();
   };
   stream.on('end', close);
   stream.on('close', close);
@@ -431,8 +448,25 @@ function attachLineQueue(stream: Readable, onLine?: () => void): LineQueue {
         notify = resolve;
       });
     },
+    waitUntilClosed(): Promise<void> {
+      if (closed) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        endWaiters.push(resolve);
+      });
+    },
     close,
   };
+}
+
+async function drainStdout(stdout: LineQueue, timeoutMs = 50): Promise<void> {
+  if (stdout.closed()) return;
+  await Promise.race([
+    stdout.waitUntilClosed(),
+    new Promise<void>((resolve) => {
+      setTimeout(resolve, timeoutMs);
+    }),
+  ]);
+  stdout.close();
 }
 
 function once(fn: () => Promise<void>): () => Promise<void> {

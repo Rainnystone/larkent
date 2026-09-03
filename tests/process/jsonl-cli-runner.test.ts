@@ -279,9 +279,10 @@ describe('JsonlCliRunner abort and timeouts', () => {
 
   afterEach(async () => {
     await Promise.all(
-      cleanup.splice(0).map((dir) =>
-        rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }),
-      ),
+      cleanup.splice(0).map(async (dir) => {
+        await killHeldPid(join(dir, 'holder.pid'));
+        await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+      }),
     );
   });
 
@@ -406,6 +407,48 @@ describe('JsonlCliRunner abort and timeouts', () => {
     await iterator.next();
     expect(await handle.waitForExit(1_000)).toBe(true);
     expect(calls).toEqual(['cleanup']);
+  });
+
+  it('unblocks when the child exits with no JSONL while a descendant holds stdout', async () => {
+    const fake = await createHeldStdoutCli();
+    cleanup.push(fake.dir);
+    const handle = runJsonlCli({
+      binaryPath: fake.path,
+      argv: [],
+      cwd: fake.dir,
+      env: process.env,
+      translator: new RecordingTranslator(),
+      signal: new AbortController().signal,
+      timeouts: { idleMs: 0, totalMs: 0 },
+      name: 'probe',
+      stopGraceMs: 50,
+    });
+    const events = await collect(handle.events);
+    expect(events[0]).toMatchObject({ type: 'error', terminationReason: 'failed' });
+    expect(events[0]?.message).toMatch(/exited with code 1/);
+    expect(await handle.waitForExit(1_000)).toBe(true);
+    await killHeldPid(fake.holderPidPath);
+  }, 5_000);
+
+  it('reassembles a JSONL line split across UTF-8 chunks', async () => {
+    const fake = await createSplitUtf8Cli();
+    cleanup.push(fake.dir);
+    const events = await collect(
+      runJsonlCli({
+        binaryPath: fake.path,
+        argv: [],
+        cwd: fake.dir,
+        env: process.env,
+        translator: new RecordingTranslator(),
+        signal: new AbortController().signal,
+        timeouts: { idleMs: 0, totalMs: 0 },
+        name: 'probe',
+      }),
+    );
+    expect(events).toEqual([
+      { type: 'text', delta: JSON.stringify({ type: 'text', data: '你好' }) },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
   });
 
   it('drives two JSONL dialects through runJsonlCli', async () => {
@@ -1114,6 +1157,65 @@ async function createFakeCli(options: {
   );
   await chmod(path, 0o755);
   return { path, dir, recordPath };
+}
+
+async function createHeldStdoutCli(): Promise<FakeBinary & { holderPidPath: string }> {
+  const dir = await mkdtemp(join(tmpdir(), 'jsonl-cli-held-stdout-'));
+  const path = join(dir, 'fake-cli.mjs');
+  const recordPath = join(dir, 'argv.json');
+  const holderPidPath = join(dir, 'holder.pid');
+  await writeFile(
+    path,
+    [
+      '#!/usr/bin/env node',
+      'import { spawn } from "node:child_process";',
+      'import { writeFileSync } from "node:fs";',
+      'const holder = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {',
+      '  stdio: ["ignore", "inherit", "ignore"],',
+      '  detached: true,',
+      '  windowsHide: true,',
+      '});',
+      'holder.unref();',
+      `writeFileSync(${JSON.stringify(holderPidPath)}, String(holder.pid ?? ""));`,
+      'process.stderr.write("held\\n");',
+      'process.exit(1);',
+    ].join('\n'),
+    'utf8',
+  );
+  await chmod(path, 0o755);
+  return { path, dir, recordPath, holderPidPath };
+}
+
+async function createSplitUtf8Cli(): Promise<FakeBinary> {
+  const dir = await mkdtemp(join(tmpdir(), 'jsonl-cli-utf8-'));
+  const path = join(dir, 'fake-cli.mjs');
+  const recordPath = join(dir, 'argv.json');
+  const line = Buffer.from(`${JSON.stringify({ type: 'text', data: '你好' })}\n`);
+  const splitAt = line.indexOf(0xe4) + 1;
+  await writeFile(
+    path,
+    [
+      '#!/usr/bin/env node',
+      `const line = Buffer.from(${JSON.stringify(Array.from(line))});`,
+      `process.stdout.write(line.subarray(0, ${splitAt}));`,
+      'setTimeout(() => {',
+      `  process.stdout.write(line.subarray(${splitAt}));`,
+      '  process.exit(0);',
+      '}, 20);',
+    ].join('\n'),
+    'utf8',
+  );
+  await chmod(path, 0o755);
+  return { path, dir, recordPath };
+}
+
+async function killHeldPid(pidPath: string): Promise<void> {
+  try {
+    const pid = Number((await readFile(pidPath, 'utf8')).trim());
+    if (Number.isInteger(pid) && pid > 0) process.kill(pid, 'SIGKILL');
+  } catch {
+    return;
+  }
 }
 
 async function readRecord(path: string): Promise<FakeRecord> {
