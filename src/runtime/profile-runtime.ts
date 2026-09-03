@@ -22,6 +22,7 @@ import {
   createRootConfig,
   hasPermissionDefaultsMigration,
   loadRootConfig,
+  loadRootConfigWithMeta,
   markPermissionDefaultsMigration,
   readActiveProfile,
   runtimeProfileConfig,
@@ -146,7 +147,8 @@ export async function resolveProfileRuntime(
       : {}),
   }, opts.handleActiveBridgeMigrationConflict);
 
-  let rootConfig = await loadRootConfig(configPath);
+  const loadedRoot = await loadRootConfigWithMeta(configPath);
+  let rootConfig = loadedRoot?.root;
   if (rootConfig) {
     if (!explicitProfile && !activeProfile) {
       profile = rootConfig.activeProfile;
@@ -175,7 +177,8 @@ export async function resolveProfileRuntime(
     if (defaultWorkspaceUpgrade.changed) {
       rootConfig = defaultWorkspaceUpgrade.rootConfig;
     }
-    if (runtimeUpgrade.changed || defaultWorkspaceUpgrade.changed) {
+    const persistUpgrade = loadedRoot.upgraded || runtimeUpgrade.changed || defaultWorkspaceUpgrade.changed;
+    if (persistUpgrade) {
       await saveRootConfig(rootConfig, configPath);
       profileConfig = rootConfig.profiles[profile]!;
       log.info('profile', 'legacy-runtime-defaults-upgraded', {
@@ -183,6 +186,7 @@ export async function resolveProfileRuntime(
         permissions: runtimeUpgrade.permissions,
         codex: runtimeUpgrade.codex,
         workspace: defaultWorkspaceUpgrade.changed,
+        schema: loadedRoot.upgraded,
       });
     }
     assertBootstrapAppMatchesExistingProfile(opts, profile, profileConfig);
@@ -420,7 +424,7 @@ async function hasLegacyConfig(configPath: string): Promise<boolean> {
     throw err;
   }
   const parsed = JSON.parse(raw) as { schemaVersion?: unknown };
-  return parsed.schemaVersion !== 2;
+  return parsed.schemaVersion !== 2 && parsed.schemaVersion !== 3;
 }
 
 async function migrateV1ToV2WithActiveBridgeHandling(

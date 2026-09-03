@@ -16,6 +16,7 @@ import * as lockfile from 'proper-lockfile';
 import { resolveAppPaths } from '../config/app-paths';
 import { paths } from '../config/paths';
 import type { AgentKind } from '../config/profile-schema';
+import { PROCESS_REGISTRY_SCHEMA_VERSION } from '../config/migrations';
 import { isAgentKind } from '../agent/registry';
 import type { TenantBrand } from '../config/schema';
 import { writeFileAtomic } from '../platform/atomic-write';
@@ -51,10 +52,11 @@ export interface ProcessEntry {
 }
 
 interface RegistryFile {
+  schemaVersion: number;
   entries: ProcessEntry[];
 }
 
-const EMPTY: RegistryFile = { entries: [] };
+const EMPTY: RegistryFile = { schemaVersion: PROCESS_REGISTRY_SCHEMA_VERSION, entries: [] };
 
 function isValidEntry(e: unknown): e is ProcessEntry {
   if (!e || typeof e !== 'object') return false;
@@ -87,13 +89,13 @@ export function readAndPrune(path: string = paths.processesFile): ProcessEntry[]
 }
 
 async function writeAtomic(entries: ProcessEntry[], path: string): Promise<void> {
-  const body = `${JSON.stringify({ entries } satisfies RegistryFile, null, 2)}\n`;
+  const body = `${JSON.stringify({ schemaVersion: PROCESS_REGISTRY_SCHEMA_VERSION, entries } satisfies RegistryFile, null, 2)}\n`;
   await writeFileAtomic(path, body, { mode: 0o600 });
 }
 
 function writeAtomicSync(entries: ProcessEntry[], path: string): void {
   const tmp = `${path}.tmp-${process.pid}`;
-  const body = `${JSON.stringify({ entries } satisfies RegistryFile, null, 2)}\n`;
+  const body = `${JSON.stringify({ schemaVersion: PROCESS_REGISTRY_SCHEMA_VERSION, entries } satisfies RegistryFile, null, 2)}\n`;
   mkdirSync(dirname(path), { recursive: true });
   const fd = openSync(tmp, 'w', 0o600);
   try {
@@ -360,20 +362,24 @@ function readRaw(path: string): RegistryFile {
   if (preferred) return preferred;
   const legacy = legacyRegistryFile(path);
   if (legacy && legacy !== path) {
-    return readRegistryFile(legacy) ?? { entries: [] };
+    return readRegistryFile(legacy) ?? { ...EMPTY };
   }
-  return { entries: [] };
+  return { ...EMPTY };
 }
 
 function readRegistryFile(path: string): RegistryFile | undefined {
   try {
     const text = readFileSync(path, 'utf8');
     const parsed = JSON.parse(text) as Partial<RegistryFile>;
-    if (!parsed || !Array.isArray(parsed.entries)) return { entries: [] };
-    return { entries: parsed.entries.filter(isValidEntry) };
+    if (!parsed || !Array.isArray(parsed.entries)) return { ...EMPTY };
+    return {
+      schemaVersion:
+        parsed.schemaVersion === undefined ? PROCESS_REGISTRY_SCHEMA_VERSION : parsed.schemaVersion,
+      entries: parsed.entries.filter(isValidEntry),
+    };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    return { entries: [] };
+    return { ...EMPTY };
   }
 }
 

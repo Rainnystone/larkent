@@ -2,6 +2,7 @@ import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import * as lockfile from 'proper-lockfile';
 import type { AppPaths } from '../config/app-paths';
+import { RUNTIME_LOCK_SCHEMA_VERSION } from '../config/migrations';
 import type { AgentKind } from '../config/profile-schema';
 import { isAgentKind } from '../agent/registry';
 
@@ -14,6 +15,7 @@ export interface AcquiredRuntimeLock {
 }
 
 export interface RuntimeLockMeta {
+  schemaVersion: number;
   kind: RuntimeLockKind;
   target: string;
   profile: string;
@@ -134,7 +136,7 @@ export async function checkRuntimeLock(target: string): Promise<{
 }
 
 async function acquireRuntimeLock(
-  meta: Omit<RuntimeLockMeta, 'pid' | 'startedAt'>,
+  meta: Omit<RuntimeLockMeta, 'schemaVersion' | 'pid' | 'startedAt'>,
 ): Promise<AcquiredRuntimeLock> {
   await mkdir(dirname(meta.target), { recursive: true });
   await writeFile(meta.target, '', { flag: 'a', mode: 0o600 });
@@ -152,6 +154,7 @@ async function acquireRuntimeLock(
   }
 
   const fullMeta: RuntimeLockMeta = {
+    schemaVersion: RUNTIME_LOCK_SCHEMA_VERSION,
     ...meta,
     pid: process.pid,
     startedAt: new Date().toISOString(),
@@ -175,6 +178,8 @@ async function acquireRuntimeLock(
 function isRuntimeLockMeta(value: unknown): value is RuntimeLockMeta {
   if (!value || typeof value !== 'object') return false;
   const meta = value as Partial<RuntimeLockMeta>;
+  const schemaVersion = meta.schemaVersion;
+  if (schemaVersion !== undefined && schemaVersion !== RUNTIME_LOCK_SCHEMA_VERSION) return false;
   return (
     (meta.kind === 'profile' || meta.kind === 'app') &&
     typeof meta.target === 'string' &&

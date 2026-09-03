@@ -15,6 +15,7 @@ import {
   type CodexConfig,
   type RootConfig,
 } from './profile-schema';
+import { PROFILE_SCHEMA_VERSION } from './migrations';
 import { markPermissionDefaultsMigration, saveRootConfig } from './profile-store';
 import type { AppConfig } from './schema';
 import { isAgentKind, unknownAgentKindMessage } from '../agent/registry';
@@ -102,7 +103,8 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   }
 
   const parsed = JSON.parse(rawConfig) as LegacyConfig | RootConfig;
-  if ((parsed as RootConfig).schemaVersion === 2) {
+  const schemaVersion = (parsed as RootConfig).schemaVersion;
+  if (schemaVersion === 2 || schemaVersion === PROFILE_SCHEMA_VERSION) {
     return { migrated: false, profile: (parsed as RootConfig).activeProfile ?? profile };
   }
 
@@ -142,7 +144,7 @@ export async function migrateV1ToV2(opts: MigrateV2Options = {}): Promise<Migrat
   }
 
   const next: RootConfig = markPermissionDefaultsMigration({
-    schemaVersion: 2,
+    schemaVersion: PROFILE_SCHEMA_VERSION,
     activeProfile: profile,
     preferences: {},
     ...(legacy.secrets ? { secrets: legacy.secrets } : {}),

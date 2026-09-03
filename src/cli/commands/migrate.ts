@@ -231,10 +231,11 @@ async function migrateConfigShape(path: string): Promise<void> {
 }
 
 function isRootConfigV2(value: unknown): value is RootConfig {
+  const schemaVersion = (value as Partial<RootConfig>).schemaVersion;
   return Boolean(
     value &&
       typeof value === 'object' &&
-      (value as Partial<RootConfig>).schemaVersion === 2 &&
+      (schemaVersion === 2 || schemaVersion === 3) &&
       (value as Partial<RootConfig>).profiles &&
       typeof (value as Partial<RootConfig>).profiles === 'object',
   );

@@ -38,43 +38,50 @@ export function createRuntimeAgent(
         }
       : undefined;
   const kind = profileConfig.agentKind;
-  const descriptor = descriptorFor(kind);
-  const envBinary = process.env[descriptor.envBinVar];
+  const explicitBinary = resolveProfileBinary(profileConfig);
+  const defaultBinary = descriptorFor(kind).binaryNames[0] ?? kind;
   const factories: Record<AgentKind, () => AgentAdapter> = {
-    claude: () => new ClaudeAdapter({ larkChannel }),
+    claude: () => new ClaudeAdapter({ binary: explicitBinary ?? defaultBinary, larkChannel }),
     codex: () => {
       const codex = profileConfig.codex;
-      if (!codex?.binaryPath) {
+      const binary = explicitBinary ?? codex?.binaryPath;
+      if (!binary) {
         throw new Error('codex profile requires codex.binaryPath');
       }
       return new CodexAdapter({
-        binary: codex.binaryPath,
+        binary,
         profileStateDir: appPaths.profileDir,
-        ...(codex.codexHome ? { codexHome: codex.codexHome } : {}),
-        inheritCodexHome: codex.inheritCodexHome === true,
-        ignoreUserConfig: codex.ignoreUserConfig === true,
-        ignoreRules: codex.ignoreRules !== false,
+        ...(codex?.codexHome ? { codexHome: codex.codexHome } : {}),
+        inheritCodexHome: codex?.inheritCodexHome === true,
+        ignoreUserConfig: codex?.ignoreUserConfig === true,
+        ignoreRules: codex?.ignoreRules !== false,
         sandbox: profileConfig.sandbox.defaultMode,
         larkChannel,
       });
     },
     kimi: () =>
       new KimiAdapter({
-        binary: envBinary ?? descriptor.binaryNames[0] ?? kind,
+        binary: explicitBinary ?? defaultBinary,
         larkChannel,
       }),
     grok: () =>
       new GrokAdapter({
-        binary: envBinary ?? descriptor.binaryNames[0] ?? kind,
+        binary: explicitBinary ?? defaultBinary,
         larkChannel,
       }),
     cursor: () =>
       new CursorAdapter({
-        ...(envBinary ? { binary: envBinary } : {}),
+        ...(explicitBinary ? { binary: explicitBinary } : {}),
         larkChannel,
       }),
   };
   return factories[kind]();
+}
+
+export function resolveProfileBinary(profile: ProfileConfig): string | undefined {
+  if (profile.agent.binaryPath) return profile.agent.binaryPath;
+  if (profile.agentKind === 'codex') return profile.codex?.binaryPath;
+  return undefined;
 }
 
 export async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promise<AgentAvailability> {

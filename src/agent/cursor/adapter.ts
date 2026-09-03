@@ -1,9 +1,10 @@
-import { resolveCursorBinary } from '../../cli/agent-detection';
+import { resolveFirstAvailableBinary } from '../../cli/agent-detection';
 import { mergeProcessEnv } from '../../platform/spawn';
 import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
+import { descriptorFor } from '../registry';
 import { runJsonlCli, wrapParsedTranslator } from '../runner/jsonl-cli-runner';
 import type {
   AgentAdapter,
@@ -31,8 +32,8 @@ export class CursorAdapter implements AgentAdapter {
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: CursorAdapterOptions = {}) {
-    this.explicitBinary = Boolean(opts.binary ?? process.env.LARK_CHANNEL_CURSOR_BIN);
-    this.binary = opts.binary ?? process.env.LARK_CHANNEL_CURSOR_BIN ?? 'cursor-agent';
+    this.explicitBinary = Boolean(opts.binary);
+    this.binary = opts.binary ?? descriptorFor('cursor').binaryNames[0] ?? 'cursor-agent';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
   }
@@ -48,7 +49,7 @@ export class CursorAdapter implements AgentAdapter {
   async checkAvailability(): Promise<AgentAvailability> {
     if (!this.explicitBinary) {
       try {
-        this.binary = await resolveCursorBinary();
+        this.binary = await resolveFirstAvailableBinary(descriptorFor('cursor').binaryNames);
       } catch {
         // Keep the default name so preflight can emit agent-binary-not-found.
       }
