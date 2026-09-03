@@ -88,10 +88,6 @@ async function startParityBot(kind: PinAgentKind): Promise<{
   const binDir = join(tmp.root, 'bin');
   const installed = await installKindCli(binDir, kind);
   setEnv('PATH', `${binDir}${delimiter}${process.env.PATH ?? ''}`);
-  // ClaudeAdapter always spawns the name `claude` and ignores LARK_CHANNEL_CLAUDE_BIN.
-  if (process.platform === 'win32') {
-    setEnv('PATHEXT', `.MJS;${process.env.PATHEXT ?? ''}`);
-  }
   if (kind === 'codex') {
     setEnv(envBinVarName(kind), undefined);
   } else {

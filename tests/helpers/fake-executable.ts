@@ -57,6 +57,9 @@ export async function writeScriptedJsonlExecutable(
   const recordPath = `${path}.argv.json`;
   const scriptPath = scriptPathFor(path);
   await writeScriptedJsonlExecutableFile(path, recordPath, options);
+  if (process.platform === 'win32') {
+    await writeFile(join(root, `${base}.CMD`), cmdLauncher(path), { mode: 0o755 });
+  }
   return { path, recordPath, scriptPath };
 }
 

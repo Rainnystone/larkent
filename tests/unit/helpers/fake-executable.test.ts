@@ -30,6 +30,12 @@ describe('scripted JSONL fake executables', () => {
     expect(source.startsWith('#!')).toBe(true);
     const script = JSON.parse(await readFile(fake.scriptPath, 'utf8')) as { lines: unknown[] };
     expect(script.lines).toEqual([{ type: 'text', data: 'ok' }]);
+    if (process.platform === 'win32') {
+      const launcher = await readFile(join(dir, 'grok.CMD'), 'utf8');
+      expect(launcher.startsWith('@echo off')).toBe(true);
+      expect(launcher).toMatch(/grok\.mjs/i);
+      expect(launcher).not.toContain('import {');
+    }
     const version = spawnProcessSync(fake.path, ['--version'], { encoding: 'utf8' });
     expect(version.status).toBe(0);
     expect(String(version.stdout)).toContain('0.0.0-pin');
