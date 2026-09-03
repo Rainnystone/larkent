@@ -101,6 +101,7 @@ describe('kill on OS-managed processes', () => {
 
 function entry(overrides: Partial<ProcessEntry> = {}): ProcessEntry {
   return {
+    schemaVersion: 1,
     id: '4a93',
     pid: 4242,
     appId: 'cli_codex',

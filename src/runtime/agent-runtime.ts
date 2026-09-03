@@ -6,6 +6,7 @@ import { KimiAdapter } from '../agent/kimi/adapter';
 import type { LarkChannelEnvContext } from '../agent/lark-channel-env';
 import { AgentPreflightError, type AgentAvailability, type LocalAgentId } from '../agent/preflight';
 import {
+  descriptorFor,
   isAgentKind,
   unknownAgentKindMessage,
   type AgentKind,
@@ -22,41 +23,53 @@ type RuntimeAgentFactory = (
 ) => AgentAdapter;
 
 const RUNTIME_AGENT_FACTORIES: Record<AgentKind, RuntimeAgentFactory> = {
-  claude: (_profileConfig, _appPaths, larkChannel) => new ClaudeAdapter({ larkChannel }),
+  claude: (profileConfig, _appPaths, larkChannel) =>
+    new ClaudeAdapter({ ...adapterBinaryOpts(profileConfig), larkChannel }),
   codex: (profileConfig, appPaths, larkChannel) => {
-    const codex = profileConfig.codex;
-    if (!codex?.binaryPath) {
-      throw new Error('codex profile requires codex.binaryPath');
+    const binary = runtimeBinary(profileConfig);
+    if (!binary) {
+      throw new Error('codex profile requires a binary path');
     }
+    const codex = profileConfig.codex;
     return new CodexAdapter({
-      binary: codex.binaryPath,
+      binary,
       profileStateDir: appPaths.profileDir,
-      ...(codex.codexHome ? { codexHome: codex.codexHome } : {}),
-      inheritCodexHome: codex.inheritCodexHome === true,
-      ignoreUserConfig: codex.ignoreUserConfig === true,
-      ignoreRules: codex.ignoreRules !== false,
+      ...(codex?.codexHome ? { codexHome: codex.codexHome } : {}),
+      inheritCodexHome: codex?.inheritCodexHome === true,
+      ignoreUserConfig: codex?.ignoreUserConfig === true,
+      ignoreRules: codex?.ignoreRules !== false,
       sandbox: profileConfig.sandbox.defaultMode,
       larkChannel,
     });
   },
-  kimi: (_profileConfig, _appPaths, larkChannel) =>
+  kimi: (profileConfig, _appPaths, larkChannel) =>
     new KimiAdapter({
-      binary: process.env.LARK_CHANNEL_KIMI_BIN ?? 'kimi',
+      binary: runtimeBinary(profileConfig) ?? descriptorFor('kimi').binaryNames[0] ?? 'kimi',
       larkChannel,
     }),
-  grok: (_profileConfig, _appPaths, larkChannel) =>
+  grok: (profileConfig, _appPaths, larkChannel) =>
     new GrokAdapter({
-      binary: process.env.LARK_CHANNEL_GROK_BIN ?? 'grok',
+      binary: runtimeBinary(profileConfig) ?? descriptorFor('grok').binaryNames[0] ?? 'grok',
       larkChannel,
     }),
-  cursor: (_profileConfig, _appPaths, larkChannel) =>
+  cursor: (profileConfig, _appPaths, larkChannel) =>
     new CursorAdapter({
-      ...(process.env.LARK_CHANNEL_CURSOR_BIN
-        ? { binary: process.env.LARK_CHANNEL_CURSOR_BIN }
-        : {}),
+      ...adapterBinaryOpts(profileConfig),
       larkChannel,
     }),
 };
+
+function runtimeBinary(profile: ProfileConfig): string | undefined {
+  if (profile.agent.binaryPath) return profile.agent.binaryPath;
+  if (profile.codex?.binaryPath) return profile.codex.binaryPath;
+  const env = process.env[descriptorFor(profile.agentKind).envBinVar];
+  return env || undefined;
+}
+
+function adapterBinaryOpts(profile: ProfileConfig): { binary?: string } {
+  const binary = runtimeBinary(profile);
+  return binary ? { binary } : {};
+}
 
 /**
  * Build the agent adapter for a profile, wiring its per-profile lark-channel env

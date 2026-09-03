@@ -327,6 +327,7 @@ async function readRoot(root: string): Promise<RootConfig> {
 
 function processEntry(overrides: Partial<ProcessEntry>): ProcessEntry {
   return {
+    schemaVersion: 1,
     id: 'id',
     pid: process.pid,
     appId: 'cli_test',

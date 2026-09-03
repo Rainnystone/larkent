@@ -23,8 +23,9 @@ describe('profile schema', () => {
       accounts: { app },
     });
 
-    expect(cfg.schemaVersion).toBe(2);
+    expect(cfg.schemaVersion).toBe(3);
     expect(cfg.agentKind).toBe('claude');
+    expect(cfg.agent).toEqual({ kind: 'claude' });
     expect(cfg.permissions).toMatchObject({
       defaultAccess: 'full',
       maxAccess: 'full',

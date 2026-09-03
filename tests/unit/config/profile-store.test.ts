@@ -126,6 +126,10 @@ describe('profile store canonical serialization', () => {
     expect(savedProfile.access).toEqual(profile.access);
     expect(savedProfile.workspaces).toEqual(profile.workspaces);
     expect(savedProfile.codex).toEqual(profile.codex);
+    expect(savedProfile.agent).toEqual({
+      kind: 'codex',
+      binaryPath: '/usr/local/bin/codex',
+    });
     expect(savedProfile.attachments).toEqual(profile.attachments);
     expect(savedProfile.comments).toEqual(profile.comments);
     expect(savedProfile.larkCli).toEqual(profile.larkCli);

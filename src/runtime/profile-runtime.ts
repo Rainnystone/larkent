@@ -150,7 +150,7 @@ export async function resolveProfileRuntime(
       : {}),
   }, opts.handleActiveBridgeMigrationConflict);
 
-  let rootConfig = await loadRootConfig(configPath);
+  let rootConfig = await loadRootConfig(configPath, { persistUpgrades: true });
   if (rootConfig) {
     if (!explicitProfile && !activeProfile) {
       profile = rootConfig.activeProfile;

@@ -109,6 +109,7 @@ async function writeProfiles(root: string, activeProfile: string, names: string[
 
 function processEntry(overrides: Partial<ProcessEntry>): ProcessEntry {
   return {
+    schemaVersion: 1,
     id: 'id',
     pid: process.pid,
     appId: 'cli_test',

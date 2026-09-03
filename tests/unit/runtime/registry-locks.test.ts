@@ -225,6 +225,7 @@ describe('registry and runtime lock integration', () => {
 
 function entry(overrides: Partial<ProcessEntry>): ProcessEntry {
   return {
+    schemaVersion: 1,
     id: 'id',
     pid: process.pid,
     appId: 'cli_test',

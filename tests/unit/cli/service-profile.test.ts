@@ -570,6 +570,7 @@ describe('profile-aware service commands', () => {
 
 function processEntry(overrides: Partial<ProcessEntry>): ProcessEntry {
   return {
+    schemaVersion: 1,
     id: 'id',
     pid: process.pid,
     appId: 'cli_test',

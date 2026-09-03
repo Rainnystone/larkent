@@ -5,6 +5,8 @@ import type { AppPaths } from '../config/app-paths';
 import { isAgentKind } from '../agent/registry';
 import type { AgentKind } from '../config/profile-schema';
 
+export const RUNTIME_LOCK_SCHEMA_VERSION = 1 as const;
+
 export type RuntimeLockKind = 'profile' | 'app';
 
 export interface AcquiredRuntimeLock {
@@ -14,6 +16,7 @@ export interface AcquiredRuntimeLock {
 }
 
 export interface RuntimeLockMeta {
+  schemaVersion: typeof RUNTIME_LOCK_SCHEMA_VERSION;
   kind: RuntimeLockKind;
   target: string;
   profile: string;
@@ -102,7 +105,9 @@ export function runtimeLockMetaFile(target: string): string {
 export async function readRuntimeLockMeta(target: string): Promise<RuntimeLockMeta | undefined> {
   try {
     const parsed = JSON.parse(await readFile(runtimeLockMetaFile(target), 'utf8')) as unknown;
-    return isRuntimeLockMeta(parsed) ? parsed : undefined;
+    return isRuntimeLockMeta(parsed)
+      ? { ...parsed, schemaVersion: RUNTIME_LOCK_SCHEMA_VERSION }
+      : undefined;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     return undefined;
@@ -134,7 +139,7 @@ export async function checkRuntimeLock(target: string): Promise<{
 }
 
 async function acquireRuntimeLock(
-  meta: Omit<RuntimeLockMeta, 'pid' | 'startedAt'>,
+  meta: Omit<RuntimeLockMeta, 'pid' | 'startedAt' | 'schemaVersion'>,
 ): Promise<AcquiredRuntimeLock> {
   await mkdir(dirname(meta.target), { recursive: true });
   await writeFile(meta.target, '', { flag: 'a', mode: 0o600 });
@@ -152,6 +157,7 @@ async function acquireRuntimeLock(
   }
 
   const fullMeta: RuntimeLockMeta = {
+    schemaVersion: RUNTIME_LOCK_SCHEMA_VERSION,
     ...meta,
     pid: process.pid,
     startedAt: new Date().toISOString(),
@@ -174,8 +180,10 @@ async function acquireRuntimeLock(
 
 function isRuntimeLockMeta(value: unknown): value is RuntimeLockMeta {
   if (!value || typeof value !== 'object') return false;
-  const meta = value as Partial<RuntimeLockMeta>;
+  const meta = value as Partial<RuntimeLockMeta> & { schemaVersion?: unknown };
+  const schemaVersion = meta.schemaVersion ?? 1;
   return (
+    schemaVersion === 1 &&
     (meta.kind === 'profile' || meta.kind === 'app') &&
     typeof meta.target === 'string' &&
     typeof meta.profile === 'string' &&

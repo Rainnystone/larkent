@@ -201,10 +201,12 @@ const GROK: AgentDescriptor = {
   createTranslator: () => new GrokJsonlTranslator(),
 };
 
+const CURSOR_BINARY_NAMES = ['cursor-agent', 'agent'] as const;
+
 const CURSOR: AgentDescriptor = {
   kind: 'cursor',
   displayName: 'Cursor CLI',
-  binaryNames: ['cursor-agent', 'agent'],
+  binaryNames: CURSOR_BINARY_NAMES,
   envBinVar: 'LARK_CHANNEL_CURSOR_BIN',
   capabilities: {
     agentId: 'cursor',

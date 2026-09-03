@@ -33,7 +33,10 @@ import { checkRuntimeLock } from './locks';
  * prune stale entries using runtime lock state, then rewrite atomically.
  */
 
+export const PROCESS_ENTRY_SCHEMA_VERSION = 1 as const;
+
 export interface ProcessEntry {
+  schemaVersion: typeof PROCESS_ENTRY_SCHEMA_VERSION;
   /** 4-char random hex, stable for this process's lifetime. */
   id: string;
   pid: number;
@@ -59,7 +62,9 @@ const EMPTY: RegistryFile = { entries: [] };
 function isValidEntry(e: unknown): e is ProcessEntry {
   if (!e || typeof e !== 'object') return false;
   const x = e as Record<string, unknown>;
+  const schemaVersion = x.schemaVersion ?? 1;
   return (
+    schemaVersion === 1 &&
     typeof x.id === 'string' &&
     typeof x.pid === 'number' &&
     typeof x.appId === 'string' &&
@@ -70,6 +75,10 @@ function isValidEntry(e: unknown): e is ProcessEntry {
     typeof x.startedAt === 'string' &&
     typeof x.version === 'string'
   );
+}
+
+function withProcessEntrySchemaVersion(entry: ProcessEntry): ProcessEntry {
+  return { ...entry, schemaVersion: PROCESS_ENTRY_SCHEMA_VERSION };
 }
 
 export function isAlive(pid: number): boolean {
@@ -133,6 +142,7 @@ export interface RegisterArgs {
 export async function register(args: RegisterArgs): Promise<ProcessEntry> {
   const registryFile = args.registryFile ?? paths.processesFile;
   const entry: ProcessEntry = {
+    schemaVersion: PROCESS_ENTRY_SCHEMA_VERSION,
     id: generateShortId(),
     pid: process.pid,
     appId: args.appId,
@@ -370,7 +380,7 @@ function readRegistryFile(path: string): RegistryFile | undefined {
     const text = readFileSync(path, 'utf8');
     const parsed = JSON.parse(text) as Partial<RegistryFile>;
     if (!parsed || !Array.isArray(parsed.entries)) return { entries: [] };
-    return { entries: parsed.entries.filter(isValidEntry) };
+    return { entries: parsed.entries.filter(isValidEntry).map(withProcessEntrySchemaVersion) };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     return { entries: [] };

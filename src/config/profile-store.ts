@@ -4,7 +4,9 @@ import * as lockfile from 'proper-lockfile';
 import { parseAgentKind } from '../agent/registry';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { resolveAppPaths } from './app-paths';
+import { upgradeRootProfiles } from './migrations';
 import {
+  ROOT_SCHEMA_VERSION,
   normalizeProfileConfig,
   type AgentKind,
   type ProfileConfig,
@@ -12,10 +14,19 @@ import {
 } from './profile-schema';
 import type { AppConfig } from './schema';
 
-export async function loadRootConfig(path: string): Promise<RootConfig | undefined> {
+export async function loadRootConfig(
+  path: string,
+  opts: { persistUpgrades?: boolean } = {},
+): Promise<RootConfig | undefined> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
-    return isRootConfig(parsed) ? normalizeRootConfig(parsed) : undefined;
+    if (!isRootConfig(parsed)) return undefined;
+    const { root: upgraded, changed } = upgradeRootProfiles(parsed);
+    const root = normalizeRootConfig(upgraded as RootConfig);
+    if (changed && opts.persistUpgrades) {
+      await saveRootConfig(root, path);
+    }
+    return root;
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw err;
@@ -29,7 +40,7 @@ function normalizeRootConfig(root: RootConfig): RootConfig {
   }
   const migrations = normalizeRootMigrations(root.migrations);
   return {
-    schemaVersion: 2,
+    schemaVersion: ROOT_SCHEMA_VERSION,
     activeProfile: root.activeProfile,
     preferences: {},
     ...(root.secrets ? { secrets: root.secrets } : {}),
@@ -50,6 +61,7 @@ type StoredProfileConfig = Pick<
   ProfileConfig,
   | 'schemaVersion'
   | 'agentKind'
+  | 'agent'
   | 'mode'
   | 'accounts'
   | 'secrets'
@@ -76,7 +88,7 @@ function serializeRootConfig(root: RootConfig): StoredRootConfig {
   }
   const migrations = normalizeRootMigrations(root.migrations);
   return {
-    schemaVersion: 2,
+    schemaVersion: ROOT_SCHEMA_VERSION,
     activeProfile: root.activeProfile,
     preferences: {},
     ...(root.secrets ? { secrets: root.secrets } : {}),
@@ -89,6 +101,10 @@ function serializeProfileConfig(profile: ProfileConfig): StoredProfileConfig {
   return {
     schemaVersion: profile.schemaVersion,
     agentKind: profile.agentKind,
+    agent: {
+      kind: profile.agent.kind,
+      ...(profile.agent.binaryPath ? { binaryPath: profile.agent.binaryPath } : {}),
+    },
     mode: profile.mode,
     accounts: profile.accounts,
     ...(profile.secrets ? { secrets: profile.secrets } : {}),
@@ -159,7 +175,7 @@ export function runtimeProfileConfig(root: RootConfig, profile: string): AppConf
 
 export function createRootConfig(profile: string, cfg: ProfileConfig, secrets = cfg.secrets): RootConfig {
   return {
-    schemaVersion: 2,
+    schemaVersion: ROOT_SCHEMA_VERSION,
     activeProfile: profile,
     preferences: {},
     ...(secrets ? { secrets } : {}),
@@ -176,7 +192,7 @@ export function createRootConfig(profile: string, cfg: ProfileConfig, secrets = 
 export function isRootConfig(value: unknown): value is RootConfig {
   if (!value || typeof value !== 'object') return false;
   const root = value as Partial<RootConfig>;
-  return root.schemaVersion === 2 && Boolean(root.profiles && typeof root.profiles === 'object');
+  return root.schemaVersion === ROOT_SCHEMA_VERSION && Boolean(root.profiles && typeof root.profiles === 'object');
 }
 
 export function hasPermissionDefaultsMigration(root: RootConfig, profile: string): boolean {

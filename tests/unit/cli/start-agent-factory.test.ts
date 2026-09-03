@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -8,6 +8,8 @@ import {
 } from '../../../src/cli/commands/start.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { createRuntimeProfileConfig } from '../../../src/runtime/profile-runtime.js';
+import { writeVersionExecutable } from '../../helpers/fake-executable.js';
+import { withEnvBin, withIsolatedPath } from '../../helpers/scripted-jsonl-cli.js';
 
 describe('start runtime agent factory', () => {
   it('creates ClaudeAdapter for a claude profile', () => {
@@ -122,6 +124,34 @@ describe('start runtime agent factory', () => {
       if (prev === undefined) delete process.env.LARK_CHANNEL_CURSOR_BIN;
       else process.env.LARK_CHANNEL_CURSOR_BIN = prev;
     }
+  });
+
+  it('lets two cursor profiles use two agent.binaryPath values', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'two-cursor-bin-'));
+    const first = await writeVersionExecutable(dir, 'agent-a', 'cursor-agent 2026.08.28-a');
+    const second = await writeVersionExecutable(dir, 'agent-b', 'cursor-agent 2026.08.28-b');
+    const profileA = createDefaultProfileConfig({
+      agentKind: 'cursor',
+      accounts: appAccount(),
+      binaryPath: first,
+    });
+    const profileB = createDefaultProfileConfig({
+      agentKind: 'cursor',
+      accounts: appAccount(),
+      binaryPath: second,
+    });
+    expect(profileA.agent.binaryPath).toBe(first);
+    expect(profileB.agent.binaryPath).toBe(second);
+    await withEnvBin('cursor', undefined, async () => {
+      await withIsolatedPath(join(dir, 'empty-path'), async () => {
+        const agentA = createRuntimeAgent(profileA, { profileDir: join(dir, 'a') });
+        const agentB = createRuntimeAgent(profileB, { profileDir: join(dir, 'b') });
+        expect(agentA.id).toBe('cursor');
+        expect(agentB.id).toBe('cursor');
+        await expect(agentA.isAvailable()).resolves.toBe(true);
+        await expect(agentB.isAvailable()).resolves.toBe(true);
+      });
+    });
   });
 });
 
