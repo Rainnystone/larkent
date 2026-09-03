@@ -220,7 +220,7 @@ function message(content: string, senderSuffix: string): NormalizedMessage {
     chatId: 'chat-1',
     chatType: 'p2p',
     senderId: `ou-${senderSuffix}`,
-    senderName: 'User',
+    senderName: 'Admin',
     content,
     resources: [],
     mentionedBot: false,
@@ -232,8 +232,12 @@ function lastDoctorText(channel: FakeChannel): string {
   if (stream?.cardUpdates.length) {
     return JSON.stringify(stream.cardUpdates.at(-1));
   }
-  const sent = channel.sent.at(-1)?.content as { markdown?: string } | undefined;
-  return sent?.markdown ?? JSON.stringify(channel.sent.at(-1)?.content ?? stream ?? null);
+  const sent = channel.sent.at(-1)?.content;
+  if (typeof sent === 'string') return sent;
+  if (sent && typeof sent === 'object' && 'markdown' in sent && typeof sent.markdown === 'string') {
+    return sent.markdown;
+  }
+  return JSON.stringify(sent ?? stream ?? null);
 }
 
 function missingDoctorEchoCheck(kind: PinAgentKind): string {

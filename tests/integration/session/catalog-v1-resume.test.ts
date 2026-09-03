@@ -78,9 +78,11 @@ describe('P2 catalog v1 resume continuity', () => {
     if (pinned === 'codex') {
       expect(loaded?.threadId).toBe('thread-v1-codex');
       expect(loaded?.sessionId).toBeUndefined();
+      expect(loaded).not.toHaveProperty('sessionId');
     } else {
       expect(loaded?.sessionId).toBe(`sess-v1-${pinned}`);
       expect(loaded?.threadId).toBeUndefined();
+      expect(loaded).not.toHaveProperty('threadId');
     }
 
     const resumed = await start(h);
@@ -88,12 +90,14 @@ describe('P2 catalog v1 resume continuity', () => {
     if (!resumed.ok) throw new Error('expected resume');
     const handle = pinned === 'codex' ? 'thread-v1-codex' : `sess-v1-${pinned}`;
     expect(resumed.resumeFrom).toBe(handle);
+    const resumeOpts = h.agent.runOptions[1];
+    expect(resumeOpts).toBeDefined();
     if (pinned === 'codex') {
-      expect(h.agent.runOptions[1]?.threadId).toBe('thread-v1-codex');
-      expect(h.agent.runOptions[1]?.sessionId).toBeUndefined();
+      expect(resumeOpts?.threadId).toBe('thread-v1-codex');
+      expect(resumeOpts?.sessionId).toBeUndefined();
     } else {
-      expect(h.agent.runOptions[1]?.sessionId).toBe(handle);
-      expect(h.agent.runOptions[1]?.threadId).toBeUndefined();
+      expect(resumeOpts?.sessionId).toBe(handle);
+      expect(resumeOpts?.threadId).toBeUndefined();
     }
   }, 20_000);
 

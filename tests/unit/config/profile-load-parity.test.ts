@@ -9,7 +9,6 @@ import { writeVersionExecutable } from '../../helpers/fake-executable.js';
 import {
   adapterDisplayName,
   cursorVersionedHelpText,
-  installKindCli,
   withEnvBin,
   withIsolatedPath,
 } from '../../helpers/scripted-jsonl-cli.js';
@@ -19,17 +18,22 @@ const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
 describe('P4 profile load parity', () => {
   it('loads env-var kimi and grok profiles to the same runtime adapter as today', async () => {
     const root = await loadRootConfig(join(fixtureRoot, 'env-var/config.json'));
+    // Current loader accepts schemaVersion 2 only. This fixture has no per-kind
+    // binaryPath; kimi/grok binaries come from LARK_CHANNEL_*_BIN at runtime.
+    expect(root?.schemaVersion).toBe(2);
     expect(root?.profiles.kimi?.agentKind).toBe('kimi');
     expect(root?.profiles.grok?.agentKind).toBe('grok');
     expect(root?.profiles.kimi?.codex).toBeUndefined();
     expect(root?.profiles.grok?.codex).toBeUndefined();
+    expect(root?.profiles.kimi).not.toHaveProperty('binaryPath');
+    expect(root?.profiles.grok).not.toHaveProperty('binaryPath');
 
     const dir = await mkdtemp(join(tmpdir(), 'pin-env-bin-'));
-    const kimi = await installKindCli(dir, 'kimi');
-    const grok = await installKindCli(dir, 'grok');
+    const kimiBin = await writeVersionExecutable(dir, 'kimi', 'kimi 0.0.0-pin');
+    const grokBin = await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
 
-    await withEnvBin('kimi', kimi.fake.path, async () => {
-      await withEnvBin('grok', grok.fake.path, async () => {
+    await withEnvBin('kimi', kimiBin, async () => {
+      await withEnvBin('grok', grokBin, async () => {
         const kimiAgent = createRuntimeAgent(root!.profiles.kimi!, {
           profileDir: join(dir, 'profiles', 'kimi'),
         });
