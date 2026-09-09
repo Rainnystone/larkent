@@ -20,7 +20,7 @@ import { GrokAdapter } from '../../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../../src/agent/kimi/adapter.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
-import { writeScriptedJsonlExecutable, writeVersionExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
+import { writeVersionExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
 import {
   PIN_AGENT_KINDS,
   adapterDisplayName,
@@ -222,14 +222,6 @@ async function createDoctorHarness(
 }
 
 async function missingAdapter(kind: PinAgentKind, root: string) {
-  if (process.platform === 'win32' && kind === 'claude') {
-    const fake = await writeScriptedJsonlExecutable(join(root, 'missing-bin'), 'claude', {
-      lines: [],
-      stderr: 'missing command\n',
-      exitCode: 1,
-    });
-    return new ClaudeAdapter({ binary: fake.path });
-  }
   const missing = join(root, `missing-${kind}`);
   switch (kind) {
     case 'claude':
@@ -282,7 +274,6 @@ function lastDoctorText(channel: FakeChannel): string {
 function missingDoctorEchoCheck(kind: PinAgentKind): string {
   switch (kind) {
     case 'claude':
-      return 'error';
     case 'codex':
     case 'kimi':
     case 'grok':

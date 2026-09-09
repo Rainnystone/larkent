@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { mergeProcessEnv } from '../../platform/spawn';
+import { SpawnFailed } from '../../runtime/errors';
 import { buildBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
@@ -54,6 +55,18 @@ export class ClaudeAdapter implements AgentAdapter {
       command: this.binary,
       binaryPath: this.binary,
     });
+  }
+
+  async prepareRun(): Promise<void> {
+    const availability = await this.checkAvailability();
+    if (!availability.ok) {
+      throw new SpawnFailed(
+        'claude binary check failed',
+        availability.error,
+        availability.diagnostic.code,
+        availability.diagnostic,
+      );
+    }
   }
 
   run(opts: AgentRunOptions): AgentRun {
