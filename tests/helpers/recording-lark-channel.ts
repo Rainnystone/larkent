@@ -29,7 +29,9 @@ export type RecordingCall =
   | { op: 'recall'; messageId: string }
   | { op: 'raw'; method: string };
 
-export function createRecordingLarkChannel(): RecordingLarkChannel {
+export function createRecordingLarkChannel(options: {
+  botIdentity?: RecordingLarkChannel['botIdentity'];
+} = {}): RecordingLarkChannel {
   const inner = createFakeChannel();
   const callLog: RecordingCall[] = [];
   const handlers: RecordingLarkChannel['handlers'] = {};
@@ -65,7 +67,7 @@ export function createRecordingLarkChannel(): RecordingLarkChannel {
     ...inner,
     send: inner.send,
     stream: inner.stream,
-    botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
+    botIdentity: { ...(options.botIdentity ?? { openId: 'ou_bot', name: 'Pin Bot' }) },
     handlers,
     callLog,
     on(next) {
