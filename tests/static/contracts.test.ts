@@ -37,6 +37,13 @@ describe('static architecture contracts', () => {
     }
   });
 
+  it('keeps Cursor adapter metadata independent of the central registry', () => {
+    const adapterPath = 'src/agent/cursor/adapter.ts';
+    expect(read(adapterPath), adapterPath).not.toMatch(
+      /from ['"].*\/registry(?:\.js)?['"]|\bdescriptorFor\b|\bAGENT_REGISTRY\b/,
+    );
+  });
+
   it('does not route production runs by importing Codex internals in shared bot/card code', () => {
     const sharedFiles = [
       ...collectTsFiles('src/bot'),
