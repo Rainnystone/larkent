@@ -71,31 +71,31 @@ export class ActiveRuns {
 
   /**
    * Interrupt the current run for this chat, if any. Returns true if an
-   * interrupt was issued. Fires stop() fire-and-forget — the old run's
-   * generator exits on its own as the subprocess dies.
+   * interrupt was issued. The owner unregisters after asynchronous stop
+   * settlement; failures remain visible to its finished/stopAll callers.
    */
   interrupt(chatId: string): boolean {
     const h = this.handles.get(chatId);
     if (!h) return false;
-    this.reservations.delete(chatId);
     h.interrupted = true;
-    this.handles.delete(chatId);
     void h.run.stop().catch(() => {
-      /* stop errors are non-fatal */
+      // The owned run retains and reports settlement failure through finished/stopAll.
     });
     return true;
   }
 
   async stopAll(): Promise<void> {
     const all = [...this.handles.values()];
-    this.handles.clear();
-    this.reservations.clear();
     for (const h of all) h.interrupted = true;
-    await Promise.allSettled(all.map((h) => h.run.stop()));
+    const results = await Promise.allSettled(all.map((h) => h.run.stop()));
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, 'failed to stop all active runs');
   }
 
   async waitForAll(timeoutMs = 300_000): Promise<void> {
     const all = [...this.handles.values()];
-    await Promise.allSettled(all.map((h) => h.run.waitForExit(timeoutMs)));
+    const results = await Promise.allSettled(all.map((h) => h.run.waitForExit(timeoutMs)));
+    const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (errors.length) throw new AggregateError(errors, 'failed to settle all active runs');
   }
 }

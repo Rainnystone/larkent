@@ -45,7 +45,7 @@ class FakeRun implements FakeAgentRun {
 
   async waitForExit(): Promise<boolean> {
     this.#waitForExitCalls++;
-    return this.waitForExitResult;
+    return this.#stopped || this.waitForExitResult;
   }
 
   private async *iterate(events: readonly AgentEvent[]): AsyncIterable<AgentEvent> {

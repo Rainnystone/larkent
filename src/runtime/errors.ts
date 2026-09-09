@@ -38,3 +38,10 @@ export class SpawnFailed extends Error {
     this.diagnostic = diagnostic;
   }
 }
+
+export class RunCleanupFailed extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = 'RunCleanupFailed';
+  }
+}

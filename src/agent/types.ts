@@ -76,11 +76,12 @@ export function omitEmptyAgentOptions(options: unknown): unknown | undefined {
 export interface AgentRun {
   readonly runId: string;
   readonly events: AsyncIterable<AgentEvent>;
+  /** Resolves only after process exit and adapter cleanup; rejects if settlement fails. */
   stop(): Promise<void>;
   /**
-   * Wait up to `timeoutMs` for the agent process to exit on its own.
-   * Resolves true if it exited within the window, false if the timer
-   * fired first (caller usually wants to fall back to stop()).
+   * Wait up to `timeoutMs` for process exit and adapter cleanup.
+   * Resolves true only when both complete, false when the timer fires first;
+   * cleanup failure rejects (caller usually falls back to stop() on timeout).
    *
    * Use this after a terminal stream event (`done` / `error`): the
    * stream-json `result` line arrives before claude has actually closed
