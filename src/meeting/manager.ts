@@ -18,15 +18,22 @@ export const VC_BOT_EVENTS = {
   ended: 'vc.bot.meeting_ended_v1',
 } as const;
 
-/** Minimal shape of node-sdk's EventDispatcher that we register handlers on. */
-interface DispatcherLike {
-  register(handles: Record<string, (data: unknown) => Promise<unknown> | unknown>): unknown;
+/**
+ * The slice of `LarkChannel` we subscribe through: `onRawEvent`, public since
+ * `@larksuite/channel` 0.5.0. Declared structurally so the manager stays
+ * testable with a fake and does not depend on the SDK's class type.
+ */
+interface RawEventSource {
+  onRawEvent(
+    eventType: string,
+    handler: (payload: unknown) => void | Promise<void>,
+  ): () => void;
 }
 
 export interface MeetingPushHealth {
-  /** Whether the dispatcher hook was installed successfully. */
+  /** Whether the `vc.bot.*` subscription was installed successfully. */
   hooked: boolean;
-  /** Why the hook could not be installed (private API changed / absent). */
+  /** Why it could not be installed (SDK too old / absent channel). */
   reason?: string;
   /** Count of `vc.bot.*` pushes observed — proves the console subscription works. */
   received: number;
@@ -40,8 +47,8 @@ export interface MeetingManagerDeps {
   /** Late-bound: the bot's identity is only known after the channel connects. */
   botOpenId?: () => string | undefined;
   /**
-   * The channel object. Its `dispatcher` is TypeScript-private but a real
-   * runtime property; we probe it defensively rather than assuming.
+   * The channel object. Only its `onRawEvent` is used, and it is probed rather
+   * than assumed so an older SDK degrades to polling instead of throwing.
    */
   channel?: unknown;
   /** Notified when a session is created, so the orchestrator can subscribe. */
@@ -59,6 +66,8 @@ function asRecord(v: unknown): Record<string, unknown> {
 export class MeetingManager {
   private sessions = new Map<string, MeetingSession>();
   private push: MeetingPushHealth = { hooked: false, received: 0 };
+  /** `onRawEvent` teardown functions, so `dispose()` stops feeding a dead manager. */
+  private unsubscribers: (() => void)[] = [];
   private disposed = false;
 
   constructor(private deps: MeetingManagerDeps) {}
@@ -86,51 +95,68 @@ export class MeetingManager {
   }
 
   /**
-   * Install handlers for the three `vc.bot.*` events on the channel's existing
-   * event connection.
+   * Subscribe to the three `vc.bot.*` events on the channel's existing event
+   * connection, via the SDK's public `onRawEvent`.
    *
-   * Why reach into a private field: `@larksuite/channel` exposes only a closed
-   * union of 9 event names, with no generic registration hook, and opening a
-   * *second* long connection for the same app would let Feishu deliver the
-   * bridge's own IM events to the other socket. Riding the existing dispatcher
-   * is the only safe option. node-sdk's `EventDispatcher.register()` accepts
-   * arbitrary event-type strings and `invoke()` dispatches purely by string, so
-   * this is mechanically sound — but it is unsupported API, hence the probe and
-   * the explicit `reason` when it fails (callers then rely on polling).
+   * Riding the existing connection is not optional: a *second* long connection
+   * for the same app makes Feishu split delivery between the two, so the
+   * bridge's own IM events start disappearing.
+   *
+   * This used to reach into the channel's TypeScript-private `dispatcher` and
+   * call node-sdk's `register()` directly. That stopped being safe in channel
+   * 0.5.0, which registers its own `vc.bot.*` handlers inside `connect()`:
+   * `register()` overwrites a duplicate key (it only logs an error), and
+   * `attachPush()` runs *before* `connect()`, so the SDK's handlers would have
+   * silently replaced ours and the pushes would have gone nowhere.
+   * `onRawEvent` composes instead — built-ins first, then raw subscribers — and
+   * the SDK's own meeting handlers are inert here because the bridge never
+   * opens an SDK-native `MeetingSession`.
    */
   attachPush(): MeetingPushHealth {
-    const dispatcher = asRecord(this.deps.channel).dispatcher as DispatcherLike | undefined;
-    if (!dispatcher || typeof dispatcher.register !== 'function') {
+    const channel = this.deps.channel as RawEventSource | undefined;
+    if (typeof channel?.onRawEvent !== 'function') {
       this.push = {
         hooked: false,
-        reason: 'channel 未暴露事件 dispatcher（SDK 版本变动？），已降级为轮询',
+        reason: 'channel 不支持 onRawEvent（需要 @larksuite/channel >= 0.5.0），已降级为轮询',
         received: 0,
       };
       log.warn('meeting', 'push-hook-unavailable', { reason: this.push.reason });
       return this.pushHealth();
     }
     try {
-      dispatcher.register({
-        [VC_BOT_EVENTS.invited]: (data: unknown) => {
-          this.notePush();
-          this.handleInvited(data);
-        },
-        [VC_BOT_EVENTS.activity]: (data: unknown) => {
-          this.notePush();
-          this.handleActivity(data);
-        },
-        [VC_BOT_EVENTS.ended]: (data: unknown) => {
-          this.notePush();
-          this.handleEnded(data);
-        },
-      });
+      const handlers: Record<string, (data: unknown) => void> = {
+        [VC_BOT_EVENTS.invited]: (data) => this.handleInvited(data),
+        [VC_BOT_EVENTS.activity]: (data) => this.handleActivity(data),
+        [VC_BOT_EVENTS.ended]: (data) => this.handleEnded(data),
+      };
+      for (const [eventType, handle] of Object.entries(handlers)) {
+        this.unsubscribers.push(
+          channel.onRawEvent(eventType, (data) => {
+            this.notePush();
+            handle(data);
+          }),
+        );
+      }
       this.push = { hooked: true, received: 0 };
       log.info('meeting', 'push-hooked', {});
     } catch (err) {
+      this.detachPush();
       this.push = { hooked: false, reason: `注册事件失败：${String(err)}`, received: 0 };
       log.warn('meeting', 'push-hook-failed', { err: String(err) });
     }
     return this.pushHealth();
+  }
+
+  /** Drop the `vc.bot.*` subscriptions. Idempotent. */
+  private detachPush(): void {
+    const offs = this.unsubscribers.splice(0);
+    for (const off of offs) {
+      try {
+        off();
+      } catch {
+        // A channel torn down under us — nothing left to unsubscribe from.
+      }
+    }
   }
 
   private notePush(): void {
@@ -239,6 +265,8 @@ export class MeetingManager {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.detachPush();
+    this.push = { ...this.push, hooked: false };
     for (const session of this.sessions.values()) session.dispose();
     this.sessions.clear();
   }

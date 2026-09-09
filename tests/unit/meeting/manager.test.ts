@@ -5,16 +5,15 @@ import { VcApiError, type VcRequestClient } from '../../../src/meeting/api';
 
 type Handler = (data: unknown) => unknown;
 
-/** Fake channel exposing the same (TS-private) `dispatcher` shape as the SDK. */
+/** Fake channel exposing the SDK's public `onRawEvent` subscription. */
 function fakeChannel(): { channel: unknown; handlers: Map<string, Handler> } {
   const handlers = new Map<string, Handler>();
   return {
     handlers,
     channel: {
-      dispatcher: {
-        register(map: Record<string, Handler>) {
-          for (const [k, v] of Object.entries(map)) handlers.set(k, v);
-        },
+      onRawEvent(eventType: string, handler: Handler) {
+        handlers.set(eventType, handler);
+        return () => handlers.delete(eventType);
       },
     },
   };
@@ -49,7 +48,7 @@ function manager(opts: {
 }
 
 describe('MeetingManager push hook', () => {
-  it('registers the three vc.bot.* events on the channel dispatcher', () => {
+  it('registers the three vc.bot.* events through channel.onRawEvent', () => {
     const { channel, handlers } = fakeChannel();
     const health = manager({ channel }).attachPush();
 
@@ -59,11 +58,22 @@ describe('MeetingManager push hook', () => {
     );
   });
 
-  it('degrades with a reason (not a throw) when the private dispatcher is gone', () => {
-    // Simulates a channel-sdk upgrade that renamed/removed the field.
+  it('degrades with a reason (not a throw) when onRawEvent is unavailable', () => {
+    // Simulates a channel-sdk older than 0.5.0, which has no onRawEvent.
     const health = manager({ channel: { somethingElse: true } }).attachPush();
     expect(health.hooked).toBe(false);
-    expect(health.reason).toMatch(/dispatcher/);
+    expect(health.reason).toMatch(/onRawEvent/);
+  });
+
+  it('unsubscribes on dispose so a torn-down channel stops feeding it', () => {
+    const { channel, handlers } = fakeChannel();
+    const m = manager({ channel });
+    m.attachPush();
+    expect(handlers.size).toBe(3);
+
+    m.dispose();
+    expect(handlers.size).toBe(0);
+    expect(m.pushHealth().hooked).toBe(false);
   });
 
   it('counts pushes so the console can prove the subscription works', async () => {
@@ -173,5 +183,24 @@ describe('describeMeetingError', () => {
 
   it('passes other errors through', () => {
     expect(describeMeetingError(new Error('boom'))).toBe('boom');
+  });
+});
+
+/**
+ * The push hook rides the SDK's connection, so it is only as good as the
+ * SDK-side contract it assumes. This pins that contract against the real
+ * package rather than a fake — the previous implementation reached into a
+ * TypeScript-private `dispatcher`, and channel 0.5.0 quietly broke it by
+ * registering its own `vc.bot.*` handlers inside `connect()`.
+ */
+describe('push hook against the real @larksuite/channel', () => {
+  it('subscribes through onRawEvent before connect()', async () => {
+    const { createLarkChannel } = await import('@larksuite/channel');
+    // Constructing does no I/O; nothing here connects.
+    const channel = createLarkChannel({ appId: 'cli_test', appSecret: 'secret_test' });
+
+    const health = manager({ channel }).attachPush();
+    expect(health.hooked).toBe(true);
+    expect(health.reason).toBeUndefined();
   });
 });
