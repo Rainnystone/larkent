@@ -43,6 +43,9 @@ export interface JsonlCliRunnerInput {
 
 type CliChild = SpawnedProcessByStdio<Writable, Readable, Readable>;
 
+const STOP_STDOUT_QUIET_MS = 50;
+const STOP_STDOUT_DRAIN_MS = 5000;
+
 export function wrapParsedTranslator(
   inner: ParsedJsonlTranslator,
   spawnName: string,
@@ -208,7 +211,9 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   };
   const stop = async (reason: JsonlFinishReason): Promise<void> => {
     await stopChild(reason);
-    await settlement;
+    // Exit does not imply EOF: descendants may inherit the pipe. The runner
+    // owns ending reads, while consumers still own draining the queued lines.
+    await Promise.all([settlement, drainStoppedStdout()]);
   };
   const requestStop = (reason: JsonlFinishReason): void => {
     void stop(reason).catch(() => {});
@@ -237,6 +242,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   };
 
   child.stdout.on('data', (chunk: Buffer) => {
+    if (stdoutClosed) return;
     sawStdout = true;
     stdoutBuffer += stdoutDecoder.write(chunk);
     let nl = stdoutBuffer.indexOf('\n');
@@ -260,6 +266,51 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   };
   child.stdout.on('end', closeStdout);
   child.stdout.on('close', closeStdout);
+
+  let stdoutDrainPromise: Promise<void> | undefined;
+  const drainStoppedStdout = (): Promise<void> => {
+    stdoutDrainPromise ??= new Promise<void>((resolve, reject) => {
+      let quietTimer: ReturnType<typeof setTimeout> | undefined;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      let finished = false;
+      const finish = (error?: RunCleanupFailed): void => {
+        if (finished) return;
+        finished = true;
+        if (quietTimer) clearTimeout(quietTimer);
+        if (deadline) clearTimeout(deadline);
+        child.stdout.off('data', received);
+        child.stdout.off('end', ended);
+        child.stdout.off('close', ended);
+        if (error) runtimeError ??= error;
+        closeStdout();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        if (error) reject(error);
+        else resolve();
+      };
+      const ended = (): void => finish();
+      const received = (): void => {
+        if (quietTimer) clearTimeout(quietTimer);
+        quietTimer = setTimeout(ended, STOP_STDOUT_QUIET_MS);
+      };
+      if (stdoutClosed) {
+        finish();
+        return;
+      }
+      // After confirmed child exit, allow in-flight OS reads to arrive before
+      // closing an inherited pipe. This is only a stopped-reader boundary,
+      // never the bot's business idle timeout. Ongoing descendant output cannot
+      // extend the total deadline or be silently mistaken for a drained pipe.
+      child.stdout.on('data', received);
+      child.stdout.once('end', ended);
+      child.stdout.once('close', ended);
+      received();
+      deadline = setTimeout(() => finish(new RunCleanupFailed(
+        'stdout did not quiesce after confirmed child exit',
+      )), STOP_STDOUT_DRAIN_MS);
+    });
+    return stdoutDrainPromise;
+  };
 
   child.on('error', (err) => {
     runtimeError = err;
@@ -346,7 +397,6 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
             // finally before the first next). Stop outside that queue first.
             if (!terminalEmitted) {
               await stop('interrupted');
-              closeStdout();
             }
             return events.return(undefined);
           },

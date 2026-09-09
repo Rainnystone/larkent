@@ -1,7 +1,9 @@
 import type { LarkChannel } from '@larksuite/channel';
+import { EventEmitter } from 'node:events';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentAdapter, AgentEvent, AgentRun } from '../../../src/agent/types';
 import type { Controls } from '../../../src/commands';
@@ -26,6 +28,8 @@ import { makeFakeCommentSurface } from '../../helpers/fake-comment-surface';
 import { ProcessPool } from '../../../src/bot/process-pool';
 import { commentTokenDigest } from '../../../src/bot/comment-resource';
 import { writeVersionExecutable } from '../../helpers/fake-executable';
+import { runJsonlCli, wrapParsedTranslator } from '../../../src/agent/runner/jsonl-cli-runner';
+import * as spawn from '../../../src/platform/spawn';
 
 const sdk = vi.hoisted(() => ({ channel: undefined as RecordingLarkChannel | undefined }));
 vi.mock('@larksuite/channel', async original => ({
@@ -127,6 +131,56 @@ async function send(channel: RecordingLarkChannel, chatId = 'oc_test') {
 }
 
 describe('settled profile persistence', () => {
+  it('disconnects after raw child exit with inherited stdout open and saves its final unterminated handle', async () => {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 4242, exitCode: null as number | null, signalCode: null as NodeJS.Signals | null,
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill: vi.fn(),
+    });
+    vi.spyOn(spawn, 'spawnProcess').mockImplementation(() => child as never);
+    child.kill.mockImplementation((signal: NodeJS.Signals) => {
+      child.stdout.write('{"type":"system","resumeHandle":"inherited-pipe-final"}');
+      child.signalCode = signal;
+      child.emit('exit', null, signal);
+      return true;
+    });
+    const started = deferred();
+    const cleaned = deferred();
+    const agent: AgentAdapter = {
+      id: 'claude', displayName: 'Controlled Claude', isAvailable: async () => true,
+      run(opts) {
+        const raw = runJsonlCli({
+          runId: opts.runId, binaryPath: '/fake', argv: [], cwd: opts.cwd ?? process.cwd(), env: {},
+          spawnName: 'inherited-stdout', cleanup: cleaned.resolve,
+          translator: wrapParsedTranslator({
+            translate: parsed => [parsed as AgentEvent],
+            finish: () => [{ type: 'done', terminationReason: 'interrupted' }],
+          }, 'inherited-stdout'),
+        });
+        child.stdout.write('{"type":"text","delta":"ready"}\n');
+        started.resolve();
+        return raw;
+      },
+    };
+    const h = await channelHarness(agent);
+    await send(h.channel);
+    await started.promise;
+    let closed = false;
+    const closing = h.bridge.disconnect().then(() => { closed = true; });
+    try {
+      await cleaned.promise;
+      await expect.poll(() => closed, { timeout: 1000 }).toBe(true);
+      expect(child.stdout.destroyed).toBe(true);
+      const sessions = new SessionStore(h.paths.sessionsFile);
+      const catalog = new SessionCatalog(`${h.paths.sessionsFile}.catalog.json`);
+      await Promise.all([sessions.load(), catalog.load()]);
+      expect(sessions.resumeFor('oc_test', h.root)).toBe('inherited-pipe-final');
+      expect(catalog.entries()).toEqual([expect.objectContaining({ resumeHandle: 'inherited-pipe-final' })]);
+    } finally {
+      child.stdout.end(); child.stderr.end();
+      await closing;
+    }
+  });
+
   it('clears issued resume selections after disabling channel intake on disconnect', async () => {
     let issued: { owner: ResumeCandidates; nonce: string; identity: SessionCatalogIdentity } | undefined;
     const issue = ResumeCandidates.prototype.issue;

@@ -59,4 +59,3 @@ async function assertCursorBinary(resolved: string, command: string): Promise<vo
 function isGenericAgentCommand(command: string): boolean {
   return basename(command).replace(/\.(exe|cmd|bat)$/i, '').toLowerCase() === 'agent';
 }
-
