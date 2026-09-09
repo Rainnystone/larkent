@@ -8,6 +8,7 @@ import { CallbackNonceStore } from '../../../src/card/callback-store.js';
 import { handleCardAction } from '../../../src/card/dispatcher.js';
 import type { Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { createFakeAgent } from '../../helpers/fake-agent.js';
@@ -18,6 +19,7 @@ interface Harness {
   tmp: TmpProfile;
   channel: FakeChannel;
   sessions: SessionStore;
+  resumeCandidates: ResumeCandidates;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
   agent: ReturnType<typeof createFakeAgent>;
@@ -43,6 +45,7 @@ describe('Claude shared security regressions', () => {
       channel: h.channel as unknown as Parameters<typeof handleCardAction>[0]['channel'],
       evt: cardEvent({ __claude_cb: true, choice: 'legacy' }),
       sessions: h.sessions,
+      resumeCandidates: h.resumeCandidates,
       workspaces: h.workspaces,
       activeRuns: h.activeRuns,
       agent: h.agent,
@@ -70,6 +73,7 @@ describe('Claude shared security regressions', () => {
         { note: 'from form' },
       ),
       sessions: h.sessions,
+      resumeCandidates: h.resumeCandidates,
       workspaces: h.workspaces,
       activeRuns: h.activeRuns,
       agent: h.agent,
@@ -99,6 +103,7 @@ async function createHarness(): Promise<Harness> {
   const sessions = new SessionStore(`${tmp.profile}/sessions.json`);
   const workspaces = new WorkspaceStore(`${tmp.profile}/workspaces.json`);
   const activeRuns = new ActiveRuns();
+  const resumeCandidates = new ResumeCandidates();
   const agent = createFakeAgent();
   const profileConfig = appConfig();
   const pending = new PendingQueue(60_000, () => {});
@@ -137,6 +142,7 @@ async function createHarness(): Promise<Harness> {
     tmp,
     channel,
     sessions,
+    resumeCandidates,
     workspaces,
     activeRuns,
     agent,

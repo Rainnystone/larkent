@@ -6,6 +6,7 @@ import type { AgentRun } from '../../../src/agent/types';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
@@ -79,6 +80,7 @@ async function createHarness(): Promise<{
   cleanups.push(tmp.cleanup);
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const activeRuns = new ActiveRuns();
   const agent = new FakeAgentAdapter();
@@ -106,6 +108,7 @@ async function createHarness(): Promise<{
     restart,
     command: (content: string) =>
       tryHandleCommand({
+        resumeCandidates,
         channel: channel as unknown as CommandContext['channel'],
         msg: message(content),
         scope: 'chat-1',

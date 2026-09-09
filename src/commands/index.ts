@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
@@ -43,7 +42,7 @@ import type {
 } from '../config/profile-schema';
 import { effectiveLarkCliIdentity } from '../config/profile-schema';
 import { resolveAppPaths } from '../config/app-paths';
-import { descriptorFor, type AgentKind } from '../agent/registry';
+import { descriptorFor } from '../agent/registry';
 import {
   canRunAdminCommand,
   canUseDm,
@@ -66,6 +65,7 @@ import type { ResumeHistoryEntry, ResumeHistoryInput } from '../agent/definition
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import { readUiSidecar } from '../ui/sidecar';
+import type { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { evaluateRunPolicy } from '../policy/run-policy';
@@ -125,6 +125,7 @@ export interface CommandContext {
    * scope semantic to the user (`topic` shows "话题独立 session"). */
   chatMode: 'p2p' | 'group' | 'topic';
   sessions: SessionStore;
+  resumeCandidates: ResumeCandidates;
   sessionCatalog?: SessionCatalog;
   sessionCatalogIdentity?: SessionCatalogIdentity;
   workspaces: WorkspaceStore;
@@ -144,17 +145,6 @@ export interface CommandContext {
 
 type Handler = (args: string, ctx: CommandContext) => Promise<void>;
 
-interface ResumeCandidate {
-  scopeId: string;
-  agentId: AgentKind;
-  cwdRealpath: string;
-  policyFingerprint: string;
-  resumeHandle: string;
-  expiresAt: number;
-}
-
-const RESUME_CANDIDATE_TTL_MS = 10 * 60 * 1000;
-const resumeCandidates = new Map<string, ResumeCandidate>();
 const AUDIT_SAFE_COMMAND_REPLY = '命令已处理。';
 const RESUME_APPLIED_REPLY = '已完成，请继续发送下一条消息。';
 
@@ -574,7 +564,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     : [];
   if (history.length > 0) {
     const entries = history.map(entry => ({
-      sessionId: identity ? issueResumeCandidate(identity, entry.resumeHandle) : entry.resumeHandle,
+      sessionId: identity ? ctx.resumeCandidates.issue(identity, entry.resumeHandle) : entry.resumeHandle,
       ...(resumeDescriptor.acceptsRawResumeHandle ? { displayId: entry.resumeHandle } : {}),
       preview: entry.preview,
       relTime: formatRelTime(entry.updatedAtMs),
@@ -586,7 +576,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
   if (currentHandle && identity) {
-    const nonce = issueResumeCandidate(identity, currentHandle);
+    const nonce = ctx.resumeCandidates.issue(identity, currentHandle);
     const label = resumeDescriptor.resume.label === 'thread'
       ? 'Codex thread '
       : `${resumeDescriptor.displayName.replace(/ (Code|CLI|Build)$/, '')} 会话`;
@@ -599,7 +589,7 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
   if (ctx.sessionCatalog && ctx.sessionCatalogIdentity) {
     const entry = ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity);
-    const resolved = consumeResumeCandidate(sessionId, ctx.sessionCatalogIdentity);
+    const resolved = ctx.resumeCandidates.consume(sessionId, ctx.sessionCatalogIdentity);
     if (resolved) {
       ctx.activeRuns.interrupt(ctx.scope);
       ctx.sessionCatalog.upsertActive({
@@ -645,50 +635,6 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
   ctx.activeRuns.interrupt(ctx.scope);
   ctx.sessions.set(ctx.scope, sessionId, cwd);
   await reply(ctx, RESUME_APPLIED_REPLY);
-}
-
-function issueResumeCandidate(
-  identity: SessionCatalogIdentity,
-  resumeHandle: string,
-): string {
-  pruneResumeCandidates();
-  let nonce = randomUUID().slice(0, 12);
-  while (resumeCandidates.has(nonce)) nonce = randomUUID().slice(0, 12);
-  resumeCandidates.set(nonce, {
-    scopeId: identity.scopeId,
-    agentId: identity.agentId,
-    cwdRealpath: identity.cwdRealpath,
-    policyFingerprint: identity.policyFingerprint,
-    resumeHandle,
-    expiresAt: Date.now() + RESUME_CANDIDATE_TTL_MS,
-  });
-  return nonce;
-}
-
-function consumeResumeCandidate(
-  nonce: string,
-  identity: SessionCatalogIdentity,
-): ResumeCandidate | undefined {
-  pruneResumeCandidates();
-  const candidate = resumeCandidates.get(nonce);
-  if (!candidate) return undefined;
-  resumeCandidates.delete(nonce);
-  if (
-    candidate.scopeId !== identity.scopeId ||
-    candidate.agentId !== identity.agentId ||
-    candidate.cwdRealpath !== identity.cwdRealpath ||
-    candidate.policyFingerprint !== identity.policyFingerprint ||
-    !candidate.resumeHandle
-  ) {
-    return undefined;
-  }
-  return candidate;
-}
-
-function pruneResumeCandidates(now = Date.now()): void {
-  for (const [nonce, candidate] of resumeCandidates.entries()) {
-    if (candidate.expiresAt <= now) resumeCandidates.delete(nonce);
-  }
 }
 
 function effectiveWorkspaceCwd(ctx: CommandContext): string | undefined {

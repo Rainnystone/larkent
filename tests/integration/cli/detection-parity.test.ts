@@ -10,6 +10,7 @@ import { ProcessPool } from '../../../src/bot/process-pool.js';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { ClaudeAdapter } from '../../../src/agent/claude/adapter.js';
@@ -155,6 +156,7 @@ async function createDoctorHarness(
   const tmp = await createTmpProfile(`doctor-parity-${kind}-${mode}-`);
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   workspaces.setCwd('chat-1', tmp.workspace);
   const activeRuns = new ActiveRuns();
@@ -199,6 +201,7 @@ async function createDoctorHarness(
   });
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
+      resumeCandidates,
       channel: channel as unknown as CommandContext['channel'],
       msg: message(content, `${kind}-${mode}`),
       scope: 'chat-1',

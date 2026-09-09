@@ -4,6 +4,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
@@ -52,6 +53,7 @@ async function createHarness(): Promise<{
   const tmp = await createTmpProfile('doctor-redaction-');
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   cleanups.push(async () => {
     await Promise.all([sessions.flush(), workspaces.flush()]);
@@ -84,6 +86,7 @@ async function createHarness(): Promise<{
     controls,
     command: (content: string) =>
       tryHandleCommand({
+        resumeCandidates,
         channel: channel as unknown as CommandContext['channel'],
         msg: message(content),
         scope: 'chat-1',

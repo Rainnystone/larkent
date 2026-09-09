@@ -1,3 +1,4 @@
+import type { LarkChannel } from '@larksuite/channel';
 import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +17,8 @@ import { readAndPrune } from '../../../src/runtime/registry';
 import * as registry from '../../../src/runtime/registry';
 import { Supervisor } from '../../../src/runtime/supervisor';
 import { SessionCatalog } from '../../../src/session/catalog';
+import { ResumeCandidates } from '../../../src/session/resume-candidates';
+import type { SessionCatalogIdentity } from '../../../src/session/catalog';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { createRecordingLarkChannel, type RecordingLarkChannel } from '../../helpers/recording-lark-channel';
@@ -95,11 +98,11 @@ function controlledAgent(options: { beforeSecond?: Promise<void>; cleanupError?:
   };
   return { agent, started, stopRequested, finalBuffered, cleanup };
 }
-async function channelHarness(agent: AgentAdapter, reply: 'card' | 'text' = 'text', maxConcurrentRuns = 3) {
+async function channelHarness(agent: AgentAdapter, reply: 'card' | 'text' = 'text', maxConcurrentRuns = 3, agentKind: 'claude' | 'kimi' = 'claude') {
   const root = await temp();
   const paths = resolveAppPaths({ rootDir: root, profile: 'test' });
   const profile = createDefaultProfileConfig({
-    agentKind: 'claude', accounts: { app: { id: 'cli_test', secret: 'test-secret', tenant: 'feishu' } },
+    agentKind, accounts: { app: { id: 'cli_test', secret: 'test-secret', tenant: 'feishu' } },
     access: { allowedUsers: ['ou_user'] }, preferences: { messageReply: reply, cotMessages: 'off', maxConcurrentRuns },
   });
   profile.workspaces.default = root;
@@ -124,6 +127,40 @@ async function send(channel: RecordingLarkChannel, chatId = 'oc_test') {
 }
 
 describe('settled profile persistence', () => {
+  it('clears issued resume selections after disabling channel intake on disconnect', async () => {
+    let issued: { owner: ResumeCandidates; nonce: string; identity: SessionCatalogIdentity } | undefined;
+    const issue = ResumeCandidates.prototype.issue;
+    vi.spyOn(ResumeCandidates.prototype, 'issue').mockImplementation(function (this: ResumeCandidates, identity, handle) {
+      const nonce = issue.call(this, identity, handle);
+      issued = { owner: this, nonce, identity };
+      return nonce;
+    });
+    const h = await channelHarness(controlledAgent().agent, 'text', 3, 'kimi');
+    vi.spyOn(h.channel as unknown as LarkChannel, 'getChatMode').mockResolvedValue('p2p');
+    h.sessions.set('oc_test', 'resume-before-close', h.root);
+    const command = {
+      messageId: 'om_resume', chatId: 'oc_test', chatType: 'p2p', senderId: 'ou_user',
+      content: '/resume', rawContentType: 'text', resources: [], mentionedBot: true,
+    };
+    await h.channel.handlers.message?.(command);
+    expect(issued).toBeDefined();
+    const card = {
+      action: { value: { cmd: 'resume.use', arg: issued!.nonce } },
+      chatId: 'oc_test', messageId: 'om_resume_card', operator: { openId: 'ou_user' },
+    };
+    expect(h.catalog.activeFor(issued!.identity)).toBeUndefined();
+    await h.channel.handlers.cardAction?.(card);
+    expect(h.catalog.activeFor(issued!.identity)?.resumeHandle).toBe('resume-before-close');
+    await h.channel.handlers.message?.({ ...command, messageId: 'om_resume_again' });
+    const selection = issued!;
+    await h.bridge.disconnect();
+    expect(selection.owner.consume(selection.nonce, selection.identity)).toBeUndefined();
+    const sent = h.channel.sent.length;
+    await h.channel.handlers.message?.(command);
+    await h.channel.handlers.cardAction?.(card);
+    expect(h.channel.sent).toHaveLength(sent);
+  });
+
   it('waits for the bot consumer after run cleanup and saves the last system event before resolving', async () => {
     const producerReady = deferred();
     const renderingBlocked = deferred();

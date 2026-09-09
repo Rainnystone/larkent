@@ -53,6 +53,7 @@ import type { ScopeContext } from '../policy/run-policy';
 import { createOwnerRefreshController } from '../policy/owner';
 import { RunExecutor } from '../runtime/run-executor';
 import type { SessionCatalog } from '../session/catalog';
+import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, type RunHandle } from './active-runs';
@@ -185,6 +186,7 @@ export interface StartChannelDeps {
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, sessionCatalog, workspaces, controls } = deps;
   const activeRuns = new ActiveRuns();
+  const resumeCandidates = new ResumeCandidates();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
   const chatModeCache = new ChatModeCache();
@@ -351,6 +353,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           agent,
           sessions,
           sessionCatalog,
+          resumeCandidates,
           workspaces,
           activeRuns,
           pending,
@@ -373,6 +376,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           channel,
           evt,
           sessions,
+          resumeCandidates,
           sessionCatalog,
           workspaces,
           activeRuns,
@@ -523,6 +527,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     channel,
     disconnect: async () => {
       closing = true;
+      resumeCandidates.clear();
       // Commands can themselves call disconnect, so track run consumers only,
       // never the enclosing message/card command handler (which would self-wait).
       const consumers = [...runConsumers];
@@ -630,6 +635,7 @@ interface IntakeDeps {
   channel: LarkChannel;
   agent: AgentAdapter;
   sessions: SessionStore;
+  resumeCandidates: ResumeCandidates;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
@@ -654,6 +660,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     agent,
     sessions,
     sessionCatalog,
+    resumeCandidates,
     workspaces,
     activeRuns,
     pending,
@@ -776,6 +783,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     scope,
     chatMode,
     sessions,
+    resumeCandidates,
     workspaces,
     agent,
     activeRuns,

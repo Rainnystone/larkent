@@ -8,6 +8,7 @@ import { CallbackNonceStore } from '../../../src/card/callback-store.js';
 import { handleCardAction } from '../../../src/card/dispatcher.js';
 import type { Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter, type FakeAgentRun } from '../../helpers/fake-agent.js';
@@ -21,7 +22,7 @@ describe('signed card callback dispatch', () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
-  it('runs built-in command callbacks only when the bridge token verifies', async () => {
+  it('runs built-in command callbacks when the bridge token verifies', async () => {
     const h = await createHarness();
     const activeRun = h.agent.run({ runId: 'run-active', prompt: 'running' }) as FakeAgentRun;
     h.activeRuns.register('oc_group', activeRun);
@@ -33,7 +34,10 @@ describe('signed card callback dispatch', () => {
     });
 
     expect(activeRun.stopped).toBe(true);
+  });
 
+  it('rejects built-in command callbacks when the bridge token does not verify', async () => {
+    const h = await createHarness();
     const deniedRun = h.agent.run({ runId: 'run-active', prompt: 'running' }) as FakeAgentRun;
     h.activeRuns.register('oc_group', deniedRun);
     await h.dispatch({
@@ -138,6 +142,7 @@ async function createHarness(
   const tmp = await createTmpProfile('callback-dispatch-test-');
   const channel = createFakeChannel();
   const sessions = new SessionStore(`${tmp.profile}/sessions.json`);
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(`${tmp.profile}/workspaces.json`);
   const activeRuns = new ActiveRuns();
   const agent = new FakeAgentAdapter();
@@ -203,6 +208,7 @@ async function createHarness(
     },
     dispatch: (value, formValue) =>
       handleCardAction({
+        resumeCandidates,
         channel: channel as unknown as Parameters<typeof handleCardAction>[0]['channel'],
         evt: cardEvent(value, formValue),
         sessions,

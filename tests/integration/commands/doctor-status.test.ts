@@ -7,6 +7,7 @@ import { ProcessPool } from '../../../src/bot/process-pool.js';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter, type FakeAgentRun } from '../../helpers/fake-agent.js';
@@ -132,6 +133,7 @@ async function createHarness(options: {
   const tmp = await createTmpProfile('doctor-status-');
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const activeRuns = new ActiveRuns();
   const pool = new ProcessPool(() => 1);
@@ -170,6 +172,7 @@ async function createHarness(options: {
 
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
+      resumeCandidates,
       channel: channel as unknown as CommandContext['channel'],
       msg: message(content),
       scope: 'chat-1',

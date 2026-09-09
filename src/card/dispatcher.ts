@@ -10,6 +10,7 @@ import { log } from '../core/logger';
 import { canUseDm, canUseGroup } from '../policy/access';
 import type { RunExecutor } from '../runtime/run-executor';
 import type { SessionCatalog } from '../session/catalog';
+import type { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { commandSessionCatalogIdentity } from '../bot/session-catalog-identity';
@@ -28,6 +29,7 @@ export interface CardDispatchDeps {
   channel: LarkChannel;
   evt: CardActionEvent;
   sessions: SessionStore;
+  resumeCandidates: ResumeCandidates;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
@@ -96,6 +98,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
       scope,
       chatMode: mode,
       sessions: deps.sessions,
+      resumeCandidates: deps.resumeCandidates,
       sessionCatalog: deps.sessionCatalog,
       sessionCatalogIdentity: await commandSessionCatalogIdentity({
         msg,

@@ -12,6 +12,7 @@ import { canUseDm } from '../../../src/policy/access.js';
 import { evaluateRunPolicy } from '../../../src/policy/run-policy.js';
 import { resolveWorkingDirectory } from '../../../src/policy/workspace.js';
 import { SessionCatalog, type SessionCatalogIdentity } from '../../../src/session/catalog.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import type { CodexThreadHistoryEntry } from '../../../src/session/codex-history.js';
@@ -59,6 +60,28 @@ describe('agent-aware resume commands', () => {
     vi.mocked(listRecentSessions).mockReset().mockResolvedValue([]);
     vi.mocked(listCodexThreadHistory).mockReset().mockResolvedValue([]);
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
+  });
+
+  it.each(['command', 'card'] as const)('rejects a different profile nonce through %s without consuming the owner candidate', async (route) => {
+    const a = await createHarness('kimi');
+    const b = await createHarness('kimi', { sharedWorkspace: a.tmp.workspace });
+    expect(b.identity).toEqual(a.identity);
+    a.sessions.set('chat-1', 'handle-a', a.identity.cwdRealpath);
+    b.sessions.set('chat-1', 'handle-b', b.identity.cwdRealpath);
+    b.catalog.upsertActive({ ...b.identity, resumeHandle: 'handle-b', now: 1000 });
+    const beforeSession = { ...b.sessions.getRaw('chat-1') };
+    const beforeCatalog = { ...b.catalog.activeFor(b.identity) };
+    await a.run('/resume');
+    const nonce = resumeNonce(lastMarkdown(a.channel));
+    if (route === 'command') await b.run(`/resume use ${nonce}`);
+    else await b.dispatchResumeArg(nonce);
+    expect(b.sessions.getRaw('chat-1')).toEqual(beforeSession);
+    expect(b.catalog.activeFor(b.identity)).toEqual(beforeCatalog);
+    expect(lastMarkdown(b.channel)).toContain('不可恢复');
+    if (route === 'command') await a.run(`/resume use ${nonce}`);
+    else await a.dispatchResumeArg(nonce);
+    expect(a.catalog.activeFor(a.identity)?.resumeHandle).toBe('handle-a');
+    expect(lastMarkdown(a.channel)).toContain('已完成');
   });
 
   it('keeps migrated scoped workspace aliases ahead of legacy fallback in actual commands', async () => {
@@ -429,9 +452,10 @@ describe('agent-aware resume commands', () => {
 
 async function createHarness(
   agentKind: AgentKind,
-  options: { bindWorkspace?: boolean; defaultWorkspace?: boolean } = {},
+  options: { bindWorkspace?: boolean; defaultWorkspace?: boolean; sharedWorkspace?: string } = {},
 ): Promise<Harness> {
   const tmp = await createTmpProfile(`resume-command-${agentKind}-`);
+  const cwd = options.sharedWorkspace ?? tmp.workspace;
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
@@ -440,11 +464,12 @@ async function createHarness(
   const codexHistory: CodexThreadHistoryEntry[] = [];
   const historyInputs: ResumeHistoryInput[] = [];
   const activeRuns = new ActiveRuns();
+  const resumeCandidates = new ResumeCandidates();
   const pending = new PendingQueue(60_000, () => {});
   const agent = createFakeAgent();
   const profileConfig = appConfig(agentKind);
   if (options.defaultWorkspace !== false) {
-    profileConfig.workspaces.default = tmp.workspace;
+    profileConfig.workspaces.default = cwd;
   }
   const controls = {
     profile: agentKind,
@@ -459,9 +484,9 @@ async function createHarness(
     processId: 'proc-1',
   } satisfies Controls;
   if (options.bindWorkspace !== false) {
-    workspaces.setCwd('chat-1', tmp.workspace);
+    workspaces.setCwd('chat-1', cwd);
   }
-  const identity = await commandIdentity(agentKind, profileConfig, controls, tmp.workspace);
+  const identity = await commandIdentity(agentKind, profileConfig, controls, cwd);
   const chatModeCache = {
     resolve: async () => 'p2p',
   } as unknown as ChatModeCache;
@@ -476,6 +501,7 @@ async function createHarness(
       scope: 'chat-1',
       chatMode: runOptions.chatMode ?? 'p2p',
       sessions,
+      resumeCandidates,
       sessionCatalog: catalog,
       sessionCatalogIdentity: runOptions.withCatalogIdentity === false ? undefined : identity,
       workspaces,
@@ -495,6 +521,7 @@ async function createHarness(
       channel: channel as unknown as Parameters<typeof handleCardAction>[0]['channel'],
       evt: cardEvent({ cmd: 'resume.use', arg }),
       sessions,
+      resumeCandidates,
       sessionCatalog: catalog,
       workspaces,
       activeRuns,
