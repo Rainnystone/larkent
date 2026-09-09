@@ -19,6 +19,16 @@ const collectTsFiles = (path: string): string[] => {
 };
 
 describe('static architecture contracts', () => {
+  it('routes factories and detection through descriptors without reverse adapter imports', () => {
+    expect(read('src/runtime/agent-runtime.ts')).not.toMatch(/\bfactories\b|new \w+Adapter\b/);
+    expect(read('src/cli/agent-detection.ts')).not.toMatch(
+      /\[\s*['"](?:claude|codex|kimi|grok|cursor)['"](?:\s*,\s*['"](?:claude|codex|kimi|grok|cursor)['"]){4}\s*,?\s*\]/,
+    );
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor']) {
+      expect(read(`src/agent/${kind}/adapter.ts`)).not.toMatch(/from ['"].*\/(?:registry|cli\/agent-detection)(?:\.js)?['"]/);
+    }
+  });
+
   it('keeps shared agent definition types independent of registry modules', () => {
     const definitionPath = 'src/agent/definition.ts';
     expect(existsSync(join(root, definitionPath)), definitionPath).toBe(true);

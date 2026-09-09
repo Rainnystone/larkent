@@ -19,7 +19,7 @@ import { GrokAdapter } from '../../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../../src/agent/kimi/adapter.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
-import { writeScriptedJsonlExecutable, writeVersionExecutable } from '../../helpers/fake-executable.js';
+import { writeScriptedJsonlExecutable, writeVersionExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
 import {
   PIN_AGENT_KINDS,
   adapterDisplayName,
@@ -52,7 +52,14 @@ describe('P7 preflight and detection', () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-detect-path-'));
     const grok = await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
     const claude = await writeVersionExecutable(dir, 'claude', 'claude 0.0.0-pin');
-    const agent = await writeVersionExecutable(dir, 'agent', 'cursor-agent 2026.08.28-pin');
+    const codex = await writeVersionExecutable(dir, 'codex', 'codex 0.0.0-pin');
+    const kimi = await writeVersionExecutable(dir, 'kimi', 'kimi 0.0.0-pin');
+    const agent = join(dir, process.platform === 'win32' ? 'agent.CMD' : 'agent');
+    // Support both probes: detection may fall back from version to Cursor-specific help.
+    await writeScriptedJsonlExecutableFile(agent, agent + '.argv.json', {
+      version: 'cursor-agent 2026.08.28-pin',
+      helpText: cursorVersionedHelpText(),
+    });
     expect(cursorVersionedHelpText()).toContain('stream-json');
 
     await withEnvBin('grok', undefined, async () => {
@@ -64,6 +71,8 @@ describe('P7 preflight and detection', () => {
                 await expect(detectInstalledAgents()).resolves.toEqual([
                   { kind: 'grok', binaryPath: grok },
                   { kind: 'claude', binaryPath: claude },
+                  { kind: 'codex', binaryPath: codex },
+                  { kind: 'kimi', binaryPath: kimi },
                   { kind: 'cursor', binaryPath: agent },
                 ]);
               });

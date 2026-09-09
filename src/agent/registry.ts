@@ -1,15 +1,15 @@
-import { claudeMetadata } from './claude/metadata';
-import { codexMetadata } from './codex/metadata';
-import { cursorMetadata } from './cursor/metadata';
-import { grokMetadata } from './grok/metadata';
-import { kimiMetadata } from './kimi/metadata';
+import { claudeDescriptor } from './claude/descriptor';
+import { codexDescriptor } from './codex/descriptor';
+import { cursorDescriptor } from './cursor/descriptor';
+import { grokDescriptor } from './grok/descriptor';
+import { kimiDescriptor } from './kimi/descriptor';
 
 export const registeredAgentDescriptors = [
-  claudeMetadata,
-  codexMetadata,
-  kimiMetadata,
-  grokMetadata,
-  cursorMetadata,
+  claudeDescriptor,
+  codexDescriptor,
+  kimiDescriptor,
+  grokDescriptor,
+  cursorDescriptor,
 ] as const;
 
 export type AgentDescriptor = (typeof registeredAgentDescriptors)[number];

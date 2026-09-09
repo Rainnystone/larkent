@@ -1,5 +1,6 @@
 import type { ProfileConfig } from '../config/profile-schema';
-import type { AgentOptionsSchema, EffectiveAccess } from './types';
+import type { LarkChannelEnvContext } from './lark-channel-env';
+import type { AgentAdapter, AgentOptionsSchema, EffectiveAccess } from './types';
 
 export interface ModelOption {
   /**
@@ -58,5 +59,25 @@ export const FOLLOW_DEFAULT: ModelOption = Object.freeze({
 export function defineMetadata<K extends string, S extends string>(
   value: AgentMetadata<K, S>,
 ): AgentMetadata<K, S> {
+  return Object.freeze(value);
+}
+
+export interface AgentFactoryContext {
+  profile: ProfileConfig;
+  profileDir: string;
+  larkChannel?: LarkChannelEnvContext;
+}
+
+export interface AgentDescriptorShape<K extends string = string, S extends string = string>
+  extends AgentMetadata<K, S> {
+  create(context: AgentFactoryContext): AgentAdapter;
+  resolveProfileBinary(profile: ProfileConfig): string | undefined;
+  detectBinary(envCommand?: string): Promise<string>;
+  readonly detectionOrder: number;
+}
+
+export function defineDescriptor<K extends string, S extends string>(
+  value: AgentDescriptorShape<K, S>,
+): AgentDescriptorShape<K, S> {
   return Object.freeze(value);
 }
