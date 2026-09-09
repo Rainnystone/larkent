@@ -1,3 +1,4 @@
+import { mkdir, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -58,6 +59,27 @@ describe('agent-aware resume commands', () => {
     vi.mocked(listRecentSessions).mockReset().mockResolvedValue([]);
     vi.mocked(listCodexThreadHistory).mockReset().mockResolvedValue([]);
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
+  });
+
+  it('keeps migrated scoped workspace aliases ahead of legacy fallback in actual commands', async () => {
+    const h = await createHarness('claude');
+    const scoped = join(h.tmp.root, 'scoped');
+    const legacy = join(h.tmp.root, 'legacy');
+    await mkdir(scoped);
+    await mkdir(legacy);
+    await h.workspaces.flush();
+    await writeFile(join(h.tmp.profile, 'workspaces.json'), JSON.stringify({
+      chats: { 'chat-1': { cwd: h.tmp.workspace }, 'chat-1:topic-other': { cwd: legacy } },
+      named: { work: legacy, 'claude\u001fou-user\u001fchat-1\u001fwork': scoped },
+    }));
+    await h.workspaces.load();
+    await h.run('/ws use work');
+    expect(h.workspaces.cwdFor('chat-1')).toBe(await realpath(scoped));
+    expect(h.workspaces.cwdFor('chat-1:topic-other')).toBe(legacy);
+    await h.run('/ws remove work');
+    await h.run('/ws use work');
+    expect(h.workspaces.cwdFor('chat-1')).toBe(await realpath(legacy));
+    expect(h.workspaces.getNamed('work')).toBe(legacy);
   });
 
   it('rejects unknown descriptors instead of falling back to local history', () => {
