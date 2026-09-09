@@ -4,9 +4,9 @@ Domain vocabulary for this repo. Use these words in code, tests, docs, and PR bo
 
 ## What this is
 
-A bridge that puts CLI coding agents behind Feishu/Lark bots. One machine (a VPS, or a Grok Bot cloud computer) can run a **profile** in the foreground (`run`), as a per-profile service (`start`), or under a supervisor console (`run --web-ui` / `start --web-ui`). The console starts the active profile and can host other profiles on demand. Each profile is one Feishu bot backed by one **agent**.
+Larkent connects CLI coding agents to Feishu/Lark bots. It is inspired by [lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) and has been refactored around a shared multi-CLI runtime. A host can run a **profile** in the foreground (`run`), as a per-profile service (`start`), or under a supervisor console (`run --web-ui` / `start --web-ui`). The console starts the active profile and can host other profiles on demand. Each profile is one Feishu bot backed by one **agent**.
 
-Grok Bot is the deployment target (a SpaceXAI always-on teammate with its own cloud computer). It is not an agent. Grok Build is an agent, one of five, with no special standing.
+Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Code, Grok Build and Cursor CLI are five equal agents; the project is not tied to one deployment product.
 
 ## Agents
 

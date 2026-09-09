@@ -1,7 +1,9 @@
 # Spec: Multi-agent runtime (five equal CLI agents, N independent Feishu bots)
 
+Historical architecture design. Current setup and project naming are defined in [AGENTS.md](../../AGENTS.md), [README.md](../../README.md), and [CONTEXT.md](../../CONTEXT.md). The orchestration instructions below describe the original workstream, not a new task.
+
 Status: approved design brief, ready for pstack `multi-phase-plan`.
-Owner: Rainnystone. Written 2026-09-03 from the architecture review (`Arch_review_findings.md` in the parent vault).
+Written 2026-09-03 from the original architecture review.
 
 This document is the input to pstack. pstack writes its own phase plan from it. Do not treat the PR sequence below as the plan; treat it as the shape the plan must satisfy.
 
@@ -175,7 +177,8 @@ export interface AgentRunInput {
 ```yaml
 agent:
   kind: kimi
-  binaryPath: /home/bot/.local/bin/kimi     # optional; absent means detect via descriptor.binaryNames on PATH
+  # binaryPath is optional; omit it to detect the CLI on PATH.
+  # If set, use the actual resolved executable path on the deployment host.
   options: { ... }                          # validated by descriptor.agentOptionsSchema
 ```
 
@@ -249,9 +252,7 @@ What the swarm should distrust: PR bodies claiming "no behavior change". Diff ea
 
 ## 8. Naming and docs
 
-The repo is named for its deployment target, not its agent. Grok Bot is a SpaceXAI product: an always-on teammate that runs on a persistent Cursor-hosted cloud computer. This bridge is what that computer (or any VPS) runs to put CLI coding agents behind Feishu bots. Grok Build is one of the five agents and has no special standing.
-
-README and README.zh must say this in the first paragraph and stop presenting Grok Build as the primary engine. `package.json` `description`, `repository`, `bugs`, and `homepage` still point at the upstream fork source and at "Grok Build (and other CLI coding agents)"; update them to this repo and to neutral wording.
+The project is now **Larkent: Agent for lark**. It is inspired by [lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge), with a refactored shared runtime supporting five equal CLI agents. README and package repository metadata use the Larkent name; deployment hosts are independent of agent choice.
 
 ---
 
@@ -264,13 +265,13 @@ README and README.zh must say this in the first paragraph and stop presenting Gr
 - **Web console types.** `web/src/lib/types.ts` duplicates the union because the console builds separately. Pick one: a shared `src/agent/kinds.ts` consumed by both bundles, or a generated file. Do not leave two declarations.
 - **`.planning/`** holds local planning-with-files state and is gitignored. Not part of this program.
 - **pstack prerequisites.** `autopilot-stack` calls `/deslop` and its swarm lanes use `control-cli`, both from the `cursor-team-kit` plugin. Both plugins are public at `https://github.com/cursor/plugins`; a cloud root that lacks them locally clones that repo to `/tmp` and reads `pstack/skills/**` and `cursor-team-kit/skills/**` from there.
-- **Forge.** Trunk is `master`. `gh` is installed and authenticated to `github.com` as `Rainnystone`; `origin` CLI is not installed. pstack uses `gh`.
+- **Forge.** The original workstream used `gh` with `master` as its base. Check the current environment before reusing its commands.
 
 ---
 
 ## 10. How to hand this to pstack
 
-In a fresh chat with `larkent-for-grokbot` open as the workspace root:
+In a fresh chat with the repository root open:
 
 ```text
 /poteto-mode new task. multi-phase plan for docs/specs/multi-agent-runtime.md.

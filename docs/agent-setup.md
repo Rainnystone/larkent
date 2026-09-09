@@ -7,14 +7,14 @@
 ## 1. 核对环境与安装
 
 1. 用 `git rev-parse --show-toplevel`、`git branch --show-current`、`git status --short` 核对用户指定的源码版本和 worktree。
-2. 按 [中文 README 的前置与安装](../README.zh.md#前置安装前先核对)（[English](../README.md#prerequisites-verify-before-install)）核对目标 CLI、登录、网络、Node 和 pnpm。版本要求以 `package.json` 为准；从已有源码接续时直接使用当前 checkout。
+2. 按 [中文 README 的环境要求](../README.zh.md#环境要求)（[English](../README.md#requirements)）核对目标 CLI、登录、网络、Node 和 pnpm。版本要求以 `package.json` 为准；从已有源码接续时直接使用当前 checkout。
 3. 安装依赖 `pnpm install --frozen-lockfile`，执行 `pnpm build`，再检查 `node bin/lark-channel-bridge.mjs --help`。后续运行这个 checkout 的本地入口。
 
 **完成条件：**依赖与构建成功，目标 CLI 已登录且能执行；记录实际 CLI 版本、源码 branch/SHA 和代码目录。
 
 ## 2. 注册并启动目标 profile
 
-按 [注册飞书应用](../README.zh.md#注册飞书应用)（[English](../README.md#provision-the-feishu-app)）完成扫码或已有应用配置。自定义 profile 使用 `profile create <name> --agent <kind> --workspace <path>`；参数先查本地 `profile create --help`。明确记录本次实际使用的数据根和 profile 名，profile 名可能与 agent kind 不同。
+按 [快速开始](../README.zh.md#快速开始)（[English](../README.md#quick-start)）完成扫码或已有应用配置。自定义 profile 使用 `profile create <name> --agent <kind> --workspace <path>`；参数先查本地 `profile create --help`。明确记录本次实际使用的数据根和 profile 名，profile 名可能与 agent kind 不同。
 
 先用 `LARK_CHANNEL_HOME=<实际数据根> node bin/lark-channel-bridge.mjs run --profile <实际profile名>` 前台启动，等 profile preflight、应用绑定和连接完成。需要 TTY 的扫码流程使用真实终端或 agent 工具的 PTY。setup agent 在另一个终端完成下一步 OAuth，让用户私下确认授权。
 
@@ -83,5 +83,5 @@ larkent_lark auth status --json --verify
 
 ## 按需继续
 
-- 常驻服务、supervisor、停止与日志：[README.zh.md 的运行与验收](../README.zh.md#运行) / [README.md](../README.md#run)。
+- 常驻服务、supervisor、停止与日志：[运行指南](operations.md)。
 - 接入问题需改代码：在用户指定的 branch/worktree 留下回归与修复，执行 repo 的 `pnpm ci:local`；记录实际命令、退出码和真实场景复验结果。

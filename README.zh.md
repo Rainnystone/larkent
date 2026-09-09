@@ -1,257 +1,88 @@
-# lark-channel-bridge（给 Grok Bot 用）
+# Larkent: Agent for lark
 
-把 CLI coding agent 接到飞书/Lark bot 后面。一台机器（VPS，或 Grok Bot 云电脑）可以用 `run` 在前台运行一个 **profile**，按 **per-profile service** 各跑一个 profile，也可以用 `run --web-ui` / `start --web-ui` 运行一个 supervisor。supervisor 控制台先启动当前 profile，其余 profile 按需启动。每个 profile 是一个飞书 bot，背后一个 **agent**。Grok Bot 是部署目标（SpaceXAI 常驻队友，自带一台云电脑）。它不是 agent。Grok Build 是五个 agent 之一，没有特殊地位。五个对等体是 `claude`、`codex`、`kimi`、`grok`、`cursor`。没有默认 agent。
+把你的 coding agent 接入飞书 / Lark。通过私聊或群聊，使用运行在自己电脑或服务器上的 Claude Code、Codex CLI、Kimi Code、Grok Build 和 Cursor CLI。
 
-本 README 是 **Grok Bot** 的执行手册。每一步都是命令 + 可核对结果。需要人的步骤标 **HUMAN**。
-英文：[README.md](./README.md)。
+Larkent 受到 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) 启发，并在此基础上进行了架构重构：统一 agent 注册与进程执行机制，让多个 CLI 共用运行底座，同时保持各 bot 的配置、会话和运行状态独立。
 
-**给 setup agent 的入口：[首次接入指南](docs/agent-setup.md)。** 首次 setup 必须同时完成常规注册/授权和 owner 的完整用户身份授权，并验证 wiki/文档与跨群记录读取。
+[English](README.md)
 
-没有发 npm。从源码安装。
+## 可以做什么
 
-## 选 agent
+- **在聊天里处理任务。** 私聊 bot，或在群里 `@bot`，让 agent 回答问题、查看项目、执行编码任务。
+- **延续工作上下文。** 连续对话、切换工作目录、停止当前任务，之后再恢复会话。
+- **同时运行多个 agent。** 每个 bot 可以选择自己的 CLI，保存独立配置和会话；一台主机可运行多个 profile。
+- **读取飞书中的上下文。** 使用 owner 授权的用户身份读取 wiki、文档和聊天记录，回复仍以 bot 身份发出。
+- **选择运行方式。** 支持终端前台、后台服务，以及管理多个 profile 的本地 Web 控制台。
 
-| Agent | `--agent` | 二进制 | 无头调用 | 续会话 | 机器必须能访问 |
-|---|---|---|---|---|---|
-| **Claude Code** | `claude` | `claude` | `claude -p --output-format stream-json` | `--resume` | Anthropic |
-| **Codex CLI** | `codex` | `codex` | `codex exec --json` | `resume` | OpenAI |
-| **Kimi Code** | `kimi` | `kimi` | `kimi -p --output-format stream-json` | `-S` | Moonshot |
-| **Grok Build** | `grok` | `grok` | `grok -p --output-format streaming-json --always-approve` | `-r`（不要用 `-s`） | `auth.x.ai` / grok 代理（**必须在墙外**） |
-| **Cursor CLI** | `cursor` | `cursor-agent`（回退 `agent`） | `agent -p --output-format stream-json --force --sandbox disabled --approve-mcps --trust` | `--resume` | Cursor API（已登录 CLI 或 `CURSOR_API_KEY`） |
+## 支持的 CLI
 
-一个 profile 不要混 agent。另建 profile。
+| Agent | Profile kind | CLI 程序 |
+| --- | --- | --- |
+| Claude Code | `claude` | `claude` |
+| Codex CLI | `codex` | `codex` |
+| Kimi Code | `kimi` | `kimi` |
+| Grok Build | `grok` | `grok` |
+| Cursor CLI | `cursor` | `cursor-agent` 或 Cursor 的 `agent` |
 
-把下文 `<AGENT>` 换成 `claude`、`codex`、`kimi`、`grok` 或 `cursor`。profile 名跟随 `--agent` 种类。没有默认 agent。
+五种 CLI 遵循相同的运行契约。各自的参数、图片处理和原生历史能力由对应适配器负责；创建 profile 时明确选择 agent。
 
-## 心智模型
+## 环境要求
 
-```
-飞书用户消息 ──WS 长连接──> 本进程
-   │  scope = chatId（话题群 chatId:threadId）
-   ▼
-拉起本机 CLI（claude / codex / kimi / grok / cursor-agent -p …）→ stdout JSONL → AgentEvent
-   ▼
-一条飞书 markdown（默认不展示 tool 过程）
-```
+- Node.js 20.12 或更新版本；pnpm 版本以 [package.json](package.json) 为准。
+- 至少安装并登录一种支持的 coding CLI。
+- 已安装 [Lark CLI](https://github.com/larksuite/cli)。
+- 可以注册应用或授权已有应用的飞书 / Lark 账号。
+- 主机能够访问飞书 / Lark，以及所选 CLI 对应的服务。
 
-- **运行状态归属**：每个 profile 独立拥有 adapter 实例、身份、会话状态和活跃 run。
-  adapter 共用进程 runner 的实现；每个 run 独立拥有子进程和 translator 状态。
-  多个 profile 共用工作目录时，运行状态隔离不会隔离目录里的文件。
-- **存储**：profile 使用 schema v3；`sessions.json`、`workspaces.json` 和会话
-  catalog 使用 v2。SessionStore v2 在 `entries` map 中保存 `resumeHandle`，
-  并保留每个 scope 的 idle 偏好；Workspace v2 保留 `chats` 和 `named` 映射。
-  支持的旧格式在加载时升级；Git 回退还需恢复匹配的数据副本，不能只换旧程序。
-- **会话**：catalog 在 `~/.lark-channel/profiles/<profile>/`；Grok 原生会话在
-  `~/.grok/sessions/`。每批消息一个 CLI 进程。
-- **发言 vs 读取**：聊天输出永远是 **bot**。读群历史、文档、表格等走
-  `lark-cli --as user`（owner 完成一次 OAuth 之后）。Token 在
-  **当前 profile 的 lark-cli 目录**，不在某个挂着的 agent 进程里。重启桥
-  不需要登录进程还活着。
-- **首次 init 默认**（`run`/`start` 写盘，不要手改除非被要求）：
-  `mode: team`、`showToolCalls: false`、`larkCli.identityPreset: user-default`、
-  **lark-cli 身份策略** `strict-mode off` + `default-as bot`。
+沿用 coding CLI 原有的登录环境。Larkent 的配置和会话数据单独存放。
 
-## 主机约束
+## 快速开始
 
-- Node.js ≥ 20.12，可写 `$HOME`，出站 HTTPS。
-- **Claude Code**：需要 Anthropic。不需要 xAI。
-- **Codex CLI**：需要 OpenAI。不需要 xAI。
-- **Grok Build**：机器必须打到 xAI。墙内主机即使用户在别的设备完成了
-  device-code 也会失败。不要把 grok profile 放在境内 VPS。
-- **Kimi Code**：不需要 xAI；仍要能连 `open.feishu.cn`。
-- **Cursor CLI**：需要 Cursor API（已登录 CLI 或 `CURSOR_API_KEY`）。不需要 xAI。
-- **不要**给 bot 单独设 `GROK_HOME` / 隔离 `~/.grok`，继承已登录的
-  `auth.json`。Claude 同理（`~/.claude`），Codex 同理（`~/.codex`），
-  Kimi 同理（`~/.kimi-code`）。Cursor 继承已登录 CLI /
-  `CURSOR_API_KEY`。隔离家目录等于再登一次。
-- 想走 SuperGrok 额度就 **不要**设 `XAI_API_KEY`。
+从源码安装：
 
-## 前置（安装前先核对）
-
-| 依赖 | 检查 | 通过 |
-|---|---|---|
-| Node ≥ 20.12 | `node --version` | `v20.12.0` 或更新 |
-| pnpm | `npx pnpm --version` | 任意 10.x |
-| lark-cli | `lark-cli --version` | 如 `1.0.x` |
-| Claude（若 `--agent claude`） | `claude --version` | Claude Code 版本横幅 |
-| Codex（若 `--agent codex`） | `codex --version` | Codex CLI 版本横幅 |
-| Grok（若 `--agent grok`） | `grok --version` 且 `test -f ~/.grok/auth.json` | 二进制 + 登录文件 |
-| Kimi（若 `--agent kimi`） | `kimi -p "say OK" --output-format stream-json` | JSONL，退出码 0 |
-| Cursor（若 `--agent cursor`） | `cursor-agent --version` 或 `agent --version` | Cursor CLI 版本横幅 |
-| TTY | `[ -t 0 ] && [ -t 1 ] && echo tty` | `tty` — 扫码向导需要 |
-
-**HUMAN — 本机 agent 登录（每台机器一次）：**
-
-- Claude：`claude`（在 CLI 里完成 Anthropic 登录）。
-- Codex：`codex login`。
-- Grok：`grok login --device-auth`（URL + 短码，owner 在任意设备确认）。
-- Kimi：`kimi login`。
-- Cursor：`agent login`（或设 `CURSOR_API_KEY`）。
-
-Claude Code：`npm install -g @anthropic-ai/claude-code`。
-Codex CLI：`npm install -g @openai/codex`。
-Grok CLI：`curl -fsSL https://x.ai/cli/install.sh | bash`。
-Cursor CLI：`curl https://cursor.com/install -fsS | bash`（二进制名是 `agent`；把 `~/.local/bin` 加进 PATH）。如果二进制是 `agent` 而不是 `cursor-agent`，设 `LARK_CHANNEL_CURSOR_BIN=agent`。
-缺 lark-cli：`npm install -g @larksuite/cli`。
-
-## 安装
-
-```bash
-git clone https://github.com/Rainnystone/larkent-for-grokbot.git
-cd larkent-for-grokbot
-npx pnpm install
-npx pnpm build
+```sh
+git clone https://github.com/Rainnystone/larkent.git
+cd larkent
+pnpm install --frozen-lockfile
+pnpm build
 ```
 
-入口：仓库根目录 `node bin/lark-channel-bridge.mjs <命令>`。
+创建一个 profile。下面以 Codex 为例，将 `codex` 换成你要接入的 CLI kind：
 
-## 注册飞书应用
-
-**HUMAN。** 无 TTY（Grok Bot 云壳常见）走 B，不要跑扫码向导。
-
-**A. 扫码向导（必须 TTY）：**
-
-```bash
-node bin/lark-channel-bridge.mjs run --agent <AGENT>
+```sh
+node bin/lark-channel-bridge.mjs profile create my-agent --agent codex
+node bin/lark-channel-bridge.mjs run --profile my-agent
 ```
 
-打印二维码和 URL。owner 用飞书 App 扫。等到 stdout 出现 `✓ 应用创建成功`
-再出现 `正在监听消息`。
+在支持 TTY 的终端中按提示完成应用注册。使用已有应用时添加 `--app-id`，再按提示输入 secret；国际版 Lark 添加 `--tenant lark`。
 
-stdin 不是 TTY 就不要走 A，改 B。
+**首次 setup 必须完成 owner 用户身份授权。** 除应用注册外，负责 setup 的 agent 还要主动请 owner 在当前 profile 的环境中完成一次 `--domain all` 完整用户身份 OAuth，然后验证实际 wiki/文档读取，以及 owner 有权访问的另一个群的记录读取。有效授权在重启后复用。
 
-**B. 已有应用凭证（可脚本化）：**
+完整的注册、授权和验证步骤见 [agent setup 指南](docs/agent-setup.md)。负责部署本仓库的 agent 应先读 [AGENTS.md](AGENTS.md)。
 
-```bash
-node bin/lark-channel-bridge.mjs run --agent <AGENT> \
-  --app-id cli_xxx --app-secret <secret> --tenant feishu
-```
+完成后，私聊 bot 或在群里 `@bot` 即可开始使用。前台进程用 `Ctrl-C` 停止。
 
-国际版 Lark 用 `--tenant lark`。向 owner 要 id/secret，不要编。只想写配置的话，
-看到 `正在监听消息` 后 Ctrl-C。
+## 运行与配置
 
-配置：`~/.lark-channel/config.json`（`LARK_CHANNEL_HOME` 改根目录）。
-密钥进每个 profile 的 keystore，不进 JSON。
+后台服务、Web 控制台、聊天命令、配置、日志和排错方法统一见 [运行指南](docs/operations.md)。
 
-## Owner OAuth（CLI，不要塞进 coding-agent 那一轮）
-
-**首次 setup 的必做步骤。** 注册完成后，setup agent 主动请 owner 完成一次完整用户身份 OAuth；按 [首次接入指南第 3–4 步](docs/agent-setup.md#3-主动请求一次完整用户身份授权)执行 `--domain all`、当前 profile 环境绑定、私下扫码、device flow 续接和实际读取验证。该指南是授权步骤的统一维护位置。
-
-**lark-cli 身份策略**：发言保持 bot 身份；读取 owner 可见的 wiki、文档和其他群记录明确使用 `--as user`。Token 写在 **当前 profile 的 lark-cli 目录**，有效授权在重启后复用。应用注册、bot ready 或仅部分业务授权不代表完整 setup 已完成。
-
-## 运行
-
-先前台：
-
-```bash
-node bin/lark-channel-bridge.mjs run --agent <AGENT>
-# 通过："✓ 已连接  bot: <名字> ... agent: Grok Build (grok)" / "Kimi Code (kimi)" / "Cursor CLI (cursor)"
-# 然后 "正在监听消息"
-```
-
-再装成系统 **per-profile service**（macOS launchd，Linux systemd `--user`）。
-Windows 上是 `.cmd` 包装，交给 schtasks。
-
-```bash
-node bin/lark-channel-bridge.mjs start
-node bin/lark-channel-bridge.mjs ps
-node bin/lark-channel-bridge.mjs status
-node bin/lark-channel-bridge.mjs restart
-node bin/lark-channel-bridge.mjs stop
-```
-
-不带参数的 `start` 是单个 **per-profile service**。一台机器上托管全部 profile
-（本地控制台）用 `start --web-ui` / `run --web-ui`。
-
-无人登录的 Linux：`loginctl enable-linger "$USER"`，否则用户退出后服务被收。
-
-## 验收
-
-1. 飞书私聊（或群 `@bot`）：`用一句话介绍你自己`。
-   通过：约 30 秒一条 markdown，没有 tool 行（`showToolCalls: false`）。
-2. Owner OAuth 之后：`回顾一下这个群最近的聊天记录`。
-   通过：用 owner 用户身份读；聊天里说话的仍是 bot。
-3. 前台 profile 日志：`~/.lark-channel/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`
-   （`"phase":"run"` / `"event":"completed"`）。supervisor 控制台日志在
-   `~/.lark-channel/logs/`。daemon 的 `status --profile <profile>` / `status --web-ui`
-   会显示 stdout/stderr 路径。前台进程用 Ctrl-C 停止；`stop` 和 `restart` 控制
-   系统服务。没有 `logs` 子命令。
-
-## 配置参考
-
-`~/.lark-channel/config.json` → `profiles.<name>`：
-
-| 键 | 默认 | 含义 |
-|---|---|---|
-| `agentKind` | `--agent` 种类。没有默认 agent。 | 适配器 |
-| `mode` | `team` | `team` 能看到就能用；`personal` 走白名单 |
-| `access.allowedUsers/allowedChats/admins` | `[]` | personal 用；admin 两种模式都有效 |
-| `workspaces.default` | profile 工作区 | `/cd` 默认目录 |
-| `preferences.model` | 不设置 | `grok -m` / `kimi -m` / `cursor --model` |
-| `preferences.showToolCalls` | `false` | 不展示工具过程 |
-| `larkCli.identityPreset` | `user-default` | 允许用户身份；默认身份仍是 bot |
-
-规范权限（旧版 `sandbox` 读入时会规范化掉，不要再写新的 sandbox 键）：
-
-```json
-"permissions": {
-  "defaultAccess": "full",
-  "maxAccess": "full"
-}
-```
-
-聊天：`/help` `/status` `/config` `/cd <path>` `/new` `/stop` `/resume`
-`/invite user` `/remove user` `/invite group` `/remove group`
-`/invite all group` `/invite admin`。
-
-Profile CLI：`profile export`、`profile remove --purge --yes`、
-`profile export --include-secrets --yes`。
-
-环境变量：`LARK_CHANNEL_HOME`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_CURSOR_BIN`。
-新建 profile 时会把二进制环境变量解析后保存为 `agent.binaryPath`。已有 profile
-继续使用保存的路径；只改环境变量不会覆盖它。改变 bridge 数据根目录不会改变
-`HOME` 或 coding CLI 的登录。
-
-云文档评论按文档权限生效：在飞书文档评论里 `@bot` 走该文档会话，不走 IM 白名单。
-
-## 故障排查
-
-| 症状 | 诊断 | 处理 |
-|---|---|---|
-| 扫码向导报非交互 | 没有 TTY | `--app-id` / `--app-secret` |
-| `agent-binary-not-found` | CLI 不在 PATH | 安装/登录；或设 `LARK_CHANNEL_GROK_BIN` / `LARK_CHANNEL_KIMI_BIN` / `LARK_CHANNEL_CURSOR_BIN` |
-| 服务器上 Grok 认证失败 | 主机到不了 xAI | 把进程放到墙外 |
-| Grok 续会话变空白 | 误用了 `-s` | adapter 只用 `-r` |
-| 读群历史 `230027` | bot 没这个权限 | 预期；OAuth 后走 `--as user` |
-| OAuth 链接过期 | 10 分钟 | 重跑 `auth login --no-wait` |
-| Linux 退出登录服务没了 | systemd 用户单元 | `loginctl enable-linger "$USER"` |
-| 飞书里刷 tool 行 | `showToolCalls` 为 true | `/config` 关掉；本 fork 默认已是 false |
+CLI 入口沿用 `bin/lark-channel-bridge.mjs`。默认数据目录为 `$HOME/.lark-channel`，可以通过 `LARK_CHANNEL_HOME` 指定其它位置。每个 profile 单独保存凭据与会话；多个 agent 共用工作目录时，运行状态隔离不等于目录内文件隔离。
 
 ## 开发
 
-```bash
-npx pnpm typecheck
-npx pnpm test
-npx pnpm build
-GROK_REAL_SMOKE=1 npx vitest run tests/process/grok-real.smoke.test.ts
-KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts
-CURSOR_REAL_SMOKE=1 npx vitest run tests/process/cursor-real.smoke.test.ts
+```sh
+pnpm ci:local
 ```
 
-`src/agent/registry.ts` 的 descriptor registry 是生产代码创建、能力查询、安装
-检测和 UI 列举的唯一注册来源。各 adapter 拥有自己的 metadata、factory、协议、
-options 和历史访问；续接参数、图片支持与原生历史能力保留各自差异。测试独立
-固定五个支持的 kind，以发现注册名单漂移。
+该命令执行 diff 检查、测试、类型检查和构建。真实 CLI smoke 需要安装相应 CLI 并显式开启环境开关，见 [运行指南](docs/operations.md#development-checks)。
 
-bot 负责业务 idle 计时，并在工具执行期间暂停；executor 负责 profile/scope 的
-run 登记，以及 terminal 事件后的有界收尾；runner 负责子进程 I/O、退出、停止
-与 cleanup。`stop()` 只有在退出和 adapter cleanup 完成后才成功，成功收尾后
-才释放所有权；cleanup 失败会传递给调用方。
+- [Agent setup](docs/agent-setup.md)
+- [运行术语](CONTEXT.md)
+- [Agent 适配器](src/agent/)
+- [运行时实现](src/runtime/)
 
-适配层：`src/agent/claude/`、`src/agent/codex/`、`src/agent/kimi/`、`src/agent/grok/`、`src/agent/cursor/`。通道、卡片、
-会话、守护进程、web 控制台与 agent 无关。共享 bot/card 代码不许 import
-adapter 内部（`tests/static/contracts.test.ts`）。
+## 致谢与许可证
 
-## 许可证
+感谢 [lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) 提供最初的灵感与基础。
 
-MIT（继承自上游）。
+Larkent 使用 [MIT License](LICENSE)，保留原有版权声明。
