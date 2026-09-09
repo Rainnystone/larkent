@@ -96,7 +96,7 @@ describe('README runtime contract', () => {
     };
 
     for (const doc of [en, zh]) {
-      expect(doc.split('\n')[0]).toBe('# Larkent: Agent for lark');
+      expect(doc.split(/\r?\n/)[0]).toBe('# Larkent: Agent for lark');
       expect(doc).toContain('https://github.com/zarazhangrui/lark-coding-agent-bridge');
       expect(doc).toContain('(docs/agent-setup.md)');
       expect(doc).toContain('(docs/operations.md)');

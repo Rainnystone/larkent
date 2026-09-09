@@ -1,21 +1,22 @@
 import { describe, expect, it } from 'vitest';
 import { descriptorFor, requireAgentKind } from '../../src/agent/registry.js';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 
 const root = process.cwd();
 const read = (p: string) => readFileSync(join(root, p), 'utf8');
 
-const collectTsFiles = (path: string): string[] => {
-  const fullPath = join(root, path);
+const collectTsFiles = (rel: string): string[] => {
+  const posixRel = rel.split('\\').join('/');
+  const fullPath = join(root, posixRel);
   if (!existsSync(fullPath)) return [];
 
   if (statSync(fullPath).isFile()) {
-    return path.endsWith('.ts') || path.endsWith('.tsx') ? [path] : [];
+    return posixRel.endsWith('.ts') || posixRel.endsWith('.tsx') ? [posixRel] : [];
   }
 
   return readdirSync(fullPath)
-    .flatMap((entry) => collectTsFiles(join(path, entry)))
+    .flatMap((entry) => collectTsFiles(posix.join(posixRel, entry)))
     .sort();
 };
 
@@ -127,6 +128,7 @@ describe('static architecture contracts', () => {
   it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
     const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
     const webFiles = collectTsFiles('web/src');
+    expect(webFiles.every((file) => file.includes('/') && !file.includes('\\'))).toBe(true);
     expect(webFiles).toContain('web/src/views/OnboardWizard.tsx');
     const files = [...collectTsFiles('src'), ...webFiles];
     const stray: string[] = [];

@@ -234,7 +234,7 @@ it.each(['claude', 'codex', 'kimi', 'grok', 'cursor'])('rejects failed %s v1 upg
   expect(rebuilt.entries()[0]?.resumeHandle).toBe(handle);
   expect(await readFile(file, 'utf8')).toBe(bytes);
   expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
-  expect(before.mode & 0o777).toBe(0o600);
+  if (process.platform !== 'win32') expect(before.mode & 0o777).toBe(0o600);
 });
 
 it.each(['{', 'null', '{"schemaVersion":99,"entries":[]}', '{"schemaVersion":2,"entries":{}}'])('freezes every mutation after load rejects %s', async bytes => {

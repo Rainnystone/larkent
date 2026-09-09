@@ -276,7 +276,11 @@ setInterval(() => {
       }
       await expect.poll(() => completed && (!remaining || collected), { timeout: 250 }).toBe(true);
       expect(cleanups).toBe(1);
-      expect(() => process.kill(descendantPid!, 0)).not.toThrow();
+      // Windows TerminateProcess / job objects reap inherited descendants with
+      // the CLI. POSIX is where we pin that stop leaves them alive.
+      if (process.platform !== 'win32') {
+        expect(() => process.kill(descendantPid!, 0)).not.toThrow();
+      }
       expect(completed).toBe(true);
       if (remaining) expect(collected).toBe(true);
       if (h) {

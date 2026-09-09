@@ -33,7 +33,7 @@ it('migrates all topic and named mappings once without changing bytes or mtime o
     await new WorkspaceStore(file).load();
     expect(await readFile(file, 'utf8')).toBe(bytes);
     expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
-    expect(before.mode & 0o777).toBe(0o600);
+    if (process.platform !== 'win32') expect(before.mode & 0o777).toBe(0o600);
   });
 });
 
