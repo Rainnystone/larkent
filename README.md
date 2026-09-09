@@ -1,6 +1,6 @@
 # lark-channel-bridge (for Grok Bot)
 
-A bridge that puts CLI coding agents behind Feishu/Lark bots. One machine (a VPS, or a Grok Bot cloud computer) can run each profile as its own **per-profile service**, or one supervisor via `start --web-ui` that hosts every **profile**. Each profile is one Feishu bot backed by one **agent**. Grok Bot is the deployment target (a SpaceXAI always-on teammate with its own cloud computer). It is not an agent. Grok Build is an agent, one of five, with no special standing. The five peers are `claude`, `codex`, `kimi`, `grok`, and `cursor`. There is no default agent.
+A bridge that puts CLI coding agents behind Feishu/Lark bots. One machine (a VPS, or a Grok Bot cloud computer) can run a **profile** in the foreground with `run`, as its own **per-profile service**, or under one supervisor via `run --web-ui` / `start --web-ui`. The supervisor console starts the active profile and lets you start the others on demand. Each profile is one Feishu bot backed by one **agent**. Grok Bot is the deployment target (a SpaceXAI always-on teammate with its own cloud computer). It is not an agent. Grok Build is an agent, one of five, with no special standing. The five peers are `claude`, `codex`, `kimi`, `grok`, and `cursor`. There is no default agent.
 
 This README is the runbook for **Grok Bot**. Every step is a command plus a checkable result. Decision points that need a human are marked **HUMAN**. Chinese: [README.zh.md](./README.zh.md).
 
@@ -31,6 +31,15 @@ spawn local CLI (claude / codex / kimi / grok / cursor-agent -p …)  →  stdou
 one Feishu markdown reply (tool-call chatter hidden by default)
 ```
 
+- **Runtime ownership**: each profile owns its adapter instance, identity, session
+  state and active runs. Adapters share the process runner implementation, while
+  each run owns its subprocess and translator state. Runtime isolation does not
+  isolate files in a working directory shared by multiple profiles.
+- **Storage**: profiles use schema v3; `sessions.json` and `workspaces.json` use
+  v2, as does the session catalog. SessionStore v2 stores `resumeHandle` in an
+  `entries` map and retains per-scope idle preferences. Workspace v2 retains
+  `chats` and `named` mappings. Supported legacy files upgrade on load; a Git
+  rollback also needs a matching data backup, not just an older executable.
 - **Sessions**: catalog under `~/.lark-channel/profiles/<profile>/`; native
   Grok sessions under `~/.grok/sessions/`. One CLI process per message batch.
 - **Speak vs read**: chat output is always the **bot**. Reading group history,
@@ -187,8 +196,11 @@ Headless Linux: `loginctl enable-linger "$USER"` or the user unit dies at logout
    (`showToolCalls: false`).
 2. After owner OAuth: `回顾一下这个群最近的聊天记录`.
    Pass: answers using the owner's user identity; chat still shows the bot.
-3. Logs: `~/.lark-channel/profiles/<AGENT>/logs/bridge-YYYYMMDD.jsonl`
-   (`"phase":"run"` / `"event":"completed"`).
+3. Foreground profile logs: `~/.lark-channel/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`
+   (`"phase":"run"` / `"event":"completed"`). Supervisor console logs use
+   `~/.lark-channel/logs/`. Daemon `status --profile <profile>` / `status --web-ui`
+   reports its stdout/stderr paths. Foreground processes stop with Ctrl-C;
+   `stop` and `restart` control OS services. There is no `logs` subcommand.
 
 ## Configuration reference
 
@@ -222,6 +234,10 @@ Profile CLI: `profile export`, `profile remove --purge --yes`,
 `profile export --include-secrets --yes`.
 
 Env: `LARK_CHANNEL_HOME`, `LARK_CHANNEL_GROK_BIN`, `LARK_CHANNEL_KIMI_BIN`, `LARK_CHANNEL_CURSOR_BIN`.
+The binary variables are resolved into `agent.binaryPath` when creating a new
+profile. An existing profile keeps its stored binary path; changing only an env
+variable does not override it. Changing the bridge data root does not change
+`HOME` or the coding CLI login.
 
 Cloud-doc comments are document-scoped: `@bot` on a Feishu doc comment uses
 that document's session, not the IM allowlist.
@@ -249,6 +265,18 @@ GROK_REAL_SMOKE=1 npx vitest run tests/process/grok-real.smoke.test.ts
 KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts
 CURSOR_REAL_SMOKE=1 npx vitest run tests/process/cursor-real.smoke.test.ts
 ```
+
+The descriptor registry in `src/agent/registry.ts` is the single production
+registration source for creation, capabilities, detection and UI choices. Each
+adapter owns its metadata, factory, protocol, options and history behavior;
+resume flags, image support and native history remain adapter-specific. Tests
+independently pin all five supported kinds.
+
+The bot owns business idle timing and pauses it during tool execution. The
+executor owns profile/scope run registration and bounded settlement after a
+terminal event. The runner owns subprocess I/O, exit, stop and cleanup;
+`stop()` succeeds only after exit and adapter cleanup. Ownership is released
+only after successful settlement; cleanup failures remain observable.
 
 Adapters: `src/agent/claude/`, `src/agent/codex/`, `src/agent/kimi/`, `src/agent/grok/`, `src/agent/cursor/`. Channel,
 cards, sessions, daemon, web console are agent-agnostic. Shared bot/card code

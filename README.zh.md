@@ -1,6 +1,6 @@
 # lark-channel-bridge（给 Grok Bot 用）
 
-把 CLI coding agent 接到飞书/Lark bot 后面。一台机器（VPS，或 Grok Bot 云电脑）可以按 **per-profile service** 各跑一个 profile，也可以用 `start --web-ui` 跑一个托管全部 **profile** 的 supervisor。每个 profile 是一个飞书 bot，背后一个 **agent**。Grok Bot 是部署目标（SpaceXAI 常驻队友，自带一台云电脑）。它不是 agent。Grok Build 是五个 agent 之一，没有特殊地位。五个对等体是 `claude`、`codex`、`kimi`、`grok`、`cursor`。没有默认 agent。
+把 CLI coding agent 接到飞书/Lark bot 后面。一台机器（VPS，或 Grok Bot 云电脑）可以用 `run` 在前台运行一个 **profile**，按 **per-profile service** 各跑一个 profile，也可以用 `run --web-ui` / `start --web-ui` 运行一个 supervisor。supervisor 控制台先启动当前 profile，其余 profile 按需启动。每个 profile 是一个飞书 bot，背后一个 **agent**。Grok Bot 是部署目标（SpaceXAI 常驻队友，自带一台云电脑）。它不是 agent。Grok Build 是五个 agent 之一，没有特殊地位。五个对等体是 `claude`、`codex`、`kimi`、`grok`、`cursor`。没有默认 agent。
 
 本 README 是 **Grok Bot** 的执行手册。每一步都是命令 + 可核对结果。需要人的步骤标 **HUMAN**。
 英文：[README.md](./README.md)。
@@ -32,6 +32,13 @@
 一条飞书 markdown（默认不展示 tool 过程）
 ```
 
+- **运行状态归属**：每个 profile 独立拥有 adapter 实例、身份、会话状态和活跃 run。
+  adapter 共用进程 runner 的实现；每个 run 独立拥有子进程和 translator 状态。
+  多个 profile 共用工作目录时，运行状态隔离不会隔离目录里的文件。
+- **存储**：profile 使用 schema v3；`sessions.json`、`workspaces.json` 和会话
+  catalog 使用 v2。SessionStore v2 在 `entries` map 中保存 `resumeHandle`，
+  并保留每个 scope 的 idle 偏好；Workspace v2 保留 `chats` 和 `named` 映射。
+  支持的旧格式在加载时升级；Git 回退还需恢复匹配的数据副本，不能只换旧程序。
 - **会话**：catalog 在 `~/.lark-channel/profiles/<profile>/`；Grok 原生会话在
   `~/.grok/sessions/`。每批消息一个 CLI 进程。
 - **发言 vs 读取**：聊天输出永远是 **bot**。读群历史、文档、表格等走
@@ -180,8 +187,11 @@ node bin/lark-channel-bridge.mjs stop
    通过：约 30 秒一条 markdown，没有 tool 行（`showToolCalls: false`）。
 2. Owner OAuth 之后：`回顾一下这个群最近的聊天记录`。
    通过：用 owner 用户身份读；聊天里说话的仍是 bot。
-3. 日志：`~/.lark-channel/profiles/<AGENT>/logs/bridge-YYYYMMDD.jsonl`
-   （`"phase":"run"` / `"event":"completed"`）。
+3. 前台 profile 日志：`~/.lark-channel/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`
+   （`"phase":"run"` / `"event":"completed"`）。supervisor 控制台日志在
+   `~/.lark-channel/logs/`。daemon 的 `status --profile <profile>` / `status --web-ui`
+   会显示 stdout/stderr 路径。前台进程用 Ctrl-C 停止；`stop` 和 `restart` 控制
+   系统服务。没有 `logs` 子命令。
 
 ## 配置参考
 
@@ -214,6 +224,9 @@ Profile CLI：`profile export`、`profile remove --purge --yes`、
 `profile export --include-secrets --yes`。
 
 环境变量：`LARK_CHANNEL_HOME`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_CURSOR_BIN`。
+新建 profile 时会把二进制环境变量解析后保存为 `agent.binaryPath`。已有 profile
+继续使用保存的路径；只改环境变量不会覆盖它。改变 bridge 数据根目录不会改变
+`HOME` 或 coding CLI 的登录。
 
 云文档评论按文档权限生效：在飞书文档评论里 `@bot` 走该文档会话，不走 IM 白名单。
 
@@ -240,6 +253,16 @@ GROK_REAL_SMOKE=1 npx vitest run tests/process/grok-real.smoke.test.ts
 KIMI_REAL_SMOKE=1 npx vitest run tests/process/kimi-real.smoke.test.ts
 CURSOR_REAL_SMOKE=1 npx vitest run tests/process/cursor-real.smoke.test.ts
 ```
+
+`src/agent/registry.ts` 的 descriptor registry 是生产代码创建、能力查询、安装
+检测和 UI 列举的唯一注册来源。各 adapter 拥有自己的 metadata、factory、协议、
+options 和历史访问；续接参数、图片支持与原生历史能力保留各自差异。测试独立
+固定五个支持的 kind，以发现注册名单漂移。
+
+bot 负责业务 idle 计时，并在工具执行期间暂停；executor 负责 profile/scope 的
+run 登记，以及 terminal 事件后的有界收尾；runner 负责子进程 I/O、退出、停止
+与 cleanup。`stop()` 只有在退出和 adapter cleanup 完成后才成功，成功收尾后
+才释放所有权；cleanup 失败会传递给调用方。
 
 适配层：`src/agent/claude/`、`src/agent/codex/`、`src/agent/kimi/`、`src/agent/grok/`、`src/agent/cursor/`。通道、卡片、
 会话、守护进程、web 控制台与 agent 无关。共享 bot/card 代码不许 import
