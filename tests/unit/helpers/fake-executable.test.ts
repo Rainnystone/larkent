@@ -1,9 +1,11 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, symlink } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { spawnProcessSync } from '../../../src/platform/spawn.js';
 import { writeScriptedJsonlExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
+import { installControlledKindCli } from '../../helpers/controlled-kind-cli.js';
+import { createTmpProfile } from '../../helpers/tmp-profile.js';
 import { stabilizePinSnapshot } from '../../helpers/scripted-jsonl-cli.js';
 
 describe('scripted JSONL fake executables', () => {
@@ -99,5 +101,26 @@ describe('stabilizePinSnapshot', () => {
       text: '/resume use <nonce>',
       arg: '<nonce>',
     });
+  });
+});
+
+describe('controlled Codex state boundary', () => {
+  it.each(['missing', 'outside', 'symlink escape'] as const)('rejects %s CODEX_HOME before writing state', async location => {
+    const tmp = await createTmpProfile('controlled-state-');
+    const outside = await createTmpProfile('controlled-outside-');
+    try {
+      const fake = await installControlledKindCli(tmp.root, 'codex', 'A');
+      await fake.release();
+      const linkedHome = join(tmp.root, 'linked-home');
+      if (location === 'symlink escape') await symlink(outside.root, linkedHome, 'junction');
+      const codexHome = location === 'missing' ? '' : location === 'outside' ? outside.root : linkedHome;
+      const result = spawnProcessSync(fake.path, ['exec', '--json', '-'], {
+        encoding: 'utf8', input: 'test prompt',
+        env: { ...process.env, CODEX_HOME: codexHome },
+      });
+      expect(result.status).not.toBe(0);
+      expect(String(result.stderr)).toContain('controlled Codex state requires CODEX_HOME inside fixture root');
+      expect((await readdir(outside.root)).sort()).toEqual(['profile', 'workspace']);
+    } finally { await tmp.cleanup(); await outside.cleanup(); }
   });
 });
