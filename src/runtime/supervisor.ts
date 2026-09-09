@@ -65,7 +65,9 @@ class ManagedProfile {
   locks: AcquiredRuntimeLock[] = [];
   entry!: ProcessEntry;
   startedAt = '';
-  private restarting = false;
+  private restartOperation: Promise<void> | undefined;
+  private stopOperation: Promise<void> | undefined;
+  private stopped = false;
   private shutdownFailure: { error: unknown } | undefined;
   private readonly pendingDisconnects = new Set<BridgeChannel>();
 
@@ -137,7 +139,21 @@ class ManagedProfile {
     }
   }
 
-  async stop(): Promise<void> {
+  stop(): Promise<void> {
+    if (this.stopOperation) return this.stopOperation;
+    if (this.stopped) return Promise.resolve();
+    // Claim stop before running any asynchronous teardown. Concurrent callers
+    // share this result, and no later reconnect may create an unowned bridge.
+    this.stopOperation = Promise.resolve().then(() => this.stopOwned()).finally(() => {
+      this.stopOperation = undefined;
+    });
+    return this.stopOperation;
+  }
+
+  private async stopOwned(): Promise<void> {
+    // An earlier reconnect owns both bridges until transfer or rollback ends.
+    // Its caller receives its failure; stop then handles every retained owner.
+    if (this.restartOperation) await this.restartOperation.catch(() => {});
     const bridges = [this.bridge, ...this.pendingDisconnects];
     const results = await Promise.allSettled(bridges.map(async bridge => {
       await bridge.disconnect();
@@ -175,6 +191,7 @@ class ManagedProfile {
       throw error;
     }
     this.shutdownFailure = undefined;
+    this.stopped = true;
   }
 
   /** Best-effort sync unregister for the process 'exit' hook. */
@@ -225,10 +242,18 @@ class ManagedProfile {
   }
 
   /** Connect-before-disconnect reconnect for this profile (e.g. after /account). */
-  private async restart(): Promise<void> {
-    if (this.shutdownFailure) throw this.shutdownFailure.error;
-    if (this.restarting) return;
-    this.restarting = true;
+  private restart(): Promise<void> {
+    if (this.stopOperation) return Promise.reject(new Error(`profile ${this.profile} is stopping`));
+    if (this.stopped) return Promise.reject(new Error(`profile ${this.profile} is stopped`));
+    if (this.shutdownFailure) return Promise.reject(this.shutdownFailure.error);
+    if (this.restartOperation) return this.restartOperation;
+    this.restartOperation = Promise.resolve().then(() => this.reconnect()).finally(() => {
+      this.restartOperation = undefined;
+    });
+    return this.restartOperation;
+  }
+
+  private async reconnect(): Promise<void> {
     let nextAppLock: AcquiredRuntimeLock | undefined;
     try {
       const nextRuntime = await resolveProfileRuntime({
@@ -308,7 +333,6 @@ class ManagedProfile {
       this.controls = nextControls;
     } finally {
       if (nextAppLock) await nextAppLock.release().catch(() => undefined);
-      this.restarting = false;
     }
   }
 }
@@ -413,7 +437,7 @@ export class Supervisor {
     const managed = this.managed.get(profile);
     if (!managed) return;
     await managed.stop();
-    this.managed.delete(profile);
+    if (this.managed.get(profile) === managed) this.managed.delete(profile);
     log.info('supervisor', 'profile-offline', { profile });
   }
 

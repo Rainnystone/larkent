@@ -43,6 +43,20 @@ function deferred() {
   const promise = new Promise<void>(done => { resolve = done; });
   return { promise, resolve };
 }
+function captureDiagnostics() {
+  const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+  return {
+    expect(expected: { warnings?: RegExp[]; errors?: RegExp[] }) {
+      expect(warnings.mock.calls.map(args => args.join(' '))).toEqual(
+        (expected.warnings ?? []).map(pattern => expect.stringMatching(pattern)),
+      );
+      expect(errors.mock.calls.map(args => args.join(' '))).toEqual(
+        (expected.errors ?? []).map(pattern => expect.stringMatching(pattern)),
+      );
+    },
+  };
+}
 async function temp() {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'shutdown-persistence-')));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
@@ -209,6 +223,7 @@ describe('settled profile persistence', () => {
   });
 
   it('settles queued consumers even when the active run cannot release its pool slot', async () => {
+    const diagnostics = captureDiagnostics();
     const queued = deferred();
     let pool: ProcessPool | undefined;
     const acquire = ProcessPool.prototype.acquire;
@@ -241,10 +256,15 @@ describe('settled profile persistence', () => {
       expect(restored.getRaw('oc_queued')).toBeUndefined();
       expect(pool?.snapshot()).toMatchObject({ active: 1, waiting: 0 });
       expect(spawn).toHaveBeenCalledTimes(1);
+      diagnostics.expect({
+        warnings: [/\[policy\.denied\].*code=reconnect-in-progress/, /\[run\.post-done-exit-timeout\].*profile=test.*agent=claude/],
+        errors: [/\[stream\.fail\].*err=active child remains owned/, /\[disconnect\.fail\].*step=stopAll.*err=failed to stop all active runs/],
+      });
     } finally { run.cleanup.resolve(); }
   });
 
   it('attempts disconnect and every store flush and rejects all persistence failures', async () => {
+    const diagnostics = captureDiagnostics();
     const h = await channelHarness({ id: 'claude', displayName: 'fake', isAvailable: async () => true, run: () => { throw new Error('no run expected'); } });
     const failures = [new Error('sessions save failed'), new Error('catalog save failed'), new Error('nonce save failed'), new Error('workspaces save failed')];
     const attempted: string[] = [];
@@ -255,12 +275,21 @@ describe('settled profile persistence', () => {
     vi.spyOn(h.workspaces, 'flush').mockImplementation(async () => { attempted.push('workspaces'); throw failures[3]; });
     await expect(h.bridge.disconnect()).rejects.toMatchObject({ errors: failures });
     expect(attempted).toEqual(['channel', 'sessions', 'catalog', 'nonce', 'workspaces']);
+    diagnostics.expect({ errors: [
+      /\[disconnect\.fail\].*step=sessions.*err=sessions save failed/,
+      /\[disconnect\.fail\].*step=catalog.*err=catalog save failed/,
+      /\[disconnect\.fail\].*step=callback-nonces.*err=nonce save failed/,
+      /\[disconnect\.fail\].*step=workspaces.*err=workspaces save failed/,
+    ] });
   });
 
   it('reports failed run cleanup while still persisting its final handle and attempting channel disconnect', async () => {
+    const diagnostics = captureDiagnostics();
     const failure = new Error('child cleanup failed');
     const run = controlledAgent({ cleanupError: failure });
     const h = await channelHarness(run.agent);
+    // The test settles this controlled run and owns its expected failed close.
+    cleanups.pop();
     const disconnect = vi.spyOn(h.channel, 'disconnect');
     await send(h.channel);
     await run.started.promise;
@@ -274,10 +303,14 @@ describe('settled profile persistence', () => {
     const restored = new SessionStore(h.paths.sessionsFile);
     await restored.load();
     expect(restored.resumeFor('oc_test', h.root)).toBe('final-on-stop');
+    diagnostics.expect({
+      warnings: [/\[run\.post-done-exit-timeout\].*profile=test.*agent=claude/],
+      errors: [/\[stream\.fail\].*err=child cleanup failed/, /\[disconnect\.fail\].*step=stopAll.*err=failed to stop all active runs/],
+    });
   });
 });
 
-async function supervisorHarness() {
+async function supervisorHarness(beforeReturn?: (bridge: BridgeChannel, index: number) => Promise<void>) {
   const root = await temp();
   const paths = resolveAppPaths({ rootDir: root, profile: 'a' });
   const binary = await writeVersionExecutable(root, 'claude', 'claude 0.0.0-test');
@@ -287,20 +320,182 @@ async function supervisorHarness() {
   config.profiles.b = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app: { id: 'cli_b', secret: '${APP_SECRET}', tenant: 'feishu' } } });
   for (const profile of Object.values(config.profiles)) { profile.workspaces.default = root; profile.agent.binaryPath = binary; }
   await saveRootConfig(config, paths.configFile);
-  const bridges: Array<{ profile: string; bridge: BridgeChannel; fail?: Error; attempts: number }> = [];
+  const bridges: Array<{ profile: string; bridge: BridgeChannel; fail?: Error; attempts: number; connected: boolean }> = [];
   const sup = new Supervisor({ configPath: paths.configFile, runPreflight: false, startChannelFn: async deps => {
     const channel = createRecordingLarkChannel();
-    const item = { profile: deps.controls.profile, bridge: undefined as unknown as BridgeChannel, fail: undefined as Error | undefined, attempts: 0 };
-    item.bridge = { channel: channel as unknown as BridgeChannel['channel'], disconnect: async () => { item.attempts++; if (item.fail) throw item.fail; } };
+    const item = { profile: deps.controls.profile, bridge: undefined as unknown as BridgeChannel, fail: undefined as Error | undefined, attempts: 0, connected: true };
+    item.bridge = { channel: channel as unknown as BridgeChannel['channel'], disconnect: async () => { item.attempts++; if (item.fail) throw item.fail; item.connected = false; } };
     bridges.push(item);
+    await beforeReturn?.(item.bridge, bridges.length - 1);
     return item.bridge;
   } });
-  cleanups.push(async () => { for (const item of bridges) item.fail = undefined; await sup.shutdown(); });
+  cleanups.push(async () => {
+    for (const item of bridges) item.fail = undefined;
+    await sup.shutdown();
+    // Also clean a bridge orphaned by the pre-fix RED, without relying on the
+    // same broken owner whose behavior the tests are diagnosing.
+    for (const item of bridges) if (item.connected) await item.bridge.disconnect();
+  });
   return { sup, bridges, paths };
 }
 
+describe('supervisor lifecycle ownership', () => {
+  it('rejects restart after stop has entered without connecting another bridge', async () => {
+    const diagnostics = captureDiagnostics();
+    const stopEntered = deferred();
+    const releaseStop = deferred();
+    const nextConnected = deferred();
+    const returnNext = deferred();
+    const h = await supervisorHarness(async (_bridge, index) => {
+      if (index === 1) { nextConnected.resolve(); await returnNext.promise; }
+    });
+    await h.sup.startProfile('a');
+    const originalDisconnect = h.bridges[0]!.bridge.disconnect;
+    h.bridges[0]!.bridge.disconnect = async () => {
+      stopEntered.resolve();
+      await releaseStop.promise;
+      await originalDisconnect();
+    };
+    const stopping = h.sup.stopProfile('a');
+    await stopEntered.promise;
+    const restarting = h.sup.restartProfile('a');
+    const restartResult = restarting.then(() => 'resolved', () => 'rejected');
+    try {
+      expect(await Promise.race([restartResult, nextConnected.promise.then(() => 'connected')])).toBe('rejected');
+      await expect(restarting).rejects.toThrow('stopping');
+      expect(h.bridges).toHaveLength(1);
+      expect(h.sup.isOnline('a')).toBe(true);
+      expect((await checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(true);
+    } finally {
+      releaseStop.resolve();
+      returnNext.resolve();
+      await Promise.allSettled([stopping, restarting]);
+    }
+    expect(h.bridges.every(item => !item.connected)).toBe(true);
+    expect(h.sup.isOnline('a')).toBe(false);
+    expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
+    diagnostics.expect({});
+  });
+
+  it.each([false, true])('waits for an entered restart and owns its new bridge before stop, rollback fails=%s', async fails => {
+    const diagnostics = captureDiagnostics();
+    const nextConnected = deferred();
+    const returnNext = deferred();
+    const nextDisconnectEntered = deferred();
+    const releaseNextDisconnect = deferred();
+    const h = await supervisorHarness(async (bridge, index) => {
+      if (index !== 1) return;
+      const disconnect = bridge.disconnect;
+      bridge.disconnect = async () => {
+        nextDisconnectEntered.resolve();
+        await releaseNextDisconnect.promise;
+        await disconnect();
+      };
+      nextConnected.resolve();
+      await returnNext.promise;
+    });
+    await h.sup.startProfile('a');
+    const config = (await loadRootConfig(h.paths.configFile))!;
+    config.profiles.a!.accounts.app.id = 'cli_changed';
+    await saveRootConfig(config, h.paths.configFile);
+    const restarting = h.sup.restartProfile('a');
+    await nextConnected.promise;
+    if (fails) {
+      h.bridges[0]!.fail = new Error('old lifecycle cleanup failed');
+      h.bridges[1]!.fail = new Error('new lifecycle cleanup failed');
+    }
+    const stopping = h.sup.stopProfile('a');
+    const result = Promise.allSettled([restarting, stopping]);
+    try {
+      // The old implementation calls disconnect synchronously from stop,
+      // while the restart still owns a connected bridge awaiting return.
+      expect(h.bridges[0]!.attempts).toBe(0);
+      returnNext.resolve();
+      await nextDisconnectEntered.promise;
+      expect(h.sup.isOnline('a')).toBe(true);
+      expect((await checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(true);
+      expect((await checkRuntimeLock(h.paths.appLockFile('cli_changed'))).locked).toBe(true);
+    } finally {
+      returnNext.resolve();
+      releaseNextDisconnect.resolve();
+      await result;
+    }
+    expect((await result).map(outcome => outcome.status)).toEqual(fails ? ['rejected', 'rejected'] : ['fulfilled', 'fulfilled']);
+    if (fails) {
+      expect(h.sup.isOnline('a')).toBe(true);
+      expect(readAndPrune(h.paths.userRegistryFile)[0]?.appId).toBe('cli_a');
+      expect((await checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(true);
+      expect((await checkRuntimeLock(h.paths.appLockFile('cli_a'))).locked).toBe(true);
+      expect((await checkRuntimeLock(h.paths.appLockFile('cli_changed'))).locked).toBe(true);
+      for (const item of h.bridges) item.fail = undefined;
+      await h.sup.stopProfile('a');
+    }
+    expect(h.bridges).toHaveLength(2);
+    expect(h.bridges.every(item => !item.connected)).toBe(true);
+    expect(h.sup.isOnline('a')).toBe(false);
+    expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
+    expect((await checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(false);
+    expect((await checkRuntimeLock(h.paths.appLockFile('cli_changed'))).locked).toBe(false);
+    diagnostics.expect({ warnings: fails ? [
+      /\[supervisor\.old-disconnect-failed\].*profile=a.*err=Error: old lifecycle cleanup failed/,
+      /\[supervisor\.rollback-disconnect-failed\].*profile=a.*err=Error: new lifecycle cleanup failed/,
+      /\[supervisor\.disconnect-failed\].*profile=a.*err=AggregateError: profile bridges did not stop/,
+    ] : [] });
+  });
+
+  it.each([false, true])('shares concurrent stops, then permits a failed stop retry, failure=%s', async fails => {
+    const diagnostics = captureDiagnostics();
+    const stopEntered = deferred();
+    const releaseStop = deferred();
+    const h = await supervisorHarness();
+    await h.sup.startProfile('a');
+    const controls = h.sup.controlsFor('a')!;
+    const item = h.bridges[0]!;
+    const failure = new Error('shared stop failed');
+    if (fails) item.fail = failure;
+    const originalDisconnect = item.bridge.disconnect;
+    const disconnect = vi.spyOn(item.bridge, 'disconnect').mockImplementation(async () => {
+      stopEntered.resolve();
+      await releaseStop.promise;
+      await originalDisconnect();
+    });
+    const first = h.sup.stopProfile('a');
+    await stopEntered.promise;
+    const second = h.sup.stopProfile('a');
+    const result = Promise.allSettled([first, second]);
+    try {
+      expect(disconnect).toHaveBeenCalledTimes(1);
+    } finally {
+      releaseStop.resolve();
+      await result;
+    }
+    if (fails) {
+      expect(await result).toEqual([{ status: 'rejected', reason: failure }, { status: 'rejected', reason: failure }]);
+      expect(h.sup.isOnline('a')).toBe(true);
+      expect((await checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(true);
+      expect((await checkRuntimeLock(h.paths.appLockFile('cli_a'))).locked).toBe(true);
+      expect(readAndPrune(h.paths.userRegistryFile)[0]?.appId).toBe('cli_a');
+      item.fail = undefined;
+      await h.sup.stopProfile('a');
+    } else {
+      expect((await result).map(outcome => outcome.status)).toEqual(['fulfilled', 'fulfilled']);
+    }
+    const calls = disconnect.mock.calls.length;
+    await h.sup.stopProfile('a');
+    await expect(controls.restart()).rejects.toThrow('stopped');
+    expect(disconnect).toHaveBeenCalledTimes(calls);
+    expect(h.bridges).toHaveLength(1);
+    expect(item.connected).toBe(false);
+    expect(h.sup.isOnline('a')).toBe(false);
+    expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
+    expect((await checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(false);
+    diagnostics.expect({ warnings: fails ? [/\[supervisor\.disconnect-failed\].*profile=a.*err=Error: shared stop failed/] : [] });
+  });
+});
+
 describe('shutdown callers preserve failed ownership', () => {
   it.each(['profile', 'app'] as const)('reports a failed %s lock release, attempts the other lock and retries without starting a bridge', async kind => {
+    const diagnostics = captureDiagnostics();
     const failure = new Error(`${kind} lock release failed`);
     const acquired: runtimeLocks.AcquiredRuntimeLock[] = [];
     for (const method of ['acquireProfileRuntimeLock', 'acquireAppRuntimeLock'] as const) {
@@ -331,9 +526,11 @@ describe('shutdown callers preserve failed ownership', () => {
     await h.sup.stopProfile('a');
     expect(h.sup.isOnline('a')).toBe(false);
     for (const lock of acquired) expect((await checkRuntimeLock(lock.target)).locked).toBe(false);
+    diagnostics.expect({ warnings: [new RegExp(`\\[supervisor\\.lock-release-failed\\].*profile=a.*kind=${kind}.*err=Error: ${kind} lock release failed`)] });
   });
 
   it('keeps a registry persistence failure visible and refuses a new bridge until stop succeeds', async () => {
+    const diagnostics = captureDiagnostics();
     const h = await supervisorHarness();
     await h.sup.startProfile('a');
     const failure = new Error('registry removal save failed');
@@ -345,9 +542,11 @@ describe('shutdown callers preserve failed ownership', () => {
     expect(h.bridges).toHaveLength(1);
     await h.sup.stopProfile('a');
     expect(h.sup.isOnline('a')).toBe(false);
+    diagnostics.expect({ warnings: [/\[supervisor\.unregister-failed\].*profile=a.*err=Error: registry removal save failed/] });
   });
 
   it.each(['stopProfile', 'exit'] as const)('propagates %s rejection and retains profile locks and registry', async caller => {
+    const diagnostics = captureDiagnostics();
     const h = await supervisorHarness();
     await h.sup.startProfile('a');
     const failure = new Error('save failed after settlement');
@@ -361,9 +560,11 @@ describe('shutdown callers preserve failed ownership', () => {
     h.bridges[0]!.fail = undefined;
     await h.sup.stopProfile('a');
     expect(h.sup.isOnline('a')).toBe(false);
+    diagnostics.expect({ warnings: [/\[supervisor\.disconnect-failed\].*profile=a.*err=Error: save failed after settlement/] });
   });
 
   it('attempts every profile on shutdown, removes only successful profiles and propagates errors', async () => {
+    const diagnostics = captureDiagnostics();
     const h = await supervisorHarness();
     await h.sup.startProfile('a');
     await h.sup.startProfile('b');
@@ -372,9 +573,11 @@ describe('shutdown callers preserve failed ownership', () => {
     expect(h.bridges.map(item => item.attempts)).toEqual([1, 1]);
     expect(h.sup.list().map(item => item.profile)).toEqual(['a']);
     expect(readAndPrune(h.paths.userRegistryFile).map(entry => entry.profileName)).toEqual(['a']);
+    diagnostics.expect({ warnings: [/\[supervisor\.disconnect-failed\].*profile=a.*err=Error: profile a cleanup failed/] });
   });
 
   it.each([false, true])('rolls back reconnect and retains every failed bridge when new cleanup fails=%s', async failNext => {
+    const diagnostics = captureDiagnostics();
     const h = await supervisorHarness();
     await h.sup.startProfile('a');
     h.bridges[0]!.fail = new Error('old bridge did not settle');
@@ -400,11 +603,16 @@ describe('shutdown callers preserve failed ownership', () => {
     await h.sup.stopProfile('a');
     expect((await checkRuntimeLock(h.paths.appLockFile('cli_changed'))).locked).toBe(false);
     expect(h.bridges[1]!.attempts).toBe(failNext ? 2 : 1);
+    diagnostics.expect({ warnings: [
+      /\[supervisor\.old-disconnect-failed\].*profile=a.*err=Error: old bridge did not settle/,
+      ...(failNext ? [/\[supervisor\.rollback-disconnect-failed\].*profile=a.*err=Error: new bridge did not settle/] : []),
+    ] });
   });
 });
 
 describe('foreground and daemon signal owner', () => {
   it.each(['registry', 'retry'] as const)('preserves failed shutdown %s and keeps the host lock until success', async check => {
+    const diagnostics = captureDiagnostics();
     const h = await supervisorHarness();
     await h.sup.startProfile('a');
     const hostLock = (await acquireHostLock(h.paths.hostLockFile))!;
@@ -439,6 +647,10 @@ describe('foreground and daemon signal owner', () => {
         expect((await checkRuntimeLock(h.paths.hostLockFile)).locked).toBe(false);
         expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
       }
+      diagnostics.expect({
+        warnings: [/\[supervisor\.disconnect-failed\].*profile=a.*err=Error: signal cleanup failed/],
+        errors: [/\[shutdown\.fail\].*signal=SIGTERM.*err=supervisor shutdown did not complete cleanly/, /关闭失败；保留运行状态与锁/],
+      });
     } finally { process.exitCode = previousExitCode; }
   });
 });
