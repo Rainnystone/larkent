@@ -104,6 +104,11 @@ class ManagedProfile {
     this.locks.push(
       await acquireAppRuntimeLock(this.appPaths, this.appId, this.profileConfig.agentKind),
     );
+    // Loading may persist a schema migration. Hold runtime ownership before
+    // reading any store so migration cannot overwrite a live owner's updates.
+    await this.sessions.load();
+    await this.sessionCatalog.load();
+    await this.workspaces.load();
     this.entry = await register({
       appId: this.appId,
       tenant: this.cfg.accounts.app.tenant,
@@ -442,11 +447,8 @@ export class Supervisor {
     }
 
     const sessions = new SessionStore(appPaths.sessionsFile);
-    await sessions.load();
     const sessionCatalog = new SessionCatalog(`${appPaths.sessionsFile}.catalog.json`);
-    await sessionCatalog.load();
     const workspaces = new WorkspaceStore(appPaths.workspacesFile);
-    await workspaces.load();
 
     const managed = new ManagedProfile(
       appPaths.profile,

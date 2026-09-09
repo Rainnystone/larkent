@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -35,6 +35,58 @@ async function harness(startChannelFn: SupervisorOptions['startChannelFn']) {
 function bridge(disconnect: () => Promise<void>) {
   return { channel: { botIdentity: { name: 'fake' } }, disconnect } as never;
 }
+
+it.each(['profile', 'app'] as const)('leaves legacy stores untouched while another owner holds the %s lock', async kind => {
+  const { supervisor, paths } = await harness(async () => bridge(async () => {}));
+  await mkdir(paths.profileDir, { recursive: true });
+  const catalogFile = `${paths.sessionsFile}.catalog.json`;
+  const legacySessions = JSON.stringify({ chat: { sessionId: 'old-session', cwd: 'old-workspace', updatedAt: 1 } });
+  const legacyWorkspaces = JSON.stringify({ chats: { chat: { cwd: 'old-workspace' } }, named: { project: 'old-workspace' } });
+  await writeFile(paths.sessionsFile, legacySessions);
+  await writeFile(catalogFile, '[]');
+  await writeFile(paths.workspacesFile, legacyWorkspaces);
+  const owner = kind === 'profile'
+    ? await locks.acquireProfileRuntimeLock(paths, 'claude')
+    : await locks.acquireAppRuntimeLock(paths, 'fake-start-app', 'claude');
+  try {
+    await expect(supervisor.startProfile('test')).rejects.toMatchObject({ name: 'RuntimeLockConflictError', kind });
+    expect(await Promise.all([paths.sessionsFile, catalogFile, paths.workspacesFile].map(file => readFile(file, 'utf8'))))
+      .toEqual([legacySessions, '[]', legacyWorkspaces]);
+    expect(supervisor.list()).toEqual([]);
+    expect(readAndPrune(paths.userRegistryFile)).toEqual([]);
+    expect((await locks.checkRuntimeLock(kind === 'profile' ? paths.profileLockFile : paths.appLockFile('fake-start-app'))).locked).toBe(true);
+    // The current owner can still persist newer state before yielding the lock.
+    await writeFile(paths.sessionsFile, JSON.stringify({ chat: { sessionId: 'latest-session', cwd: 'latest-workspace', updatedAt: 2 } }));
+    await writeFile(paths.workspacesFile, JSON.stringify({ chats: { chat: { cwd: 'latest-workspace' } }, named: { project: 'latest-workspace' } }));
+  } finally {
+    await owner.release();
+  }
+  await supervisor.startProfile('test');
+  expect(supervisor.isOnline('test')).toBe(true);
+  expect(JSON.parse(await readFile(paths.sessionsFile, 'utf8'))).toEqual({
+    schemaVersion: 2, entries: { chat: { resumeHandle: 'latest-session', cwd: 'latest-workspace', updatedAt: 2 } },
+  });
+  expect(JSON.parse(await readFile(catalogFile, 'utf8'))).toEqual({ schemaVersion: 2, entries: [] });
+  expect(JSON.parse(await readFile(paths.workspacesFile, 'utf8'))).toEqual({
+    schemaVersion: 2, chats: { chat: { cwd: 'latest-workspace' } }, named: { project: 'latest-workspace' },
+  });
+});
+
+it.each(['sessions', 'catalog', 'workspaces'] as const)('releases startup locks after a %s load failure and allows a repaired retry', async store => {
+  const { supervisor, paths } = await harness(async () => bridge(async () => {}));
+  await mkdir(paths.profileDir, { recursive: true });
+  const file = store === 'sessions' ? paths.sessionsFile : store === 'catalog' ? `${paths.sessionsFile}.catalog.json` : paths.workspacesFile;
+  await writeFile(file, '{invalid-json');
+  await expect(supervisor.startProfile('test')).rejects.toBeInstanceOf(SyntaxError);
+  expect(await readFile(file, 'utf8')).toBe('{invalid-json');
+  expect(supervisor.list()).toEqual([]);
+  expect(readAndPrune(paths.userRegistryFile)).toEqual([]);
+  expect((await locks.checkRuntimeLock(paths.profileLockFile)).locked).toBe(false);
+  expect((await locks.checkRuntimeLock(paths.appLockFile('fake-start-app'))).locked).toBe(false);
+  await writeFile(file, store === 'catalog' ? '[]' : '{}');
+  await supervisor.startProfile('test');
+  expect(supervisor.isOnline('test')).toBe(true);
+});
 
 it.each(['shutdown', 'stopProfile'] as const)('%s waits for the admitted start and duplicate start creates one owner', async method => {
   const entered = deferred();
