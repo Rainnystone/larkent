@@ -81,6 +81,11 @@ const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
 
+/** Single handshake attempt. Also the force-reconnect budget via connectTimeoutMs. */
+export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
+/** `connect()` / force-reconnect wait. Channel 0.6.1+ no longer reads handshakeTimeoutMs for this. */
+export const CHANNEL_CONNECT_TIMEOUT_MS = CHANNEL_HANDSHAKE_TIMEOUT_MS;
+
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
   '不要 unset LARK_CHANNEL / LARK_CHANNEL_HOME / LARK_CHANNEL_PROFILE / LARKSUITE_CLI_CONFIG_DIR，也不要用 env -u LARK_CHANNEL 绕回本机普通配置。',
@@ -263,8 +268,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       pingTimeout: 3,
     },
     // 8s handshake timeout (replaces hardcoded 15s). Fast-fail + fast-retry
-    // beats slow-fail in unstable networks.
-    handshakeTimeoutMs: 8_000,
+    // beats slow-fail in unstable networks. Channel 0.6.1+ uses
+    // connectTimeoutMs for force-reconnect; keep both on the same budget.
+    handshakeTimeoutMs: CHANNEL_HANDSHAKE_TIMEOUT_MS,
+    connectTimeoutMs: CHANNEL_CONNECT_TIMEOUT_MS,
     // Per-request REST timeout — without a cap a slow API can hang the
     // event-handling thread.
     httpTimeoutMs: 30_000,

@@ -10,10 +10,9 @@ function fakeChannel(): { channel: unknown; handlers: Map<string, Handler> } {
   return {
     handlers,
     channel: {
-      dispatcher: {
-        register(map: Record<string, Handler>) {
-          for (const [k, v] of Object.entries(map)) handlers.set(k, v);
-        },
+      onRawEvent(eventType: string, handler: Handler) {
+        handlers.set(eventType, handler);
+        return () => handlers.delete(eventType);
       },
     },
   };

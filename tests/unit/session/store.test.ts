@@ -28,7 +28,7 @@ describe('SessionStore v2', () => {
       await new SessionStore(file).load();
       expect(await readFile(file, 'utf8')).toBe(bytes);
       expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
-      expect(before.mode & 0o777).toBe(0o600);
+      if (process.platform !== 'win32') expect(before.mode & 0o777).toBe(0o600);
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 });

@@ -515,7 +515,7 @@ describe('runtime schema upgrade persistence', () => {
       expect(vi.mocked(writeFileAtomic)).toHaveBeenCalledTimes(writes);
       expect(await readFile(file, 'utf8')).toBe(bytes);
       expect((await stat(file)).mtimeMs).toBe(metadata.mtimeMs);
-      expect(metadata.mode & 0o777).toBe(0o600);
+      if (process.platform !== 'win32') expect(metadata.mode & 0o777).toBe(0o600);
     },
   );
 

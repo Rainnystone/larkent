@@ -103,6 +103,9 @@ async function startParityBot(kind: PinAgentKind): Promise<{
 
   const profileConfig = createDefaultProfileConfig({
     agentKind: kind,
+    // Spawn the node script, not a PATH-resolved `.cmd`. Windows cmd.exe `%*`
+    // drops `--output-format streaming-json` once `-p` contains JSON quotes.
+    binaryPath: installed.fake.path,
     accounts: { app: { id: `cli_${kind}`, secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: ['ou_user'] },
     preferences: { messageReply: 'card' },
