@@ -22,6 +22,23 @@ describe('agent registry', () => {
     }
   });
 
+  it.each([
+    ['claude', '--resume', 'claude-session'],
+    ['codex', 'resume', 'codex-thread'],
+    ['kimi', '-S', 'kimi-session'],
+    ['grok', '-r', 'grok-session'],
+    ['cursor', '--resume', 'cursor-session'],
+  ] as const)('keeps %s metadata', (kind, flag, sessionKind) => {
+    const descriptor = descriptorFor(kind);
+    expect(descriptor.resume.flag).toBe(flag);
+    expect(descriptor.sessionKind).toBe(sessionKind);
+    expect(
+      descriptor.capability({
+        permissions: { defaultAccess: 'workspace', maxAccess: 'full' },
+      }),
+    ).toMatchObject({ agentId: kind, sessionKind });
+  });
+
   it('rejects unknown kinds and lists AGENT_KINDS', () => {
     expect(isAgentKind('nope')).toBe(false);
     expect(() => requireAgentKind('nope')).toThrow(/claude, codex, kimi, grok, cursor/);

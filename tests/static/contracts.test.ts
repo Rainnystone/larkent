@@ -19,6 +19,24 @@ const collectTsFiles = (path: string): string[] => {
 };
 
 describe('static architecture contracts', () => {
+  it('keeps shared agent definition types independent of registry modules', () => {
+    const definitionPath = 'src/agent/definition.ts';
+    expect(existsSync(join(root, definitionPath)), definitionPath).toBe(true);
+
+    const source = read(definitionPath);
+    expect(source).not.toMatch(/from ['"].*\/(?:registry|capability|models)(?:\.js)?['"]/);
+  });
+
+  it('keeps adapter metadata independent of the central registry', () => {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const) {
+      const metadataPath = `src/agent/${kind}/metadata.ts`;
+      expect(existsSync(join(root, metadataPath)), metadataPath).toBe(true);
+      expect(read(metadataPath), metadataPath).not.toMatch(
+        /from ['"].*\/(?:registry|capability|models)(?:\.js)?['"]|\bdescriptorFor\b|\bAGENT_REGISTRY\b/,
+      );
+    }
+  });
+
   it('does not route production runs by importing Codex internals in shared bot/card code', () => {
     const sharedFiles = [
       ...collectTsFiles('src/bot'),

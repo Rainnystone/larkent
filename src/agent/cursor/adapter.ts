@@ -4,7 +4,6 @@ import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
-import { descriptorFor } from '../registry';
 import { runJsonlCli, wrapParsedTranslator } from '../runner/jsonl-cli-runner';
 import {
   mergeAgentOptions,
@@ -16,6 +15,7 @@ import {
 } from '../types';
 import { assertCursorSandbox, buildCursorArgs } from './argv';
 import { CursorJsonlTranslator } from './jsonl';
+import { cursorMetadata } from './metadata';
 import { parseCursorAgentOptions } from './options';
 
 export interface CursorAdapterOptions {
@@ -38,7 +38,7 @@ export class CursorAdapter implements AgentAdapter {
 
   constructor(opts: CursorAdapterOptions = {}) {
     this.explicitBinary = Boolean(opts.binary);
-    this.binary = opts.binary ?? descriptorFor('cursor').binaryNames[0] ?? 'cursor-agent';
+    this.binary = opts.binary ?? cursorMetadata.binaryNames[0] ?? 'cursor-agent';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
     this.profileOptions = opts.agentOptions;
@@ -57,7 +57,7 @@ export class CursorAdapter implements AgentAdapter {
       try {
         this.binary = await resolveCursorPathBinary();
       } catch {
-        this.binary = descriptorFor('cursor').binaryNames[0] ?? 'cursor-agent';
+        this.binary = cursorMetadata.binaryNames[0] ?? 'cursor-agent';
       }
     }
     return checkAgentAvailability({
