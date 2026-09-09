@@ -99,8 +99,8 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, o
     expect(root?.profiles.grok).not.toHaveProperty('binaryPath');
 
     const dir = await mkdtemp(join(tmpdir(), 'pin-env-bin-'));
-    await writeVersionExecutable(dir, 'kimi', 'kimi 0.0.0-pin');
-    await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
+    await writeProfileProbe(dir, 'kimi', 'kimi 0.0.0-pin');
+    await writeProfileProbe(dir, 'grok', 'grok 0.0.0-pin');
 
     await withEnvBin('kimi', undefined, async () => {
       await withEnvBin('grok', undefined, async () => {
@@ -128,7 +128,7 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, o
     expect(root?.profiles.claude?.agent).toEqual({ kind: 'claude' });
     expect(root?.profiles.claude?.agent).not.toHaveProperty('binaryPath');
     const dir = await mkdtemp(join(tmpdir(), 'pin-path-claude-'));
-    await writeVersionExecutable(dir, 'claude', 'claude 0.0.0-pin');
+    await writeProfileProbe(dir, 'claude', 'claude 0.0.0-pin');
     await withEnvBin('claude', undefined, async () => {
       await withIsolatedPath(dir, async () => {
         const agent = createRuntimeAgent(root!.profiles.claude!, {
@@ -166,12 +166,8 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, o
     expect(root?.profiles.cursor?.agent).toEqual({ kind: 'cursor' });
     expect(root?.profiles.cursor?.agent).not.toHaveProperty('binaryPath');
     const dir = await mkdtemp(join(tmpdir(), 'pin-cursor-agent-'));
-    const agentBin = join(dir, process.platform === 'win32' ? 'agent.CMD' : 'agent');
     // Support both probes: detection may fall back from version to Cursor-specific help.
-    await writeScriptedJsonlExecutableFile(agentBin, agentBin + '.argv.json', {
-      version: 'cursor-agent 2026.08.28-pin',
-      helpText: cursorVersionedHelpText(),
-    });
+    const agentBin = await writeProfileProbe(dir, 'agent', 'cursor-agent 2026.08.28-pin', cursorVersionedHelpText());
     await withEnvBin('cursor', undefined, async () => {
       await withIsolatedPath(dir, async () => {
         await expect(resolveCursorBinary()).resolves.toBe(agentBin);
@@ -186,3 +182,24 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, o
     expect(cursorVersionedHelpText()).toContain('--approve-mcps');
   });
 });
+
+async function writeProfileProbe(dir: string, name: string, version: string, helpText = ''): Promise<string> {
+  const binary = join(dir, process.platform === 'win32' ? `${name}.CMD` : name);
+  if (process.platform === 'win32') {
+    if (!helpText) return writeVersionExecutable(dir, name, version);
+    await writeScriptedJsonlExecutableFile(binary, binary + '.argv.json', { version, helpText });
+    return binary;
+  }
+  // These cases verify profile selection and real executable discovery. A
+  // static shell probe avoids paying Node startup cost inside the detector's
+  // existing deadline when the full suite starts many fake agents at once.
+  const quote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+  await writeFile(binary, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  printf '%s\\n' ${quote(helpText)}
+else
+  printf '%s\\n' ${quote(version)}
+fi
+`, { mode: 0o755 });
+  return binary;
+}
