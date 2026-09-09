@@ -554,7 +554,15 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   const catalogEntry = ctx.sessionCatalog && identity
     ? ctx.sessionCatalog.activeFor(identity)
     : undefined;
-  const currentHandle = catalogEntry?.resumeHandle ?? ctx.sessions.getRaw(ctx.scope)?.sessionId;
+  let currentHandle = catalogEntry?.resumeHandle;
+  if (!currentHandle && resumeDescriptor.resume.label === 'session') {
+    if (identity) {
+      currentHandle = ctx.sessions.resumeFor(ctx.scope, identity.cwdRealpath);
+    } else {
+      const workspace = await resolveWorkingDirectory(cwd);
+      if (workspace.ok) currentHandle = ctx.sessions.resumeFor(ctx.scope, workspace.cwdRealpath);
+    }
+  }
   const provider = ctx.resumeHistoryProvider ?? resumeDescriptor.listResumeHistory;
   const history = identity || resumeDescriptor.acceptsRawResumeHandle
     ? await provider({

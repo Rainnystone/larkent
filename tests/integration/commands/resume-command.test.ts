@@ -54,6 +54,7 @@ const cleanups: Array<() => Promise<void>> = [];
 
 describe('agent-aware resume commands', () => {
   afterEach(async () => {
+    vi.restoreAllMocks();
     vi.mocked(listRecentSessions).mockReset().mockResolvedValue([]);
     vi.mocked(listCodexThreadHistory).mockReset().mockResolvedValue([]);
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
@@ -100,7 +101,7 @@ describe('agent-aware resume commands', () => {
 
   it('returns empty history with a profile-scoped error when Codex query fails', async () => {
     const h = await createHarness('codex');
-    const warning = vi.spyOn(log, 'warn');
+    const warning = vi.spyOn(log, 'warn').mockImplementation(() => {});
     vi.mocked(listCodexThreadHistory).mockRejectedValueOnce(new Error('fixture query failed'));
     expect(await descriptorFor('codex').listResumeHistory({ profile: h.controls.profileConfig, profileDir: h.tmp.profile, cwd: h.tmp.workspace, limit: 5 })).toEqual([]);
     expect(warning).toHaveBeenCalledWith('session', 'codex-history-failed', { profile: h.tmp.profile, message: 'fixture query failed' });
@@ -126,6 +127,39 @@ describe('agent-aware resume commands', () => {
   it('offers the SessionStore current handle when the catalog has no entry', async () => {
     const h = await createHarness('claude');
     h.sessions.set('chat-1', 'stored-session', h.identity.cwdRealpath);
+    await h.run('/resume');
+    await h.run(`/resume use ${resumeNonce(lastMarkdown(h.channel))}`);
+    expect(h.catalog.activeFor(h.identity)?.resumeHandle).toBe('stored-session');
+  });
+
+  it.each(['claude', 'kimi', 'grok', 'cursor'] as const)('does not issue a %s candidate from a different stored cwd', async kind => {
+    const h = await createHarness(kind);
+    const oldCwd = join(h.tmp.profile, 'old-workspace');
+    h.sessions.set('chat-1', 'old-session', oldCwd);
+    const original = { ...h.sessions.getRaw('chat-1') };
+    await h.run('/resume');
+    const rendered = lastContentString(h.channel);
+    expect(rendered).toContain('此 cwd 下没有历史会话');
+    expect(rendered).not.toContain('/resume use');
+    expect(resumeArgsFromCard(lastContent(h.channel))).toEqual([]);
+    expect(h.catalog.activeFor(h.identity)).toBeUndefined();
+    expect(h.sessions.getRaw('chat-1')).toEqual(original);
+  });
+
+  it('does not upgrade a legacy SessionStore handle to a Codex thread candidate', async () => {
+    const h = await createHarness('codex');
+    h.sessions.set('chat-1', 'legacy-session', h.identity.cwdRealpath);
+    const original = { ...h.sessions.getRaw('chat-1') };
+    await h.run('/resume');
+    expect(lastContentString(h.channel)).toContain('此 cwd 下没有历史会话');
+    expect(h.catalog.activeFor(h.identity)).toBeUndefined();
+    expect(h.sessions.getRaw('chat-1')).toEqual(original);
+  });
+
+  it('compares a stored cwd with the canonical current workspace', async () => {
+    const h = await createHarness('claude');
+    h.sessions.set('chat-1', 'stored-session', h.identity.cwdRealpath);
+    h.workspaces.setCwd('chat-1', `${h.tmp.workspace}/../workspace`);
     await h.run('/resume');
     await h.run(`/resume use ${resumeNonce(lastMarkdown(h.channel))}`);
     expect(h.catalog.activeFor(h.identity)?.resumeHandle).toBe('stored-session');
@@ -211,6 +245,7 @@ describe('agent-aware resume commands', () => {
   });
 
   it('falls back to an audit-safe reply when resume confirmation is rejected', async () => {
+    const failure = vi.spyOn(log, 'fail').mockImplementation(() => {});
     const h = await createHarness('codex');
     h.catalog.upsertActive({ ...h.identity, resumeHandle: 'thread-current', now: 1000 });
     await expect(h.run('/resume')).resolves.toBe(true);
@@ -229,6 +264,7 @@ describe('agent-aware resume commands', () => {
 
     await expect(h.run(`/resume use ${nonce}`)).resolves.toBe(true);
 
+    expect(failure).toHaveBeenCalled();
     expect(attempts).toBe(2);
     expect(lastMarkdown(h.channel)).toBe('命令已处理。');
   });
