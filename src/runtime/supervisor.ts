@@ -66,6 +66,8 @@ class ManagedProfile {
   entry!: ProcessEntry;
   startedAt = '';
   private restarting = false;
+  private shutdownFailure: { error: unknown } | undefined;
+  private readonly pendingDisconnects = new Set<BridgeChannel>();
 
   constructor(
     readonly profile: string,
@@ -78,7 +80,7 @@ class ManagedProfile {
     private sessionCatalog: SessionCatalog,
     private workspaces: WorkspaceStore,
     private startChannelFn: StartChannelFn,
-    private onExitCommand: (profile: string) => void,
+    private onExitCommand: (profile: string) => Promise<void>,
   ) {}
 
   get appId(): string {
@@ -136,16 +138,43 @@ class ManagedProfile {
   }
 
   async stop(): Promise<void> {
-    try {
-      await this.bridge?.disconnect();
-    } catch (err) {
-      log.warn('supervisor', 'disconnect-failed', { profile: this.profile, err: String(err) });
+    const bridges = [this.bridge, ...this.pendingDisconnects];
+    const results = await Promise.allSettled(bridges.map(async bridge => {
+      await bridge.disconnect();
+      this.pendingDisconnects.delete(bridge);
+    }));
+    const failures = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
+    if (failures.length) {
+      const error = failures.length === 1 ? failures[0] : new AggregateError(failures, 'profile bridges did not stop');
+      this.shutdownFailure = { error };
+      log.warn('supervisor', 'disconnect-failed', { profile: this.profile, err: String(error) });
+      throw error;
     }
     if (this.entry) {
-      await unregister(this.entry.id, this.appPaths.userRegistryFile).catch(() => undefined);
+      try {
+        await unregister(this.entry.id, this.appPaths.userRegistryFile);
+      } catch (error) {
+        this.shutdownFailure = { error };
+        log.warn('supervisor', 'unregister-failed', { profile: this.profile, err: String(error) });
+        throw error;
+      }
     }
-    await releaseRuntimeLocks(this.locks);
-    this.locks = [];
+    const locks = this.locks;
+    const released = await Promise.allSettled(locks.map(async lock => { await lock.release(); }));
+    this.locks = locks.filter((_lock, index) => released[index]?.status === 'rejected');
+    const lockFailures = released.flatMap((result, index) => {
+      if (result.status === 'fulfilled') return [];
+      log.warn('supervisor', 'lock-release-failed', {
+        profile: this.profile, kind: locks[index]?.kind, target: locks[index]?.target, err: String(result.reason),
+      });
+      return [result.reason];
+    });
+    if (lockFailures.length) {
+      const error = lockFailures.length === 1 ? lockFailures[0] : new AggregateError(lockFailures, 'profile locks did not release');
+      this.shutdownFailure = { error };
+      throw error;
+    }
+    this.shutdownFailure = undefined;
   }
 
   /** Best-effort sync unregister for the process 'exit' hook. */
@@ -186,7 +215,7 @@ class ManagedProfile {
       processId: self.entry.id,
       async exit() {
         // `/exit` from chat stops THIS profile's channel; the supervisor lives on.
-        self.onExitCommand(self.profile);
+        await self.onExitCommand(self.profile);
       },
       async restart() {
         await self.restart();
@@ -197,6 +226,7 @@ class ManagedProfile {
 
   /** Connect-before-disconnect reconnect for this profile (e.g. after /account). */
   private async restart(): Promise<void> {
+    if (this.shutdownFailure) throw this.shutdownFailure.error;
     if (this.restarting) return;
     this.restarting = true;
     let nextAppLock: AcquiredRuntimeLock | undefined;
@@ -238,6 +268,22 @@ class ManagedProfile {
         await this.bridge.disconnect();
       } catch (err) {
         log.warn('supervisor', 'old-disconnect-failed', { profile: this.profile, err: String(err) });
+        const failures = [err];
+        try {
+          await nextBridge.disconnect();
+        } catch (rollbackError) {
+          log.warn('supervisor', 'rollback-disconnect-failed', { profile: this.profile, err: String(rollbackError) });
+          failures.push(rollbackError);
+          // Keep every failed bridge and its app lock owned for a later stop.
+          this.pendingDisconnects.add(nextBridge);
+          if (nextAppLock) {
+            this.locks.push(nextAppLock);
+            nextAppLock = undefined;
+          }
+        }
+        const error = failures.length === 1 ? err : new AggregateError(failures, 'profile reconnect rollback failed');
+        this.shutdownFailure = { error };
+        throw error;
       }
       this.bridge = nextBridge;
       await updateEntry(
@@ -355,7 +401,7 @@ export class Supervisor {
       sessionCatalog,
       workspaces,
       this.startChannelFn,
-      (p) => void this.stopProfile(p).catch(() => undefined),
+      (p) => this.stopProfile(p),
     );
     await managed.bringUp(new Date().toISOString());
     this.managed.set(appPaths.profile, managed);
@@ -366,8 +412,8 @@ export class Supervisor {
   async stopProfile(profile: string): Promise<void> {
     const managed = this.managed.get(profile);
     if (!managed) return;
-    this.managed.delete(profile);
     await managed.stop();
+    this.managed.delete(profile);
     log.info('supervisor', 'profile-offline', { profile });
   }
 
@@ -379,9 +425,17 @@ export class Supervisor {
 
   /** Stop every profile — for process shutdown. */
   async shutdown(): Promise<void> {
-    const all = [...this.managed.values()];
-    this.managed.clear();
-    await Promise.allSettled(all.map((m) => m.stop()));
+    const failures: unknown[] = [];
+    // Profiles share one registry file. Finish each stop's registry write
+    // before the next one, while preserving every failure for the caller.
+    for (const profile of [...this.managed.keys()]) {
+      try {
+        await this.stopProfile(profile);
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (failures.length) throw new AggregateError(failures, 'supervisor shutdown did not complete cleanly');
   }
 
   /** Sync best-effort unregister of all entries (for the process 'exit' hook). */

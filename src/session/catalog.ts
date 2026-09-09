@@ -1,12 +1,11 @@
-import { randomUUID } from 'node:crypto';
-import { open, readFile, rename, mkdir } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { writeFileAtomic } from '../platform/atomic-write';
+import { PersistenceQueue } from '../platform/persistence-queue';
 import { paths } from '../config/paths';
 import { log } from '../core/logger';
 import { isAgentKind, type AgentKind } from '../agent/registry';
 import {
   CATALOG_SCHEMA_VERSION,
-  UnsupportedCatalogSchemaError,
   upgradeCatalogDocument,
   type CatalogEntryV2,
 } from './migrations';
@@ -56,46 +55,45 @@ export function sessionCatalogKey(input: SessionCatalogIdentity): string {
 
 export class SessionCatalog {
   private data = new Map<string, SessionCatalogEntry>();
-  private saving: Promise<void> = Promise.resolve();
-  private persistFrozen = false;
+  private queue = new PersistenceQueue();
+  private loadFailure: { error: unknown } | undefined;
+  private loading: Promise<void> | undefined;
   private readonly path: string;
 
   constructor(path = `${paths.sessionsFile}.catalog.json`) {
     this.path = path;
   }
 
-  async load(): Promise<void> {
-    let raw: unknown;
-    try {
-      raw = JSON.parse(await readFile(this.path, 'utf8')) as unknown;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      log.fail('session-catalog', err, { step: 'load' });
-      this.data.clear();
-      return;
-    }
+  load(): Promise<void> {
+    if (this.loading) return this.loading;
+    this.loading = this.loadDocument().finally(() => { this.loading = undefined; });
+    return this.loading;
+  }
 
-    let document: { entries: SessionCatalogEntry[] };
-    let upgraded: boolean;
+  private async loadDocument(): Promise<void> {
+    // Reload is the recovery boundary. Drain the old writer before reading;
+    // mutations remain blocked until a complete document has been published.
+    await this.queue.flush().catch(() => {});
     try {
-      ({ document, upgraded } = upgradeCatalogDocument(raw));
-    } catch (err) {
-      log.fail('session-catalog', err, { step: 'load' });
-      if (err instanceof UnsupportedCatalogSchemaError) {
-        this.persistFrozen = true;
-        return;
+      let text: string | undefined;
+      try {
+        text = await readFile(this.path, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error;
       }
-      this.data.clear();
-      return;
-    }
-
-    this.persistFrozen = false;
-    this.data = new Map(document.entries.map((entry) => [entry.key, { ...entry }]));
-    if (!upgraded) return;
-    try {
-      await this.persist();
-    } catch (err) {
-      log.fail('session-catalog', err, { step: 'persist' });
+      const { document, upgraded } = text === undefined
+        ? { document: { schemaVersion: CATALOG_SCHEMA_VERSION, entries: [] }, upgraded: false }
+        : upgradeCatalogDocument(JSON.parse(text));
+      if (upgraded) {
+        await writeFileAtomic(this.path, `${JSON.stringify(document, null, 2)}\n`, { mode: 0o600 });
+      }
+      this.data = new Map(document.entries.map(entry => [entry.key, { ...entry }]));
+      this.queue = new PersistenceQueue();
+      this.loadFailure = undefined;
+    } catch (error) {
+      this.loadFailure = { error };
+      log.fail('session-catalog', error, { step: 'load' });
+      throw error;
     }
   }
 
@@ -114,6 +112,7 @@ export class SessionCatalog {
   }
 
   upsertActive(input: UpsertSessionCatalogInput): SessionCatalogEntry {
+    this.assertMutable();
     assertAgentIdentity(input);
     const key = sessionCatalogKey(input);
     const entry: SessionCatalogEntry = {
@@ -133,6 +132,7 @@ export class SessionCatalog {
   }
 
   archiveActive(input: ArchiveSessionCatalogInput): boolean {
+    this.assertMutable();
     const key = sessionCatalogKey(input);
     const entry = this.data.get(key);
     if (!entry || entry.status !== 'active') return false;
@@ -150,6 +150,7 @@ export class SessionCatalog {
   }
 
   gc(options: SessionCatalogGcOptions = {}): void {
+    this.assertMutable();
     const now = options.now ?? Date.now();
     const maxArchivedAgeMs = options.maxArchivedAgeMs ?? DEFAULT_MAX_ARCHIVED_AGE_MS;
     const maxEntriesPerScope = options.maxEntriesPerScope ?? DEFAULT_MAX_ENTRIES_PER_SCOPE;
@@ -179,53 +180,29 @@ export class SessionCatalog {
   }
 
   async flush(): Promise<void> {
-    await this.saving;
+    if (this.loading) await this.loading;
+    if (this.loadFailure) throw this.loadFailure.error;
+    await this.queue.flush();
   }
 
   async replaceForTest(entries: SessionCatalogEntry[]): Promise<void> {
-    await this.saving;
-    this.data = new Map(entries.map((entry) => [entry.key, { ...entry }]));
-    await this.persist();
+    this.assertMutable();
+    this.data = new Map(entries.map(entry => [entry.key, { ...entry }]));
+    this.schedulePersist();
+    await this.flush();
+  }
+
+  private assertMutable(): void {
+    if (this.loadFailure) throw this.loadFailure.error;
+    if (this.loading) throw new Error('Session catalog is loading');
+    this.queue.assertHealthy();
   }
 
   private schedulePersist(): void {
-    this.saving = this.saving
-      .then(() => this.persist())
-      .catch((err: unknown) => {
-        log.fail('session-catalog', err, { step: 'persist' });
-      });
-  }
-
-  private async persist(): Promise<void> {
-    if (this.persistFrozen) {
-      log.warn('session-catalog', 'persist-skipped', { reason: 'unsupported-schema' });
-      return;
-    }
-    await mkdir(dirname(this.path), { recursive: true });
-    const tmp = `${this.path}.${process.pid}.${Date.now()}.${randomUUID()}.tmp`;
-    const payload = `${JSON.stringify(
-      { schemaVersion: CATALOG_SCHEMA_VERSION, entries: this.entries() },
-      null,
-      2,
+    const snapshot = `${JSON.stringify(
+      { schemaVersion: CATALOG_SCHEMA_VERSION, entries: this.entries() }, null, 2,
     )}\n`;
-    const fh = await open(tmp, 'w', 0o600);
-    try {
-      await fh.writeFile(payload, 'utf8');
-      await fh.sync();
-    } finally {
-      await fh.close();
-    }
-    await rename(tmp, this.path);
-    try {
-      const dir = await open(dirname(this.path), 'r');
-      try {
-        await dir.sync();
-      } finally {
-        await dir.close();
-      }
-    } catch {
-      // Directory fsync is not available on every platform.
-    }
+    this.queue.enqueue(() => writeFileAtomic(this.path, snapshot, { mode: 0o600 }));
   }
 }
 

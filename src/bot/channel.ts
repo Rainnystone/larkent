@@ -278,11 +278,22 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // unblock arms a fresh quiet-window timer. Net effect: at most one run per
   // chat in flight, and everything sent during a run merges into the next
   // batch (only flushed once 600ms of silence has passed *after* the run).
+  let closing = false;
+  const runConsumers = new Set<Promise<void>>();
+  const trackConsumer = (work: Promise<void>, phase: string): Promise<void> => {
+    runConsumers.add(work);
+    void work.then(
+      () => { runConsumers.delete(work); },
+      error => { runConsumers.delete(work); log.fail(phase, error); },
+    );
+    return work;
+  };
   const pending = new PendingQueue(DEBOUNCE_MS, (scope, batch) => {
+    if (closing) return;
     const firstMsg = batch[0];
     if (!firstMsg) return;
     pending.block(scope);
-    void withTrace({ chatId: firstMsg.chatId }, async () => {
+    void trackConsumer(withTrace({ chatId: firstMsg.chatId }, async () => {
       log.info('flush', 'start', {
         scope,
         batchSize: batch.length,
@@ -321,13 +332,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           scope,
           mode,
         });
-      } catch (err) {
-        log.fail('flush', err);
       } finally {
         pending.unblock(scope);
         log.info('flush', 'end');
       }
-    });
+    }), 'flush');
   });
 
   // Counter for stdout reconnect escalation; reset on `reconnected`.
@@ -335,6 +344,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   channel.on({
     message: async (msg) => {
+      if (closing) return;
       await withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
         intakeMessage({
           channel,
@@ -357,6 +367,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       log.info('intake', 'reject', { chatId: evt.chatId, reason: evt.reason });
     },
     cardAction: async (evt) => {
+      if (closing) return;
       await withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
         await handleCardAction({
           channel,
@@ -377,7 +388,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       }).catch((err) => log.fail('cardAction', err));
     },
     comment: async (evt) => {
-      await withTrace({ chatId: 'comment' }, async () => {
+      if (closing) return;
+      await trackConsumer(withTrace({ chatId: 'comment' }, async () => {
         await handleCommentMention({
           channel,
           evt,
@@ -388,8 +400,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           activeRuns,
           executor,
           controls,
-        }).catch((err) => log.fail('comment', err));
-      }).catch((err) => log.fail('comment', err));
+        });
+      }), 'comment').catch(() => {});
     },
     reconnecting: () => {
       consecutiveReconnects++;
@@ -510,35 +522,37 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   return {
     channel,
     disconnect: async () => {
+      closing = true;
+      // Commands can themselves call disconnect, so track run consumers only,
+      // never the enclosing message/card command handler (which would self-wait).
+      const consumers = [...runConsumers];
       activeRuns.pauseNewRuns('bridge-disconnect');
+      pool.cancelPending();
       ownerRefresh.stop();
       knownChatsRefresh.stop();
       keepalive.stop();
-      // Stop meeting timers but stay in the meetings: /reconnect tears the
-      // channel down and rebuilds it, and auto-leaving every meeting on a
-      // reconnect would be surprising.
+      // A reconnect keeps meeting membership while stopping local timers.
       meetingManager?.dispose();
       controls.meeting = undefined;
       pending.cancelAll();
-      const [disconnectResult, stopAllResult, ...flushResults] = await Promise.allSettled([
-        channel.disconnect(),
-        activeRuns.stopAll(),
-        sessions.flush(),
-        sessionCatalog?.flush(),
-        callbackNonceStore?.flush(),
-        workspaces.flush(),
+      const first = await Promise.allSettled([
+        channel.disconnect(), activeRuns.stopAll(), ...consumers,
       ]);
-      if (stopAllResult.status === 'rejected') {
-        log.fail('disconnect', stopAllResult.reason, { step: 'stopAll' });
-      }
-      for (const [idx, result] of flushResults.entries()) {
+      // Run cleanup and bot event consumption are distinct completion points.
+      // Both must settle before flush observes the last queued session write.
+      const saved = await Promise.allSettled([
+        sessions.flush(), sessionCatalog?.flush(), callbackNonceStore?.flush(), workspaces.flush(),
+      ]);
+      const steps = ['channel', 'stopAll', ...consumers.map(() => 'run-consumer'),
+        'sessions', 'catalog', 'callback-nonces', 'workspaces'];
+      const failures: unknown[] = [];
+      for (const [index, result] of [...first, ...saved].entries()) {
         if (result.status === 'rejected') {
-          log.fail('disconnect', result.reason, { step: `flush-${idx}` });
+          log.fail('disconnect', result.reason, { step: steps[index] });
+          failures.push(result.reason);
         }
       }
-      if (disconnectResult.status === 'rejected') {
-        throw disconnectResult.reason;
-      }
+      if (failures.length) throw new AggregateError(failures, 'profile shutdown did not complete cleanly');
     },
   };
 }
@@ -1589,7 +1603,14 @@ async function processAgentStream(
 
   try {
     for await (const evt of events) {
-      if (handle.interrupted) break;
+      // A stopped run can still deliver its final resume handle before cleanup.
+      // Keep draining owned events while suppressing further UI updates.
+      if (evt.type === 'system') {
+        if (!handle.interrupted) armOrPauseIdle();
+        recordSession(evt);
+        continue;
+      }
+      if (handle.interrupted) continue;
 
       // Track tool flight before re-arming the idle timer so the arm step
       // sees the correct set size. tool_use opens a window; tool_result
@@ -1606,10 +1627,6 @@ async function processAgentStream(
       }
       armOrPauseIdle();
 
-      if (evt.type === 'system') {
-        recordSession(evt);
-        continue;
-      }
       if (evt.type === 'usage') {
         const { costUsd, inputTokens, outputTokens } = evt;
         if (costUsd !== undefined || inputTokens !== undefined || outputTokens !== undefined) {

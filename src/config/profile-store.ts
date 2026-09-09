@@ -14,6 +14,7 @@ import {
   PROFILE_SCHEMA_VERSION,
   assertSupportedProfileSchemaVersion,
   isKnownProfileSchemaVersion,
+  isLegacyProfileSchemaVersion,
   profileSchemaVersionOf,
   upgradeRootConfigDocument,
 } from './migrations';
@@ -26,12 +27,21 @@ export interface LoadedRootConfig {
 export async function loadRootConfigWithMeta(path: string): Promise<LoadedRootConfig | undefined> {
   try {
     const parsed = JSON.parse(await readFile(path, 'utf8')) as unknown;
-    assertSupportedProfileSchemaVersion(profileSchemaVersionOf(parsed));
-    if (!isRootConfig(parsed)) return undefined;
+    const version = profileSchemaVersionOf(parsed);
+    assertSupportedProfileSchemaVersion(version);
+    if (isLegacyProfileSchemaVersion(version)) {
+      // Only a recognized v1 app document belongs to migrateV1ToV2. A
+      // damaged current document must never look like a missing config.
+      const legacy = parsed as Partial<AppConfig> & { app?: AppConfig['accounts']['app'] } | null;
+      const app = legacy?.accounts?.app ?? legacy?.app;
+      if (!app?.id || !app.secret || (app.tenant !== 'feishu' && app.tenant !== 'lark')) {
+        throw new Error('legacy config is missing accounts.app');
+      }
+      return undefined;
+    }
     const upgraded = upgradeRootConfigDocument(parsed);
-    if (!isRootConfig(upgraded.document)) return undefined;
     return {
-      root: normalizeRootConfig(upgraded.document as RootConfig),
+      root: normalizeRootConfig(upgraded.document as unknown as RootConfig),
       upgraded: upgraded.upgraded,
     };
   } catch (err) {

@@ -81,6 +81,12 @@ export class RunExecutor {
     const release = input.nowait ? this.pool.tryAcquire() : await this.pool.acquire();
     if (!release) {
       releaseScope();
+      if (this.activeRuns.newRunsPaused()) {
+        throw new RunRejected(
+          'reconnect-in-progress',
+          this.activeRuns.newRunsPauseReason() ?? 'new runs are temporarily paused',
+        );
+      }
       throw new RunRejected('pool-full', 'process pool is full');
     }
     if (this.activeRuns.newRunsPaused()) {

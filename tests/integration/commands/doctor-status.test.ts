@@ -38,6 +38,8 @@ describe('/status and /doctor diagnostics', () => {
     const activeRun = h.agent.run({ runId: 'run-active', prompt: 'running' }) as FakeAgentRun;
     h.activeRuns.register('chat-1', activeRun);
     const release = await h.pool.acquire();
+    expect(release).toBeTypeOf('function');
+    if (!release) throw new Error('doctor fixture should acquire an available slot');
 
     await expect(h.run('/status')).resolves.toBe(true);
 
@@ -111,6 +113,8 @@ describe('/status and /doctor diagnostics', () => {
   it('fast-fails the agent echo check when the process pool is full', async () => {
     const h = await createHarness({ configuredWorkspace: true });
     const release = await h.pool.acquire();
+    expect(release).toBeTypeOf('function');
+    if (!release) throw new Error('doctor fixture should acquire an available slot');
 
     await expect(h.run('/doctor')).resolves.toBe(true);
 

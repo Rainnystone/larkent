@@ -9,6 +9,7 @@ import { log, reportMetric } from '../core/logger';
  * Use:
  *   const pool = new ProcessPool();
  *   const release = await pool.acquire();
+ *   if (!release) return; // queued acquisition cancelled during shutdown
  *   try { ... } finally { release(); }
  *
  * The cap is read fresh each `acquire()`, so `/config maxConcurrentRuns`
@@ -16,7 +17,7 @@ import { log, reportMetric } from '../core/logger';
  */
 export class ProcessPool {
   private active = 0;
-  private readonly waiters: Array<() => void> = [];
+  private readonly waiters: Array<(acquired: boolean) => void> = [];
   /** Snapshot of the cap captured at the moment acquire() decided to wait. */
   private cap: () => number;
 
@@ -24,7 +25,7 @@ export class ProcessPool {
     this.cap = cap;
   }
 
-  async acquire(): Promise<() => void> {
+  async acquire(): Promise<(() => void) | undefined> {
     if (this.active < this.cap()) {
       this.active++;
       log.info('pool', 'acquired', { active: this.active, cap: this.cap() });
@@ -33,11 +34,19 @@ export class ProcessPool {
     }
     log.info('pool', 'wait', { active: this.active, cap: this.cap(), waiting: this.waiters.length + 1 });
     reportMetric('pool_waiting', this.waiters.length + 1);
-    await new Promise<void>((resolve) => this.waiters.push(resolve));
+    const acquired = await new Promise<boolean>((resolve) => this.waiters.push(resolve));
+    if (!acquired) return undefined;
     this.active++;
     log.info('pool', 'acquired', { active: this.active, cap: this.cap() });
     reportMetric('pool_active', this.active);
     return () => this.release();
+  }
+
+  /** Cancel only queued acquisitions; active runs retain their slots. */
+  cancelPending(): void {
+    const waiting = this.waiters.splice(0);
+    for (const wake of waiting) wake(false);
+    reportMetric('pool_waiting', 0);
   }
 
   tryAcquire(): (() => void) | undefined {
@@ -58,7 +67,7 @@ export class ProcessPool {
     // via /config, this naturally throttles by not waking.
     if (this.active < this.cap() && this.waiters.length > 0) {
       const next = this.waiters.shift();
-      if (next) next();
+      if (next) next(true);
     }
   }
 

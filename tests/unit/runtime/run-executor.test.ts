@@ -9,6 +9,31 @@ import type { AgentAdapter, AgentRun, AgentEvent } from '../../../src/agent/type
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('RunExecutor settlement', () => {
+  it('releases a cancelled queued scope without starting a child and keeps the shutdown rejection reason', async () => {
+    const agent = new FakeAgentAdapter({ events: [{ type: 'done', terminationReason: 'normal' }] });
+    const h = harness(agent);
+    const releases = Array.from({ length: h.pool.snapshot().cap }, () => h.pool.tryAcquire());
+    const queued = h.executor.submit({ scopeId: 'queued', policy: policy() });
+    expect(h.pool.snapshot().waiting).toBe(1);
+    const resume = h.activeRuns.pauseNewRuns('bridge-disconnect');
+    h.pool.cancelPending();
+    await expect(queued).rejects.toMatchObject({ code: 'reconnect-in-progress' });
+    expect(agent.runs).toHaveLength(0);
+    expect(h.pool.snapshot().waiting).toBe(0);
+    const reservation = h.activeRuns.reserve('queued');
+    expect(reservation).toBeTypeOf('function');
+    if (!reservation) throw new Error('cancelled scope was not released');
+    reservation();
+    resume();
+    for (const release of releases) {
+      if (!release) throw new Error('initial slots should have been acquired');
+      release();
+    }
+    const next = await h.executor.submit({ scopeId: 'queued', policy: policy() });
+    await next.finished;
+    expect(agent.runs).toHaveLength(1);
+  });
+
   it.each(['return', 'terminal break'] as const)('reports completed cleanup failure on subscriber %s', async mode => {
     const failure = new Error('adapter cleanup failed');
     const cleanup = deferred<void>();
