@@ -15,7 +15,6 @@ import {
   assertReconnectAgentKindUnchanged,
   checkRuntimeAgentAvailability,
   createRuntimeAgent,
-  releaseRuntimeLocks,
 } from './agent-runtime';
 import {
   acquireAppRuntimeLock,
@@ -93,49 +92,42 @@ class ManagedProfile {
     return this.bridge?.channel.botIdentity?.name;
   }
 
+  get online(): boolean {
+    return this.bridge !== undefined;
+  }
+
   async bringUp(nowIso: string): Promise<void> {
     this.startedAt = nowIso;
-    // Acquire sequentially, pushing as we go: if the app lock throws (e.g. the
-    // same app is running elsewhere) the already-held profile lock is still in
-    // this.locks and gets released by the catch — otherwise it would leak and
-    // a retry in the same process would fail to re-lock.
-    this.locks = [];
+    // The supervisor owns this profile before bringUp starts. Every acquired
+    // resource joins the same stop/rollback path, including a second-lock failure.
     this.locks.push(await acquireProfileRuntimeLock(this.appPaths, this.profileConfig.agentKind));
     this.locks.push(
       await acquireAppRuntimeLock(this.appPaths, this.appId, this.profileConfig.agentKind),
     );
-    try {
-      this.entry = await register({
-        appId: this.appId,
-        tenant: this.cfg.accounts.app.tenant,
-        profileName: this.appPaths.profile,
-        agentKind: this.profileConfig.agentKind,
-        configPath: this.configPath,
-        version: pkg.version,
-        registryFile: this.appPaths.userRegistryFile,
-      });
-      this.controls = this.makeControls(this.appPaths, this.cfg, this.profileConfig);
-      this.bridge = await this.startChannelFn({
-        cfg: this.cfg,
-        agent: this.agent,
-        sessions: this.sessions,
-        sessionCatalog: this.sessionCatalog,
-        workspaces: this.workspaces,
-        controls: this.controls,
-        appPaths: this.appPaths,
-      });
-      const botName = this.bridge.channel.botIdentity?.name;
-      if (botName) {
-        await updateEntry(this.entry.id, { botName }, this.appPaths.userRegistryFile).catch((err) =>
-          log.warn('registry', 'update-failed', { step: 'botName', err: String(err) }),
-        );
-      }
-    } catch (err) {
-      // Roll back partial bring-up so a failed start doesn't leak locks/entries.
-      if (this.entry) unregisterSync(this.entry.id, this.appPaths.userRegistryFile);
-      await releaseRuntimeLocks(this.locks);
-      this.locks = [];
-      throw err;
+    this.entry = await register({
+      appId: this.appId,
+      tenant: this.cfg.accounts.app.tenant,
+      profileName: this.appPaths.profile,
+      agentKind: this.profileConfig.agentKind,
+      configPath: this.configPath,
+      version: pkg.version,
+      registryFile: this.appPaths.userRegistryFile,
+    });
+    this.controls = this.makeControls(this.appPaths, this.cfg, this.profileConfig);
+    this.bridge = await this.startChannelFn({
+      cfg: this.cfg,
+      agent: this.agent,
+      sessions: this.sessions,
+      sessionCatalog: this.sessionCatalog,
+      workspaces: this.workspaces,
+      controls: this.controls,
+      appPaths: this.appPaths,
+    });
+    const botName = this.bridge.channel.botIdentity?.name;
+    if (botName) {
+      await updateEntry(this.entry.id, { botName }, this.appPaths.userRegistryFile).catch((err) =>
+        log.warn('registry', 'update-failed', { step: 'botName', err: String(err) }),
+      );
     }
   }
 
@@ -154,7 +146,7 @@ class ManagedProfile {
     // An earlier reconnect owns both bridges until transfer or rollback ends.
     // Its caller receives its failure; stop then handles every retained owner.
     if (this.restartOperation) await this.restartOperation.catch(() => {});
-    const bridges = [this.bridge, ...this.pendingDisconnects];
+    const bridges = this.bridge ? [this.bridge, ...this.pendingDisconnects] : [...this.pendingDisconnects];
     const results = await Promise.allSettled(bridges.map(async bridge => {
       await bridge.disconnect();
       this.pendingDisconnects.delete(bridge);
@@ -203,7 +195,7 @@ class ManagedProfile {
     return {
       profile: this.profile,
       agentKind: this.profileConfig.agentKind,
-      online: true,
+      online: this.online,
       pid,
       startedAt: this.startedAt,
       botName: this.botName,
@@ -278,6 +270,7 @@ class ManagedProfile {
           next.accounts.app.id,
           nextRuntime.profileConfig.agentKind,
         );
+        this.locks.push(nextAppLock);
       }
       const nextControls = this.makeControls(nextRuntime.appPaths, next, nextRuntime.profileConfig);
       const nextBridge = await this.startChannelFn({
@@ -302,7 +295,6 @@ class ManagedProfile {
           // Keep every failed bridge and its app lock owned for a later stop.
           this.pendingDisconnects.add(nextBridge);
           if (nextAppLock) {
-            this.locks.push(nextAppLock);
             nextAppLock = undefined;
           }
         }
@@ -321,19 +313,43 @@ class ManagedProfile {
         },
         this.appPaths.userRegistryFile,
       ).catch((err) => log.warn('registry', 'update-failed', { err: String(err) }));
-      if (nextAppLock) {
-        const oldAppLock = this.locks.find((l) => l.kind === 'app');
-        this.locks = [...this.locks.filter((l) => l.kind !== 'app'), nextAppLock];
-        nextAppLock = undefined;
-        await oldAppLock?.release().catch(() => undefined);
-      }
+      const oldAppLock = nextAppLock
+        ? this.locks.find(lock => lock.kind === 'app' && lock !== nextAppLock)
+        : undefined;
+      // Publish the connected bridge's configuration before releasing its
+      // predecessor's lock. A release failure must not describe the new bridge
+      // as the old app, or lose either lock's ownership.
+      nextAppLock = undefined;
       this.cfg = next;
       this.profileConfig = nextRuntime.profileConfig;
       this.agent = nextAgent;
       this.controls = nextControls;
-    } finally {
-      if (nextAppLock) await nextAppLock.release().catch(() => undefined);
+      if (oldAppLock) await this.releaseOwnedLock(oldAppLock);
+    } catch (error) {
+      if (nextAppLock) {
+        try {
+          await this.releaseOwnedLock(nextAppLock);
+        } catch (releaseError) {
+          const failure = new AggregateError([error, releaseError], 'profile reconnect cleanup failed');
+          this.shutdownFailure = { error: failure };
+          throw failure;
+        }
+      }
+      throw error;
     }
+  }
+
+  private async releaseOwnedLock(lock: AcquiredRuntimeLock): Promise<void> {
+    try {
+      await lock.release();
+    } catch (error) {
+      this.shutdownFailure = { error };
+      log.warn('supervisor', 'lock-release-failed', {
+        profile: this.profile, kind: lock.kind, target: lock.target, err: String(error),
+      });
+      throw error;
+    }
+    this.locks = this.locks.filter(owned => owned !== lock);
   }
 }
 
@@ -344,6 +360,9 @@ class ManagedProfile {
  */
 export class Supervisor {
   private managed = new Map<string, ManagedProfile>();
+  private readonly starting = new Map<string, Promise<void>>();
+  private closing = false;
+  private shutdownOperation: Promise<void> | undefined;
 
   constructor(private opts: SupervisorOptions) {}
 
@@ -352,7 +371,7 @@ export class Supervisor {
   }
 
   isOnline(profile: string): boolean {
-    return this.managed.has(profile);
+    return this.managed.get(profile)?.online ?? false;
   }
 
   controlsFor(profile: string): Controls | undefined {
@@ -360,7 +379,7 @@ export class Supervisor {
   }
 
   channelFor(profile: string) {
-    return this.managed.get(profile)?.bridge.channel;
+    return this.managed.get(profile)?.bridge?.channel;
   }
 
   list(): ManagedStatus[] {
@@ -368,9 +387,24 @@ export class Supervisor {
   }
 
   /** Bring a profile online inside this process. Throws on lock/app conflict. */
-  async startProfile(profile: string): Promise<void> {
-    if (this.managed.has(profile)) return;
+  startProfile(profile: string): Promise<void> {
+    if (this.closing) return Promise.reject(new Error('supervisor is shutting down'));
+    const starting = this.starting.get(profile);
+    if (starting) return starting;
+    const owned = this.managed.get(profile);
+    if (owned) return owned.online ? Promise.resolve() : Promise.reject(
+      new Error(`profile ${profile} has incomplete startup cleanup; stop it before retrying`),
+    );
+    // Claim admission synchronously so duplicate start, stop and shutdown all
+    // join this operation, including its preflight and partial-start rollback.
+    const operation = Promise.resolve().then(() => this.startOwnedProfile(profile)).finally(() => {
+      this.starting.delete(profile);
+    });
+    this.starting.set(profile, operation);
+    return operation;
+  }
 
+  private async startOwnedProfile(profile: string): Promise<void> {
     const runtime = await resolveProfileRuntime({
       config: this.opts.configPath,
       profile,
@@ -427,13 +461,29 @@ export class Supervisor {
       this.startChannelFn,
       (p) => this.stopProfile(p),
     );
-    await managed.bringUp(new Date().toISOString());
     this.managed.set(appPaths.profile, managed);
-    log.info('supervisor', 'profile-online', { profile: appPaths.profile, appId: cfg.accounts.app.id });
+    try {
+      await managed.bringUp(new Date().toISOString());
+    } catch (error) {
+      try {
+        await managed.stop();
+        this.managed.delete(appPaths.profile);
+      } catch (cleanupError) {
+        // A failed rollback remains in managed for a later stop/shutdown retry.
+        throw new AggregateError([error, cleanupError], 'profile startup rollback failed');
+      }
+      throw error;
+    }
+    if (!this.closing) {
+      log.info('supervisor', 'profile-online', { profile: appPaths.profile, appId: cfg.accounts.app.id });
+    }
   }
 
   /** Take a profile offline (in-process). The supervisor keeps running. */
   async stopProfile(profile: string): Promise<void> {
+    // The start caller owns its error; stop owns cleanup of anything retained.
+    const starting = this.starting.get(profile);
+    if (starting) await starting.catch(() => {});
     const managed = this.managed.get(profile);
     if (!managed) return;
     await managed.stop();
@@ -443,12 +493,23 @@ export class Supervisor {
 
   async restartProfile(profile: string): Promise<void> {
     const managed = this.managed.get(profile);
-    if (!managed) throw new Error(`profile 未在运行：${profile}`);
+    if (!managed?.online) throw new Error(`profile 未在运行：${profile}`);
     await managed.controls.restart();
   }
 
   /** Stop every profile — for process shutdown. */
-  async shutdown(): Promise<void> {
+  shutdown(): Promise<void> {
+    this.closing = true;
+    this.shutdownOperation ??= Promise.resolve().then(() => this.shutdownOwned()).finally(() => {
+      this.shutdownOperation = undefined;
+    });
+    return this.shutdownOperation;
+  }
+
+  private async shutdownOwned(): Promise<void> {
+    // Admission is closed. Startup callers observe their own errors; shutdown
+    // waits for rollback and then retries all resources that remain owned.
+    await Promise.allSettled(this.starting.values());
     const failures: unknown[] = [];
     // Profiles share one registry file. Finish each stop's registry write
     // before the next one, while preserving every failure for the caller.

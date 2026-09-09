@@ -296,6 +296,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     if (!firstMsg) return;
     pending.block(scope);
     void trackConsumer(withTrace({ chatId: firstMsg.chatId }, async () => {
+      const sessionWriter = activeRuns.trackSessionWriter(scope);
       log.info('flush', 'start', {
         scope,
         batchSize: batch.length,
@@ -331,10 +332,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           callbackAuth,
           activePolicyFingerprints,
           lastRunModelByScope,
+          canRecordSession: sessionWriter.isCurrent,
           scope,
           mode,
         });
       } finally {
+        sessionWriter.release();
         pending.unblock(scope);
         log.info('flush', 'end');
       }
@@ -823,6 +826,7 @@ interface RunBatchDeps {
   callbackAuth?: CallbackAuth;
   activePolicyFingerprints: Map<string, string>;
   lastRunModelByScope: Map<string, string>;
+  canRecordSession(): boolean;
   scope: string;
   mode: ChatMode;
 }
@@ -1021,6 +1025,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     log.info('session', 'fresh', { cwd });
   }
   const recordSession = (evt: AgentEvent): void => {
+    if (!deps.canRecordSession()) return;
     recordRunSessionEvent({
       scopeId: scope,
       sessions,

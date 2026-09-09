@@ -188,9 +188,6 @@ export class RunExecutor {
             throw new RunCleanupFailed('run did not settle after stop');
           }
         }
-        this.activeRuns.unregister(input.scopeId, ownedRun);
-        releaseScope();
-        release();
         settled = true;
       })();
       return finishing;
@@ -223,7 +220,13 @@ export class RunExecutor {
       dimensions,
       startedAt,
       now: this.now,
-    }), finish);
+    }), finish, () => {
+      // Raw exit/cleanup can finish before buffered source events. Release
+      // ownership only once the pump has drained them (or observed failure).
+      this.activeRuns.unregister(input.scopeId, ownedRun);
+      releaseScope();
+      release();
+    });
 
     return {
       runId,
@@ -288,6 +291,7 @@ class EventFanout {
   constructor(
     private readonly source: AsyncIterable<AgentEvent>,
     private readonly onDone: (forceStop: boolean) => Promise<void>,
+    private readonly onSettled: () => void,
   ) {
     this.finished = new Promise<void>((resolve, reject) => {
       this.resolveFinished = resolve;
@@ -298,8 +302,17 @@ class EventFanout {
     void this.pump().catch(error => this.complete(true, error));
   }
 
-  stop(): Promise<void> {
-    return this.settle(true);
+  async stop(): Promise<void> {
+    try {
+      // Request raw stop immediately, including while the pump is already
+      // waiting for graceful exit. Success still belongs to the source pump.
+      await this.onDone(true);
+    } catch (error) {
+      // A broken child may never close its source. Wake callers with failure
+      // while keeping its resource ownership for diagnosis.
+      this.complete(true, error);
+    }
+    return this.finished;
   }
 
   subscribe(): AsyncIterable<AgentEvent> {
@@ -344,7 +357,8 @@ class EventFanout {
             returned = true;
             this.wakeAll();
             if (wasActive && this.subscribers === 0 && !this.done) {
-              await this.settle(!this.terminal);
+              if (!this.terminal) await this.stop();
+              else await this.finished;
             }
             if (this.failed) throw this.error;
             return { done: true, value: undefined };
@@ -369,13 +383,14 @@ class EventFanout {
       failed = true;
       error = err;
     } finally {
-      await this.settle(false, failed, error);
+      await this.settle(failed, error);
     }
   }
 
-  private async settle(forceStop: boolean, failed = false, error?: unknown): Promise<void> {
+  private async settle(failed: boolean, error?: unknown): Promise<void> {
     try {
-      await this.onDone(forceStop);
+      await this.onDone(false);
+      this.onSettled();
     } catch (err) {
       failed = true;
       error = err;

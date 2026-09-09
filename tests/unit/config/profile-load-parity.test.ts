@@ -21,13 +21,16 @@ describe('P4 profile load parity', () => {
     const dir = await mkdtemp(join(tmpdir(), 'factory-codex-'));
     const parentHome = join(dir, 'parent-home');
     vi.stubEnv('CODEX_HOME', parentHome);
+    const warnings = vi.spyOn(console, 'warn');
     try {
       const binaries = await Promise.all(['a', 'b'].map(async (name) => {
         const binary = join(dir, `${name}.mjs`);
         await writeFile(binary, `#!${process.execPath}
 import { writeFileSync } from 'node:fs';
+let stdin = '';
+for await (const chunk of process.stdin) stdin += chunk.toString();
 writeFileSync(${JSON.stringify(join(dir, name + '.json'))}, JSON.stringify({
-  argv: process.argv.slice(2), home: process.env.CODEX_HOME,
+  argv: process.argv.slice(2), home: process.env.CODEX_HOME, stdin,
 }));
 console.log(JSON.stringify({ type: 'thread.started', thread_id: ${JSON.stringify(name)} }));
 console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }));
@@ -69,7 +72,11 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, o
       expect(first.argv).toContain('--ignore-rules');
       expect(second.argv).not.toContain('--ignore-rules');
       expect(process.env.CODEX_HOME).toBe(parentHome);
+      expect(first.stdin).toContain('hello');
+      expect(second.stdin).toContain('hello');
+      expect(warnings.mock.calls.filter(args => args.join(' ').includes('stdin-error'))).toEqual([]);
     } finally {
+      warnings.mockRestore();
       vi.unstubAllEnvs();
       await rm(dir, { recursive: true, force: true });
     }

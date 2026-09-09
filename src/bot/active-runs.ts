@@ -8,6 +8,7 @@ export interface RunHandle {
 export class ActiveRuns {
   private readonly handles = new Map<string, RunHandle>();
   private readonly reservations = new Set<string>();
+  private readonly sessionWriters = new Map<string, Set<{ current: boolean }>>();
   private pauseDepth = 0;
   private pauseReason: string | undefined;
 
@@ -67,6 +68,29 @@ export class ActiveRuns {
 
   scopes(): string[] {
     return [...this.handles.keys()];
+  }
+
+  /** A consumer can still save buffered events after its process unregisters. */
+  trackSessionWriter(scope: string): { isCurrent(): boolean; release(): void } {
+    const writers = this.sessionWriters.get(scope) ?? new Set<{ current: boolean }>();
+    this.sessionWriters.set(scope, writers);
+    const writer = { current: true };
+    writers.add(writer);
+    return {
+      isCurrent: () => writer.current,
+      release: () => {
+        writers.delete(writer);
+        if (writers.size === 0 && this.sessionWriters.get(scope) === writers) {
+          this.sessionWriters.delete(scope);
+        }
+      },
+    };
+  }
+
+  /** An accepted session choice revokes old consumers before requesting stop. */
+  supersedeSession(scope: string): boolean {
+    for (const writer of this.sessionWriters.get(scope) ?? []) writer.current = false;
+    return this.interrupt(scope);
   }
 
   /**

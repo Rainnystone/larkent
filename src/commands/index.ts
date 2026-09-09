@@ -313,7 +313,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     return handleNewChat(rawName, ctx);
   }
 
-  const wasRunning = ctx.activeRuns.interrupt(ctx.scope);
+  const wasRunning = ctx.activeRuns.supersedeSession(ctx.scope);
   if (ctx.sessionCatalog && ctx.sessionCatalogIdentity) {
     ctx.sessionCatalog.archiveActive({
       ...ctx.sessionCatalogIdentity,
@@ -379,7 +379,7 @@ async function handleCd(args: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, workspace.userVisible);
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope);
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换 cwd 到 \`${workspace.cwdRealpath}\`\n（session 已重置）`);
@@ -444,7 +444,7 @@ async function handleWsUse(name: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, workspace.userVisible);
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope);
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换到 \`${name}\` (${workspace.cwdRealpath})\n（session 已重置）`);
@@ -591,7 +591,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     const entry = ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity);
     const resolved = ctx.resumeCandidates.consume(sessionId, ctx.sessionCatalogIdentity);
     if (resolved) {
-      ctx.activeRuns.interrupt(ctx.scope);
+      ctx.activeRuns.supersedeSession(ctx.scope);
       ctx.sessionCatalog.upsertActive({
         scopeId: ctx.sessionCatalogIdentity.scopeId,
         agentId: ctx.sessionCatalogIdentity.agentId,
@@ -614,7 +614,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       await reply(ctx, '当前上下文不可恢复这个会话，请重新选择当前工作区和权限策略下的会话。');
       return;
     }
-    ctx.activeRuns.interrupt(ctx.scope);
+    ctx.activeRuns.supersedeSession(ctx.scope);
     if (descriptorFor(ctx.sessionCatalogIdentity.agentId).resume.label === 'session') {
       ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
     }
@@ -632,7 +632,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     await reply(ctx, '请先使用 /cd <path> 选择工作目录，再查看或恢复会话。');
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope);
   ctx.sessions.set(ctx.scope, sessionId, cwd);
   await reply(ctx, RESUME_APPLIED_REPLY);
 }
