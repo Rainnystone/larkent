@@ -11,6 +11,7 @@ import { canUseDm } from '../../../src/policy/access.js';
 import { evaluateRunPolicy } from '../../../src/policy/run-policy.js';
 import { resolveWorkingDirectory } from '../../../src/policy/workspace.js';
 import { SessionCatalog, type SessionCatalogIdentity } from '../../../src/session/catalog.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
@@ -89,6 +90,7 @@ async function createHarness(kind: PinAgentKind): Promise<{
   const tmp = await createTmpProfile(`slash-parity-${kind}-`);
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const catalog = new SessionCatalog(join(tmp.profile, 'sessions.catalog.json'));
   const workspaceRealpath = await realpath(tmp.workspace);
@@ -120,6 +122,7 @@ async function createHarness(kind: PinAgentKind): Promise<{
   }
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
+      resumeCandidates,
       channel: channel as unknown as CommandContext['channel'],
       msg: message(content),
       scope: 'chat-1',
@@ -131,25 +134,17 @@ async function createHarness(kind: PinAgentKind): Promise<{
       agent,
       activeRuns: new ActiveRuns(),
       controls,
-      claudeHistoryProvider: async () => [
-        {
-          sessionId: 'sess-slash-claude',
-          preview: 'pinned preview',
-          mtime: Date.now(),
-          lineCount: 3,
-        },
-      ],
-      codexHistoryProvider: async () => [
-        {
-          threadId: 'thread-slash-codex',
-          name: 'pinned thread',
-          preview: 'pinned preview',
-          cwd: workspaceRealpath,
-          createdAtMs: Date.now(),
-          updatedAtMs: Date.now(),
-          source: 'session_index',
-        },
-      ],
+      resumeHistoryProvider: async () => kind === 'claude' ? [{
+        resumeHandle: 'sess-slash-claude',
+        preview: 'pinned preview',
+        updatedAtMs: Date.now(),
+        lineCount: 3,
+      }] : kind === 'codex' ? [{
+        resumeHandle: 'thread-slash-codex',
+        preview: 'pinned thread',
+        updatedAtMs: Date.now(),
+        detail: 'Codex · session_index',
+      }] : [],
     });
   cleanups.push(async () => {
     await Promise.all([sessions.flush(), workspaces.flush(), catalog.flush()]);

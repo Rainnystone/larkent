@@ -9,6 +9,7 @@ import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/con
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { ProcessPool } from '../../../src/bot/process-pool';
 import { RunExecutor } from '../../../src/runtime/run-executor';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel';
@@ -180,6 +181,7 @@ function commandContext(args: {
     scope: 'chat-1',
     chatMode: 'p2p',
     sessions: args.sessions,
+    resumeCandidates: new ResumeCandidates(),
     workspaces: args.workspaces,
     agent: new FakeAgentAdapter({ events: [] }),
     activeRuns: new ActiveRuns(),

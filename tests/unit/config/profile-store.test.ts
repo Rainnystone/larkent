@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   createDefaultProfileConfig,
   type RootConfig,
@@ -10,6 +10,7 @@ import {
   agentKindFromString,
   createRootConfig,
   loadRootConfig,
+  loadRootConfigWithMeta,
   saveRootConfig,
 } from '../../../src/config/profile-store';
 
@@ -272,4 +273,45 @@ describe('agentKindFromString', () => {
     expect(agentKindFromString('cursor')).toBe('cursor');
     expect(() => agentKindFromString('nope')).toThrow(/unsupported agent/);
   });
+});
+
+vi.mock('../../../src/platform/atomic-write', async original => {
+  const actual = await original<typeof import('../../../src/platform/atomic-write')>();
+  return { ...actual, writeFileAtomic: vi.fn(actual.writeFileAtomic) };
+});
+import { writeFileAtomic } from '../../../src/platform/atomic-write';
+beforeEach(async () => {
+  const actual = await vi.importActual<typeof import('../../../src/platform/atomic-write')>('../../../src/platform/atomic-write');
+  vi.mocked(writeFileAtomic).mockReset().mockImplementation(actual.writeFileAtomic);
+});
+
+it.each(['{', 'null', '[]', '{}', '{"schemaVersion":3}', '{"schemaVersion":2,"profiles":null}', '{"schemaVersion":99,"profiles":{}}'])('rejects damaged or future profile documents as errors, not missing: %s', async bytes => {
+  const file = join(await tmpRoot(), 'config.json');
+  await writeFile(file, bytes);
+  await expect(loadRootConfigWithMeta(file)).rejects.toBeDefined();
+  expect(await readFile(file, 'utf8')).toBe(bytes);
+});
+
+it('routes only missing files or identified legacy v1 documents to the legacy loader', async () => {
+  const file = join(await tmpRoot(), 'config.json');
+  await expect(loadRootConfigWithMeta(file)).resolves.toBeUndefined();
+  for (const legacy of [{ accounts: { app } }, { schemaVersion: 1, app }]) {
+    const bytes = JSON.stringify(legacy);
+    await writeFile(file, bytes);
+    await expect(loadRootConfigWithMeta(file)).resolves.toBeUndefined();
+    expect(await readFile(file, 'utf8')).toBe(bytes);
+  }
+});
+
+it('propagates an atomic save failure and retains the original profile bytes', async () => {
+  const file = join(await tmpRoot(), 'config.json');
+  const root = createRootConfig('claude', createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } }));
+  await saveRootConfig(root, file);
+  const bytes = await readFile(file, 'utf8');
+  const failure = new Error('profile rename failed');
+  const actual = await vi.importActual<typeof import('../../../src/platform/atomic-write')>('../../../src/platform/atomic-write');
+  vi.mocked(writeFileAtomic).mockImplementationOnce((path, data, opts) => actual.writeFileAtomic(path, data, { ...opts, rename: async () => { throw failure; } }));
+  root.profiles.claude!.preferences.messageReply = 'text';
+  await expect(saveRootConfig(root, file)).rejects.toBe(failure);
+  expect(await readFile(file, 'utf8')).toBe(bytes);
 });

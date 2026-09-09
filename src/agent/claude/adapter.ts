@@ -102,12 +102,6 @@ function writeSystemPromptFile(content: string): { path: string; cleanup: () => 
   writeFileSync(path, content, 'utf8');
   return {
     path,
-    cleanup: () => {
-      try {
-        rmSync(dir, { recursive: true, force: true });
-      } catch {
-        // best-effort: the OS will reclaim the temp dir eventually
-      }
-    },
+    cleanup: () => rmSync(dir, { recursive: true, force: true }),
   };
 }

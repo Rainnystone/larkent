@@ -5,7 +5,7 @@ import { ActiveRuns, type RunHandle } from '../bot/active-runs';
 import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
 import { log } from '../core/logger';
-import { RunRejected, SpawnFailed } from './errors';
+import { RunCleanupFailed, RunRejected, SpawnFailed } from './errors';
 
 export interface RunExecutorDeps {
   agent: AgentAdapter;
@@ -37,6 +37,8 @@ export interface RunExecution {
   scopeId: string;
   run: AgentRun;
   handle: RunHandle;
+  /** Runtime settlement result; downstream consumers may still be processing events. */
+  finished: Promise<void>;
   subscribe(): AsyncIterable<AgentEvent>;
   stop(): Promise<void>;
 }
@@ -79,6 +81,12 @@ export class RunExecutor {
     const release = input.nowait ? this.pool.tryAcquire() : await this.pool.acquire();
     if (!release) {
       releaseScope();
+      if (this.activeRuns.newRunsPaused()) {
+        throw new RunRejected(
+          'reconnect-in-progress',
+          this.activeRuns.newRunsPauseReason() ?? 'new runs are temporarily paused',
+        );
+      }
       throw new RunRejected('pool-full', 'process pool is full');
     }
     if (this.activeRuns.newRunsPaused()) {
@@ -154,60 +162,80 @@ export class RunExecutor {
       permissionMode: input.policy.permissionMode,
     });
 
+    const rawRun = run;
     let handle: RunHandle;
+    let finishing: Promise<void> | undefined;
+    let stopping: Promise<void> | undefined;
+    let settled = false;
+    const requestStop = (): Promise<void> => {
+      stopping ??= (async () => { await rawRun.stop(); })();
+      // A forced stop can reject while the graceful wait is still pending.
+      void stopping.catch(() => {});
+      return stopping;
+    };
+    const finish = (forceStop: boolean): Promise<void> => {
+      if (forceStop && !settled) requestStop();
+      finishing ??= (async () => {
+        if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
+          log.warn('run', 'post-done-exit-timeout', {
+            ...dimensions, graceMs: this.postDoneExitGraceMs,
+          });
+          requestStop();
+        }
+        if (stopping) {
+          await stopping;
+          if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
+            throw new RunCleanupFailed('run did not settle after stop');
+          }
+        }
+        settled = true;
+      })();
+      return finishing;
+    };
+    const ownedRun: AgentRun = {
+      runId: rawRun.runId,
+      events: rawRun.events,
+      waitForExit: timeoutMs => rawRun.waitForExit(timeoutMs),
+      stop: () => {
+        handle.interrupted = true;
+        return fanout.stop();
+      },
+    };
     try {
-      handle = this.activeRuns.register(input.scopeId, run);
+      handle = this.activeRuns.register(input.scopeId, ownedRun);
     } catch (err) {
+      // No owner was registered, but the spawned child still owns its slot.
+      await rawRun.stop();
+      if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
+        throw new RunCleanupFailed('unregistered run did not settle after stop');
+      }
       releaseScope();
       release();
-      await run.stop().catch(() => {});
       throw new RunRejected(
         'run-already-active',
         err instanceof Error ? err.message : 'another run is already active for this scope',
       );
     }
-    let cleaned = false;
-    const cleanup = async (waitForExit: boolean): Promise<void> => {
-      if (cleaned) return;
-      cleaned = true;
-      this.activeRuns.unregister(input.scopeId, run);
-      release();
-      if (waitForExit) {
-        const exited = await run.waitForExit(this.postDoneExitGraceMs);
-        if (!exited) {
-          log.warn('run', 'post-done-exit-timeout', {
-            ...dimensions,
-            graceMs: this.postDoneExitGraceMs,
-          });
-          await run.stop().catch((err) => {
-            log.warn('run', 'post-done-stop-failed', {
-              ...dimensions,
-              err: err instanceof Error ? err.message : String(err),
-            });
-          });
-        }
-      }
-    };
-    const fanout = new EventFanout(observeRunEvents(run.events, {
+    const fanout = new EventFanout(observeRunEvents(rawRun.events, {
       dimensions,
       startedAt,
       now: this.now,
-    }), async () => {
-      await cleanup(!handle.interrupted);
+    }), finish, () => {
+      // Raw exit/cleanup can finish before buffered source events. Release
+      // ownership only once the pump has drained them (or observed failure).
+      this.activeRuns.unregister(input.scopeId, ownedRun);
+      releaseScope();
+      release();
     });
 
     return {
       runId,
       scopeId: input.scopeId,
-      run,
+      run: ownedRun,
       handle,
+      finished: fanout.finished,
       subscribe: () => fanout.subscribe(),
-      stop: async () => {
-        handle.interrupted = true;
-        await run.stop();
-        await run.waitForExit(this.postDoneExitGraceMs);
-        await cleanup(false);
-      },
+      stop: () => ownedRun.stop(),
     };
   }
 }
@@ -249,42 +277,90 @@ function observeRunEvents(
 }
 
 class EventFanout {
-  private readonly source: AsyncIterable<AgentEvent>;
-  private readonly onDone: () => Promise<void>;
+  readonly finished: Promise<void>;
   private readonly buffer: AgentEvent[] = [];
   private readonly waiters = new Set<() => void>();
-  private started = false;
+  private subscribers = 0;
+  private terminal = false;
   private done = false;
+  private failed = false;
   private error: unknown;
+  private resolveFinished!: () => void;
+  private rejectFinished!: (error: unknown) => void;
 
-  constructor(source: AsyncIterable<AgentEvent>, onDone: () => Promise<void>) {
-    this.source = source;
-    this.onDone = onDone;
+  constructor(
+    private readonly source: AsyncIterable<AgentEvent>,
+    private readonly onDone: (forceStop: boolean) => Promise<void>,
+    private readonly onSettled: () => void,
+  ) {
+    this.finished = new Promise<void>((resolve, reject) => {
+      this.resolveFinished = resolve;
+      this.rejectFinished = reject;
+    });
+    // Keep the original rejection observable for subscribers and finished.
+    void this.finished.catch(() => {});
+    void this.pump().catch(error => this.complete(true, error));
+  }
+
+  async stop(): Promise<void> {
+    try {
+      // Request raw stop immediately, including while the pump is already
+      // waiting for graceful exit. Success still belongs to the source pump.
+      await this.onDone(true);
+    } catch (error) {
+      // A broken child may never close its source. Wake callers with failure
+      // while keeping its resource ownership for diagnosis.
+      this.complete(true, error);
+    }
+    return this.finished;
   }
 
   subscribe(): AsyncIterable<AgentEvent> {
     return {
       [Symbol.asyncIterator]: () => {
         let index = 0;
+        let active = false;
+        let returned = false;
+        const leave = (): void => {
+          if (active) this.subscribers--;
+          active = false;
+        };
         return {
           next: async (): Promise<IteratorResult<AgentEvent>> => {
-            this.start();
-            if (index < this.buffer.length) {
-              return { done: false, value: this.buffer[index++]! };
+            if (!active && !returned) {
+              active = true;
+              this.subscribers++;
             }
-            if (this.error) throw this.error;
-            if (this.done) return { done: true, value: undefined };
-            await new Promise<void>((resolve) => {
-              const wake = (): void => {
-                this.waiters.delete(wake);
-                resolve();
-              };
-              this.waiters.add(wake);
-            });
-            if (index < this.buffer.length) {
-              return { done: false, value: this.buffer[index++]! };
+            for (;;) {
+              if (returned) return { done: true, value: undefined };
+              if (index < this.buffer.length) {
+                return { done: false, value: this.buffer[index++]! };
+              }
+              if (this.done) {
+                leave();
+                returned = true;
+                if (this.failed) throw this.error;
+                return { done: true, value: undefined };
+              }
+              await new Promise<void>(resolve => {
+                const wake = (): void => {
+                  this.waiters.delete(wake);
+                  resolve();
+                };
+                this.waiters.add(wake);
+              });
             }
-            if (this.error) throw this.error;
+          },
+          return: async (): Promise<IteratorResult<AgentEvent>> => {
+            const wasActive = active;
+            leave();
+            returned = true;
+            this.wakeAll();
+            if (wasActive && this.subscribers === 0 && !this.done) {
+              if (!this.terminal) await this.stop();
+              else await this.finished;
+            }
+            if (this.failed) throw this.error;
             return { done: true, value: undefined };
           },
         };
@@ -292,26 +368,46 @@ class EventFanout {
     };
   }
 
-  private start(): void {
-    if (this.started) return;
-    this.started = true;
-    void this.pump();
-  }
-
   private async pump(): Promise<void> {
+    let failed = false;
+    let error: unknown;
     try {
       for await (const event of this.source) {
+        if (this.done) break;
         this.buffer.push(event);
+        this.terminal = isTerminalEvent(event);
         this.wakeAll();
-        if (isTerminalEvent(event)) break;
+        if (this.terminal) break;
       }
     } catch (err) {
-      this.error = err;
+      failed = true;
+      error = err;
     } finally {
-      await this.onDone();
-      this.done = true;
-      this.wakeAll();
+      await this.settle(failed, error);
     }
+  }
+
+  private async settle(failed: boolean, error?: unknown): Promise<void> {
+    try {
+      await this.onDone(false);
+      this.onSettled();
+    } catch (err) {
+      failed = true;
+      error = err;
+    } finally {
+      this.complete(failed, error);
+    }
+    return this.finished;
+  }
+
+  private complete(failed: boolean, error: unknown): void {
+    if (this.done) return;
+    this.done = true;
+    this.failed = failed;
+    this.error = error;
+    if (failed) this.rejectFinished(error);
+    else this.resolveFinished();
+    this.wakeAll();
   }
 
   private wakeAll(): void {

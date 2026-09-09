@@ -19,7 +19,7 @@ const SCOPE_ERROR = {
     hint: 'ask the app developer to enable scope vc:meeting.bot.join:write',
     missing_scopes: ['vc:meeting.bot.join:write'],
     console_url:
-      'https://open.feishu.cn/page/scope-apply?clientID=cli_a9408afb4c781cb3&scopes=vc%3Ameeting.bot.join%3Awrite',
+      'https://open.feishu.cn/page/scope-apply?clientID=cli_test_app&scopes=vc%3Ameeting.bot.join%3Awrite',
   },
 };
 

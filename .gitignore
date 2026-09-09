@@ -12,7 +12,27 @@ web/dist/
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
 .npmrc
+
+# Local credentials, OAuth material and runtime state
+/.lark-channel/
+/auth.json
+/credentials.json
+/config.json
+/profiles/
+/registry/
+/sessions.json
+/sessions.json.catalog.json
+/workspaces.json
+/ui.json
+secrets.enc
+.keystore.salt
+*.pem
+*.key
+*.p12
+owner-auth*.png
 
 .DS_Store
 .idea/

@@ -8,7 +8,13 @@ import {
   UnsupportedCatalogSchemaError,
   upgradeCatalogDocument,
 } from '../../../src/session/migrations.js';
+import { writeFileAtomic } from '../../../src/platform/atomic-write.js';
 import { SessionCatalog } from '../../../src/session/catalog.js';
+
+vi.mock('../../../src/platform/atomic-write.js', async (original) => {
+  const actual = await original<typeof import('../../../src/platform/atomic-write.js')>();
+  return { ...actual, writeFileAtomic: vi.fn(actual.writeFileAtomic) };
+});
 
 const fixtureRoot = join(process.cwd(), 'tests/fixtures/sessions');
 const cleanups: Array<() => Promise<void>> = [];
@@ -175,58 +181,48 @@ describe('catalog v1 to v2 upgrade', () => {
     await writeFile(dest, payload);
 
     const catalog = new SessionCatalog(dest);
-    await catalog.load();
+    await expect(catalog.load()).rejects.toThrow(UnsupportedCatalogSchemaError);
     expect(catalog.entries()).toEqual([]);
     expect(await readFile(dest, 'utf8')).toBe(payload);
 
-    catalog.upsertActive({
+    expect(() => catalog.upsertActive({
       scopeId: 'chat-new',
       agentId: 'claude',
       cwdRealpath: '/repo',
       policyFingerprint: 'fp',
       resumeHandle: 'should-not-clobber',
       now: 2,
-    });
-    await catalog.flush();
+    })).toThrow(UnsupportedCatalogSchemaError);
+    await expect(catalog.flush()).rejects.toThrow(UnsupportedCatalogSchemaError);
     expect(await readFile(dest, 'utf8')).toBe(payload);
   });
 
-  it('keeps in-memory v1 entries when upgrade persist fails so a later upsert cannot wipe them', async () => {
+  it('does not publish v1 entries until the atomic upgrade succeeds', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'catalog-persist-fail-'));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
     const dest = join(dir, 'sessions.json.catalog.json');
     await copyFile(join(fixtureRoot, 'catalog-v1-codex.json'), dest);
     const original = await readFile(dest, 'utf8');
-
-    const persistSpy = vi
-      .spyOn(SessionCatalog.prototype as unknown as { persist(): Promise<void> }, 'persist')
-      .mockRejectedValueOnce(new Error('disk full'));
-
+    const failure = new Error('disk full');
+    const actual = await vi.importActual<typeof import('../../../src/platform/atomic-write.js')>('../../../src/platform/atomic-write.js');
+    vi.mocked(writeFileAtomic).mockImplementationOnce((file, data, opts) =>
+      actual.writeFileAtomic(file, data, { ...opts, rename: async () => { throw failure; } }));
     const catalog = new SessionCatalog(dest);
-    await catalog.load();
-    expect(persistSpy).toHaveBeenCalledTimes(1);
-    expect(catalog.entries()).toHaveLength(1);
-    expect(catalog.entries()[0]?.resumeHandle).toBe('thread-v1-codex');
+    await expect(catalog.load()).rejects.toBe(failure);
+    expect(catalog.entries()).toEqual([]);
+    await expect(catalog.flush()).rejects.toBe(failure);
     expect(await readFile(dest, 'utf8')).toBe(original);
-
+    await catalog.load();
+    expect(catalog.entries()[0]?.resumeHandle).toBe('thread-v1-codex');
     catalog.upsertActive({
-      scopeId: 'chat-2',
-      agentId: 'claude',
-      cwdRealpath: '/PINNED_CWD',
-      policyFingerprint: 'PINNED_FP',
-      resumeHandle: 'sess-new',
-      now: 2,
+      scopeId: 'chat-2', agentId: 'claude', cwdRealpath: '/PINNED_CWD',
+      policyFingerprint: 'PINNED_FP', resumeHandle: 'sess-new', now: 2,
     });
     await catalog.flush();
-
-    const persisted = JSON.parse(await readFile(dest, 'utf8')) as {
-      schemaVersion: number;
-      entries: Array<{ resumeHandle: string }>;
-    };
+    const persisted = JSON.parse(await readFile(dest, 'utf8'));
     expect(persisted.schemaVersion).toBe(CATALOG_SCHEMA_VERSION);
-    expect(persisted.entries.map((entry) => entry.resumeHandle).sort()).toEqual([
-      'sess-new',
-      'thread-v1-codex',
+    expect(persisted.entries.map((entry: { resumeHandle: string }) => entry.resumeHandle).sort()).toEqual([
+      'sess-new', 'thread-v1-codex',
     ]);
   });
 });

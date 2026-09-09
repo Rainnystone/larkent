@@ -232,7 +232,7 @@ describe('markdown stream startup failures', () => {
     expect(lastMarkdown(h.channel)).toContain('KIMI_FINAL_SENTINEL');
     expect(h.channel.sent[0]?.options).toMatchObject({ replyTo: 'om_kimi_final' });
     // session id from the system event must land in the store for -S resume
-    expect(h.sessions.getRaw('oc_dm')?.sessionId).toBe('session_kimi_1');
+    expect(h.sessions.getRaw('oc_dm')?.resumeHandle).toBe('session_kimi_1');
   });
 
   it('grok final-only round sends exactly one final reply, no progress stream', async () => {
@@ -262,7 +262,7 @@ describe('markdown stream startup failures', () => {
     expect(h.channel.sent).toHaveLength(1);
     expect(lastMarkdown(h.channel)).toContain('GROK_FINAL_SENTINEL');
     expect(h.channel.sent[0]?.options).toMatchObject({ replyTo: 'om_grok_final' });
-    expect(h.sessions.getRaw('oc_dm')?.sessionId).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
+    expect(h.sessions.getRaw('oc_dm')?.resumeHandle).toBe('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee');
   });
 
   it('cursor final-only round sends exactly one final reply, no progress stream', async () => {
@@ -292,7 +292,7 @@ describe('markdown stream startup failures', () => {
     expect(h.channel.sent).toHaveLength(1);
     expect(lastMarkdown(h.channel)).toContain('CURSOR_FINAL_SENTINEL');
     expect(h.channel.sent[0]?.options).toMatchObject({ replyTo: 'om_cursor_final' });
-    expect(h.sessions.getRaw('oc_dm')?.sessionId).toBe('c6b62c6f-7ead-4fd6-9922-e952131177ff');
+    expect(h.sessions.getRaw('oc_dm')?.resumeHandle).toBe('c6b62c6f-7ead-4fd6-9922-e952131177ff');
   });
 
   it('opens no progress stream for a final-only round', async () => {    // The regression this guards: Codex answering without any commentary. The

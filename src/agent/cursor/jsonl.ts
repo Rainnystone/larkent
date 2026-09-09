@@ -14,6 +14,7 @@ export interface ProtocolDriftState {
  *
  *   {"type":"system","subtype":"init","session_id":"...","cwd":"...","model":"..."}
  *   {"type":"user","message":{...},"session_id":"..."}
+ *   {"type":"thinking",...}
  *   {"type":"assistant","message":{"content":[{"type":"text","text":"..."}]}}
  *   {"type":"tool_call","subtype":"started","call_id":"...","tool_call":{"readToolCall":{...}}}
  *   {"type":"tool_call","subtype":"completed","call_id":"...","tool_call":{...}}
@@ -46,6 +47,8 @@ export class CursorJsonlTranslator {
       case 'system':
         return this.translateSystem(raw);
       case 'user':
+        return [];
+      case 'thinking':
         return [];
       case 'assistant':
         return this.translateAssistant(raw);

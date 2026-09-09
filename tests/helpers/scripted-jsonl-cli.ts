@@ -9,6 +9,11 @@ export interface JsonlScript {
   stderr?: string;
   exitCode?: number;
   hang?: boolean;
+  readyPath?: string;
+  releasePath?: string;
+  recordAppendPath?: string;
+  holdAfterLines?: boolean;
+  closeStdoutAfterLines?: boolean;
 }
 
 export interface KindCliInstall {

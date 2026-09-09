@@ -10,12 +10,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Rainnystone/larkent-for-grokbot.git"
+    "url": "git+https://github.com/Rainnystone/larkent.git"
   },
   "bugs": {
-    "url": "https://github.com/Rainnystone/larkent-for-grokbot/issues"
+    "url": "https://github.com/Rainnystone/larkent/issues"
   },
-  "homepage": "https://github.com/Rainnystone/larkent-for-grokbot#readme",
+  "homepage": "https://github.com/Rainnystone/larkent#readme",
   "bin": {
     "lark-channel-bridge": "./bin/lark-channel-bridge.mjs"
   },

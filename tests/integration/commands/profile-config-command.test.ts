@@ -13,6 +13,7 @@ import {
 } from '../../../src/config/profile-schema';
 import { runtimeProfileConfig } from '../../../src/config/profile-store';
 import { getMessageReplyMode, getRequireMentionInGroup, secretKeyForApp } from '../../../src/config/schema';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
@@ -258,6 +259,7 @@ async function createHarness(options: {
   const appPaths = resolveAppPaths({ rootDir, profile: 'claude' });
   const channel = createFakeChannel();
   const sessions = new SessionStore(appPaths.sessionsFile);
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(appPaths.workspacesFile);
   const controls = {
     profile: 'claude',
@@ -277,6 +279,7 @@ async function createHarness(options: {
     channel,
     command: (content: string, formValue?: Record<string, unknown>) =>
       tryHandleCommand({
+        resumeCandidates,
         channel: channel as unknown as CommandContext['channel'],
         msg: message(content),
         scope: 'chat-1',

@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdir, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runMigrate } from '../../../src/cli/commands/migrate';
 import {
   ActiveBridgeMigrationConflictError,
@@ -10,11 +10,22 @@ import {
   type ActiveBridgeMigrationProcess,
 } from '../../../src/config/migrate-v2';
 import type { RootConfig } from '../../../src/config/profile-schema';
+import { loadRootConfigWithMeta } from '../../../src/config/profile-store';
+import { writeFileAtomic } from '../../../src/platform/atomic-write';
 import { resolveProfileRuntime } from '../../../src/runtime/profile-runtime';
 import { writeVersionExecutable } from '../../helpers/fake-executable';
 
 const roots: string[] = [];
 const childProcesses: ChildProcess[] = [];
+
+vi.mock('../../../src/platform/atomic-write', async original => {
+  const actual = await original<typeof import('../../../src/platform/atomic-write')>();
+  return { ...actual, writeFileAtomic: vi.fn(actual.writeFileAtomic) };
+});
+beforeEach(async () => {
+  const actual = await vi.importActual<typeof import('../../../src/platform/atomic-write')>('../../../src/platform/atomic-write');
+  vi.mocked(writeFileAtomic).mockReset().mockImplementation(actual.writeFileAtomic);
+});
 
 async function makeRoot(): Promise<string> {
   const root = await import('node:fs/promises').then((fs) =>
@@ -465,4 +476,82 @@ async function killChild(child: ChildProcess): Promise<void> {
     child.once('exit', () => resolve());
     setTimeout(resolve, 500);
   });
+}
+
+it.each([2, 3, 99])('does not bootstrap over damaged or future version %s even when root accounts look valid', async schemaVersion => {
+  const root = await makeRoot();
+  const file = join(root, 'config.json');
+  const bytes = JSON.stringify({ schemaVersion, activeProfile: 'claude', accounts: { app: { id: 'cli_old', secret: '${APP_SECRET}', tenant: 'feishu' } } });
+  await writeFile(file, bytes);
+  await expect(resolveProfileRuntime({ config: file, profile: 'claude', allowBootstrap: true })).rejects.toBeDefined();
+  expect(await readFile(file, 'utf8')).toBe(bytes);
+});
+
+describe('runtime schema upgrade persistence', () => {
+  it.each(['path-claude', 'env-var', 'codex-binary-path', 'cursor-versioned-agent'])(
+    'preserves %s profile settings through migration and a fresh runtime load without another write',
+    async fixture => {
+      const file = await materializeProfileFixture(fixture);
+      const loaded = await loadRootConfigWithMeta(file);
+      expect(loaded?.upgraded).toBe(true);
+      for (const [profile, expected] of Object.entries(loaded!.root.profiles)) {
+        const runtime = await resolveProfileRuntime({ config: file, profile, allowBootstrap: false });
+        expect(runtime.profileConfig.agent).toEqual(expected.agent);
+        expect(runtime.profileConfig.permissions).toEqual(expected.permissions);
+        expect(runtime.profileConfig.sandbox).toEqual(expected.sandbox);
+        expect(runtime.profileConfig.codex).toEqual(expected.codex);
+        expect(runtime.profileConfig.agent.options).toEqual(expected.agent.options);
+      }
+      const bytes = await readFile(file, 'utf8');
+      const metadata = await stat(file);
+      const writes = vi.mocked(writeFileAtomic).mock.calls.length;
+      expect(JSON.parse(bytes).schemaVersion).toBe(3);
+      expect((await loadRootConfigWithMeta(file))?.upgraded).toBe(false);
+      for (const profile of Object.keys(loaded!.root.profiles)) {
+        const rebuilt = await resolveProfileRuntime({ config: file, profile, allowBootstrap: false });
+        expect(rebuilt.profileConfig.agent).toEqual(loaded!.root.profiles[profile]!.agent);
+        expect(rebuilt.profileConfig.codex).toEqual(loaded!.root.profiles[profile]!.codex);
+      }
+      expect(vi.mocked(writeFileAtomic)).toHaveBeenCalledTimes(writes);
+      expect(await readFile(file, 'utf8')).toBe(bytes);
+      expect((await stat(file)).mtimeMs).toBe(metadata.mtimeMs);
+      expect(metadata.mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it('propagates atomic migration save failure before returning a runtime and preserves the original file', async () => {
+    const file = await materializeProfileFixture('codex-binary-path');
+    const bytes = await readFile(file, 'utf8');
+    const metadata = await stat(file);
+    const failure = new Error('migration rename denied');
+    const actual = await vi.importActual<typeof import('../../../src/platform/atomic-write')>('../../../src/platform/atomic-write');
+    vi.mocked(writeFileAtomic).mockImplementationOnce((path, data, options) => actual.writeFileAtomic(path, data, {
+      ...options, rename: async () => { throw failure; },
+    }));
+    await expect(resolveProfileRuntime({ config: file, profile: 'codex', allowBootstrap: false })).rejects.toBe(failure);
+    expect(await readFile(file, 'utf8')).toBe(bytes);
+    expect((await stat(file)).mtimeMs).toBe(metadata.mtimeMs);
+    const recovered = await resolveProfileRuntime({ config: file, profile: 'codex', allowBootstrap: false });
+    expect(recovered.profileConfig.agent.binaryPath).toBe('/opt/pinned/codex');
+    expect(JSON.parse(await readFile(file, 'utf8')).schemaVersion).toBe(3);
+  });
+});
+
+async function materializeProfileFixture(fixture: string): Promise<string> {
+  const root = await realpath(await makeRoot());
+  const file = join(root, 'config.json');
+  const document = JSON.parse(await readFile(join(process.cwd(), 'tests/fixtures/profiles', fixture, 'config.json'), 'utf8')) as RootConfig;
+  for (const profile of Object.values(document.profiles)) {
+    profile.accounts.app.secret = '${APP_SECRET}';
+    profile.workspaces.default = root;
+    if (profile.codex) {
+      profile.codex = { ...profile.codex, codexHome: join(root, 'codex-home'), inheritCodexHome: false, ignoreUserConfig: true };
+      profile.agent = { kind: 'codex', options: {
+        codexHome: join(root, 'agent-home'), inheritCodexHome: false, ignoreUserConfig: true,
+        sandbox: 'read-only', ignoreRules: true,
+      } };
+    }
+  }
+  await writeJson(file, document);
+  return file;
 }

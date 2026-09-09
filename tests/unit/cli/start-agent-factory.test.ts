@@ -1,13 +1,20 @@
-import { readFile } from 'node:fs/promises';
+import { mkdtemp, realpath, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   assertReconnectAgentKindUnchanged,
   createRuntimeAgent,
+  parkWithShutdown,
 } from '../../../src/cli/commands/start.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { createRuntimeProfileConfig } from '../../../src/runtime/profile-runtime.js';
+import { resolveAppPaths } from '../../../src/config/app-paths.js';
+import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store.js';
+import * as locks from '../../../src/runtime/locks.js';
+import { readAndPrune } from '../../../src/runtime/registry.js';
+import { Supervisor } from '../../../src/runtime/supervisor.js';
+import { writeVersionExecutable } from '../../helpers/fake-executable.js';
 
 describe('start runtime agent factory', () => {
   it('keeps Claude as the default runtime agent', () => {
@@ -70,34 +77,80 @@ describe('start runtime agent factory', () => {
   });
 
   it('updates the process registry before releasing the old app lock during reconnect', async () => {
-    // Reconnect ordering now lives in the supervisor's ManagedProfile.restart().
-    const source = await readFile(join(process.cwd(), 'src/runtime/supervisor.ts'), 'utf8');
-    const restartStart = source.indexOf('async restart()');
-    const updateIndex = source.indexOf('updateEntry(', restartStart);
-    const releaseIndex = source.indexOf('oldAppLock?.release()', restartStart);
-
-    expect(restartStart).toBeGreaterThanOrEqual(0);
-    expect(updateIndex).toBeGreaterThanOrEqual(0);
-    expect(releaseIndex).toBeGreaterThanOrEqual(0);
-    expect(updateIndex).toBeLessThan(releaseIndex);
+    const h = await supervisorHarness();
+    const registryAtRelease: string[][] = [];
+    const acquire = locks.acquireAppRuntimeLock;
+    vi.spyOn(locks, 'acquireAppRuntimeLock').mockImplementation(async (...args) => {
+      const lock = await acquire(...args);
+      if (args[1] !== 'cli_xxx') return lock;
+      return { ...lock, release: async () => {
+        registryAtRelease.push(readAndPrune(h.paths.userRegistryFile).map(entry => entry.appId));
+        await lock.release();
+      } };
+    });
+    try {
+      await h.supervisor.startProfile('test');
+      h.config.profiles.test!.accounts.app.id = 'cli_new';
+      await saveRootConfig(h.config, h.paths.configFile);
+      await h.supervisor.restartProfile('test');
+      expect(registryAtRelease).toEqual([['cli_new']]);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_xxx'))).locked).toBe(false);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_new'))).locked).toBe(true);
+      await h.supervisor.shutdown();
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_new'))).locked).toBe(false);
+      expect((await locks.checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(false);
+    } finally {
+      await h.supervisor.shutdown();
+      vi.restoreAllMocks();
+      await rm(h.root, { recursive: true, force: true });
+    }
   });
 
   it('shuts down the supervisor (releasing profile locks) before exiting', async () => {
-    // Graceful shutdown: the supervisor stops all channels (releasing each
-    // profile's locks) before the process exits.
-    const source = await readFile(join(process.cwd(), 'src/cli/commands/start.ts'), 'utf8');
-    const stopStart = source.indexOf('const shutdown = async');
-    const shutdownIndex = source.indexOf('await supervisor.shutdown()', stopStart);
-    const exitIndex = source.indexOf('process.exit(0)', stopStart);
-
-    expect(stopStart).toBeGreaterThanOrEqual(0);
-    expect(shutdownIndex).toBeGreaterThanOrEqual(0);
-    expect(exitIndex).toBeGreaterThanOrEqual(0);
-    expect(shutdownIndex).toBeLessThan(exitIndex);
-
-    // And each channel's teardown releases its runtime locks.
-    const sup = await readFile(join(process.cwd(), 'src/runtime/supervisor.ts'), 'utf8');
-    expect(sup).toContain('releaseRuntimeLocks(this.locks)');
+    const h = await supervisorHarness();
+    let allowRelease!: () => void;
+    let releaseStarted!: () => void;
+    const releaseGate = new Promise<void>(resolve => { allowRelease = resolve; });
+    const releasing = new Promise<void>(resolve => { releaseStarted = resolve; });
+    let appLockReleased = false;
+    const acquire = locks.acquireAppRuntimeLock;
+    vi.spyOn(locks, 'acquireAppRuntimeLock').mockImplementation(async (...args) => {
+      const lock = await acquire(...args);
+      return { ...lock, release: async () => {
+        releaseStarted();
+        await releaseGate;
+        await lock.release();
+        appLockReleased = true;
+      } };
+    });
+    const hooks = new Map<string, () => void>();
+    vi.spyOn(process, 'on').mockImplementation((event, listener) => {
+      hooks.set(String(event), listener);
+      return process;
+    });
+    const exits: unknown[] = [];
+    vi.spyOn(process, 'exit').mockImplementation(code => {
+      exits.push({ code, appLockReleased, online: h.supervisor.isOnline('test') });
+      return undefined as never;
+    });
+    try {
+      await h.supervisor.startProfile('test');
+      void parkWithShutdown(h.supervisor, h.paths, undefined, undefined);
+      hooks.get('SIGTERM')!();
+      await releasing;
+      expect(exits).toEqual([]);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_xxx'))).locked).toBe(true);
+      allowRelease();
+      await vi.waitFor(() => expect(exits).toEqual([{ code: 0, appLockReleased: true, online: false }]));
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_xxx'))).locked).toBe(false);
+      expect((await locks.checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(false);
+      expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
+    } finally {
+      allowRelease();
+      await h.supervisor.shutdown();
+      vi.restoreAllMocks();
+      await rm(h.root, { recursive: true, force: true });
+    }
   });
 
   it('rejects reconnect when a profile changes agent kind in place', () => {
@@ -124,6 +177,19 @@ describe('start runtime agent factory', () => {
     }
   });
 });
+
+async function supervisorHarness() {
+  const root = await realpath(await mkdtemp(join(tmpdir(), 'start-agent-factory-')));
+  const paths = resolveAppPaths({ rootDir: root, profile: 'test' });
+  const profile = createDefaultProfileConfig({ agentKind: 'claude', accounts: appAccount() });
+  profile.agent.binaryPath = await writeVersionExecutable(root, 'fake-claude', '1.0.0');
+  const config = createRootConfig('test', profile);
+  await saveRootConfig(config, paths.configFile);
+  const supervisor = new Supervisor({ configPath: paths.configFile, rootDir: root, runPreflight: false,
+    startChannelFn: async () => ({ channel: {}, disconnect: async () => {} }) as never,
+  });
+  return { root, paths, config, supervisor };
+}
 
 function appAccount() {
   return {

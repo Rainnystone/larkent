@@ -35,6 +35,7 @@ describe('P2 catalog v1 resume continuity', () => {
     expect(probe.ok).toBe(true);
     if (!probe.ok) throw new Error('expected probe run to compute policy');
     await drain(probe.execution.subscribe());
+    await probe.execution.finished;
 
     const fixturePath = join(fixtureRoot, `catalog-v1-${pinned}.json`);
     const raw = JSON.parse(await readFile(fixturePath, 'utf8')) as Array<{
@@ -96,6 +97,26 @@ describe('P2 catalog v1 resume continuity', () => {
     expect(resumeOpts?.resumeHandle).toBe(handle);
     expect(resumeOpts).not.toHaveProperty('sessionId');
     expect(resumeOpts).not.toHaveProperty('threadId');
+    await drain(resumed.execution.subscribe());
+    await resumed.execution.finished;
+    await Promise.all([h.sessions.flush(), h.catalog.flush(), h.workspaces.flush()]);
+
+    // Rebuild every runtime-owned instance from the migrated files. A working
+    // in-memory migration alone does not establish restart continuity.
+    h.sessions = new SessionStore(join(h.tmp.profile, 'sessions.json'));
+    h.catalog = new SessionCatalog(join(h.tmp.profile, 'sessions.json.catalog.json'));
+    h.workspaces = new WorkspaceStore(join(h.tmp.profile, 'workspaces.json'));
+    await Promise.all([h.sessions.load(), h.catalog.load(), h.workspaces.load()]);
+    h.agent = new FakeAgentAdapter({ id: pinned, displayName: adapterDisplayName(pinned), events: [{ type: 'done', terminationReason: 'normal' }] });
+    h.executor = new RunExecutor({ agent: h.agent, pool: new ProcessPool(() => 10), activeRuns: new ActiveRuns(), now: () => 1000 });
+    const rebuilt = await start(h);
+    expect(rebuilt.ok).toBe(true);
+    if (!rebuilt.ok) throw new Error('expected rebuilt runtime to resume');
+    expect(rebuilt.resumeFrom).toBe(handle);
+    expect(h.agent.runOptions[0]?.resumeHandle).toBe(handle);
+    await drain(rebuilt.execution.subscribe());
+    await rebuilt.execution.finished;
+    await Promise.all([h.sessions.flush(), h.catalog.flush(), h.workspaces.flush()]);
   }, 20_000);
 
   it('keeps committed v1 catalog files loadable without rewriting the fixture bytes', async () => {

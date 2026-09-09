@@ -8,6 +8,13 @@ export interface ScriptedJsonlExecutableOptions {
   hang?: boolean;
   version?: string;
   helpText?: string;
+  readyPath?: string;
+  releasePath?: string;
+  recordAppendPath?: string;
+  holdAfterLines?: boolean;
+  closeStdoutAfterLines?: boolean;
+  /** Controlled Codex only: record state under the actual, fixture-contained CODEX_HOME. */
+  codexStateRoot?: string;
 }
 
 export interface ScriptedJsonlExecutable {
@@ -106,11 +113,12 @@ async function writeNodeSource(
   const shebang = process.platform === 'win32' || file.endsWith('.mjs') ? '#!/usr/bin/env node' : `#!${process.execPath}`;
   await writeFile(
     scriptPath,
-    `${JSON.stringify({ lines, stderr, exitCode, hang })}\n`,
+    `${JSON.stringify({ ...options, lines, stderr, exitCode, hang })}\n`,
   );
   const source = [
     shebang,
-    'import { existsSync, readFileSync, writeFileSync } from "node:fs";',
+    'import { appendFileSync, existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";',
+    'import { isAbsolute, join, relative, sep } from "node:path";',
     'const argv = process.argv.slice(2);',
     `const recordPath = ${JSON.stringify(recordPath)};`,
     `const scriptPath = ${JSON.stringify(scriptPath)};`,
@@ -137,16 +145,49 @@ async function writeNodeSource(
     `let stderr = ${JSON.stringify(stderr)};`,
     `let exitCode = ${JSON.stringify(exitCode)};`,
     `let hang = ${JSON.stringify(hang)};`,
+    'const script = existsSync(scriptPath) ? JSON.parse(readFileSync(scriptPath, "utf8")) : {};',
     'if (existsSync(scriptPath)) {',
-    '  const script = JSON.parse(readFileSync(scriptPath, "utf8"));',
     '  if (Array.isArray(script.lines)) lines = script.lines;',
     '  if (typeof script.stderr === "string") stderr = script.stderr;',
     '  if (typeof script.exitCode === "number") exitCode = script.exitCode;',
     '  if (typeof script.hang === "boolean") hang = script.hang;',
     '}',
+    'if (script.recordAppendPath || script.readyPath || script.releasePath) {',
+    '  let stdin = "";',
+    '  for await (const chunk of process.stdin) stdin += chunk.toString();',
+    '  const record = {',
+    '    argv, stdin, pid: process.pid, cwd: process.cwd(),',
+    '    env: Object.fromEntries(["CODEX_HOME", "LARK_CHANNEL", "LARK_CHANNEL_PROFILE", "LARK_CHANNEL_HOME", "LARK_CHANNEL_CONFIG", "LARKSUITE_CLI_CONFIG_DIR"].map(key => [key, process.env[key]])),',
+    '  };',
+    '  if (script.codexStateRoot) {',
+    '    const message = "controlled Codex state requires CODEX_HOME inside fixture root";',
+    '    if (!process.env.CODEX_HOME) throw new Error(message);',
+    '    const root = realpathSync(script.codexStateRoot);',
+    '    const home = realpathSync(process.env.CODEX_HOME);',
+    '    const rel = relative(root, home);',
+    '    if (!rel || rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) throw new Error(message);',
+    '    writeFileSync(join(home, "run-" + process.pid + ".json"), JSON.stringify(record));',
+    '  }',
+    '  if (script.recordAppendPath) appendFileSync(script.recordAppendPath, JSON.stringify(record) + "\\n");',
+    '} else if (argv[0] === "exec" && argv.at(-1) === "-") {',
+    '  // Codex receives its prompt on stdin; terminal output follows EOF.',
+    '  let stdin = "";',
+    '  for await (const chunk of process.stdin) stdin += chunk.toString();',
+    '  const record = JSON.parse(readFileSync(recordPath, "utf8"));',
+    '  writeFileSync(recordPath, JSON.stringify({ ...record, stdin }));',
+    '}',
+    'if (script.readyPath) writeFileSync(script.readyPath, String(process.pid));',
+    'if (script.releasePath) {',
+    '  const deadline = Date.now() + 10000;',
+    '  while (!existsSync(script.releasePath)) {',
+    '    if (Date.now() >= deadline) throw new Error("test release gate timed out");',
+    '    await new Promise(resolve => setTimeout(resolve, 10));',
+    '  }',
+    '}',
     'for (const line of lines) console.log(JSON.stringify(line));',
+    'if (script.closeStdoutAfterLines) process.stdout.end();',
     'if (stderr) process.stderr.write(stderr);',
-    'if (hang) {',
+    'if (hang || script.holdAfterLines) {',
     '  setInterval(() => {}, 1000);',
     '} else {',
     '  process.exit(exitCode);',

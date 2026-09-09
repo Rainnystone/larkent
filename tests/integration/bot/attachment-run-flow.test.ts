@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { codexCapability } from '../../../src/agent/capability.js';
+import { descriptorFor, type AgentKind } from '../../../src/agent/registry.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
 import { startRunFlow } from '../../../src/bot/run-flow.js';
@@ -19,8 +19,8 @@ describe('attachment run flow', () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
-  it('passes accepted image attachment paths to Codex adapter image args only', async () => {
-    const h = await createHarness();
+  it.each(['claude', 'codex', 'kimi', 'grok', 'cursor'] as const)('passes accepted image paths only when %s accepts images', async (kind) => {
+    const h = await createHarness(kind);
 
     const result = await startRunFlow({
       scopeId: 'chat-1',
@@ -48,7 +48,7 @@ describe('attachment run flow', () => {
         },
       ],
       access: { ok: true, reason: 'allowed-user' },
-      capability: codexCapability(h.profileConfig),
+      capability: descriptorFor(kind).capability(h.profileConfig),
       profileConfig: h.profileConfig,
       sessions: h.sessions,
       workspaces: h.workspaces,
@@ -58,12 +58,12 @@ describe('attachment run flow', () => {
 
     expect(result.ok).toBe(true);
     expect(h.agent.runOptions[0]).toMatchObject({
-      images: ['/media/image.png'],
+      images: kind === 'codex' ? ['/media/image.png'] : undefined,
     });
   });
 });
 
-async function createHarness(): Promise<{
+async function createHarness(kind: AgentKind): Promise<{
   tmp: TmpProfile;
   agent: FakeAgentAdapter;
   executor: RunExecutor;
@@ -73,7 +73,7 @@ async function createHarness(): Promise<{
 }> {
   const tmp = await createTmpProfile('attachment-run-flow-');
   const agent = new FakeAgentAdapter({
-    id: 'codex',
+    id: kind,
     displayName: 'Codex',
     events: [{ type: 'done', terminationReason: 'normal' }],
   });
@@ -85,7 +85,7 @@ async function createHarness(): Promise<{
     now: () => 1000,
   });
   const profileConfig = createDefaultProfileConfig({
-    agentKind: 'codex',
+    agentKind: kind,
     accounts: {
       app: {
         id: 'cli_test',

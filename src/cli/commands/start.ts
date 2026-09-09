@@ -235,25 +235,38 @@ async function runSupervisorConsole(opts: StartOptions): Promise<void> {
  * a `uiServer` + `hostLock` to also tear those down, classic mode passes
  * neither. Returns a promise that never resolves so the caller stays parked.
  */
-function parkWithShutdown(
+export function parkWithShutdown(
   supervisor: Supervisor,
   appPaths: AppPaths,
   uiServer: UiServerHandle | undefined,
   hostLock: { release(): Promise<void> } | undefined,
 ): Promise<void> {
   let shuttingDown = false;
+  let shutdownFailed = false;
   const shutdown = async (sig: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(`\n收到 ${sig}，正在关闭...`);
-    if (uiServer) {
-      await uiServer.close().catch(() => {});
-      await removeUiSidecar(appPaths.hostUiFile);
+    try {
+      if (uiServer) {
+        await uiServer.close().catch(() => {});
+        await removeUiSidecar(appPaths.hostUiFile);
+      }
+      await supervisor.shutdown();
+      if (hostLock) await hostLock.release().catch(() => {});
+      await flushTelemetry();
+      shutdownFailed = false;
+      process.exit(0);
+    } catch (error) {
+      // The signal callback owns this rejection. Keep failed profile/host
+      // ownership, expose failure on natural exit, and allow a later retry.
+      shutdownFailed = true;
+      process.exitCode = 1;
+      log.fail('shutdown', error, { signal: sig });
+      console.error('关闭失败；保留运行状态与锁。解决问题后可再次发送退出信号重试。');
+      await flushTelemetry();
+      shuttingDown = false;
     }
-    await supervisor.shutdown();
-    if (hostLock) await hostLock.release().catch(() => {});
-    await flushTelemetry();
-    process.exit(0);
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
@@ -261,7 +274,7 @@ function parkWithShutdown(
     void flushTelemetry();
   });
   process.on('exit', () => {
-    supervisor.unregisterAllSync();
+    if (!shutdownFailed) supervisor.unregisterAllSync();
     cleanupTmpFiles(appPaths.userRegistryFile);
   });
 

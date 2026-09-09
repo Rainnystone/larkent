@@ -1,6 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { log } from '../../core/logger';
+import { RunCleanupFailed } from '../../runtime/errors';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import type { AgentEvent, AgentRun } from '../types';
 
@@ -41,6 +42,9 @@ export interface JsonlCliRunnerInput {
 }
 
 type CliChild = SpawnedProcessByStdio<Writable, Readable, Readable>;
+
+const STOP_STDOUT_QUIET_MS = 50;
+const STOP_STDOUT_DRAIN_MS = 5000;
 
 export function wrapParsedTranslator(
   inner: ParsedJsonlTranslator,
@@ -132,63 +136,101 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     if (silentExitTimer) clearTimeout(silentExitTimer);
   };
 
+  let exited = false;
+  let resolveExit!: (code: number | null) => void;
+  const exitPromise = new Promise<number | null>(resolve => { resolveExit = resolve; });
+  let rejectEventExit!: (error: unknown) => void;
+  const eventExit = Promise.race([
+    exitPromise,
+    new Promise<never>((_resolve, reject) => { rejectEventExit = reject; }),
+  ]);
+  void eventExit.catch(() => {});
+  const confirmExit = (code: number | null): void => {
+    if (exited) return;
+    exited = true;
+    clearTimers();
+    detachAbort();
+    resolveExit(code);
+  };
   let cleanupPromise: Promise<void> | undefined;
-  const childHasExited = (): boolean =>
-    !child.pid || child.exitCode !== null || child.signalCode !== null;
   const runCleanup = (): Promise<void> => {
     cleanupPromise ??= (async () => {
-      if (!childHasExited()) {
-        await waitForExitCode(child);
+      await exitPromise;
+      try {
+        const cleaned = await within(Promise.resolve().then(() => input.cleanup?.()), 5000);
+        if (cleaned === false) throw new RunCleanupFailed('adapter cleanup timed out');
+      } catch (error) {
+        if (error instanceof RunCleanupFailed) throw error;
+        throw new RunCleanupFailed('adapter cleanup failed', { cause: error });
       }
-      clearTimers();
-      detachAbort();
-      await input.cleanup?.();
     })();
     return cleanupPromise;
   };
-  const scheduleCleanup = (): void => {
-    void runCleanup().catch(() => {});
-  };
+  const settlement = exitPromise.then(runCleanup);
+  // Background cleanup must retain its original rejection for stop/wait.
+  void settlement.catch(() => {});
 
   let stopInFlight: Promise<void> | undefined;
   const stopChild = (reason: JsonlFinishReason): Promise<void> => {
-    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
     if (stopInFlight) return stopInFlight;
-    stopReason = reason;
-    stopInFlight = new Promise<void>((resolve) => {
-      log.info('agent', 'stop-sigterm', { pid: child.pid ?? null, graceMs: stopGraceMs });
-      child.kill('SIGTERM');
-      const timer = setTimeout(() => {
-        if (child.exitCode === null && child.signalCode === null) {
-          log.warn('agent', 'stop-sigkill', {
-            pid: child.pid ?? null,
-            graceMs: stopGraceMs,
-            reason: 'grace-period-expired',
-          });
-          child.kill('SIGKILL');
+    if (exited) return Promise.resolve();
+    stopReason ??= reason;
+    stopInFlight = (async () => {
+      let signalError: unknown;
+      if (child.pid) {
+        log.info('agent', 'stop-sigterm', { pid: child.pid, graceMs: stopGraceMs });
+        let signalled = false;
+        try {
+          signalled = child.kill('SIGTERM');
+        } catch (error) {
+          signalError = error;
         }
-        resolve();
-      }, stopGraceMs);
-      child.once('exit', () => {
-        clearTimeout(timer);
-        resolve();
-      });
+        if (signalled && await within(exitPromise, stopGraceMs) !== false) return;
+        if (!exited) {
+          log.warn('agent', 'stop-sigkill', {
+            pid: child.pid, graceMs: stopGraceMs, reason: 'sigterm-did-not-exit',
+          });
+          try {
+            child.kill('SIGKILL');
+          } catch (error) {
+            signalError = error;
+          }
+        }
+      }
+      if (await within(exitPromise, 5000) === false) {
+        throw new RunCleanupFailed('child exit was not confirmed after stop', { cause: signalError });
+      }
+    })();
+    void stopInFlight.catch(error => {
+      runtimeError = error;
+      rejectEventExit(error);
+      // Wake event consumers even when a failed kill leaves stdout open.
+      closeStdout();
     });
     return stopInFlight;
+  };
+  const stop = async (reason: JsonlFinishReason): Promise<void> => {
+    await stopChild(reason);
+    // Exit does not imply EOF: descendants may inherit the pipe. The runner
+    // owns ending reads, while consumers still own draining the queued lines.
+    await Promise.all([settlement, drainStoppedStdout()]);
+  };
+  const requestStop = (reason: JsonlFinishReason): void => {
+    void stop(reason).catch(() => {});
   };
 
   const idleMs = input.timeouts?.idleMs;
   const totalMs = input.timeouts?.totalMs;
   const armIdle = (): void => {
-    if (!idleMs || idleMs === Number.POSITIVE_INFINITY) return;
+    if (exited || stopReason || !idleMs || idleMs === Number.POSITIVE_INFINITY) return;
     if (idleTimer) clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
-      void stopChild('timeout');
+      requestStop('timeout');
     }, idleMs);
   };
   if (totalMs && totalMs !== Number.POSITIVE_INFINITY) {
     totalTimer = setTimeout(() => {
-      void stopChild('timeout');
+      requestStop('timeout');
     }, totalMs);
   }
   armIdle();
@@ -200,6 +242,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   };
 
   child.stdout.on('data', (chunk: Buffer) => {
+    if (stdoutClosed) return;
     sawStdout = true;
     stdoutBuffer += stdoutDecoder.write(chunk);
     let nl = stdoutBuffer.indexOf('\n');
@@ -214,6 +257,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const closeStdout = (): void => {
     if (stdoutClosed) return;
     stdoutClosed = true;
+    if (silentExitTimer) clearTimeout(silentExitTimer);
     stdoutBuffer += stdoutDecoder.end();
     const tail = stdoutBuffer.trim();
     stdoutBuffer = '';
@@ -223,15 +267,62 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   child.stdout.on('end', closeStdout);
   child.stdout.on('close', closeStdout);
 
+  let stdoutDrainPromise: Promise<void> | undefined;
+  const drainStoppedStdout = (): Promise<void> => {
+    stdoutDrainPromise ??= new Promise<void>((resolve, reject) => {
+      let quietTimer: ReturnType<typeof setTimeout> | undefined;
+      let deadline: ReturnType<typeof setTimeout> | undefined;
+      let finished = false;
+      const finish = (error?: RunCleanupFailed): void => {
+        if (finished) return;
+        finished = true;
+        if (quietTimer) clearTimeout(quietTimer);
+        if (deadline) clearTimeout(deadline);
+        child.stdout.off('data', received);
+        child.stdout.off('end', ended);
+        child.stdout.off('close', ended);
+        if (error) runtimeError ??= error;
+        closeStdout();
+        child.stdout.destroy();
+        child.stderr.destroy();
+        if (error) reject(error);
+        else resolve();
+      };
+      const ended = (): void => finish();
+      const received = (): void => {
+        if (quietTimer) clearTimeout(quietTimer);
+        quietTimer = setTimeout(ended, STOP_STDOUT_QUIET_MS);
+      };
+      if (stdoutClosed) {
+        finish();
+        return;
+      }
+      // After confirmed child exit, allow in-flight OS reads to arrive before
+      // closing an inherited pipe. This is only a stopped-reader boundary,
+      // never the bot's business idle timeout. Ongoing descendant output cannot
+      // extend the total deadline or be silently mistaken for a drained pipe.
+      child.stdout.on('data', received);
+      child.stdout.once('end', ended);
+      child.stdout.once('close', ended);
+      received();
+      deadline = setTimeout(() => finish(new RunCleanupFailed(
+        'stdout did not quiesce after confirmed child exit',
+      )), STOP_STDOUT_DRAIN_MS);
+    });
+    return stdoutDrainPromise;
+  };
+
   child.on('error', (err) => {
     runtimeError = err;
     closeStdout();
-    scheduleCleanup();
+    if (!child.pid) confirmExit(null);
   });
   child.on('exit', (code, signal) => {
     log.info('agent', 'exit', { pid: child.pid ?? null, code, signal });
-    scheduleCleanup();
+    confirmExit(code);
   });
+  // The process may have exited between spawn and listener registration.
+  if (child.exitCode !== null || child.signalCode !== null) confirmExit(child.exitCode);
   child.stdin.on('error', (err) => {
     log.warn('agent', 'stdin-error', { message: err.message });
   });
@@ -243,6 +334,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
 
   if (input.emptyStdoutDestroyMs && input.emptyStdoutDestroyMs > 0) {
     const closeSilentStdout = (): void => {
+      if (stdoutClosed || sawStdout) return;
       silentExitTimer = setTimeout(() => {
         if (!sawStdout && !child.stdout.readableEnded) child.stdout.destroy();
       }, input.emptyStdoutDestroyMs);
@@ -264,55 +356,56 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     },
   };
 
-  if (input.signal) {
+  if (input.signal && !exited) {
     if (input.signal.aborted) {
-      void stopChild('interrupted');
+      requestStop('interrupted');
     } else {
       abortHandler = () => {
-        void stopChild('interrupted');
+        requestStop('interrupted');
       };
       input.signal.addEventListener('abort', abortHandler, { once: true });
     }
   }
 
+  let terminalEmitted = false;
+  const events = iterateEvents({
+    child,
+    stdout,
+    stderrChunks,
+    translator: input.translator,
+    spawnName: input.spawnName,
+    getError: () => runtimeError,
+    getStopReason: () => stopReason,
+    missingTerminalOnSuccess: input.missingTerminalOnSuccess,
+    failNonzeroAfterTerminal: input.failNonzeroAfterTerminal === true,
+    successFinish: input.successFinish,
+    waitForExitCode: () => eventExit,
+    onTerminal: () => { terminalEmitted = true; },
+    cleanup: async terminal => {
+      if (exited) await settlement;
+      else if (!terminal) await stop('interrupted');
+    },
+  });
   return {
     runId: input.runId,
-    events: iterateEvents({
-      child,
-      stdout,
-      stderrChunks,
-      translator: input.translator,
-      spawnName: input.spawnName,
-      getError: () => runtimeError,
-      getStopReason: () => stopReason,
-      missingTerminalOnSuccess: input.missingTerminalOnSuccess,
-      failNonzeroAfterTerminal: input.failNonzeroAfterTerminal === true,
-      successFinish: input.successFinish,
-      cleanup: async () => {
-        detachAbort();
-        if (childHasExited()) {
-          await runCleanup();
-        }
-      },
-    }),
-    async stop() {
-      await stopChild('interrupted');
-    },
-    waitForExit(timeoutMs: number): Promise<boolean> {
-      if (child.exitCode !== null || child.signalCode !== null) {
-        return Promise.resolve(true);
-      }
-      return new Promise<boolean>((resolve) => {
-        const onExit = (): void => {
-          clearTimeout(timer);
-          resolve(true);
+    events: {
+      [Symbol.asyncIterator]() {
+        return {
+          next: () => events.next(),
+          return: async () => {
+            // Generator.return queues behind a pending next (and never enters
+            // finally before the first next). Stop outside that queue first.
+            if (!terminalEmitted) {
+              await stop('interrupted');
+            }
+            return events.return(undefined);
+          },
         };
-        const timer = setTimeout(() => {
-          child.removeListener('exit', onExit);
-          resolve(false);
-        }, timeoutMs);
-        child.once('exit', onExit);
-      });
+      },
+    },
+    stop: () => stop('interrupted'),
+    async waitForExit(timeoutMs: number): Promise<boolean> {
+      return await within(settlement.then(() => true), timeoutMs) !== false;
     },
   };
 }
@@ -332,11 +425,26 @@ async function* iterateEvents(input: {
   missingTerminalOnSuccess?: string;
   failNonzeroAfterTerminal: boolean;
   successFinish?: JsonlFinishReason;
-  cleanup: () => Promise<void>;
+  waitForExitCode: () => Promise<number | null>;
+  onTerminal: () => void;
+  cleanup: (terminal: boolean) => Promise<void>;
 }): AsyncGenerator<AgentEvent> {
+  let terminalSeen = false;
+  let failed = false;
+  function* emit(events: Iterable<AgentEvent>): Generator<AgentEvent> {
+    for (const event of events) {
+      if (event.type === 'done' || event.type === 'error') {
+        terminalSeen = true;
+        input.onTerminal();
+      }
+      yield event;
+    }
+  }
   try {
     if (!input.child.pid) {
       const err = input.getError();
+      terminalSeen = true;
+      input.onTerminal();
       yield {
         type: 'error',
         message: err ? `failed to spawn ${input.spawnName}: ${err.message}` : 'spawn returned no pid',
@@ -348,7 +456,7 @@ async function* iterateEvents(input: {
     for (;;) {
       let line = input.stdout.nextLine();
       while (line !== undefined) {
-        yield* input.translator.translate(line);
+        yield* emit(input.translator.translate(line));
         line = input.stdout.nextLine();
       }
       if (input.stdout.closed()) break;
@@ -356,15 +464,18 @@ async function* iterateEvents(input: {
     }
 
     const earlyRuntimeError = input.getError();
+    if (earlyRuntimeError instanceof RunCleanupFailed) throw earlyRuntimeError;
     if (earlyRuntimeError && input.child.exitCode === null && input.child.signalCode === null) {
-      yield* input.translator.fail(`${input.spawnName} runtime error: ${earlyRuntimeError.message}`);
+      yield* emit(input.translator.fail(`${input.spawnName} runtime error: ${earlyRuntimeError.message}`));
       return;
     }
 
-    const exitCode = await waitForExitCode(input.child);
+    const exitCode = await input.waitForExitCode();
     const stopReason = input.getStopReason();
     if (stopReason === 'interrupted' || stopReason === 'timeout') {
       if (stopReason === 'timeout' && !input.translator.terminalEmitted?.()) {
+        terminalSeen = true;
+        input.onTerminal();
         yield {
           type: 'error',
           message: `${input.spawnName} ${stopReason}`,
@@ -372,7 +483,7 @@ async function* iterateEvents(input: {
         };
         return;
       }
-      yield* input.translator.finish(stopReason);
+      yield* emit(input.translator.finish(stopReason));
       return;
     }
 
@@ -382,38 +493,37 @@ async function* iterateEvents(input: {
       if (!terminal || input.failNonzeroAfterTerminal) {
         const stderr = Buffer.concat(input.stderrChunks).toString('utf8').trim();
         const detail = stderr ? `: ${stderr.slice(0, 500)}` : '';
-        yield* input.translator.fail(`${input.spawnName} exited with code ${exitCode}${detail}`);
+        yield* emit(input.translator.fail(`${input.spawnName} exited with code ${exitCode}${detail}`));
       }
       return;
     }
     if (runtimeError && !terminal) {
-      yield* input.translator.fail(`${input.spawnName} runtime error: ${runtimeError.message}`);
+      yield* emit(input.translator.fail(`${input.spawnName} runtime error: ${runtimeError.message}`));
       return;
     }
     if (input.missingTerminalOnSuccess && !terminal) {
-      yield* input.translator.fail(input.missingTerminalOnSuccess);
+      yield* emit(input.translator.fail(input.missingTerminalOnSuccess));
       return;
     }
-    yield* input.translator.finish(input.successFinish);
+    yield* emit(input.translator.finish(input.successFinish));
+  } catch (error) {
+    failed = true;
+    throw error;
   } finally {
-    await input.cleanup();
+    await input.cleanup(terminalSeen && !failed);
   }
 }
 
-async function waitForExitCode(child: CliChild): Promise<number | null> {
-  if (child.exitCode !== null || child.signalCode !== null) {
-    return child.exitCode;
+async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T | false> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<false>(resolve => { timer = setTimeout(() => resolve(false), timeoutMs); }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
-  return new Promise<number | null>((resolve) => {
-    const onExit = (code: number | null): void => {
-      resolve(code);
-    };
-    child.once('exit', onExit);
-    if (child.exitCode !== null || child.signalCode !== null) {
-      child.removeListener('exit', onExit);
-      resolve(child.exitCode);
-    }
-  });
 }
 
 function failMessage(spawnName: string, error: unknown): string {

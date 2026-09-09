@@ -1,11 +1,12 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { resolveCursorBinary } from '../../../src/cli/agent-detection.js';
+import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { loadRootConfig } from '../../../src/config/profile-store.js';
-import { createRuntimeAgent } from '../../../src/runtime/agent-runtime.js';
-import { writeVersionExecutable } from '../../helpers/fake-executable.js';
+import { createRuntimeAgent, resolveProfileBinary } from '../../../src/runtime/agent-runtime.js';
+import { writeVersionExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
 import {
   adapterDisplayName,
   cursorVersionedHelpText,
@@ -16,6 +17,71 @@ import {
 const fixtureRoot = join(process.cwd(), 'tests/fixtures/profiles');
 
 describe('P4 profile load parity', () => {
+  it.each([true, false])('isolates two fake Codex factories with inherited login %s', async (inherit) => {
+    const dir = await mkdtemp(join(tmpdir(), 'factory-codex-'));
+    const parentHome = join(dir, 'parent-home');
+    vi.stubEnv('CODEX_HOME', parentHome);
+    const warnings = vi.spyOn(console, 'warn');
+    try {
+      const binaries = await Promise.all(['a', 'b'].map(async (name) => {
+        const binary = join(dir, `${name}.mjs`);
+        await writeFile(binary, `#!${process.execPath}
+import { writeFileSync } from 'node:fs';
+let stdin = '';
+for await (const chunk of process.stdin) stdin += chunk.toString();
+writeFileSync(${JSON.stringify(join(dir, name + '.json'))}, JSON.stringify({
+  argv: process.argv.slice(2), home: process.env.CODEX_HOME, stdin,
+}));
+console.log(JSON.stringify({ type: 'thread.started', thread_id: ${JSON.stringify(name)} }));
+console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, output_tokens: 1 } }));
+`, { mode: 0o755 });
+        return binary;
+      }));
+      const accounts = { app: { id: 'fake-app', secret: 'fake-secret', tenant: 'feishu' as const } };
+      const a = createDefaultProfileConfig({
+        agentKind: 'codex', accounts,
+        codex: { binaryPath: '/fake/unused-codex', inheritCodexHome: true, ignoreRules: false },
+      });
+      a.agent.binaryPath = binaries[0]!;
+      a.agent.options = { codexHome: join(dir, 'explicit-home'), inheritCodexHome: false, ignoreRules: true };
+      const b = createDefaultProfileConfig({
+        agentKind: 'codex', accounts,
+        codex: { binaryPath: binaries[1]!, inheritCodexHome: inherit, ignoreRules: false },
+      });
+      // Exercise the legacy Codex fallback independently of agent.binaryPath.
+      delete b.agent.binaryPath;
+      expect(resolveProfileBinary(a)).toBe(binaries[0]);
+      expect(resolveProfileBinary(b)).toBe(binaries[1]);
+      const adapters = [
+        createRuntimeAgent(a, { profileDir: join(dir, 'profile-a') }),
+        createRuntimeAgent(b, { profileDir: join(dir, 'profile-b') }),
+      ];
+      expect(adapters[0]).not.toBe(adapters[1]);
+      await Promise.all(adapters.map(async (adapter, index) => {
+        const run = adapter.run({ runId: `fake-${index}`, prompt: 'hello', cwd: dir });
+        const events = [];
+        for await (const event of run.events) events.push(event);
+        expect(await run.waitForExit(5000)).toBe(true);
+        expect(events).toContainEqual(expect.objectContaining({ type: 'done', terminationReason: 'normal' }));
+        expect(events).toContainEqual(expect.objectContaining({ type: 'system', resumeHandle: index === 0 ? 'a' : 'b' }));
+      }));
+      const first = JSON.parse(await readFile(join(dir, 'a.json'), 'utf8'));
+      const second = JSON.parse(await readFile(join(dir, 'b.json'), 'utf8'));
+      expect(first.home).toBe(join(dir, 'explicit-home'));
+      expect(second.home).toBe(inherit ? parentHome : join(dir, 'profile-b', 'codex-home'));
+      expect(first.argv).toContain('--ignore-rules');
+      expect(second.argv).not.toContain('--ignore-rules');
+      expect(process.env.CODEX_HOME).toBe(parentHome);
+      expect(first.stdin).toContain('hello');
+      expect(second.stdin).toContain('hello');
+      expect(warnings.mock.calls.filter(args => args.join(' ').includes('stdin-error'))).toEqual([]);
+    } finally {
+      warnings.mockRestore();
+      vi.unstubAllEnvs();
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('loads env-var kimi and grok profiles to the same runtime adapter as today', async () => {
     const fixture = join(fixtureRoot, 'env-var/config.json');
     const before = await readFile(fixture, 'utf8');
@@ -33,8 +99,8 @@ describe('P4 profile load parity', () => {
     expect(root?.profiles.grok).not.toHaveProperty('binaryPath');
 
     const dir = await mkdtemp(join(tmpdir(), 'pin-env-bin-'));
-    await writeVersionExecutable(dir, 'kimi', 'kimi 0.0.0-pin');
-    await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
+    await writeProfileProbe(dir, 'kimi', 'kimi 0.0.0-pin');
+    await writeProfileProbe(dir, 'grok', 'grok 0.0.0-pin');
 
     await withEnvBin('kimi', undefined, async () => {
       await withEnvBin('grok', undefined, async () => {
@@ -62,7 +128,7 @@ describe('P4 profile load parity', () => {
     expect(root?.profiles.claude?.agent).toEqual({ kind: 'claude' });
     expect(root?.profiles.claude?.agent).not.toHaveProperty('binaryPath');
     const dir = await mkdtemp(join(tmpdir(), 'pin-path-claude-'));
-    await writeVersionExecutable(dir, 'claude', 'claude 0.0.0-pin');
+    await writeProfileProbe(dir, 'claude', 'claude 0.0.0-pin');
     await withEnvBin('claude', undefined, async () => {
       await withIsolatedPath(dir, async () => {
         const agent = createRuntimeAgent(root!.profiles.claude!, {
@@ -100,7 +166,8 @@ describe('P4 profile load parity', () => {
     expect(root?.profiles.cursor?.agent).toEqual({ kind: 'cursor' });
     expect(root?.profiles.cursor?.agent).not.toHaveProperty('binaryPath');
     const dir = await mkdtemp(join(tmpdir(), 'pin-cursor-agent-'));
-    const agentBin = await writeVersionExecutable(dir, 'agent', 'cursor-agent 2026.08.28-pin');
+    // Support both probes: detection may fall back from version to Cursor-specific help.
+    const agentBin = await writeProfileProbe(dir, 'agent', 'cursor-agent 2026.08.28-pin', cursorVersionedHelpText());
     await withEnvBin('cursor', undefined, async () => {
       await withIsolatedPath(dir, async () => {
         await expect(resolveCursorBinary()).resolves.toBe(agentBin);
@@ -115,3 +182,24 @@ describe('P4 profile load parity', () => {
     expect(cursorVersionedHelpText()).toContain('--approve-mcps');
   });
 });
+
+async function writeProfileProbe(dir: string, name: string, version: string, helpText = ''): Promise<string> {
+  const binary = join(dir, process.platform === 'win32' ? `${name}.CMD` : name);
+  if (process.platform === 'win32') {
+    if (!helpText) return writeVersionExecutable(dir, name, version);
+    await writeScriptedJsonlExecutableFile(binary, binary + '.argv.json', { version, helpText });
+    return binary;
+  }
+  // These cases verify profile selection and real executable discovery. A
+  // static shell probe avoids paying Node startup cost inside the detector's
+  // existing deadline when the full suite starts many fake agents at once.
+  const quote = (value: string): string => `'${value.replace(/'/g, "'\\''")}'`;
+  await writeFile(binary, `#!/bin/sh
+if [ "$1" = "--help" ]; then
+  printf '%s\\n' ${quote(helpText)}
+else
+  printf '%s\\n' ${quote(version)}
+fi
+`, { mode: 0o755 });
+  return binary;
+}

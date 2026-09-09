@@ -42,6 +42,7 @@ const goldenRoot = join(process.cwd(), 'tests/fixtures/goldens/feishu-parity');
 const savedEnv = new Map<string, string | undefined>();
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   restoreEnv();
   sdkMock.channel = undefined;
   sdkMock.createLarkChannel.mockClear();
@@ -51,6 +52,7 @@ afterEach(async () => {
 describe('P1 Feishu surface parity', () => {
   it.each(PIN_AGENT_KINDS)('pins the bot channel-call sequence for %s', async (kind) => {
     const pinned = pinAgentKind(kind);
+    const warnings = pinned === 'codex' ? vi.spyOn(console, 'warn') : undefined;
     const h = await startParityBot(pinned);
 
     await writeFile(h.scriptFile, `${JSON.stringify(jsonlScript(pinned, 'error'))}\n`);
@@ -74,6 +76,11 @@ describe('P1 Feishu surface parity', () => {
     }
 
     await expectGolden(join(goldenRoot, `${pinned}.json`), { success: successCalls, error: errorCalls });
+    if (warnings) {
+      const record = JSON.parse(await readFile(h.recordPath, 'utf8')) as { stdin: string };
+      expect(record.stdin).toContain('please succeed');
+      expect(warnings.mock.calls.filter(args => args.join(' ').includes('stdin-error'))).toEqual([]);
+    }
   }, 60_000);
 });
 

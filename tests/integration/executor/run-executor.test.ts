@@ -9,7 +9,6 @@ import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile';
 import {
   FakeAgentAdapter,
   type FakeAgentEvents,
-  type FakeAgentRun,
 } from '../../helpers/fake-agent';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -67,13 +66,11 @@ describe('RunExecutor', () => {
   });
 
   it('fast-fails nowait when the pool is full and queues normal submissions FIFO', async () => {
-    const h = await createHarness({
-      events: [
-        [{ type: 'done', terminationReason: 'normal' }],
-        [{ type: 'done', terminationReason: 'normal' }],
-      ],
-      poolCap: 1,
-    });
+    const agent = new GatedAgent({ events: [
+      [{ type: 'done', terminationReason: 'normal' }],
+      [{ type: 'done', terminationReason: 'normal' }],
+    ] });
+    const h = await createHarness({ agent, poolCap: 1 });
     const first = await h.executor.submit({
       scopeId: 'scope-1',
       policy: policy(h.tmp.workspace),
@@ -93,6 +90,7 @@ describe('RunExecutor', () => {
     });
     expect(h.pool.snapshot()).toMatchObject({ active: 1, waiting: 1 });
 
+    agent.releaseFirst();
     await collect(first.subscribe());
     const second = await secondPromise;
     expect(second.runId).toBe('run-2');
@@ -129,7 +127,8 @@ describe('RunExecutor', () => {
   });
 
   it('rejects duplicate submissions for a scope that already has a run', async () => {
-    const h = await createHarness({ events: [{ type: 'done', terminationReason: 'normal' }] });
+    const agent = new GatedAgent({ events: [{ type: 'done', terminationReason: 'normal' }] });
+    const h = await createHarness({ agent });
 
     const first = await h.executor.submit({
       scopeId: 'scope-1',
@@ -144,6 +143,7 @@ describe('RunExecutor', () => {
     ).rejects.toMatchObject({ code: 'run-already-active' });
     expect(h.agent.runs).toHaveLength(1);
 
+    agent.releaseFirst();
     await collect(first.subscribe());
   });
 
@@ -164,13 +164,11 @@ describe('RunExecutor', () => {
   });
 
   it('rejects submissions that were queued before reconnect drain started', async () => {
-    const h = await createHarness({
-      events: [
-        [{ type: 'done', terminationReason: 'normal' }],
-        [{ type: 'done', terminationReason: 'normal' }],
-      ],
-      poolCap: 1,
-    });
+    const agent = new GatedAgent({ events: [
+      [{ type: 'done', terminationReason: 'normal' }],
+      [{ type: 'done', terminationReason: 'normal' }],
+    ] });
+    const h = await createHarness({ agent, poolCap: 1 });
     const first = await h.executor.submit({
       scopeId: 'scope-1',
       policy: policy(h.tmp.workspace),
@@ -184,6 +182,7 @@ describe('RunExecutor', () => {
 
     const resume = h.activeRuns.pauseNewRuns('reconnect');
     try {
+      agent.releaseFirst();
       await collect(first.subscribe());
       await expect(second).rejects.toMatchObject({ code: 'reconnect-in-progress' });
       expect(h.agent.runs).toHaveLength(1);
@@ -241,9 +240,12 @@ describe('RunExecutor', () => {
 
     await execution.stop();
 
-    const run = execution.run as FakeAgentRun;
+    const run = h.agent.runs[0]!;
     expect(run.stopped).toBe(true);
-    expect(run.waitForExitCalls).toBe(1);
+    expect(run.waitForExitCalls).toBe(2);
+    await execution.finished;
+    expect(h.activeRuns.get('scope-1')).toBeUndefined();
+    expect(h.pool.snapshot()).toMatchObject({ active: 0, waiting: 0 });
   });
 
   it('stops the underlying process when it does not exit after a terminal event', async () => {
@@ -258,8 +260,8 @@ describe('RunExecutor', () => {
 
     await collect(execution.subscribe());
 
-    const run = execution.run as FakeAgentRun;
-    expect(run.waitForExitCalls).toBe(1);
+    const run = h.agent.runs[0]!;
+    expect(run.waitForExitCalls).toBe(2);
     expect(run.stopped).toBe(true);
     expect(h.activeRuns.get('scope-1')).toBeUndefined();
     expect(h.pool.snapshot()).toMatchObject({ active: 0, waiting: 0 });
@@ -362,5 +364,27 @@ class DelayedPrepareAgent extends FakeAgentAdapter {
 
   releasePrepare(): void {
     this.resolvePrepare();
+  }
+}
+
+class GatedAgent extends FakeAgentAdapter {
+  private readonly firstReady: Promise<void>;
+  releaseFirst!: () => void;
+
+  constructor(options: ConstructorParameters<typeof FakeAgentAdapter>[0]) {
+    super(options);
+    this.firstReady = new Promise(resolve => { this.releaseFirst = resolve; });
+  }
+
+  override run(opts: AgentRunOptions): AgentRun {
+    const run = super.run(opts);
+    if (this.runs.length !== 1) return run;
+    const firstReady = this.firstReady;
+    return {
+      runId: run.runId,
+      events: (async function* () { await firstReady; yield* run.events; })(),
+      stop: async () => { this.releaseFirst(); await run.stop(); },
+      waitForExit: timeoutMs => run.waitForExit(timeoutMs),
+    };
   }
 }

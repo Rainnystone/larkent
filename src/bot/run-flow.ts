@@ -138,7 +138,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
         input.profileConfig.preferences.model,
       ),
       images:
-        input.capability.agentId === 'codex'
+        descriptorFor(input.capability.agentId).acceptsImagePaths
           ? policy.attachments
               .filter((attachment) => attachment.kind === 'image' && attachment.decision === 'accepted')
               .map((attachment) => attachment.path)

@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute } from 'node:path';
@@ -43,7 +42,7 @@ import type {
 } from '../config/profile-schema';
 import { effectiveLarkCliIdentity } from '../config/profile-schema';
 import { resolveAppPaths } from '../config/app-paths';
-import { descriptorFor, type AgentKind } from '../agent/registry';
+import { descriptorFor } from '../agent/registry';
 import {
   canRunAdminCommand,
   canUseDm,
@@ -61,16 +60,12 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import { formatRelTime, listRecentSessions, type SessionSummary } from '../session/history';
-import {
-  listCodexThreadHistory,
-  type CodexThreadHistoryEntry,
-  type ListCodexThreadHistoryOptions,
-} from '../session/codex-history';
+import { formatRelTime } from '../session/history';
+import type { ResumeHistoryEntry, ResumeHistoryInput } from '../agent/definition';
 import type { SessionCatalog, SessionCatalogIdentity } from '../session/catalog';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
-import { resolveProfileBinary } from '../runtime/agent-runtime';
 import { readUiSidecar } from '../ui/sidecar';
+import type { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { evaluateRunPolicy } from '../policy/run-policy';
@@ -130,6 +125,7 @@ export interface CommandContext {
    * scope semantic to the user (`topic` shows "话题独立 session"). */
   chatMode: 'p2p' | 'group' | 'topic';
   sessions: SessionStore;
+  resumeCandidates: ResumeCandidates;
   sessionCatalog?: SessionCatalog;
   sessionCatalogIdentity?: SessionCatalogIdentity;
   workspaces: WorkspaceStore;
@@ -138,10 +134,7 @@ export interface CommandContext {
   processPool?: ProcessPool;
   runExecutor?: RunExecutor;
   controls: Controls;
-  codexHistoryProvider?: (
-    options: ListCodexThreadHistoryOptions,
-  ) => Promise<CodexThreadHistoryEntry[]>;
-  claudeHistoryProvider?: (cwd: string, limit: number) => Promise<SessionSummary[]>;
+  resumeHistoryProvider?: (input: ResumeHistoryInput) => Promise<ResumeHistoryEntry[]>;
   /** Set when invoked from a CardKit 2.0 form submit. Keys are input `name`s. */
   formValue?: Record<string, unknown>;
   /** True when this invocation came from a card button click rather than a
@@ -152,17 +145,6 @@ export interface CommandContext {
 
 type Handler = (args: string, ctx: CommandContext) => Promise<void>;
 
-interface ResumeCandidate {
-  scopeId: string;
-  agentId: AgentKind;
-  cwdRealpath: string;
-  policyFingerprint: string;
-  resumeHandle: string;
-  expiresAt: number;
-}
-
-const RESUME_CANDIDATE_TTL_MS = 10 * 60 * 1000;
-const resumeCandidates = new Map<string, ResumeCandidate>();
 const AUDIT_SAFE_COMMAND_REPLY = '命令已处理。';
 const RESUME_APPLIED_REPLY = '已完成，请继续发送下一条消息。';
 
@@ -331,7 +313,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     return handleNewChat(rawName, ctx);
   }
 
-  const wasRunning = ctx.activeRuns.interrupt(ctx.scope);
+  const wasRunning = ctx.activeRuns.supersedeSession(ctx.scope);
   if (ctx.sessionCatalog && ctx.sessionCatalogIdentity) {
     ctx.sessionCatalog.archiveActive({
       ...ctx.sessionCatalogIdentity,
@@ -397,7 +379,7 @@ async function handleCd(args: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, workspace.userVisible);
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope);
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换 cwd 到 \`${workspace.cwdRealpath}\`\n（session 已重置）`);
@@ -462,7 +444,7 @@ async function handleWsUse(name: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, workspace.userVisible);
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope);
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换到 \`${name}\` (${workspace.cwdRealpath})\n（session 已重置）`);
@@ -558,84 +540,58 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   }
 
   const resumeDescriptor = descriptorFor(ctx.controls.profileConfig.agentKind);
-  if (resumeDescriptor.resume.label === 'thread') {
-    const identity = ctx.sessionCatalogIdentity;
-    const entry =
-      ctx.sessionCatalog && identity
-        ? ctx.sessionCatalog.activeFor(identity)
-        : undefined;
-    const history = identity ? await listCodexResumeHistory(ctx, cwd, limit) : [];
-    if (history.length > 0 && identity) {
-      const entries = history.map((thread) => {
-        const nonce = issueResumeCandidate(identity, thread.threadId);
-        return {
-          sessionId: nonce,
-          preview: thread.name || thread.preview,
-          relTime: formatRelTime(thread.updatedAtMs),
-          detail: `Codex · ${thread.source}`,
-          current: thread.threadId === entry?.resumeHandle,
-        };
-      });
-      const card = resumeCard(cwd, entries);
-      await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
-      return;
-    }
-    if (entry?.resumeHandle && identity) {
-      const nonce = issueResumeCandidate(identity, entry.resumeHandle);
-      await reply(
-        ctx,
-        `当前 Codex thread 可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。`,
-      );
-      return;
-    }
-    const card = resumeCard(cwd, []);
-    await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
-    return;
-  }
-
-  if (resumeDescriptor.replyMode === 'final-answer' && resumeDescriptor.resume.label === 'session') {
-    const agentLabel = resumeDescriptor.displayName.replace(/ (Code|CLI|Build)$/, '');
-    const identity = ctx.sessionCatalogIdentity;
-    const entry =
-      ctx.sessionCatalog && identity
-        ? ctx.sessionCatalog.activeFor(identity)
-        : undefined;
-    if (entry?.resumeHandle && identity) {
-      const nonce = issueResumeCandidate(identity, entry.resumeHandle);
-      await reply(
-        ctx,
-        `当前 ${agentLabel} 会话可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。`,
-      );
-      return;
-    }
-    const card = resumeCard(cwd, []);
-    await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
-    return;
-  }
-
-  const sessions = await listClaudeResumeHistory(ctx, cwd, limit);
-  const currentSession = ctx.sessions.getRaw(ctx.scope);
   const identity = ctx.sessionCatalogIdentity;
-  const entries = sessions.map((s) => ({
-    sessionId: identity
-      ? issueResumeCandidate(identity, s.sessionId)
-      : s.sessionId,
-    displayId: s.sessionId,
-    preview: s.preview,
-    relTime: formatRelTime(s.mtime),
-    lineCount: s.lineCount,
-    current: s.sessionId === currentSession?.sessionId,
-  }));
-  const card = resumeCard(cwd, entries);
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+  const catalogEntry = ctx.sessionCatalog && identity
+    ? ctx.sessionCatalog.activeFor(identity)
+    : undefined;
+  let currentHandle = catalogEntry?.resumeHandle;
+  if (!currentHandle && resumeDescriptor.resume.label === 'session') {
+    if (identity) {
+      currentHandle = ctx.sessions.resumeFor(ctx.scope, identity.cwdRealpath);
+    } else {
+      const workspace = await resolveWorkingDirectory(cwd);
+      if (workspace.ok) currentHandle = ctx.sessions.resumeFor(ctx.scope, workspace.cwdRealpath);
+    }
+  }
+  const provider = ctx.resumeHistoryProvider ?? resumeDescriptor.listResumeHistory;
+  const history = identity || resumeDescriptor.acceptsRawResumeHandle
+    ? await provider({
+        profile: ctx.controls.profileConfig,
+        profileDir: commandProfilePaths(ctx).profileDir,
+        cwd,
+        limit,
+      })
+    : [];
+  if (history.length > 0) {
+    const entries = history.map(entry => ({
+      sessionId: identity ? ctx.resumeCandidates.issue(identity, entry.resumeHandle) : entry.resumeHandle,
+      ...(resumeDescriptor.acceptsRawResumeHandle ? { displayId: entry.resumeHandle } : {}),
+      preview: entry.preview,
+      relTime: formatRelTime(entry.updatedAtMs),
+      lineCount: entry.lineCount,
+      detail: entry.detail,
+      current: entry.resumeHandle === currentHandle,
+    }));
+    await ctx.channel.send(ctx.msg.chatId, { card: resumeCard(cwd, entries) }, commandReplyOptions(ctx));
+    return;
+  }
+  if (currentHandle && identity) {
+    const nonce = ctx.resumeCandidates.issue(identity, currentHandle);
+    const label = resumeDescriptor.resume.label === 'thread'
+      ? 'Codex thread '
+      : `${resumeDescriptor.displayName.replace(/ (Code|CLI|Build)$/, '')} 会话`;
+    await reply(ctx, `当前 ${label}可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。`);
+    return;
+  }
+  await ctx.channel.send(ctx.msg.chatId, { card: resumeCard(cwd, []) }, commandReplyOptions(ctx));
 }
 
 async function applyResume(sessionId: string, ctx: CommandContext): Promise<void> {
   if (ctx.sessionCatalog && ctx.sessionCatalogIdentity) {
     const entry = ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity);
-    const resolved = consumeResumeCandidate(sessionId, ctx.sessionCatalogIdentity);
+    const resolved = ctx.resumeCandidates.consume(sessionId, ctx.sessionCatalogIdentity);
     if (resolved) {
-      ctx.activeRuns.interrupt(ctx.scope);
+      ctx.activeRuns.supersedeSession(ctx.scope);
       ctx.sessionCatalog.upsertActive({
         scopeId: ctx.sessionCatalogIdentity.scopeId,
         agentId: ctx.sessionCatalogIdentity.agentId,
@@ -649,7 +605,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       await reply(ctx, RESUME_APPLIED_REPLY);
       return;
     }
-    if (ctx.sessionCatalogIdentity.agentId === 'codex') {
+    if (!descriptorFor(ctx.sessionCatalogIdentity.agentId).acceptsRawResumeHandle) {
       await reply(ctx, '当前上下文不可恢复这个会话，请先用 `/resume` 重新生成恢复候选。');
       return;
     }
@@ -658,7 +614,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       await reply(ctx, '当前上下文不可恢复这个会话，请重新选择当前工作区和权限策略下的会话。');
       return;
     }
-    ctx.activeRuns.interrupt(ctx.scope);
+    ctx.activeRuns.supersedeSession(ctx.scope);
     if (descriptorFor(ctx.sessionCatalogIdentity.agentId).resume.label === 'session') {
       ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
     }
@@ -676,90 +632,9 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     await reply(ctx, '请先使用 /cd <path> 选择工作目录，再查看或恢复会话。');
     return;
   }
-  ctx.activeRuns.interrupt(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope);
   ctx.sessions.set(ctx.scope, sessionId, cwd);
   await reply(ctx, RESUME_APPLIED_REPLY);
-}
-
-function issueResumeCandidate(
-  identity: SessionCatalogIdentity,
-  resumeHandle: string,
-): string {
-  pruneResumeCandidates();
-  let nonce = randomUUID().slice(0, 12);
-  while (resumeCandidates.has(nonce)) nonce = randomUUID().slice(0, 12);
-  resumeCandidates.set(nonce, {
-    scopeId: identity.scopeId,
-    agentId: identity.agentId,
-    cwdRealpath: identity.cwdRealpath,
-    policyFingerprint: identity.policyFingerprint,
-    resumeHandle,
-    expiresAt: Date.now() + RESUME_CANDIDATE_TTL_MS,
-  });
-  return nonce;
-}
-
-function consumeResumeCandidate(
-  nonce: string,
-  identity: SessionCatalogIdentity,
-): ResumeCandidate | undefined {
-  pruneResumeCandidates();
-  const candidate = resumeCandidates.get(nonce);
-  if (!candidate) return undefined;
-  resumeCandidates.delete(nonce);
-  if (
-    candidate.scopeId !== identity.scopeId ||
-    candidate.agentId !== identity.agentId ||
-    candidate.cwdRealpath !== identity.cwdRealpath ||
-    candidate.policyFingerprint !== identity.policyFingerprint ||
-    !candidate.resumeHandle
-  ) {
-    return undefined;
-  }
-  return candidate;
-}
-
-function pruneResumeCandidates(now = Date.now()): void {
-  for (const [nonce, candidate] of resumeCandidates.entries()) {
-    if (candidate.expiresAt <= now) resumeCandidates.delete(nonce);
-  }
-}
-
-async function listClaudeResumeHistory(
-  ctx: CommandContext,
-  cwd: string,
-  limit: number,
-): Promise<SessionSummary[]> {
-  const provider = ctx.claudeHistoryProvider ?? listRecentSessions;
-  return provider(cwd, limit);
-}
-
-async function listCodexResumeHistory(
-  ctx: CommandContext,
-  cwd: string,
-  limit: number,
-): Promise<CodexThreadHistoryEntry[]> {
-  const binary = resolveProfileBinary(ctx.controls.profileConfig);
-  if (!binary) return [];
-
-  const provider = ctx.codexHistoryProvider ?? listCodexThreadHistory;
-  const historyEnv = descriptorFor(ctx.controls.profileConfig.agentKind).historyEnv?.(
-    ctx.controls.profileConfig,
-  );
-  try {
-    return await provider({
-      binary,
-      cwd,
-      limit,
-      profileStateDir: commandProfilePaths(ctx).profileDir,
-      ...historyEnv,
-    });
-  } catch (err) {
-    log.warn('session', 'codex-history-failed', {
-      message: err instanceof Error ? err.message : String(err),
-    });
-    return [];
-  }
 }
 
 function effectiveWorkspaceCwd(ctx: CommandContext): string | undefined {
@@ -825,7 +700,7 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const card = statusCard({
     profileName: ctx.controls.profile,
     cwd,
-    sessionId: isThreadResume ? catalogEntry?.resumeHandle : sess?.sessionId,
+    sessionId: isThreadResume ? catalogEntry?.resumeHandle : sess?.resumeHandle,
     emptySessionText: isThreadResume ? '(未建立)' : undefined,
     sessionStale: !isThreadResume && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,

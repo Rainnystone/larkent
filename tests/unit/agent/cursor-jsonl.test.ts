@@ -186,6 +186,27 @@ describe('CursorJsonlTranslator', () => {
     expect(t.protocolDrift()).toEqual({ unknownEvents: 1, anomalies: 2 });
   });
 
+  it('ignores thinking lines without counting them as protocol drift', () => {
+    const t = new CursorJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      { type: 'thinking' },
+      {
+        type: 'assistant',
+        message: { role: 'assistant', content: [{ type: 'text', text: 'OK' }] },
+        session_id: SESSION,
+      },
+      { type: 'thinking' },
+      RESULT,
+    ]);
+    expect(events).toEqual([
+      { type: 'system', resumeHandle: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
+      { type: 'final_text', content: 'OK' },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
   it('finish(failed) surfaces an error when the stream never reached result', () => {
     const t = new CursorJsonlTranslator();
     expect([...collect(t, [INIT]), ...t.finish()]).toEqual([

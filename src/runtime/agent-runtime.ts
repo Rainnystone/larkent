@@ -1,9 +1,3 @@
-import { ClaudeAdapter } from '../agent/claude/adapter';
-import { CodexAdapter } from '../agent/codex/adapter';
-import { codexAdapterAgentOptions } from '../agent/codex/options';
-import { CursorAdapter } from '../agent/cursor/adapter';
-import { GrokAdapter } from '../agent/grok/adapter';
-import { KimiAdapter } from '../agent/kimi/adapter';
 import { AgentPreflightError, type AgentAvailability } from '../agent/preflight';
 import { descriptorFor, isAgentKind, type AgentKind } from '../agent/registry';
 import type { AgentAdapter } from '../agent/types';
@@ -38,50 +32,13 @@ export function createRuntimeAgent(
             : {}),
         }
       : undefined;
-  const kind = profileConfig.agentKind;
-  const explicitBinary = resolveProfileBinary(profileConfig);
-  const defaultBinary = descriptorFor(kind).binaryNames[0] ?? kind;
-  const factories: Record<AgentKind, () => AgentAdapter> = {
-    claude: () => new ClaudeAdapter({ binary: explicitBinary ?? defaultBinary, agentOptions: profileConfig.agent.options, larkChannel }),
-    codex: () => {
-      const binary = explicitBinary ?? profileConfig.codex?.binaryPath;
-      if (!binary) {
-        throw new Error('codex profile requires codex.binaryPath');
-      }
-      return new CodexAdapter({
-        binary,
-        profileStateDir: appPaths.profileDir,
-        agentOptions: codexAdapterAgentOptions(profileConfig),
-        sandbox: profileConfig.sandbox.defaultMode,
-        larkChannel,
-      });
-    },
-    kimi: () =>
-      new KimiAdapter({
-        binary: explicitBinary ?? defaultBinary,
-        agentOptions: profileConfig.agent.options,
-        larkChannel,
-      }),
-    grok: () =>
-      new GrokAdapter({
-        binary: explicitBinary ?? defaultBinary,
-        agentOptions: profileConfig.agent.options,
-        larkChannel,
-      }),
-    cursor: () =>
-      new CursorAdapter({
-        ...(explicitBinary ? { binary: explicitBinary } : {}),
-        agentOptions: profileConfig.agent.options,
-        larkChannel,
-      }),
-  };
-  return factories[kind]();
+  const descriptor = descriptorFor(profileConfig.agentKind);
+  descriptor.agentOptionsSchema.parse(profileConfig.agent.options);
+  return descriptor.create({ profile: profileConfig, profileDir: appPaths.profileDir, larkChannel });
 }
 
 export function resolveProfileBinary(profile: ProfileConfig): string | undefined {
-  if (profile.agent.binaryPath) return profile.agent.binaryPath;
-  if (profile.agentKind === 'codex') return profile.codex?.binaryPath;
-  return undefined;
+  return descriptorFor(profile.agentKind).resolveProfileBinary(profile);
 }
 
 export async function checkRuntimeAgentAvailability(agent: AgentAdapter): Promise<AgentAvailability> {

@@ -1,4 +1,7 @@
 import { descriptorFor, type AgentKind } from './registry';
+import type { ModelOption } from './definition';
+
+export type { ModelOption } from './definition';
 
 /**
  * Sentinel selection meaning "don't pass `--model`; let the agent CLI /
@@ -7,16 +10,6 @@ import { descriptorFor, type AgentKind } from './registry';
  * the option `value`s exactly and rejects an empty string.
  */
 export const DEFAULT_MODEL = 'default';
-
-export interface ModelOption {
-  /**
-   * Stored in `preferences.model` and forwarded to the agent's `--model`
-   * flag. `DEFAULT_MODEL` is special-cased to omit the flag entirely.
-   */
-  value: string;
-  /** Human-facing label shown in the `/config` picker. */
-  label: string;
-}
 
 /** The model picker options for a profile's agent kind. */
 export function supportedModels(agentKind: AgentKind): ModelOption[] {

@@ -8,6 +8,7 @@ import { tryHandleCommand, type CommandContext, type Controls } from '../../../s
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
 import { RunExecutor } from '../../../src/runtime/run-executor';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
@@ -53,6 +54,7 @@ async function createHarness(): Promise<{
   });
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   workspaces.setCwd('chat-1', tmp.workspace);
   cleanups.push(async () => {
@@ -98,6 +100,7 @@ async function createHarness(): Promise<{
     logsDir,
     run: (content: string) =>
       tryHandleCommand({
+        resumeCandidates,
         channel: channel as unknown as CommandContext['channel'],
         msg: message(content),
         scope: 'chat-1',

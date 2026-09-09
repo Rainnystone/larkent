@@ -312,7 +312,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             terminal = true;
             break;
           }
-          if (next.done || execution.handle.interrupted) {
+          if (next.done) {
             terminal = true;
             break;
           }
@@ -332,6 +332,8 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
           ) {
             sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath);
           }
+          // Preserve the final session event, but never post an interrupted answer.
+          if (execution.handle.interrupted) continue;
           switch (e.type) {
             case 'text':
               answer += e.delta;

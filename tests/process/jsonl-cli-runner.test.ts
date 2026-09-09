@@ -1,8 +1,12 @@
-import { getEventListeners } from 'node:events';
+import { EventEmitter, getEventListeners } from 'node:events';
+import { PassThrough } from 'node:stream';
 import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { dirname, join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import * as spawn from '../../src/platform/spawn.js';
 import { ClaudeAdapter } from '../../src/agent/claude/adapter.js';
 import { CodexAdapter } from '../../src/agent/codex/adapter.js';
 import { buildCodexArgs } from '../../src/agent/codex/argv.js';
@@ -11,6 +15,273 @@ import { GrokAdapter } from '../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../src/agent/kimi/adapter.js';
 import { runJsonlCli, wrapParsedTranslator } from '../../src/agent/runner/jsonl-cli-runner.js';
 import type { AgentEvent } from '../../src/agent/types.js';
+
+describe('runner settlement boundaries', () => {
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
+
+  function fixture(options: Partial<Parameters<typeof runJsonlCli>[0]> = {}) {
+    const child = Object.assign(new EventEmitter(), {
+      pid: 42 as number | undefined,
+      exitCode: null as number | null,
+      signalCode: null as NodeJS.Signals | null,
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+      kill: vi.fn((_signal: NodeJS.Signals = 'SIGTERM') => true),
+    });
+    const exit = (signal: NodeJS.Signals | null = null): void => {
+      child.exitCode = signal ? null : 0;
+      child.signalCode = signal;
+      child.stdout.end();
+      child.stderr.end();
+      child.emit('exit', child.exitCode, signal);
+    };
+    vi.spyOn(spawn, 'spawnProcess').mockImplementation(() => child as never);
+    const start = () => runJsonlCli({
+      runId: 'settlement', binaryPath: '/fake', argv: [], cwd: '/tmp', env: {},
+      spawnName: 'fake', stopGraceMs: 10,
+      translator: wrapParsedTranslator({ translate: () => [{ type: 'text', delta: 'hello' }] }, 'fake'),
+      ...options,
+    });
+    return { child, exit, start };
+  }
+
+  it('does not attach abort listeners after detecting exit during startup', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const f = fixture({ signal: controller.signal, timeouts: { totalMs: 100, idleMs: 100 } });
+    f.child.exitCode = 0;
+    const run = f.start();
+    expect(await run.waitForExit(1)).toBe(true);
+    expect(getEventListeners(controller.signal, 'abort')).toEqual([]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(f.child.kill).not.toHaveBeenCalled();
+  });
+
+  it('does not rearm idle when a trailing stdout line closes after exit', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ timeouts: { idleMs: 100 } });
+    const run = f.start();
+    f.child.stdout.write('{}');
+    f.exit();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(await collect(run.events)).toEqual([{ type: 'text', delta: 'hello' }]);
+    expect(await run.waitForExit(1)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('does not schedule a silent-stdout fallback after stdout already closed', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ emptyStdoutDestroyMs: 50 });
+    const run = f.start();
+    f.child.stdout.end();
+    await vi.advanceTimersByTimeAsync(0);
+    f.exit();
+    expect(await run.waitForExit(1)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['before reading', 'while next is pending'] as const)('stops when iterator.return is called %s', async stage => {
+    vi.useFakeTimers();
+    const cleanup = vi.fn();
+    const f = fixture({ cleanup });
+    f.child.kill.mockImplementation(signal => { f.exit(signal); return true; });
+    const run = f.start();
+    const iterator = run.events[Symbol.asyncIterator]();
+    const pending = stage === 'while next is pending' ? iterator.next() : undefined;
+    const returned = iterator.return?.();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(f.child.kill).toHaveBeenCalledWith('SIGTERM');
+    await returned;
+    await pending;
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(await run.waitForExit(1)).toBe(true);
+  });
+
+  it('fails an event consumer waiting for exit after stdout closes when stop cannot confirm exit', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    const run = f.start();
+    f.child.stdout.end();
+    let result: unknown = 'pending';
+    const events = collect(run.events).then(value => { result = value; }, error => { result = error; });
+    await vi.advanceTimersByTimeAsync(0);
+    const stopped = run.stop().catch(error => error);
+    await vi.advanceTimersByTimeAsync(5010);
+    expect(await stopped).toMatchObject({ name: 'RunCleanupFailed' });
+    expect(result).toMatchObject({ name: 'RunCleanupFailed' });
+    await events;
+  });
+
+  it('settles no-pid spawn errors and cleans once without waiting for a nonexistent exit', async () => {
+    vi.useFakeTimers();
+    const cleanup = vi.fn();
+    const f = fixture({ cleanup });
+    f.child.pid = undefined;
+    const run = f.start();
+    const wait = run.waitForExit(100);
+    f.child.emit('error', new Error('ENOENT'));
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await wait).toBe(true);
+    await run.stop();
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(f.child.kill).not.toHaveBeenCalled();
+    expect(await collect(run.events)).toMatchObject([{ type: 'error', terminationReason: 'failed' }]);
+  });
+
+  it('waitForExit true and repeated stop wait for the same adapter cleanup', async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const cleanup = vi.fn(() => gate);
+    const f = fixture({ cleanup });
+    const run = f.start();
+    f.exit();
+    const early = run.waitForExit(5);
+    let stopped = false;
+    const stops = Promise.all([run.stop(), run.stop()]).then(() => { stopped = true; });
+    await vi.advanceTimersByTimeAsync(5);
+    expect(await early).toBe(false);
+    expect(stopped).toBe(false);
+    release();
+    await stops;
+    expect(await run.waitForExit(1)).toBe(true);
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('propagates cleanup rejection to stop, waitForExit, and the event consumer', async () => {
+    const failure = new Error('adapter cleanup failed');
+    const f = fixture({ cleanup: () => { throw failure; } });
+    const run = f.start();
+    f.exit();
+    await expect(run.stop()).rejects.toMatchObject({ name: 'RunCleanupFailed', cause: failure });
+    await expect(run.waitForExit(100)).rejects.toMatchObject({ name: 'RunCleanupFailed', cause: failure });
+    await expect(collect(run.events)).rejects.toMatchObject({ name: 'RunCleanupFailed', cause: failure });
+  });
+
+  it('exposes a real Claude adapter prompt cleanup failure instead of reporting settlement success', async () => {
+    const f = fixture();
+    const run = new ClaudeAdapter({ binary: '/fake' }).run({ runId: 'cleanup-failed', prompt: 'hello', cwd: '/tmp' });
+    const argv = vi.mocked(spawn.spawnProcess).mock.calls[0]![1]!;
+    const promptPath = argv[argv.indexOf('--append-system-prompt-file') + 1]!;
+    expect(await readFile(promptPath, 'utf8')).toContain('lark-channel-bridge');
+    const failure = new Error('cannot delete prompt');
+    let restore: () => void = () => {};
+    try {
+      const remove = vi.spyOn(fs, 'rmSync').mockImplementationOnce(() => { throw failure; });
+      restore = () => remove.mockRestore();
+      syncBuiltinESMExports();
+      f.exit();
+      await expect(run.stop()).rejects.toMatchObject({ name: 'RunCleanupFailed', cause: failure });
+      await expect(run.waitForExit(100)).rejects.toMatchObject({ name: 'RunCleanupFailed', cause: failure });
+      expect(await readFile(promptPath, 'utf8')).toContain('lark-channel-bridge');
+    } finally {
+      restore();
+      syncBuiltinESMExports();
+      await rm(dirname(promptPath), { recursive: true, force: true });
+    }
+  });
+
+  it('bounds adapter cleanup at 5000ms after confirmed exit', async () => {
+    vi.useFakeTimers();
+    const f = fixture({ cleanup: () => new Promise<void>(() => {}) });
+    const run = f.start();
+    f.exit();
+    const stopped = expect(run.stop()).rejects.toMatchObject({ name: 'RunCleanupFailed' });
+    void stopped.catch(() => {});
+    await vi.advanceTimersByTimeAsync(5000);
+    await stopped;
+    await expect(run.waitForExit(1)).rejects.toMatchObject({ name: 'RunCleanupFailed' });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('rejects stop when SIGKILL never produces a confirmed exit', async () => {
+    vi.useFakeTimers();
+    const cleanup = vi.fn();
+    const f = fixture({ cleanup });
+    const run = f.start();
+    const stopped = expect(run.stop()).rejects.toMatchObject({ name: 'RunCleanupFailed' });
+    void stopped.catch(() => {});
+    await vi.advanceTimersByTimeAsync(5010);
+    await stopped;
+    expect(f.child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
+    expect(cleanup).not.toHaveBeenCalled();
+    const wait = run.waitForExit(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await wait).toBe(false);
+  });
+
+  it('escalates a failed SIGTERM and observes synchronous SIGKILL exit', async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    f.child.kill.mockImplementation(signal => {
+      if (signal === 'SIGTERM') throw new Error('SIGTERM failed');
+      f.exit('SIGKILL');
+      return true;
+    });
+    const run = f.start();
+    const stopped = run.stop();
+    // Observe immediately, including the RED rejection from the old signal path.
+    void stopped.catch(() => {});
+    await vi.advanceTimersByTimeAsync(10);
+    await stopped;
+    expect(f.child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
+    expect(await run.waitForExit(1)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['translator throw', 'consumer return'] as const)('stops and cleans on %s before terminal', async mode => {
+    vi.useFakeTimers();
+    const failure = new Error('translator failed');
+    const cleanup = vi.fn();
+    const f = fixture({ cleanup, ...(mode === 'translator throw' ? {
+      translator: wrapParsedTranslator({ translate: () => { throw failure; } }, 'fake'),
+    } : {}) });
+    f.child.kill.mockImplementation(signal => { f.exit(signal); return true; });
+    const run = f.start();
+    f.child.stdout.write('{}\n');
+    const iterator = run.events[Symbol.asyncIterator]();
+    if (mode === 'translator throw') {
+      const failed = expect(iterator.next()).rejects.toBe(failure);
+      await vi.advanceTimersByTimeAsync(10);
+      await failed;
+    } else {
+      await iterator.next();
+      const returned = iterator.return?.();
+      await vi.advanceTimersByTimeAsync(10);
+      await returned;
+    }
+    expect(f.child.kill).toHaveBeenCalledWith('SIGTERM');
+    expect(cleanup).toHaveBeenCalledTimes(1);
+    expect(await run.waitForExit(1)).toBe(true);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['abort', 'timeout'] as const)('keeps %s as the first reason across competing stop requests', async first => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const f = fixture({ signal: controller.signal, timeouts: { totalMs: 5 },
+      translator: wrapParsedTranslator({ translate: () => [], finish: reason => [
+        { type: 'done', terminationReason: reason === 'interrupted' ? 'interrupted' : 'normal' },
+      ] }, 'fake'),
+    });
+    f.child.kill.mockImplementation(signal => {
+      if (signal === 'SIGKILL') f.exit(signal);
+      return true;
+    });
+    const run = f.start();
+    const events = collect(run.events);
+    if (first === 'abort') controller.abort();
+    await vi.advanceTimersByTimeAsync(5);
+    if (first === 'timeout') controller.abort();
+    const stops = Promise.all([run.stop(), run.stop()]);
+    await vi.advanceTimersByTimeAsync(10);
+    await stops;
+    expect(await events).toMatchObject([{ terminationReason: first === 'abort' ? 'interrupted' : 'timeout' }]);
+    expect(f.child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(getEventListeners(controller.signal, 'abort')).toEqual([]);
+  });
+});
 
 async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
@@ -191,50 +462,6 @@ process.exit(0);
     ]);
   });
 
-  it('resets idle timeout when a complete stdout line is enqueued', async () => {
-    const fake = await createFakeRunnerBinary(`
-import { setTimeout as delay } from 'node:timers/promises';
-for (const n of [1, 2, 3, 4, 5, 6]) {
-  console.log(JSON.stringify({ n }));
-  await delay(40);
-}
-process.exit(0);
-`);
-    cleanup.push(fake.dir);
-    const run = runJsonlCli({
-      runId: 'run-idle-enqueue',
-      binaryPath: fake.path,
-      argv: [],
-      cwd: fake.dir,
-      env: process.env,
-      translator: wrapParsedTranslator(
-        {
-          translate: (parsed) => [{ type: 'text' as const, delta: String((parsed as { n: number }).n) }],
-          finish: () => [{ type: 'done' as const, terminationReason: 'normal' as const }],
-        },
-        'idle-enqueue',
-      ),
-      spawnName: 'idle-enqueue',
-      timeouts: { idleMs: 70 },
-      stopGraceMs: 50,
-      successFinish: 'normal',
-    });
-    const events: AgentEvent[] = [];
-    for await (const event of run.events) {
-      events.push(event);
-      await new Promise((resolve) => setTimeout(resolve, 120));
-    }
-    expect(events).toEqual([
-      { type: 'text', delta: '1' },
-      { type: 'text', delta: '2' },
-      { type: 'text', delta: '3' },
-      { type: 'text', delta: '4' },
-      { type: 'text', delta: '5' },
-      { type: 'text', delta: '6' },
-      { type: 'done', terminationReason: 'normal' },
-    ]);
-  });
-
   it('awaits the same in-flight cleanup from exit and generator finally', async () => {
     const fake = await createFakeClaude({
       lines: [{ type: 'result', session_id: 's-clean' }],
@@ -383,7 +610,7 @@ process.exit(0);
           translate: (parsed) => {
             const row = parsed as { type?: string; session_id?: string };
             return row.type === 'result'
-              ? [{ type: 'done' as const, sessionId: row.session_id, terminationReason: 'normal' as const }]
+              ? [{ type: 'done' as const, resumeHandle: row.session_id, terminationReason: 'normal' as const }]
               : [];
           },
         },
@@ -393,36 +620,25 @@ process.exit(0);
       stopGraceMs: 50,
     });
 
-    const events: AgentEvent[] = [];
-    let consumeSettled = false;
-    const consume = (async () => {
-      try {
-        for await (const event of run.events) {
-          events.push(event);
-          if (event.type === 'done' || event.type === 'error') break;
-        }
-      } finally {
-        consumeSettled = true;
-      }
-    })();
-
+    const iterator = run.events[Symbol.asyncIterator]();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      // Startup is bounded by the test budget, not the iterator-return deadline.
+      expect(await iterator.next()).toMatchObject({
+        done: false,
+        value: { type: 'done', resumeHandle: 'sess-hang-tail' },
+      });
       await Promise.race([
-        consume,
+        iterator.return?.(),
         new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('iterator hung after terminal event')), 400);
+          timer = setTimeout(() => reject(new Error('return hung after terminal')), 400);
         }),
       ]);
-      expect(consumeSettled).toBe(true);
-      expect(events).toEqual([
-        { type: 'done', sessionId: 'sess-hang-tail', terminationReason: 'normal' },
-      ]);
       expect(await run.waitForExit(50)).toBe(false);
+    } finally {
+      if (timer) clearTimeout(timer);
       await run.stop();
       expect(await run.waitForExit(1_000)).toBe(true);
-    } finally {
-      await run.stop().catch(() => {});
-      await run.waitForExit(1_000);
     }
   });
 
@@ -480,6 +696,38 @@ describe('ClaudeAdapter process contract', () => {
         rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }),
       ),
     );
+  });
+
+  // Windows terminates directly for these signals; the controlled-child
+  // escalation cases above cover its runner contract without a POSIX handler.
+  it.skipIf(process.platform === 'win32')('confirms real SIGTERM to SIGKILL exit and removes its temporary prompt before stop succeeds', async () => {
+    const fake = await createFakeRunnerBinary(`
+import { writeFileSync } from 'node:fs';
+process.on('SIGTERM', () => writeFileSync('term-seen', 'yes'));
+writeFileSync('argv.json', JSON.stringify({ pid: process.pid, argv: process.argv.slice(2) }));
+process.stdin.resume();
+console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'READY' }] } }));
+setInterval(() => {}, 1000);
+`);
+    cleanup.push(fake.dir);
+    const run = new ClaudeAdapter({ binary: fake.path }).run({
+      runId: 'real-stop-cleanup', prompt: 'hello', cwd: fake.dir, stopGraceMs: 50,
+    });
+    const iterator = run.events[Symbol.asyncIterator]();
+    try {
+      expect(await iterator.next()).toMatchObject({ value: { type: 'text', delta: 'READY' } });
+      const record = JSON.parse(await readFile(fake.recordPath, 'utf8')) as { pid: number; argv: string[] };
+      const promptPath = record.argv[record.argv.indexOf('--append-system-prompt-file') + 1]!;
+      expect(await readFile(promptPath, 'utf8')).toContain('lark-channel-bridge');
+      await run.stop();
+      expect(await readFile(join(fake.dir, 'term-seen'), 'utf8')).toBe('yes');
+      expect(await run.waitForExit(1)).toBe(true);
+      expect(() => process.kill(record.pid, 0)).toThrow();
+      await expect(readFile(promptPath)).rejects.toMatchObject({ code: 'ENOENT' });
+    } finally {
+      await run.stop();
+      await iterator.return?.();
+    }
   });
 
   it('spawns a fresh run with stream-json, verbose, permission mode, and bridge prompt args', async () => {

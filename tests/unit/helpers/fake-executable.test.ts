@@ -1,12 +1,61 @@
-import { mkdtemp, readFile } from 'node:fs/promises';
+import { once } from 'node:events';
+import { mkdtemp, readFile, readdir, symlink, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { spawnProcessSync } from '../../../src/platform/spawn.js';
+import { spawnProcess, spawnProcessSync } from '../../../src/platform/spawn.js';
 import { writeScriptedJsonlExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
+import { installControlledKindCli } from '../../helpers/controlled-kind-cli.js';
+import { createTmpProfile } from '../../helpers/tmp-profile.js';
 import { stabilizePinSnapshot } from '../../helpers/scripted-jsonl-cli.js';
 
 describe('scripted JSONL fake executables', () => {
+  it('drains and records a non-controlled Codex prompt before emitting terminal output', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fake-codex-stdin-'));
+    try {
+      const terminal = { type: 'turn.completed', usage: {} };
+      const fake = await writeScriptedJsonlExecutable(dir, 'codex', { lines: [terminal] });
+      const prompt = 'actual fixture prompt\n'.repeat(32768);
+      const result = spawnProcessSync(fake.path, ['exec', '--json', '-'], {
+        encoding: 'utf8', input: prompt, maxBuffer: 1024 * 1024,
+      });
+      expect(result.error).toBeFalsy();
+      expect(result.status).toBe(0);
+      expect(result.stderr).toBe('');
+      expect(JSON.parse(String(result.stdout))).toEqual(terminal);
+      const record = JSON.parse(await readFile(fake.recordPath, 'utf8')) as { stdin: string; argv: string[] };
+      expect(record.stdin).toBe(prompt);
+      expect(record.argv).toEqual(['exec', '--json', '-']);
+      const help = spawnProcessSync(fake.path, ['--help'], { encoding: 'utf8' });
+      expect(help.status).toBe(0);
+      expect(String(help.stdout)).toContain('Usage: fake-cli');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a non-controlled Codex hang alive after draining its prompt', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'fake-codex-hang-'));
+    const fake = await writeScriptedJsonlExecutable(dir, 'codex', {
+      lines: [{ type: 'thread.started', thread_id: 'hang-fixture' }], hang: true,
+    });
+    const child = spawnProcess(fake.path, ['exec', '--json', '-']);
+    const closed = once(child, 'close');
+    try {
+      const output = once(child.stdout!, 'data');
+      child.stdin!.end('hang prompt');
+      await output;
+      const record = JSON.parse(await readFile(fake.recordPath, 'utf8')) as { stdin: string };
+      expect(record.stdin).toBe('hang prompt');
+      expect(child.exitCode).toBeNull();
+      expect(child.signalCode).toBeNull();
+    } finally {
+      child.kill();
+      await closed;
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+
   it('writes a cmd file as a launcher, not a shebang script', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-cmd-wrapper-'));
     const file = join(dir, 'grok.CMD');
@@ -99,5 +148,26 @@ describe('stabilizePinSnapshot', () => {
       text: '/resume use <nonce>',
       arg: '<nonce>',
     });
+  });
+});
+
+describe('controlled Codex state boundary', () => {
+  it.each(['missing', 'outside', 'symlink escape'] as const)('rejects %s CODEX_HOME before writing state', async location => {
+    const tmp = await createTmpProfile('controlled-state-');
+    const outside = await createTmpProfile('controlled-outside-');
+    try {
+      const fake = await installControlledKindCli(tmp.root, 'codex', 'A');
+      await fake.release();
+      const linkedHome = join(tmp.root, 'linked-home');
+      if (location === 'symlink escape') await symlink(outside.root, linkedHome, 'junction');
+      const codexHome = location === 'missing' ? '' : location === 'outside' ? outside.root : linkedHome;
+      const result = spawnProcessSync(fake.path, ['exec', '--json', '-'], {
+        encoding: 'utf8', input: 'test prompt',
+        env: { ...process.env, CODEX_HOME: codexHome },
+      });
+      expect(result.status).not.toBe(0);
+      expect(String(result.stderr)).toContain('controlled Codex state requires CODEX_HOME inside fixture root');
+      expect((await readdir(outside.root)).sort()).toEqual(['profile', 'workspace']);
+    } finally { await tmp.cleanup(); await outside.cleanup(); }
   });
 });

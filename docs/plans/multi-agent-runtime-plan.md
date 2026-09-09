@@ -1,5 +1,7 @@
 # Multi-agent runtime plan
 
+Historical implementation plan. Current setup is in [agent setup](../agent-setup.md), and current naming is in [README.md](../../README.md). This record does not start or authorize a new execution run.
+
 This program makes the five CLI agents equal peers behind one supervisor. A Feishu user keeps the same cards, slash commands, and resume behavior. Owners pin P1 to P7 first, then move enumerations into a registry, then collapse spawn, resume, binary paths, and private options. The PRs in order are PR #3, PR-0, PR-1, PR-2, PR-3, PR-4, PR-5, and PR-6. The operator lands the stack. Nobody in this program merges.
 
 ## How to read this
@@ -515,8 +517,8 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 
 **Build.**
 
-- [ ] Rewrite the README first paragraph so Grok Bot is the deployment target and Grok Build is one of five agents with no special standing.
-- [ ] Point package metadata at `Rainnystone/larkent-for-grokbot` with neutral agent wording.
+- [ ] Use the current Larkent branding and upstream attribution; preserve all five agents as equal choices.
+- [ ] Point package metadata at `Rainnystone/larkent` with neutral agent wording.
 - [ ] Delete leftover `usesNativeSessionId`, `usesFinalAnswerReply`, env-var binary helpers, and any other symbol the static test flags.
 
 **You see.**
@@ -534,7 +536,7 @@ Each live lane runs on its own cloud VM at the PR head. Drive through `control-c
 **Verify, live.** Tests alone are not sufficient verification. A PR is verified only when its unit, live, and perf boxes are all checked. Ten lanes on `grok-4.6-fast-xhigh` at the PR head, per the boot recipe.
 
 - [ ] Lane 1. Regression lane against trunk. Run `pnpm test` at trunk and head. If trunk lacks later pin tests, record that and gate the full P1 to P7 suite plus README first-paragraph wording. Save `pr6-l1-regression.png`. Pass when head `pnpm ci:local` exits 0.
-- [ ] Lane 2. README and README.zh first paragraph name Grok Bot as the deployment target and Grok Build as one of five agents. Save `pr6-l2-readme.png`. Pass when `tests/unit/docs/readme-contract.test.ts` covers the new wording and no longer treats Grok Build as the primary engine.
+- [ ] Lane 2. README and README.zh present Larkent, credit the upstream inspiration, and name all five CLI agents. Save `pr6-l2-readme.png`. Pass when `tests/unit/docs/readme-contract.test.ts` covers the new wording and no longer treats Grok Build as the primary engine.
 - [ ] Lane 3. `package.json` `description`, `repository`, `bugs`, and `homepage` point at this repo with neutral agent wording. Save `pr6-l3-package.png`. Pass when those fields no longer cite the upstream fork or name Grok Build as the primary engine.
 - [ ] Lane 4. Dead code flagged by the static contract test is gone. Save `pr6-l4-dead.png`. Pass when `tests/static/contracts.test.ts` exits 0.
 - [ ] Lane 5. P1 goldens still match. Save `pr6-l5-p1.png`. Pass when Feishu sequences match.

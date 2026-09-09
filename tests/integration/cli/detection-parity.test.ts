@@ -10,6 +10,7 @@ import { ProcessPool } from '../../../src/bot/process-pool.js';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
+import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { ClaudeAdapter } from '../../../src/agent/claude/adapter.js';
@@ -19,7 +20,7 @@ import { GrokAdapter } from '../../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../../src/agent/kimi/adapter.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
-import { writeScriptedJsonlExecutable, writeVersionExecutable } from '../../helpers/fake-executable.js';
+import { writeScriptedJsonlExecutable, writeVersionExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
 import {
   PIN_AGENT_KINDS,
   adapterDisplayName,
@@ -52,7 +53,14 @@ describe('P7 preflight and detection', () => {
     const dir = await mkdtemp(join(tmpdir(), 'pin-detect-path-'));
     const grok = await writeVersionExecutable(dir, 'grok', 'grok 0.0.0-pin');
     const claude = await writeVersionExecutable(dir, 'claude', 'claude 0.0.0-pin');
-    const agent = await writeVersionExecutable(dir, 'agent', 'cursor-agent 2026.08.28-pin');
+    const codex = await writeVersionExecutable(dir, 'codex', 'codex 0.0.0-pin');
+    const kimi = await writeVersionExecutable(dir, 'kimi', 'kimi 0.0.0-pin');
+    const agent = join(dir, process.platform === 'win32' ? 'agent.CMD' : 'agent');
+    // Support both probes: detection may fall back from version to Cursor-specific help.
+    await writeScriptedJsonlExecutableFile(agent, agent + '.argv.json', {
+      version: 'cursor-agent 2026.08.28-pin',
+      helpText: cursorVersionedHelpText(),
+    });
     expect(cursorVersionedHelpText()).toContain('stream-json');
 
     await withEnvBin('grok', undefined, async () => {
@@ -64,6 +72,8 @@ describe('P7 preflight and detection', () => {
                 await expect(detectInstalledAgents()).resolves.toEqual([
                   { kind: 'grok', binaryPath: grok },
                   { kind: 'claude', binaryPath: claude },
+                  { kind: 'codex', binaryPath: codex },
+                  { kind: 'kimi', binaryPath: kimi },
                   { kind: 'cursor', binaryPath: agent },
                 ]);
               });
@@ -146,6 +156,7 @@ async function createDoctorHarness(
   const tmp = await createTmpProfile(`doctor-parity-${kind}-${mode}-`);
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   workspaces.setCwd('chat-1', tmp.workspace);
   const activeRuns = new ActiveRuns();
@@ -190,6 +201,7 @@ async function createDoctorHarness(
   });
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
+      resumeCandidates,
       channel: channel as unknown as CommandContext['channel'],
       msg: message(content, `${kind}-${mode}`),
       scope: 'chat-1',
