@@ -1,60 +1,53 @@
 import { readFile } from 'node:fs/promises';
 import { paths } from '../config/paths';
-import { log } from '../core/logger';
 import { writeFileAtomic } from '../platform/atomic-write';
+import { PersistenceQueue } from '../platform/persistence-queue';
+import { upgradeSessionDocument, type SessionEntry } from './store-format';
 
-export interface SessionEntry {
-  /** May be absent if the entry was created by /timeout before any run
-   * recorded a session id. Treat absence as "no resumable session". */
-  sessionId?: string;
-  /** Pinned cwd for the resumable session. Absent for the same reason. */
-  cwd?: string;
-  updatedAt: number;
-  /** Per-scope idle-timeout override (minutes). 0 = explicitly off for this
-   * scope, undefined = follow global default. Session resets preserve this
-   * scope preference while removing the resumable session id/cwd. */
-  idleTimeoutMinutes?: number;
-}
+export type { SessionEntry } from './store-format';
 
 type SessionMap = Record<string, SessionEntry>;
 
 export class SessionStore {
-  private data: SessionMap = {};
-  private saving: Promise<void> = Promise.resolve();
+  private data: SessionMap = Object.create(null);
+  private queue = new PersistenceQueue();
+  private loadFailure: { error: unknown } | undefined;
+  private loading: Promise<void> | undefined;
   private readonly path: string;
 
   constructor(path: string = paths.sessionsFile) {
     this.path = path;
   }
 
-  async load(): Promise<void> {
+  load(): Promise<void> {
+    if (this.loading) return this.loading;
+    this.loading = this.loadDocument().finally(() => { this.loading = undefined; });
+    return this.loading;
+  }
+
+  private async loadDocument(): Promise<void> {
+    // Reload is the explicit recovery boundary: drain even a failed queue
+    // before reading, and keep mutations blocked until publication completes.
+    await this.queue.flush().catch(() => {});
     try {
-      const text = await readFile(this.path, 'utf8');
-      const raw = JSON.parse(text) as Record<string, Partial<SessionEntry>>;
-      this.data = {};
-      for (const [chatId, entry] of Object.entries(raw)) {
-        if (!entry || typeof entry.updatedAt !== 'number') continue;
-        // Drop entries without a `cwd`/`sessionId` pair *unless* there's
-        // some other persisted state worth keeping (e.g. an idle-timeout
-        // override). Resuming a session whose cwd we don't know about
-        // would hang claude on a missing jsonl, so resume keys still need
-        // the full pair; but a bare timeout override is fine on its own.
-        const sessionId = typeof entry.sessionId === 'string' ? entry.sessionId : undefined;
-        const cwd = typeof entry.cwd === 'string' ? entry.cwd : undefined;
-        const idleTimeoutMinutes =
-          typeof entry.idleTimeoutMinutes === 'number' ? entry.idleTimeoutMinutes : undefined;
-        const hasSession = sessionId !== undefined && cwd !== undefined;
-        if (!hasSession && idleTimeoutMinutes === undefined) continue;
-        this.data[chatId] = {
-          ...(sessionId !== undefined ? { sessionId } : {}),
-          ...(cwd !== undefined ? { cwd } : {}),
-          updatedAt: entry.updatedAt,
-          ...(idleTimeoutMinutes !== undefined ? { idleTimeoutMinutes } : {}),
-        };
+      let text: string | undefined;
+      try {
+        text = await readFile(this.path, 'utf8');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error;
       }
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return;
-      throw err;
+      const result = text === undefined
+        ? { document: { schemaVersion: 2 as const, entries: Object.create(null) as SessionMap }, upgraded: true }
+        : upgradeSessionDocument(JSON.parse(text));
+      if (result.upgraded) {
+        await writeFileAtomic(this.path, `${JSON.stringify(result.document, null, 2)}\n`, { mode: 0o600 });
+      }
+      this.data = result.document.entries;
+      this.queue = new PersistenceQueue();
+      this.loadFailure = undefined;
+    } catch (error) {
+      this.loadFailure = { error };
+      throw error;
     }
   }
 
@@ -67,19 +60,20 @@ export class SessionStore {
     const entry = this.data[chatId];
     if (!entry) return undefined;
     if (entry.cwd !== cwd) return undefined;
-    return entry.sessionId;
+    return entry.resumeHandle;
   }
 
   getRaw(chatId: string): SessionEntry | undefined {
     return this.data[chatId];
   }
 
-  set(chatId: string, sessionId: string, cwd: string): void {
+  set(chatId: string, resumeHandle: string, cwd: string): void {
+    this.assertMutable();
     // Preserve idleTimeoutMinutes across run starts — it's a per-scope
-    // preference, not per-run-instance state. /new (clear) wipes it.
+    // preference, not per-run-instance state. Session resets preserve it.
     const prev = this.data[chatId];
     this.data[chatId] = {
-      sessionId,
+      resumeHandle,
       cwd,
       updatedAt: Date.now(),
       ...(prev?.idleTimeoutMinutes !== undefined
@@ -90,6 +84,7 @@ export class SessionStore {
   }
 
   clear(chatId: string): void {
+    this.assertMutable();
     const prev = this.data[chatId];
     if (!prev) return;
     if (prev.idleTimeoutMinutes !== undefined) {
@@ -109,6 +104,8 @@ export class SessionStore {
   }
 
   setIdleTimeoutMinutes(chatId: string, minutes: number): void {
+    this.assertMutable();
+    if (Number.isNaN(minutes)) throw new Error('Invalid idle timeout');
     const clamped = Math.min(Math.max(Math.floor(minutes), 0), 120);
     const prev = this.data[chatId];
     this.data[chatId] = {
@@ -122,27 +119,33 @@ export class SessionStore {
   /** Remove the override so this scope falls back to the global default.
    * Returns true if something was actually removed. */
   clearIdleTimeoutOverride(chatId: string): boolean {
+    this.assertMutable();
     const prev = this.data[chatId];
     if (!prev || prev.idleTimeoutMinutes === undefined) return false;
     const { idleTimeoutMinutes: _, ...rest } = prev;
-    this.data[chatId] = { ...rest, updatedAt: Date.now() };
+    if (rest.resumeHandle !== undefined && rest.cwd !== undefined) {
+      this.data[chatId] = { ...rest, updatedAt: Date.now() };
+    } else {
+      delete this.data[chatId];
+    }
     this.schedulePersist();
     return true;
   }
 
   async flush(): Promise<void> {
-    await this.saving;
+    if (this.loading) await this.loading;
+    if (this.loadFailure) throw this.loadFailure.error;
+    await this.queue.flush();
+  }
+
+  private assertMutable(): void {
+    if (this.loadFailure) throw this.loadFailure.error;
+    if (this.loading) throw new Error('Session store is loading');
+    this.queue.assertHealthy();
   }
 
   private schedulePersist(): void {
-    this.saving = this.saving
-      .then(async () => {
-        await writeFileAtomic(this.path, `${JSON.stringify(this.data, null, 2)}\n`, {
-          mode: 0o600,
-        });
-      })
-      .catch((err: unknown) => {
-        log.fail('session', err, { step: 'persist' });
-      });
+    const snapshot = `${JSON.stringify({ schemaVersion: 2, entries: this.data }, null, 2)}\n`;
+    this.queue.enqueue(() => writeFileAtomic(this.path, snapshot, { mode: 0o600 }));
   }
 }

@@ -754,7 +754,7 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const card = statusCard({
     profileName: ctx.controls.profile,
     cwd,
-    sessionId: isThreadResume ? catalogEntry?.resumeHandle : sess?.sessionId,
+    sessionId: isThreadResume ? catalogEntry?.resumeHandle : sess?.resumeHandle,
     emptySessionText: isThreadResume ? '(未建立)' : undefined,
     sessionStale: !isThreadResume && Boolean(cwd && sess && sess.cwd !== cwd),
     agentName: ctx.agent.displayName,
