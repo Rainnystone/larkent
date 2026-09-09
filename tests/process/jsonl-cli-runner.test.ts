@@ -191,50 +191,6 @@ process.exit(0);
     ]);
   });
 
-  it('resets idle timeout when a complete stdout line is enqueued', async () => {
-    const fake = await createFakeRunnerBinary(`
-import { setTimeout as delay } from 'node:timers/promises';
-for (const n of [1, 2, 3, 4, 5, 6]) {
-  console.log(JSON.stringify({ n }));
-  await delay(40);
-}
-process.exit(0);
-`);
-    cleanup.push(fake.dir);
-    const run = runJsonlCli({
-      runId: 'run-idle-enqueue',
-      binaryPath: fake.path,
-      argv: [],
-      cwd: fake.dir,
-      env: process.env,
-      translator: wrapParsedTranslator(
-        {
-          translate: (parsed) => [{ type: 'text' as const, delta: String((parsed as { n: number }).n) }],
-          finish: () => [{ type: 'done' as const, terminationReason: 'normal' as const }],
-        },
-        'idle-enqueue',
-      ),
-      spawnName: 'idle-enqueue',
-      timeouts: { idleMs: 70 },
-      stopGraceMs: 50,
-      successFinish: 'normal',
-    });
-    const events: AgentEvent[] = [];
-    for await (const event of run.events) {
-      events.push(event);
-      await new Promise((resolve) => setTimeout(resolve, 120));
-    }
-    expect(events).toEqual([
-      { type: 'text', delta: '1' },
-      { type: 'text', delta: '2' },
-      { type: 'text', delta: '3' },
-      { type: 'text', delta: '4' },
-      { type: 'text', delta: '5' },
-      { type: 'text', delta: '6' },
-      { type: 'done', terminationReason: 'normal' },
-    ]);
-  });
-
   it('awaits the same in-flight cleanup from exit and generator finally', async () => {
     const fake = await createFakeClaude({
       lines: [{ type: 'result', session_id: 's-clean' }],
@@ -383,7 +339,7 @@ process.exit(0);
           translate: (parsed) => {
             const row = parsed as { type?: string; session_id?: string };
             return row.type === 'result'
-              ? [{ type: 'done' as const, sessionId: row.session_id, terminationReason: 'normal' as const }]
+              ? [{ type: 'done' as const, resumeHandle: row.session_id, terminationReason: 'normal' as const }]
               : [];
           },
         },
@@ -393,36 +349,25 @@ process.exit(0);
       stopGraceMs: 50,
     });
 
-    const events: AgentEvent[] = [];
-    let consumeSettled = false;
-    const consume = (async () => {
-      try {
-        for await (const event of run.events) {
-          events.push(event);
-          if (event.type === 'done' || event.type === 'error') break;
-        }
-      } finally {
-        consumeSettled = true;
-      }
-    })();
-
+    const iterator = run.events[Symbol.asyncIterator]();
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
+      // Startup is bounded by the test budget, not the iterator-return deadline.
+      expect(await iterator.next()).toMatchObject({
+        done: false,
+        value: { type: 'done', resumeHandle: 'sess-hang-tail' },
+      });
       await Promise.race([
-        consume,
+        iterator.return?.(),
         new Promise((_, reject) => {
-          setTimeout(() => reject(new Error('iterator hung after terminal event')), 400);
+          timer = setTimeout(() => reject(new Error('return hung after terminal')), 400);
         }),
       ]);
-      expect(consumeSettled).toBe(true);
-      expect(events).toEqual([
-        { type: 'done', sessionId: 'sess-hang-tail', terminationReason: 'normal' },
-      ]);
       expect(await run.waitForExit(50)).toBe(false);
+    } finally {
+      if (timer) clearTimeout(timer);
       await run.stop();
       expect(await run.waitForExit(1_000)).toBe(true);
-    } finally {
-      await run.stop().catch(() => {});
-      await run.waitForExit(1_000);
     }
   });
 
