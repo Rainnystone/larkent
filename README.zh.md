@@ -5,6 +5,8 @@
 本 README 是 **Grok Bot** 的执行手册。每一步都是命令 + 可核对结果。需要人的步骤标 **HUMAN**。
 英文：[README.md](./README.md)。
 
+**给 setup agent 的入口：[首次接入指南](docs/agent-setup.md)。** 首次 setup 必须同时完成常规注册/授权和 owner 的完整用户身份授权，并验证 wiki/文档与跨群记录读取。
+
 没有发 npm。从源码安装。
 
 ## 选 agent
@@ -133,27 +135,9 @@ node bin/lark-channel-bridge.mjs run --agent <AGENT> \
 
 ## Owner OAuth（CLI，不要塞进 coding-agent 那一轮）
 
-读群历史、改租户文档之前必须做。Token 写在 **当前 profile 的 lark-cli 目录**。
-这是首次 init 的一步，不是某个 grok/kimi 进程一直挂着。
+**首次 setup 的必做步骤。** 注册完成后，setup agent 主动请 owner 完成一次完整用户身份 OAuth；按 [首次接入指南第 3–4 步](docs/agent-setup.md#3-主动请求一次完整用户身份授权)执行 `--domain all`、当前 profile 环境绑定、私下扫码、device flow 续接和实际读取验证。该指南是授权步骤的统一维护位置。
 
-**HUMAN** 打开 `verification_url`（10 分钟有效）。**前台**跑；不要把
-device-code 等待丢到后台。
-
-```bash
-export LARK_CHANNEL=1 LARK_CHANNEL_HOME=~/.lark-channel LARK_CHANNEL_PROFILE=<AGENT> \
-  LARK_CHANNEL_CONFIG=~/.lark-channel/profiles/<AGENT>/lark-cli-source/config.json \
-  LARKSUITE_CLI_CONFIG_DIR=~/.lark-channel/profiles/<AGENT>/lark-cli
-
-lark-cli auth login --no-wait --json --domain im,docs,drive,wiki,sheets,base,markdown,task,calendar
-# 把 verification_url 和 device_code 给 owner
-lark-cli auth login --device-code "<device_code>"
-lark-cli config strict-mode off && lark-cli config default-as bot
-lark-cli auth status --json
-# 通过：identities.user.status == "ready"，identities.bot.status == "ready"，defaultAs == "bot"
-```
-
-这就是 **lark-cli 身份策略**：说话是 bot；`--as user` 只用于读/资产。
-授权链接不要发到群里（谁先点谁绑 token）。
+**lark-cli 身份策略**：发言保持 bot 身份；读取 owner 可见的 wiki、文档和其他群记录明确使用 `--as user`。Token 写在 **当前 profile 的 lark-cli 目录**，有效授权在重启后复用。应用注册、bot ready 或仅部分业务授权不代表完整 setup 已完成。
 
 ## 运行
 

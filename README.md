@@ -4,6 +4,8 @@ A bridge that puts CLI coding agents behind Feishu/Lark bots. One machine (a VPS
 
 This README is the runbook for **Grok Bot**. Every step is a command plus a checkable result. Decision points that need a human are marked **HUMAN**. Chinese: [README.zh.md](./README.zh.md).
 
+**Setup agents: start with the [first setup guide](docs/agent-setup.md).** First setup requires app provisioning, the owner's full user-identity authorization, and verified wiki/document and cross-chat history reads.
+
 Not published to npm. Install from source.
 
 ## Pick an agent
@@ -138,29 +140,17 @@ Secrets go to the per-profile keystore, not the JSON file.
 
 ## Owner OAuth (CLI — not inside a coding-agent turn)
 
-Needed before the bot can read group history or edit tenant docs. Tokens are
-stored in the **profile-local lark-cli directory**. This is a first-init step,
-not a leftover `grok`/`kimi` process.
+**Required during first setup.** After app provisioning, the setup agent must
+ask the owner to complete full user-identity OAuth. Follow [steps 3–4 of the
+setup guide](docs/agent-setup.md#3-主动请求一次完整用户身份授权) for `--domain all`,
+the correct profile environment, a private authorization URL/QR, device-flow
+completion, and real read checks. That guide owns the authorization procedure.
 
-**HUMAN** opens `verification_url` (10 min TTL). Run in the **foreground**;
-do not background the device-code wait.
-
-```bash
-export LARK_CHANNEL=1 LARK_CHANNEL_HOME=~/.lark-channel LARK_CHANNEL_PROFILE=<AGENT> \
-  LARK_CHANNEL_CONFIG=~/.lark-channel/profiles/<AGENT>/lark-cli-source/config.json \
-  LARKSUITE_CLI_CONFIG_DIR=~/.lark-channel/profiles/<AGENT>/lark-cli
-
-lark-cli auth login --no-wait --json --domain im,docs,drive,wiki,sheets,base,markdown,task,calendar
-# print verification_url + device_code to the owner
-lark-cli auth login --device-code "<device_code>"
-lark-cli config strict-mode off && lark-cli config default-as bot
-lark-cli auth status --json
-# pass: identities.user.status == "ready", identities.bot.status == "ready", defaultAs == "bot"
-```
-
-This is the **lark-cli identity policy**: speak as bot; `--as user` only for
-reads/assets. Never send an OAuth URL into a group (whoever clicks binds the
-token).
+The **lark-cli identity policy** keeps bot as the speaking identity and uses
+explicit `--as user` for the owner's accessible wiki pages, documents, and
+other chats. Tokens remain in the **profile-local lark-cli directory** and
+valid grants survive restarts. App registration, bot-ready status, or a partial
+user grant does not complete setup.
 
 ## Run
 
