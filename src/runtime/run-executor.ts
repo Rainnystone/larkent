@@ -340,6 +340,7 @@ class EventFanout {
             if (wasActive && this.subscribers === 0 && !this.done) {
               await this.settle(!this.terminal);
             }
+            if (this.failed) throw this.error;
             return { done: true, value: undefined };
           },
         };

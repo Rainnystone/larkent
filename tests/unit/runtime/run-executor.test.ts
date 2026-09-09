@@ -9,6 +9,42 @@ import type { AgentAdapter, AgentRun, AgentEvent } from '../../../src/agent/type
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 describe('RunExecutor settlement', () => {
+  it.each(['return', 'terminal break'] as const)('reports completed cleanup failure on subscriber %s', async mode => {
+    const failure = new Error('adapter cleanup failed');
+    const cleanup = deferred<void>();
+    const stop = vi.fn(async () => { throw failure; });
+    const waitForExit = vi.fn(async () => { await cleanup.promise; throw failure; });
+    const h = harness(adapter({
+      events: (async function* () { yield { type: 'done', terminationReason: 'normal' } as const; })(),
+      stop, waitForExit,
+    }));
+    const execution = await h.executor.submit({ scopeId: 's', policy: policy() });
+    const finishFailure = execution.finished.catch(error => error);
+    const observeFailure = async () => {
+      cleanup.resolve();
+      expect(await finishFailure).toBe(failure);
+    };
+    if (mode === 'return') {
+      const iterator = execution.subscribe()[Symbol.asyncIterator]();
+      expect(await iterator.next()).toMatchObject({ value: { type: 'done' } });
+      await observeFailure();
+      await expect(iterator.return!()).rejects.toBe(failure);
+    } else {
+      const consume = async () => {
+        for await (const event of execution.subscribe()) {
+          expect(event.type).toBe('done');
+          await observeFailure();
+          break;
+        }
+      };
+      await expect(consume()).rejects.toBe(failure);
+    }
+    expect(h.activeRuns.get('s')?.run).toBe(execution.run);
+    expect(h.pool.snapshot().active).toBe(1);
+    expect(stop).not.toHaveBeenCalled();
+    expect(waitForExit).toHaveBeenCalledTimes(1);
+  });
+
   it('does not release ownership while a force stop joins an in-flight settlement check', async () => {
     vi.useFakeTimers();
     const firstWait = deferred<boolean>();
