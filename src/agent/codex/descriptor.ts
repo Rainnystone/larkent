@@ -1,3 +1,4 @@
+import { listCodexResumeHistory } from './history';
 import { defineDescriptor } from '../definition';
 import { CodexAdapter } from './adapter';
 import { codexMetadata } from './metadata';
@@ -6,6 +7,9 @@ import { codexAdapterAgentOptions } from './options';
 
 export const codexDescriptor = defineDescriptor({
   ...codexMetadata,
+  acceptsImagePaths: true,
+  acceptsRawResumeHandle: false,
+  listResumeHistory: listCodexResumeHistory,
   detectionOrder: 2,
   resolveProfileBinary: (profile) => profile.agent.binaryPath ?? profile.codex?.binaryPath,
   detectBinary: (command) => command

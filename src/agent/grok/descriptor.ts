@@ -5,6 +5,9 @@ import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platfo
 
 export const grokDescriptor = defineDescriptor({
   ...grokMetadata,
+  acceptsImagePaths: false,
+  acceptsRawResumeHandle: true,
+  listResumeHistory: async () => [],
   detectionOrder: 0,
   resolveProfileBinary: (profile) => profile.agent.binaryPath,
   detectBinary: (command) => command

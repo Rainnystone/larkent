@@ -1,3 +1,4 @@
+import { listClaudeResumeHistory } from './history';
 import { defineDescriptor } from '../definition';
 import { ClaudeAdapter } from './adapter';
 import { claudeMetadata } from './metadata';
@@ -5,6 +6,9 @@ import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platfo
 
 export const claudeDescriptor = defineDescriptor({
   ...claudeMetadata,
+  acceptsImagePaths: false,
+  acceptsRawResumeHandle: true,
+  listResumeHistory: listClaudeResumeHistory,
   detectionOrder: 1,
   resolveProfileBinary: (profile) => profile.agent.binaryPath,
   detectBinary: (command) => command

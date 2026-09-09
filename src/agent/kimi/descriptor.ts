@@ -5,6 +5,9 @@ import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platfo
 
 export const kimiDescriptor = defineDescriptor({
   ...kimiMetadata,
+  acceptsImagePaths: false,
+  acceptsRawResumeHandle: true,
+  listResumeHistory: async () => [],
   detectionOrder: 3,
   resolveProfileBinary: (profile) => profile.agent.binaryPath,
   detectBinary: (command) => command

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { descriptorFor, requireAgentKind } from '../../src/agent/registry.js';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -19,6 +20,12 @@ const collectTsFiles = (path: string): string[] => {
 };
 
 describe('static architecture contracts', () => {
+  it('declares image and raw resume behavior for all five adapters', () => {
+    const descriptors = ['claude', 'codex', 'kimi', 'grok', 'cursor'].map(kind => descriptorFor(requireAgentKind(kind)));
+    expect(descriptors.map(d => d.acceptsImagePaths)).toEqual([false, true, false, false, false]);
+    expect(descriptors.map(d => d.acceptsRawResumeHandle)).toEqual([true, false, true, true, true]);
+  });
+
   it('routes factories and detection through descriptors without reverse adapter imports', () => {
     expect(read('src/runtime/agent-runtime.ts')).not.toMatch(/\bfactories\b|new \w+Adapter\b/);
     expect(read('src/cli/agent-detection.ts')).not.toMatch(

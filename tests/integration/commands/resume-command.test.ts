@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
-import { claudeCapability, codexCapability } from '../../../src/agent/capability.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import type { ChatModeCache } from '../../../src/bot/chat-mode-cache.js';
 import { PendingQueue } from '../../../src/bot/pending-queue.js';
@@ -16,6 +15,20 @@ import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import type { CodexThreadHistoryEntry } from '../../../src/session/codex-history.js';
 import type { SessionSummary } from '../../../src/session/history.js';
+import { listRecentSessions } from '../../../src/session/history.js';
+import { listCodexThreadHistory } from '../../../src/session/codex-history.js';
+import { log } from '../../../src/core/logger.js';
+import { descriptorFor } from '../../../src/agent/registry.js';
+import type { ResumeHistoryInput } from '../../../src/agent/definition.js';
+
+// External boundaries stay isolated even before the unified provider is implemented.
+vi.mock('../../../src/session/history.js', async (original) => ({
+  ...await original<typeof import('../../../src/session/history.js')>(),
+  listRecentSessions: vi.fn(async () => []),
+}));
+vi.mock('../../../src/session/codex-history.js', () => ({
+  listCodexThreadHistory: vi.fn(async () => []),
+}));
 import { createFakeAgent } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
@@ -34,14 +47,88 @@ interface Harness {
   pending: PendingQueue;
   run(content: string, options?: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' }): Promise<boolean>;
   dispatchResumeArg(arg: string): Promise<void>;
-  codexHistoryBinaries: string[];
+  historyInputs: ResumeHistoryInput[];
 }
 
 const cleanups: Array<() => Promise<void>> = [];
 
 describe('agent-aware resume commands', () => {
   afterEach(async () => {
+    vi.mocked(listRecentSessions).mockReset().mockResolvedValue([]);
+    vi.mocked(listCodexThreadHistory).mockReset().mockResolvedValue([]);
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
+  });
+
+  it('rejects unknown descriptors instead of falling back to local history', () => {
+    expect(() => descriptorFor('unknown' as AgentKind)).toThrow('unknown agent kind');
+  });
+
+  it.each(['kimi', 'grok', 'cursor'] as const)('keeps %s catalog resume candidates and raw current handles', async (kind) => {
+    const h = await createHarness(kind);
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'session-current', now: 1000 });
+    await h.run('/resume');
+    expect(lastMarkdown(h.channel)).toContain('会话可恢复');
+    await h.run('/resume use session-current');
+    expect(h.sessions.resumeFor('chat-1', h.identity.cwdRealpath)).toBe('session-current');
+  });
+
+  it('maps Claude history through its descriptor', async () => {
+    const h = await createHarness('claude');
+    vi.mocked(listRecentSessions).mockResolvedValueOnce([claudeSession('session-1', 'hello', 1234)]);
+    const input = { profile: h.controls.profileConfig, profileDir: h.tmp.profile, cwd: h.tmp.workspace, limit: 3 };
+    expect(await descriptorFor('claude').listResumeHistory(input)).toEqual([{ resumeHandle: 'session-1', preview: 'hello', updatedAtMs: 1234, lineCount: 1 }]);
+    expect(listRecentSessions).toHaveBeenLastCalledWith(h.tmp.workspace, 3);
+  });
+
+  it('maps Codex history with the factory binary and profile environment', async () => {
+    const h = await createHarness('codex');
+    const profile = h.controls.profileConfig;
+    profile.agent.binaryPath = '/fake/pinned-codex';
+    profile.agent.options = { codexHome: '/fake/codex-home', inheritCodexHome: false };
+    vi.mocked(listCodexThreadHistory).mockResolvedValueOnce([{ ...codexThread('thread-1', 'preview', 4321), name: 'title' }]);
+    expect(await descriptorFor('codex').listResumeHistory({ profile, profileDir: h.tmp.profile, cwd: h.tmp.workspace, limit: 3 })).toEqual([{ resumeHandle: 'thread-1', preview: 'title', updatedAtMs: 4321, detail: 'Codex · exec' }]);
+    expect(listCodexThreadHistory).toHaveBeenLastCalledWith({ binary: '/fake/pinned-codex', cwd: h.tmp.workspace, limit: 3, profileStateDir: h.tmp.profile, codexHome: '/fake/codex-home', inheritCodexHome: false });
+  });
+
+  it('returns no Codex history when no binary is configured', async () => {
+    const h = await createHarness('codex');
+    h.controls.profileConfig.agent.binaryPath = undefined;
+    h.controls.profileConfig.codex = undefined;
+    expect(await descriptorFor('codex').listResumeHistory({ profile: h.controls.profileConfig, profileDir: h.tmp.profile, cwd: h.tmp.workspace, limit: 5 })).toEqual([]);
+    expect(listCodexThreadHistory).not.toHaveBeenCalled();
+  });
+
+  it('returns empty history with a profile-scoped error when Codex query fails', async () => {
+    const h = await createHarness('codex');
+    const warning = vi.spyOn(log, 'warn');
+    vi.mocked(listCodexThreadHistory).mockRejectedValueOnce(new Error('fixture query failed'));
+    expect(await descriptorFor('codex').listResumeHistory({ profile: h.controls.profileConfig, profileDir: h.tmp.profile, cwd: h.tmp.workspace, limit: 5 })).toEqual([]);
+    expect(warning).toHaveBeenCalledWith('session', 'codex-history-failed', { profile: h.tmp.profile, message: 'fixture query failed' });
+    warning.mockRestore();
+  });
+
+  it.each(['kimi', 'grok', 'cursor'] as const)('%s does not invent external history', async kind => {
+    const h = await createHarness(kind);
+    expect(await descriptorFor(kind).listResumeHistory({ profile: h.controls.profileConfig, profileDir: h.tmp.profile, cwd: h.tmp.workspace, limit: 5 })).toEqual([]);
+    expect(listRecentSessions).not.toHaveBeenCalled();
+    expect(listCodexThreadHistory).not.toHaveBeenCalled();
+  });
+
+  it('uses the catalog current handle before the SessionStore handle', async () => {
+    const h = await createHarness('claude');
+    h.sessions.set('chat-1', 'stale-session', h.identity.cwdRealpath);
+    h.catalog.upsertActive({ ...h.identity, resumeHandle: 'catalog-session', now: 1000 });
+    await h.run('/resume');
+    await h.run(`/resume use ${resumeNonce(lastMarkdown(h.channel))}`);
+    expect(h.sessions.resumeFor('chat-1', h.identity.cwdRealpath)).toBe('catalog-session');
+  });
+
+  it('offers the SessionStore current handle when the catalog has no entry', async () => {
+    const h = await createHarness('claude');
+    h.sessions.set('chat-1', 'stored-session', h.identity.cwdRealpath);
+    await h.run('/resume');
+    await h.run(`/resume use ${resumeNonce(lastMarkdown(h.channel))}`);
+    expect(h.catalog.activeFor(h.identity)?.resumeHandle).toBe('stored-session');
   });
 
   it('archives only the current catalog entry when starting a new conversation', async () => {
@@ -277,7 +364,8 @@ describe('agent-aware resume commands', () => {
     }
 
     await expect(h.run('/resume')).resolves.toBe(true);
-    expect(h.codexHistoryBinaries).toEqual(['/opt/pinned/codex-a']);
+    expect(h.historyInputs).toHaveLength(1);
+    expect(h.historyInputs[0]).toMatchObject({ profile: h.controls.profileConfig, profileDir: join(h.tmp.profile, 'profiles', 'codex'), cwd: h.tmp.workspace, limit: 5 });
   });
 });
 
@@ -292,7 +380,7 @@ async function createHarness(
   const catalog = new SessionCatalog(join(tmp.profile, 'session-catalog.json'));
   const claudeHistory: SessionSummary[] = [];
   const codexHistory: CodexThreadHistoryEntry[] = [];
-  const codexHistoryBinaries: string[] = [];
+  const historyInputs: ResumeHistoryInput[] = [];
   const activeRuns = new ActiveRuns();
   const pending = new PendingQueue(60_000, () => {});
   const agent = createFakeAgent();
@@ -336,10 +424,11 @@ async function createHarness(
       agent,
       activeRuns,
       controls,
-      claudeHistoryProvider: async () => claudeHistory,
-      codexHistoryProvider: async (input) => {
-        codexHistoryBinaries.push(input.binary);
-        return codexHistory;
+      resumeHistoryProvider: async (input) => {
+        historyInputs.push(input);
+        return agentKind === 'codex'
+          ? codexHistory.map(t => ({ resumeHandle: t.threadId, preview: t.name || t.preview, updatedAtMs: t.updatedAtMs, detail: `Codex · ${t.source}` }))
+          : claudeHistory.map(t => ({ resumeHandle: t.sessionId, preview: t.preview, updatedAtMs: t.mtime, lineCount: t.lineCount }));
       },
     });
 
@@ -377,7 +466,7 @@ async function createHarness(
     pending,
     run,
     dispatchResumeArg,
-    codexHistoryBinaries,
+    historyInputs,
   };
 }
 
@@ -402,7 +491,7 @@ async function commandIdentity(
 ): Promise<SessionCatalogIdentity> {
   const workspace = await resolveWorkingDirectory(cwd);
   if (!workspace.ok) throw new Error(workspace.userVisible);
-  const capability = agentKind === 'codex' ? codexCapability(profileConfig) : claudeCapability(profileConfig);
+  const capability = descriptorFor(agentKind).capability(profileConfig);
   const access = canUseDm(profileConfig, controls, 'ou-user');
   const policy = evaluateRunPolicy({
     scope: {

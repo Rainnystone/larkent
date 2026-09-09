@@ -131,25 +131,17 @@ async function createHarness(kind: PinAgentKind): Promise<{
       agent,
       activeRuns: new ActiveRuns(),
       controls,
-      claudeHistoryProvider: async () => [
-        {
-          sessionId: 'sess-slash-claude',
-          preview: 'pinned preview',
-          mtime: Date.now(),
-          lineCount: 3,
-        },
-      ],
-      codexHistoryProvider: async () => [
-        {
-          threadId: 'thread-slash-codex',
-          name: 'pinned thread',
-          preview: 'pinned preview',
-          cwd: workspaceRealpath,
-          createdAtMs: Date.now(),
-          updatedAtMs: Date.now(),
-          source: 'session_index',
-        },
-      ],
+      resumeHistoryProvider: async () => kind === 'claude' ? [{
+        resumeHandle: 'sess-slash-claude',
+        preview: 'pinned preview',
+        updatedAtMs: Date.now(),
+        lineCount: 3,
+      }] : kind === 'codex' ? [{
+        resumeHandle: 'thread-slash-codex',
+        preview: 'pinned thread',
+        updatedAtMs: Date.now(),
+        detail: 'Codex · session_index',
+      }] : [],
     });
   cleanups.push(async () => {
     await Promise.all([sessions.flush(), workspaces.flush(), catalog.flush()]);

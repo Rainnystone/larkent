@@ -5,6 +5,9 @@ import { detectCursorBinary } from './detection';
 
 export const cursorDescriptor = defineDescriptor({
   ...cursorMetadata,
+  acceptsImagePaths: false,
+  acceptsRawResumeHandle: true,
+  listResumeHistory: async () => [],
   detectionOrder: 4,
   resolveProfileBinary: (profile) => profile.agent.binaryPath,
   detectBinary: detectCursorBinary,

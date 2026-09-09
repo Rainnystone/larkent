@@ -68,8 +68,26 @@ export interface AgentFactoryContext {
   larkChannel?: LarkChannelEnvContext;
 }
 
+export interface ResumeHistoryEntry {
+  resumeHandle: string;
+  preview: string;
+  updatedAtMs: number;
+  lineCount?: number;
+  detail?: string;
+}
+
+export interface ResumeHistoryInput {
+  profile: ProfileConfig;
+  profileDir: string;
+  cwd: string;
+  limit: number;
+}
+
 export interface AgentDescriptorShape<K extends string = string, S extends string = string>
   extends AgentMetadata<K, S> {
+  readonly acceptsImagePaths: boolean;
+  readonly acceptsRawResumeHandle: boolean;
+  listResumeHistory(input: ResumeHistoryInput): Promise<ResumeHistoryEntry[]>;
   create(context: AgentFactoryContext): AgentAdapter;
   resolveProfileBinary(profile: ProfileConfig): string | undefined;
   detectBinary(envCommand?: string): Promise<string>;
