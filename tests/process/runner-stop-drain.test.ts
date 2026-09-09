@@ -3,7 +3,6 @@ import { PassThrough, type Readable } from 'node:stream';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { setTimeout as delay } from 'node:timers/promises';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as spawn from '../../src/platform/spawn';
 import { runJsonlCli, wrapParsedTranslator } from '../../src/agent/runner/jsonl-cli-runner';
@@ -32,9 +31,12 @@ async function execute(raw: AgentRun) {
   return { activeRuns, pool, execution: await executor.submit({ scopeId: 's', policy }) };
 }
 
-async function collect(events: AsyncIterable<AgentEvent>) {
+async function collect(events: AsyncIterable<AgentEvent>, received?: (event: AgentEvent) => void) {
   const result: AgentEvent[] = [];
-  for await (const event of events) result.push(event);
+  for await (const event of events) {
+    result.push(event);
+    received?.(event);
+  }
   return result;
 }
 
@@ -153,27 +155,72 @@ it('propagates cleanup failure while closing inherited pipes and retaining execu
   }
 });
 
-it.each(['raw return', 'raw stop', 'executor return', 'executor stop', 'stopAll', 'post-exit OS tail'] as const)(
-  '%s settles with a real stdout-inheriting descendant alive and preserves the stop burst', async mode => {
+const portableStops = ['raw return', 'raw stop', 'executor return', 'executor stop', 'stopAll', 'post-exit OS tail'] as const;
+type RealStopMode = typeof portableStops[number] | 'POSIX stop burst';
+
+it.each(portableStops)(
+  '%s settles with a real stdout-inheriting descendant alive and preserves the produced burst',
+  runInheritedStdoutCase, 10000,
+);
+
+// Windows kill(SIGTERM) terminates abruptly; the six cases above establish
+// their writes before stop. Keep signal-handler output covered on POSIX too.
+it.skipIf(process.platform === 'win32')(
+  'POSIX stop drains a large burst produced by the signal handler while a descendant holds stdout',
+  () => runInheritedStdoutCase('POSIX stop burst'), 10000,
+);
+
+async function waitForWritten(path: string): Promise<void> {
+  await expect.poll(async () => {
+    try { return await readFile(path, 'utf8'); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }, { timeout: 5000 }).toBe('written');
+}
+
+async function runInheritedStdoutCase(mode: RealStopMode): Promise<void> {
     const dir = await mkdtemp(join(tmpdir(), 'runner-stop-drain-'));
     const marker = join(dir, 'descendant.pid');
     const script = join(dir, 'agent.mjs');
-    // The paused-reader case fits in the native pipe so the parent can finish
-    // its write and exit before this process resumes delivering stdout data.
-    const text = '尾🌟'.repeat(mode === 'post-exit OS tail' ? 2 : 2000);
+    const burstRequest = join(dir, 'write-burst');
+    const burstWritten = join(dir, 'burst-written');
+    const tailRequest = join(dir, 'write-tail');
+    const tailWritten = join(dir, 'tail-written');
+    const text = '尾🌟'.repeat(2000);
     const burst: AgentEvent[] = Array.from({ length: 100 }, (_, i) => ({ type: 'text', delta: `${i}:${text}` }));
     burst.push({ type: 'system', resumeHandle: 'real-final-no-newline' });
-    const descendant = "process.on('SIGTERM',()=>process.exit(0)); setTimeout(()=>process.exit(0),15000); process.send('ready');";
+    const descendant = "setTimeout(()=>process.exit(0),15000); process.send('ready');";
+    const signalWriter = mode === 'POSIX stop burst'
+      ? `process.on('SIGTERM', () => process.stdout.write(${JSON.stringify(burst.map(event => JSON.stringify(event)).join('\n'))}, () => process.exit(0)));`
+      : '';
     await writeFile(script, `import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 const descendant = spawn(process.execPath, ['-e', ${JSON.stringify(descendant)}], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'] });
+if (descendant.pid) writeFileSync(${JSON.stringify(marker)}, String(descendant.pid));
 descendant.once('message', () => {
-  writeFileSync(${JSON.stringify(marker)}, String(descendant.pid));
   console.log('{"type":"text","delta":"ready"}');
   descendant.disconnect(); descendant.unref();
 });
-process.on('SIGTERM', () => process.stdout.write(${JSON.stringify(burst.map(event => JSON.stringify(event)).join('\n'))}, () => process.exit(0)));
-setInterval(() => {}, 1000);
+${signalWriter}
+let phase = 'burst';
+setInterval(() => {
+  if (phase === 'burst' && existsSync(${JSON.stringify(burstRequest)})) {
+    phase = 'writing-burst';
+    process.stdout.write(${JSON.stringify(burst.slice(0, -1).map(event => JSON.stringify(event)).join('\n') + '\n')}, error => {
+      if (error) throw error;
+      writeFileSync(${JSON.stringify(burstWritten)}, 'written');
+      phase = 'tail';
+    });
+  } else if (phase === 'tail' && existsSync(${JSON.stringify(tailRequest)})) {
+    phase = 'writing-tail';
+    process.stdout.write(${JSON.stringify(JSON.stringify(burst[burst.length - 1]))}, error => {
+      if (error) throw error;
+      writeFileSync(${JSON.stringify(tailWritten)}, 'written');
+      phase = 'waiting-for-stop';
+    });
+  }
+}, 5);
 `);
     let cleanups = 0;
     let pausedStdout: Readable | undefined;
@@ -195,12 +242,28 @@ setInterval(() => {}, 1000);
     let stopping: Promise<unknown> | undefined;
     let remaining: Promise<AgentEvent[]> | undefined;
     let collected = false;
+    let textEvents = 0;
     try {
       expect(await iterator.next()).toMatchObject({ value: { type: 'text', delta: 'ready' } });
       descendantPid = Number(await readFile(marker, 'utf8'));
-      pausedStdout?.pause();
-      if (!mode.endsWith('return')) remaining = collect({ [Symbol.asyncIterator]: () => iterator })
+      if (!mode.endsWith('return')) remaining = collect({ [Symbol.asyncIterator]: () => iterator }, event => {
+        if (event.type === 'text') textEvents++;
+      })
         .then(events => { collected = true; return events; });
+      if (mode !== 'POSIX stop burst') {
+        // A successful write callback establishes the data before any platform's
+        // stop signal. No cross-platform case depends on a JS signal handler.
+        await writeFile(burstRequest, 'go');
+        await waitForWritten(burstWritten);
+        if (pausedStdout) {
+          // Drain the large burst first: only the small unterminated handle
+          // must fit in the inherited native pipe while delivery is paused.
+          await expect.poll(() => textEvents, { timeout: 5000 }).toBe(100);
+          pausedStdout.pause();
+        }
+        await writeFile(tailRequest, 'go');
+        await waitForWritten(tailWritten);
+      }
       let completed = false;
       stopping = (mode.endsWith('return') ? iterator.return!()
         : mode === 'stopAll' ? h!.activeRuns.stopAll() : h ? h.execution.stop() : raw.stop())
@@ -211,7 +274,7 @@ setInterval(() => {}, 1000);
         expect(h!.pool.snapshot().active).toBe(1);
         pausedStdout.resume();
       }
-      await delay(250);
+      await expect.poll(() => completed && (!remaining || collected), { timeout: 250 }).toBe(true);
       expect(cleanups).toBe(1);
       expect(() => process.kill(descendantPid!, 0)).not.toThrow();
       expect(completed).toBe(true);
@@ -240,5 +303,4 @@ setInterval(() => {}, 1000);
       await Promise.allSettled([stopping, remaining, h?.execution.finished]);
       await rm(dir, { recursive: true, force: true });
     }
-  }, 10000,
-);
+}
