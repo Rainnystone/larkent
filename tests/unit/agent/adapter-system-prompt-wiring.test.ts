@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { PassThrough } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -51,36 +51,59 @@ beforeEach(() => {
 describe('ClaudeAdapter system prompt wiring', () => {
   it('appends the identity-aware bridge system prompt via a temp file after setBotIdentity', async () => {
     const child = fakeChild();
+    child.exitCode = null;
     spawnMock.spawnProcess.mockReturnValue(child);
     const adapter = new ClaudeAdapter();
     adapter.setBotIdentity({ openId: 'ou_bot_self', name: 'Bridge' });
 
-    adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
-
-    // The prompt goes via stdin, never argv (cmd.exe would mangle it on Windows).
-    expect(await readAll(child.stdin)).toBe('hi');
-    expect(systemPromptFileContent()).toBe(
-      buildBridgeSystemPrompt({ openId: 'ou_bot_self', name: 'Bridge' }),
-    );
+    const run = adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+    let promptPath: string | undefined;
+    try {
+      promptPath = systemPromptFilePath();
+      // Keep the child alive while checking its input; exit owns prompt cleanup.
+      // The prompt goes via stdin, never argv (cmd.exe would mangle it on Windows).
+      expect(await readAll(child.stdin)).toBe('hi');
+      expect(readFileSync(promptPath, 'utf8')).toBe(
+        buildBridgeSystemPrompt({ openId: 'ou_bot_self', name: 'Bridge' }),
+      );
+    } finally {
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+      child.stdout.end();
+      child.stderr.end();
+      expect(await run.waitForExit(1000)).toBe(true);
+      if (promptPath) expect(existsSync(promptPath)).toBe(false);
+    }
   });
 
   it('falls back to the base system prompt when no identity was set', async () => {
     const child = fakeChild();
+    child.exitCode = null;
     spawnMock.spawnProcess.mockReturnValue(child);
     const adapter = new ClaudeAdapter();
 
-    adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
-
-    expect(await readAll(child.stdin)).toBe('hi');
-    expect(systemPromptFileContent()).toBe(buildBridgeSystemPrompt(undefined));
+    const run = adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
+    let promptPath: string | undefined;
+    try {
+      promptPath = systemPromptFilePath();
+      expect(await readAll(child.stdin)).toBe('hi');
+      expect(readFileSync(promptPath, 'utf8')).toBe(buildBridgeSystemPrompt(undefined));
+    } finally {
+      child.exitCode = 0;
+      child.emit('exit', 0, null);
+      child.stdout.end();
+      child.stderr.end();
+      expect(await run.waitForExit(1000)).toBe(true);
+      if (promptPath) expect(existsSync(promptPath)).toBe(false);
+    }
   });
 
-  function systemPromptFileContent(): string {
+  function systemPromptFilePath(): string {
     const args = spawnMock.spawnProcess.mock.calls[0]?.[1] as string[];
     const flagIndex = args.indexOf('--append-system-prompt-file');
     expect(flagIndex).toBeGreaterThan(-1);
     expect(args).not.toContain('--append-system-prompt');
-    return readFileSync(args[flagIndex + 1] as string, 'utf8');
+    return args[flagIndex + 1] as string;
   }
 });
 
