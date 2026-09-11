@@ -71,6 +71,15 @@ describe('resolveBackfillWindow', () => {
       lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
     }).windowStart).toBe(lastBackfillEnd - WATERMARK_MARGIN_MS);
   });
+
+  it('keeps an incomplete origin after lastLiveAt has advanced', () => {
+    expect(resolveBackfillWindow({
+      now: NOW,
+      lastLiveAt: NOW,
+      incompleteFrom: NOW - HOUR,
+      lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
+    }).windowStart).toBe(NOW - HOUR - WATERMARK_MARGIN_MS);
+  });
 });
 
 describe('runBackfill', () => {
@@ -181,6 +190,8 @@ describe('runBackfill', () => {
     for (let i = 0; i < 10; i++) {
       expect(h.ledger.has(`om_mention_${i}`)).toBe(true);
     }
+    expect(h.requests).toHaveLength(4);
+    expect(h.requests.every((params) => params.sort_type === 'ByCreateTimeDesc')).toBe(true);
   });
 
   it('B7: registered slash commands are skipped', async () => {
@@ -201,8 +212,10 @@ describe('runBackfill', () => {
     );
   });
 
-  it('B8: one chat fetch failure does not block the others', async () => {
+  it('B8: one chat fetch failure does not block the others or advance completion', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
     const h = await harness({
+      lastLiveAt,
       chats: [
         { id: CHAT_A, name: 'A' },
         { id: CHAT_B, name: 'B' },
@@ -210,6 +223,7 @@ describe('runBackfill', () => {
       ],
       messages: {
         [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'from b', NOW - 15_000)],
         [CHAT_C]: [mentionItem('om_c', CHAT_C, 'from c', NOW - 10_000)],
       },
       listErrors: { [CHAT_B]: Object.assign(new Error('rate limited'), { code: 99991400 }) },
@@ -224,10 +238,25 @@ describe('runBackfill', () => {
       expect.objectContaining({ event: 'chat-fetch-failed', chatId: CHAT_B, code: 99991400 }),
     );
     expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'done', chats: 3, enqueuedTotal: 2 }),
+      expect.objectContaining({ event: 'incomplete', chats: 3, enqueuedTotal: 2, fetchFailures: 1 }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'done')).toEqual([]);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(h.ledger.getLiveAt()).toBe(lastLiveAt);
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+    expect(metrics.mock.calls).toContainEqual(['backfill_chat_fetch_failed', 1]);
+
+    delete h.listErrors[CHAT_B];
+    h.intake.length = 0;
+    h.ledger.touchLive(NOW);
+    const retry = spyInfo();
+    await runBackfill(await deps(h));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_b']);
+    expect(events(retry, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'done', chats: 3, enqueuedTotal: 1 }),
     );
     expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
-    expect(metrics.mock.calls).toContainEqual(['backfill_chat_fetch_failed', 1]);
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
   });
 
   it('dry-run logs would-enqueue and does not intake or record survivors', async () => {
@@ -406,7 +435,7 @@ describe('runBackfill', () => {
       container_id: CHAT_A,
       start_time: String(Math.floor(window.windowStart / 1000)),
       end_time: String(Math.ceil(window.windowEnd / 1000)),
-      sort_type: 'ByCreateTimeAsc',
+      sort_type: 'ByCreateTimeDesc',
       page_size: 50,
     });
   });
@@ -580,10 +609,6 @@ function fakeChannel(opts: {
   listChatsError?: Error;
   listChatsHold?: Promise<void>;
 }): BackfillChannel {
-  const pages = new Map<string, Record<string, unknown>[][]>();
-  for (const [chatId, items] of Object.entries(opts.messages)) {
-    pages.set(chatId, chunk(items, 50));
-  }
   return {
     botIdentity: opts.identity,
     async listChats(query) {
@@ -609,7 +634,9 @@ function fakeChannel(opts: {
               opts.requests.push(params);
               const error = opts.listErrors[chatId];
               if (error) throw error;
-              const chatPages = pages.get(chatId) ?? [[]];
+              const items = [...(opts.messages[chatId] ?? [])];
+              if (params.sort_type === 'ByCreateTimeDesc') items.reverse();
+              const chatPages = chunk(items, 50);
               const token = typeof params.page_token === 'string' ? Number(params.page_token) : 0;
               const page = chatPages[token] ?? [];
               const next = token + 1;

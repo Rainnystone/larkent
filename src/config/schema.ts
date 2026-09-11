@@ -436,7 +436,12 @@ function positiveIntOr(
     warn({ event: 'backfill-invalid', field, value });
     return fallback;
   }
-  return Math.floor(value);
+  const floored = Math.floor(value);
+  if (floored < 1) {
+    warn({ event: 'backfill-invalid', field, value });
+    return fallback;
+  }
+  return floored;
 }
 
 function normalizeBackfillChats(

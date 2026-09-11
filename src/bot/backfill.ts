@@ -48,11 +48,14 @@ export function resolveBackfillWindow(input: {
   now: number;
   lastLiveAt: number;
   lastBackfillEnd?: number;
+  incompleteFrom?: number;
   lookbackMs: number;
 }): { gapMs: number; windowStart: number; windowEnd: number } {
-  const anchor = input.lastBackfillEnd === undefined
-    ? input.lastLiveAt
-    : Math.min(input.lastLiveAt, input.lastBackfillEnd);
+  const anchor = Math.min(
+    input.lastLiveAt,
+    input.lastBackfillEnd ?? input.lastLiveAt,
+    input.incompleteFrom ?? input.lastLiveAt,
+  );
   return {
     gapMs: input.now - input.lastLiveAt,
     windowStart: Math.max(input.now - input.lookbackMs, anchor - WATERMARK_MARGIN_MS),
@@ -111,13 +114,15 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     deps.ledger.touchLive(now);
     return;
   }
+  const incompleteFrom = deps.ledger.getIncompleteFrom();
   const window = resolveBackfillWindow({
     now,
     lastLiveAt,
     lastBackfillEnd: deps.ledger.getLastBackfillEnd(),
+    incompleteFrom,
     lookbackMs: deps.prefs.lookbackMs,
   });
-  if (window.gapMs < deps.prefs.minGapMs) {
+  if (window.gapMs < deps.prefs.minGapMs && incompleteFrom === undefined) {
     log.info('backfill', 'skip-short-gap', { gapMs: window.gapMs });
     return;
   }
@@ -179,8 +184,22 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     return;
   }
 
-  deps.ledger.markScanComplete(window.windowEnd, now);
   const durationMs = Date.now() - startedAt;
+  if (fetchFailures > 0) {
+    deps.ledger.markScanIncomplete(lastLiveAt);
+    log.info('backfill', 'incomplete', {
+      chats: inScope.chats.length,
+      enqueuedTotal,
+      fetchFailures,
+      durationMs,
+    });
+    reportMetric('backfill_enqueued', enqueuedTotal);
+    reportMetric('backfill_duration_ms', durationMs);
+    reportMetric('backfill_chat_fetch_failed', fetchFailures);
+    return;
+  }
+
+  deps.ledger.markScanComplete(window.windowEnd, now);
   log.info('backfill', 'done', {
     chats: inScope.chats.length,
     enqueuedTotal,
@@ -189,7 +208,6 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   });
   reportMetric('backfill_enqueued', enqueuedTotal);
   reportMetric('backfill_duration_ms', durationMs);
-  if (fetchFailures > 0) reportMetric('backfill_chat_fetch_failed', fetchFailures);
 }
 
 function selectInScopeChats(
@@ -399,7 +417,7 @@ async function listChatHistory(
         container_id: chatId,
         start_time: String(Math.floor(window.windowStart / 1000)),
         end_time: String(Math.ceil(window.windowEnd / 1000)),
-        sort_type: 'ByCreateTimeAsc',
+        sort_type: 'ByCreateTimeDesc',
         page_size: 50,
         ...(pageToken ? { page_token: pageToken } : {}),
       },
@@ -411,18 +429,22 @@ async function listChatHistory(
       : Array.isArray(payload?.messages)
         ? payload.messages
         : [];
+    let capped = false;
     for (const raw of items) {
       const item = asHistoryItem(raw);
       if (!item) continue;
       seen += 1;
       kept.push(item);
-      if (kept.length > maxRawPerChat) kept.shift();
+      if (kept.length >= maxRawPerChat) {
+        capped = true;
+        break;
+      }
     }
-    pageToken = payload?.has_more === true && typeof payload.page_token === 'string'
+    pageToken = !capped && payload?.has_more === true && typeof payload.page_token === 'string'
       ? payload.page_token
       : undefined;
   } while (pageToken);
-  if (seen > maxRawPerChat) {
+  if (seen >= maxRawPerChat) {
     log.info('backfill', 'raw-truncated', {
       chatId,
       seen,

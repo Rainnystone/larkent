@@ -50,6 +50,23 @@ describe('BackfillLedger', () => {
     await expect(readFile(file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('coalesces bulk records into one snapshot write that flush still drains', async () => {
+    const now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await ledger.load();
+    for (let i = 0; i < 50; i++) {
+      const id = `om_bulk_${String(i).padStart(2, '0')}`;
+      expect(ledger.claim(id)).toBe(true);
+      ledger.record(id, now - i);
+    }
+    await ledger.flush();
+    expect(atomic.mock.calls).toHaveLength(1);
+    const saved = JSON.parse(await readFile(file, 'utf8')) as { processed: Record<string, number> };
+    expect(Object.keys(saved.processed)).toHaveLength(50);
+    expect(saved.processed.om_bulk_00).toBe(now);
+    expect(saved.processed.om_bulk_49).toBe(now - 49);
+  });
+
   it('records an accepted id atomically at mode 0o600 and reloads it as already processed', async () => {
     const now = 1_760_000_000_000;
     const { file, ledger } = await fixture(() => now);
@@ -221,6 +238,34 @@ describe('BackfillLedger', () => {
     expect(ledger.has('om_first')).toBe(true);
     expect(ledger.has('om_second')).toBe(true);
     expect(ledger.claim('om_first')).toBe(false);
+  });
+
+  it('persists an incomplete scan origin and clears it on a later complete mark', async () => {
+    const now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.touchLive(now - 60_000);
+    ledger.markScanIncomplete(now - 60_000);
+    await ledger.flush();
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      lastLiveAt: now - 60_000,
+      incompleteFrom: now - 60_000,
+      processed: {},
+    });
+
+    const reloaded = new BackfillLedger(file, { now: () => now });
+    await reloaded.load();
+    expect(reloaded.getIncompleteFrom()).toBe(now - 60_000);
+    reloaded.markScanComplete(now, now);
+    await reloaded.flush();
+    expect(reloaded.getIncompleteFrom()).toBeUndefined();
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      lastLiveAt: now,
+      lastBackfillEnd: now,
+      processed: {},
+    });
   });
 
   it('touchLive writes lastLiveAt, exposes getters, and persists at most once per 30s', async () => {

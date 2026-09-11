@@ -99,6 +99,24 @@ describe('preferences.backfill', () => {
     ]);
   });
 
+  it('rejects positive fractions that would floor to zero', () => {
+    const { value, warnings } = warningsOf({
+      lookbackMs: 0.5,
+      minGapMs: 0.9,
+      maxChats: 0.5,
+      maxRawPerChat: 0.2,
+      maxMentionsPerChat: 0.5,
+    });
+    expect(value).toEqual(DEFAULT_BACKFILL_PREFERENCES);
+    expect(warnings).toEqual([
+      { event: 'backfill-invalid', field: 'lookbackMs', value: 0.5 },
+      { event: 'backfill-invalid', field: 'minGapMs', value: 0.9 },
+      { event: 'backfill-invalid', field: 'maxChats', value: 0.5 },
+      { event: 'backfill-invalid', field: 'maxRawPerChat', value: 0.2 },
+      { event: 'backfill-invalid', field: 'maxMentionsPerChat', value: 0.5 },
+    ]);
+  });
+
   it('treats a non-array chats value as empty and warns', () => {
     const { value, warnings } = warningsOf({ chats: { oc_a: true } });
     expect(value.chats).toEqual([]);

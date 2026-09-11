@@ -84,7 +84,7 @@ describe('RunState.directImSentChatIds', () => {
   it('records a send to another chat without treating it as the trigger', () => {
     const state = fold([
       bashSend(`lark-cli im +messages-send --chat-id ${OTHER} --text hi`),
-      bashResult(''),
+      bashResult('{"code":0,"data":{"message_id":"om_sent"}}'),
       { type: 'text', delta: ANSWER },
       done(),
     ]);
@@ -114,6 +114,8 @@ describe('RunState.directImSentChatIds', () => {
     ['different cli', 'feishu-cli im +messages-send --chat-id oc_trigger'],
     ['no target', 'lark-cli im +messages-send --text hi'],
     ['malformed', 'not a command'],
+    ['echoed command', `echo lark-cli im +messages-send --chat-id ${CHAT} --text hi`],
+    ['commented-out send', `# lark-cli im +messages-send --chat-id ${CHAT} --text hi`],
   ])('records nothing for a malformed send (%s)', (_label, command) => {
     const state = fold([
       bashSend(command),
@@ -123,10 +125,23 @@ describe('RunState.directImSentChatIds', () => {
     expect([...state.directImSentChatIds]).toEqual([]);
   });
 
+  it.each([
+    ['empty output', ''],
+    ['plain ok', 'ok'],
+    ['echoed command text', `lark-cli im +messages-send --chat-id ${CHAT} --text hi`],
+  ])('records nothing when the tool_result has no send receipt (%s)', (_label, output) => {
+    const state = fold([
+      bashSend(`lark-cli im +messages-send --chat-id ${CHAT} --text hi`),
+      bashResult(output),
+      done(),
+    ]);
+    expect([...state.directImSentChatIds]).toEqual([]);
+  });
+
   it('does not persist the set — it starts empty on a fresh run', () => {
     const first = fold([
       bashSend(`lark-cli im +messages-send --chat-id ${CHAT} --text hi`),
-      bashResult('ok'),
+      bashResult('{"code":0,"data":{"message_id":"om_sent"}}'),
       done(),
     ]);
     expect(first.directImSentChatIds.size).toBe(1);

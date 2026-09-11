@@ -21,6 +21,7 @@ interface LedgerDocument {
   processed: Map<string, number>;
   lastLiveAt?: number;
   lastBackfillEnd?: number;
+  incompleteFrom?: number;
 }
 
 export class BackfillLedger {
@@ -31,9 +32,12 @@ export class BackfillLedger {
   private readonly claimed = new Set<string>();
   private lastLiveAt: number | undefined;
   private lastBackfillEnd: number | undefined;
+  private incompleteFrom: number | undefined;
   private lastLivePersistAt: number | undefined;
   private clockSkewWarned = false;
   private queue = new PersistenceQueue();
+  private persistScheduled = false;
+  private persistDirty = false;
   private loading: Promise<void> | undefined;
   private persistenceDisabled = false;
 
@@ -113,11 +117,24 @@ export class BackfillLedger {
     return this.lastBackfillEnd;
   }
 
+  getIncompleteFrom(): number | undefined {
+    return this.incompleteFrom;
+  }
+
+  markScanIncomplete(anchor: number): void {
+    if (!Number.isFinite(anchor)) return;
+    this.incompleteFrom = this.incompleteFrom === undefined
+      ? anchor
+      : Math.min(this.incompleteFrom, anchor);
+    this.schedulePersist();
+  }
+
   markScanComplete(windowEnd: number, now: number): void {
     if (!Number.isFinite(windowEnd) || !Number.isFinite(now)) return;
     this.lastBackfillEnd = windowEnd;
     this.lastLiveAt = now;
     this.lastLivePersistAt = now;
+    this.incompleteFrom = undefined;
     this.prune();
     this.schedulePersist();
   }
@@ -159,9 +176,12 @@ export class BackfillLedger {
     this.processed = document.processed;
     this.lastLiveAt = document.lastLiveAt;
     this.lastBackfillEnd = document.lastBackfillEnd;
+    this.incompleteFrom = document.incompleteFrom;
     this.lastLivePersistAt = document.lastLiveAt;
     this.clockSkewWarned = false;
     this.persistenceDisabled = persistenceDisabled;
+    this.persistScheduled = false;
+    this.persistDirty = false;
     this.queue = new PersistenceQueue();
   }
 
@@ -188,16 +208,27 @@ export class BackfillLedger {
     } catch {
       return;
     }
-    const snapshot = `${JSON.stringify(this.serialize(), null, 2)}\n`;
+    this.persistDirty = true;
+    if (this.persistScheduled) return;
+    this.persistScheduled = true;
     this.queue.enqueue(async () => {
       try {
-        await writeFileAtomic(this.path, snapshot, { mode: 0o600 });
-      } catch (error) {
-        log.warn('backfill', 'ledger-persist-failed', {
-          err: error instanceof Error ? error.message : String(error),
-        });
-        throw error;
+        while (this.persistDirty) {
+          this.persistDirty = false;
+          const snapshot = `${JSON.stringify(this.serialize(), null, 2)}\n`;
+          try {
+            await writeFileAtomic(this.path, snapshot, { mode: 0o600 });
+          } catch (error) {
+            log.warn('backfill', 'ledger-persist-failed', {
+              err: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          }
+        }
+      } finally {
+        this.persistScheduled = false;
       }
+      if (this.persistDirty) this.schedulePersist();
     });
   }
 
@@ -205,12 +236,14 @@ export class BackfillLedger {
     schemaVersion: typeof BACKFILL_LEDGER_SCHEMA_VERSION;
     lastLiveAt?: number;
     lastBackfillEnd?: number;
+    incompleteFrom?: number;
     processed: Record<string, number>;
   } {
     return {
       schemaVersion: BACKFILL_LEDGER_SCHEMA_VERSION,
       ...(this.lastLiveAt !== undefined ? { lastLiveAt: this.lastLiveAt } : {}),
       ...(this.lastBackfillEnd !== undefined ? { lastBackfillEnd: this.lastBackfillEnd } : {}),
+      ...(this.incompleteFrom !== undefined ? { incompleteFrom: this.incompleteFrom } : {}),
       processed: Object.fromEntries(this.processed),
     };
   }
@@ -239,6 +272,7 @@ function parseLedgerDocument(text: string): LedgerDocument {
     processed,
     lastLiveAt: optionalTime(raw.lastLiveAt),
     lastBackfillEnd: optionalTime(raw.lastBackfillEnd),
+    incompleteFrom: optionalTime(raw.incompleteFrom),
   };
 }
 
