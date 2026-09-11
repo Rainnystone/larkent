@@ -57,6 +57,7 @@ import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, type RunHandle } from './active-runs';
+import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
@@ -184,12 +185,13 @@ export interface StartChannelDeps {
   sessions: SessionStore;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
+  ledger?: BackfillLedger;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
-  const { cfg, agent, sessions, sessionCatalog, workspaces, controls } = deps;
+  const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, controls } = deps;
   const activeRuns = new ActiveRuns();
   const resumeCandidates = new ResumeCandidates();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
@@ -365,6 +367,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           sessionCatalog,
           resumeCandidates,
           workspaces,
+          ledger,
           activeRuns,
           pending,
           msg,
@@ -557,9 +560,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       // Both must settle before flush observes the last queued session write.
       const saved = await Promise.allSettled([
         sessions.flush(), sessionCatalog?.flush(), callbackNonceStore?.flush(), workspaces.flush(),
+        ledger?.flush(),
       ]);
       const steps = ['channel', 'stopAll', ...consumers.map(() => 'run-consumer'),
-        'sessions', 'catalog', 'callback-nonces', 'workspaces'];
+        'sessions', 'catalog', 'callback-nonces', 'workspaces', 'ledger'];
       const failures: unknown[] = [];
       for (const [index, result] of [...first, ...saved].entries()) {
         if (result.status === 'rejected') {
@@ -648,6 +652,8 @@ interface IntakeDeps {
   resumeCandidates: ResumeCandidates;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
+  ledger?: BackfillLedger;
+  intakeSource?: IntakeSource;
   activeRuns: ActiveRuns;
   pending: PendingQueue;
   msg: NormalizedMessage;
@@ -665,6 +671,23 @@ type LogThreadModeOverride = (input: {
 }) => void;
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
+  const { ledger, msg } = deps;
+  const source = deps.intakeSource ?? 'ws';
+  const scopeHint = msg.threadId ? `${msg.chatId}:${msg.threadId}` : msg.chatId;
+  if (ledger && !ledger.claim(msg.messageId)) {
+    log.info('intake', 'skip-duplicate', { msgId: msg.messageId, scope: scopeHint, source });
+    reportMetric('intake_duplicate_dropped', 1, { source });
+    return;
+  }
+  try {
+    await intakeAcceptedOrGated(deps);
+  } catch (err) {
+    ledger?.release(msg.messageId);
+    throw err;
+  }
+}
+
+async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
   const {
     channel,
     agent,
@@ -672,6 +695,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     sessionCatalog,
     resumeCandidates,
     workspaces,
+    ledger,
     activeRuns,
     pending,
     msg,
@@ -749,6 +773,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
         log.warn('intake', 'non-allowed-hint-failed', { err: String(err) }),
       );
     }
+    ledger?.release(msg.messageId);
     return;
   }
 
@@ -767,6 +792,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     !msg.mentionedBot
   ) {
     log.info('intake', 'skip-no-mention', { scope, chatType: msg.chatType });
+    ledger?.release(msg.messageId);
     return;
   }
 
@@ -784,6 +810,7 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     await sendForwardFetchFailedHint(channel, emsg.chatId, emsg.messageId).catch((err) =>
       log.warn('intake', 'forward-fetch-failed-hint-failed', { err: String(err) }),
     );
+    ledger?.release(msg.messageId);
     return;
   }
 
@@ -813,11 +840,21 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
   if (handled) {
     const dropped = pending.cancel(scope);
     log.info('intake', 'command', { scope, droppedPending: dropped.length });
+    recordAccepted(ledger, emsg);
     return;
   }
 
   const size = pending.push(scope, emsg);
   log.info('intake', 'queued', { scope, queueSize: size, debounceMs: DEBOUNCE_MS });
+  recordAccepted(ledger, emsg);
+}
+
+function recordAccepted(ledger: BackfillLedger | undefined, msg: NormalizedMessage): void {
+  if (!ledger) return;
+  const createTime = typeof msg.createTime === 'number' && Number.isFinite(msg.createTime)
+    ? msg.createTime
+    : Date.now();
+  ledger.record(msg.messageId, createTime);
 }
 
 interface RunBatchDeps {
