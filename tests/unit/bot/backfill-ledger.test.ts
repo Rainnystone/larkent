@@ -110,6 +110,21 @@ describe('BackfillLedger', () => {
     });
   });
 
+  it('honours an injected prune horizon shorter than the default lookback', async () => {
+    const now = 1_760_000_000_000;
+    const dir = await mkdtemp(join(tmpdir(), 'backfill-ledger-'));
+    dirs.push(dir);
+    const file = join(dir, 'backfill-state.json');
+    const ledger = new BackfillLedger(file, { now: () => now, pruneHorizonMs: () => 60_000 });
+    await writeFile(file, `${JSON.stringify({
+      schemaVersion: 1,
+      processed: { om_old: now - 60_001, om_fresh: now - 1_000 },
+    })}\n`);
+    await ledger.load();
+    await ledger.flush();
+    expect(JSON.parse(await readFile(file, 'utf8')).processed).toEqual({ om_fresh: now - 1_000 });
+  });
+
   it('drops ids older than twice the lookback window on load and after a later record', async () => {
     const now = 1_760_000_000_000;
     const stale = now - 2 * BACKFILL_LOOKBACK_MS - 1;

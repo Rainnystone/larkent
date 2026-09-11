@@ -1,10 +1,10 @@
 import { readFile } from 'node:fs/promises';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
+import { DEFAULT_BACKFILL_PREFERENCES } from '../config/schema';
 import { log } from '../core/logger';
 
-/** Spec default lookback; ticket 06 makes this configurable. */
-export const BACKFILL_LOOKBACK_MS = 6 * 60 * 60 * 1000;
+export const BACKFILL_LOOKBACK_MS = DEFAULT_BACKFILL_PREFERENCES.lookbackMs;
 export const BACKFILL_LEDGER_MAX_IDS = 5000;
 export const BACKFILL_LEDGER_SCHEMA_VERSION = 1 as const;
 
@@ -12,6 +12,8 @@ export type IntakeSource = 'ws' | 'backfill';
 
 export interface BackfillLedgerOptions {
   now?: () => number;
+  /** Defaults to `2 ×` the spec lookback. Supervisor passes the live config getter. */
+  pruneHorizonMs?: () => number;
 }
 
 interface LedgerDocument {
@@ -23,6 +25,7 @@ interface LedgerDocument {
 export class BackfillLedger {
   private readonly path: string;
   private readonly now: () => number;
+  private readonly pruneHorizonMs: () => number;
   private processed = new Map<string, number>();
   private readonly claimed = new Set<string>();
   private lastLiveAt: number | undefined;
@@ -34,6 +37,7 @@ export class BackfillLedger {
   constructor(path: string, opts: BackfillLedgerOptions = {}) {
     this.path = path;
     this.now = opts.now ?? Date.now;
+    this.pruneHorizonMs = opts.pruneHorizonMs ?? (() => 2 * BACKFILL_LOOKBACK_MS);
   }
 
   load(): Promise<void> {
@@ -107,7 +111,7 @@ export class BackfillLedger {
   }
 
   private prune(): boolean {
-    const cutoff = this.now() - 2 * BACKFILL_LOOKBACK_MS;
+    const cutoff = this.now() - this.pruneHorizonMs();
     const before = this.processed.size;
     for (const [messageId, createTime] of this.processed) {
       if (createTime < cutoff) this.processed.delete(messageId);
