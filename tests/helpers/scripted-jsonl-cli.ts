@@ -1,7 +1,7 @@
 import { delimiter, join } from 'node:path';
 import { writeScriptedJsonlExecutable, type ScriptedJsonlExecutable } from './fake-executable.js';
 
-export const PIN_AGENT_KINDS = ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const;
+export const PIN_AGENT_KINDS = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const;
 export type PinAgentKind = (typeof PIN_AGENT_KINDS)[number];
 
 export interface JsonlScript {
@@ -43,6 +43,7 @@ export function pinAgentKind(kind: PinAgentKind): PinAgentKind {
     case 'kimi':
     case 'grok':
     case 'cursor':
+    case 'antigravity':
       return kind;
     default: {
       const _never: never = kind;
@@ -63,6 +64,8 @@ export function defaultBinaryName(kind: PinAgentKind): string {
       return 'grok';
     case 'cursor':
       return 'cursor-agent';
+    case 'antigravity':
+      return 'agy';
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -82,6 +85,8 @@ export function envBinVarName(kind: PinAgentKind): string {
       return 'LARK_CHANNEL_GROK_BIN';
     case 'cursor':
       return 'LARK_CHANNEL_CURSOR_BIN';
+    case 'antigravity':
+      return 'LARK_CHANNEL_ANTIGRAVITY_BIN';
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -101,6 +106,8 @@ export function adapterDisplayName(kind: PinAgentKind): string {
       return 'Grok Build';
     case 'cursor':
       return 'Cursor CLI';
+    case 'antigravity':
+      return 'Antigravity CLI';
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -177,6 +184,48 @@ export function jsonlScript(kind: PinAgentKind, scenario: 'success' | 'error'): 
             is_error: false,
             result: 'ignored-concat',
             session_id: PIN_CURSOR_SESSION,
+          },
+        ],
+      };
+    case 'antigravity':
+      return {
+        lines: [
+          {
+            event: 'init',
+            conversation_id: PIN_SESSION,
+            init: {
+              model: 'claude-sonnet-4-6',
+              cwd: '/tmp',
+              tools: [],
+              permission_mode: 'always-proceed',
+            },
+          },
+          {
+            event: 'step_update',
+            step_update: {
+              conversation_id: PIN_SESSION,
+              step_index: 0,
+              state: 'DONE',
+              step_type: 'user_input',
+            },
+          },
+          {
+            event: 'step_update',
+            step_update: {
+              conversation_id: PIN_SESSION,
+              step_index: 1,
+              state: 'DONE',
+              step_type: 'agent_response',
+              text_delta: PIN_ANSWER,
+            },
+          },
+          {
+            event: 'result',
+            result: {
+              conversation_id: PIN_SESSION,
+              status: 'SUCCESS',
+              response: PIN_ANSWER,
+            },
           },
         ],
       };

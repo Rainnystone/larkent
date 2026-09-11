@@ -13,6 +13,7 @@ import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
+import { AntigravityAdapter } from '../../../src/agent/antigravity/adapter.js';
 import { ClaudeAdapter } from '../../../src/agent/claude/adapter.js';
 import { CodexAdapter } from '../../../src/agent/codex/adapter.js';
 import { CursorAdapter } from '../../../src/agent/cursor/adapter.js';
@@ -238,6 +239,8 @@ async function missingAdapter(kind: PinAgentKind, root: string) {
       return new GrokAdapter({ binary: missing });
     case 'cursor':
       return new CursorAdapter({ binary: missing });
+    case 'antigravity':
+      return new AntigravityAdapter({ binary: missing });
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -278,6 +281,7 @@ function missingDoctorEchoCheck(kind: PinAgentKind): string {
     case 'kimi':
     case 'grok':
     case 'cursor':
+    case 'antigravity':
       return 'failed';
     default: {
       const _never: never = kind;

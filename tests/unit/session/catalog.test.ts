@@ -209,7 +209,7 @@ function entry(
 
 const identity = { scopeId: 'a', agentId: 'codex' as const, cwdRealpath: '/a', policyFingerprint: 'fp' };
 
-it.each(['claude', 'codex', 'kimi', 'grok', 'cursor'])('rejects failed %s v1 upgrade before publishing and preserves original bytes', async kind => {
+it.each(['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'])('rejects failed %s v1 upgrade before publishing and preserves original bytes', async kind => {
   const file = await path();
   const catalog = new SessionCatalog(file);
   catalog.upsertActive({ ...identity, resumeHandle: 'previous' });

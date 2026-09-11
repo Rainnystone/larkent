@@ -1,6 +1,6 @@
 # Larkent: Agent for lark
 
-把你的 coding agent 接入飞书 / Lark。通过私聊或群聊，使用运行在自己电脑或服务器上的 Claude Code、Codex CLI、Kimi Code、Grok Build 和 Cursor CLI。
+把你的 coding agent 接入飞书 / Lark。通过私聊或群聊，使用运行在自己电脑或服务器上的 Claude Code、Codex CLI、Kimi Code、Grok Build、Cursor CLI 和 Antigravity CLI。
 
 Larkent 受到 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) 启发，并在此基础上进行了架构重构：统一 agent 注册与进程执行机制，让多个 CLI 共用运行底座，同时保持各 bot 的配置、会话和运行状态独立。
 
@@ -23,8 +23,9 @@ Larkent 受到 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazh
 | Kimi Code | `kimi` | `kimi` |
 | Grok Build | `grok` | `grok` |
 | Cursor CLI | `cursor` | `cursor-agent` 或 Cursor 的 `agent` |
+| Antigravity CLI | `antigravity` | `agy` |
 
-五种 CLI 遵循相同的运行契约。各自的参数、图片处理和原生历史能力由对应适配器负责；创建 profile 时明确选择 agent。
+六种 CLI 遵循相同的运行契约。各自的参数、图片处理和原生历史能力由对应适配器负责；创建 profile 时明确选择 agent。
 
 ## 环境要求
 

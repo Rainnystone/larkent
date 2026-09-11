@@ -10,7 +10,7 @@ import { capabilityForProfile } from '../../../src/agent/capability.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 
 describe('agent registry', () => {
-  it.each(['claude', 'codex', 'kimi', 'grok', 'cursor'] as const)(
+  it.each(['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const)(
     'creates independent %s profile adapters with descriptor capabilities', (kind) => {
       const profile = createDefaultProfileConfig({
         agentKind: kind,
@@ -31,7 +31,7 @@ describe('agent registry', () => {
   );
 
   it('lists kinds in registry order with no default', () => {
-    expect(AGENT_KINDS).toEqual(['claude', 'codex', 'kimi', 'grok', 'cursor']);
+    expect(AGENT_KINDS).toEqual(['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity']);
     expect(AGENT_KINDS[0]).not.toBe('grok');
   });
 
@@ -48,6 +48,7 @@ describe('agent registry', () => {
     ['kimi', '-S', 'kimi-session'],
     ['grok', '-r', 'grok-session'],
     ['cursor', '--resume', 'cursor-session'],
+    ['antigravity', '--conversation', 'antigravity-session'],
   ] as const)('keeps %s metadata', (kind, flag, sessionKind) => {
     const descriptor = descriptorFor(kind);
     expect(descriptor.resume.flag).toBe(flag);
@@ -61,7 +62,7 @@ describe('agent registry', () => {
 
   it('rejects unknown kinds and lists AGENT_KINDS', () => {
     expect(isAgentKind('nope')).toBe(false);
-    expect(() => requireAgentKind('nope')).toThrow(/claude, codex, kimi, grok, cursor/);
+    expect(() => requireAgentKind('nope')).toThrow(/claude, codex, kimi, grok, cursor, antigravity/);
     expect(unknownAgentKindMessage('nope')).toContain('nope');
   });
 

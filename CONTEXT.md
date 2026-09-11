@@ -6,11 +6,11 @@ Domain vocabulary for this repo. Use these words in code, tests, docs, and PR bo
 
 Larkent connects CLI coding agents to Feishu/Lark bots. It is inspired by [lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) and has been refactored around a shared multi-CLI runtime. A host can run a **profile** in the foreground (`run`), as a per-profile service (`start`), or under a supervisor console (`run --web-ui` / `start --web-ui`). The console starts the active profile and can host other profiles on demand. Each profile is one Feishu bot backed by one **agent**.
 
-Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Code, Grok Build and Cursor CLI are five equal agents; the project is not tied to one deployment product.
+Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Code, Grok Build, Cursor CLI and Antigravity CLI are equal agents; the project is not tied to one deployment product.
 
 ## Agents
 
-- **agent kind** (`AgentKind`): `claude`, `codex`, `kimi`, `grok`, `cursor`. Derived from the descriptor tuple in `src/agent/registry.ts`, the single production registration source. Tests may independently list the five kinds to detect drift.
+- **agent kind** (`AgentKind`): `claude`, `codex`, `kimi`, `grok`, `cursor`, `antigravity`. Derived from the descriptor tuple in `src/agent/registry.ts`, the single production registration source. Tests may independently list the registered kinds to detect drift.
 - **AgentDescriptor**: the record that fully describes one agent kind. Adapter-owned metadata, factory, binary detection, options, capabilities and history access. Shared creation, capability, detection and UI entry points consume the registered descriptors.
 - **AgentRegistry**: the registered descriptor tuple, derived ordered kinds and lookup (`AGENT_REGISTRY`). Detection order is derived from each descriptor's explicit priority. Adding an agent means one new adapter directory and one registry entry.
 - **adapter** (`src/agent/<kind>/`): argv building, JSONL translation, model list, capability declaration, per-agent options schema. Knows nothing about Feishu.
@@ -48,6 +48,6 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 
 - "default agent". There is none.
 - Agent resume fields named `sessionId` or `threadId` outside an adapter or a migration. Shared agent code says `resumeHandle`.
-- "built-in" versus "added" agents. All five are equal.
+- "built-in" versus "added" agents. All registered kinds are equal.
 
 Existing CLI/card/history DTO fields may retain their specified protocol names; the current SessionStore memory and disk fields use `resumeHandle`. Feishu routing still uses protocol `thread_id` / `threadId` in `src/bot/scope.ts` and the channel SDK. QR onboarding still uses a Feishu `sessionId`. Those are not resume handles. Do not rename them.

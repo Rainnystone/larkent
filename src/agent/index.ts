@@ -7,6 +7,7 @@ export {
   isAgentKind,
   requireAgentKind,
 } from './registry';
+export { AntigravityAdapter } from './antigravity/adapter';
 export { ClaudeAdapter } from './claude/adapter';
 export { CodexAdapter } from './codex/adapter';
 export { CursorAdapter } from './cursor/adapter';
