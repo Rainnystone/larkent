@@ -1,4 +1,6 @@
+import { tmpdir } from 'node:os';
 import { describe, expect, it } from 'vitest';
+import { AntigravityAdapter } from '../../../src/agent/antigravity/adapter';
 import { buildAntigravityArgs } from '../../../src/agent/antigravity/argv';
 
 describe('buildAntigravityArgs', () => {
@@ -39,5 +41,28 @@ describe('buildAntigravityArgs', () => {
     const prompt = '<bridge_context>{"chatId":"oc_1"}</bridge_context>\n\nhello > world';
     const args = buildAntigravityArgs({ prompt });
     expect(args[1]).toBe(prompt);
+  });
+
+  it('rejects restricted sandbox modes instead of silently bypassing permissions', () => {
+    expect(() => buildAntigravityArgs({ prompt: 'hi', sandbox: 'read-only' })).toThrow(
+      /only supports full access/,
+    );
+    expect(() => buildAntigravityArgs({ prompt: 'hi', sandbox: 'workspace-write' })).toThrow(
+      /only supports full access/,
+    );
+    expect(() =>
+      buildAntigravityArgs({ prompt: 'hi', sandbox: 'danger-full-access' }),
+    ).not.toThrow();
+  });
+
+  it('refuses restricted sandbox before spawn', () => {
+    expect(() =>
+      new AntigravityAdapter({ binary: 'unused' }).run({
+        runId: 'run-ro',
+        prompt: 'hi',
+        cwd: tmpdir(),
+        sandbox: 'read-only',
+      }),
+    ).toThrow(/only supports full access/);
   });
 });

@@ -4,14 +4,17 @@ import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
 import { runJsonlCli, wrapParsedTranslator } from '../runner/jsonl-cli-runner';
-import type {
-  AgentAdapter,
-  AgentBotIdentity,
-  AgentRun,
-  AgentRunOptions,
+import {
+  mergeAgentOptions,
+  runAgentOptions,
+  type AgentAdapter,
+  type AgentBotIdentity,
+  type AgentRun,
+  type AgentRunOptions,
 } from '../types';
-import { buildAntigravityArgs } from './argv';
+import { assertAntigravitySandbox, buildAntigravityArgs } from './argv';
 import { AntigravityJsonlTranslator } from './jsonl';
+import { parseAntigravityAgentOptions } from './options';
 
 export interface AntigravityAdapterOptions {
   binary?: string;
@@ -27,12 +30,14 @@ export class AntigravityAdapter implements AgentAdapter {
   private readonly binary: string;
   private readonly defaultStopGraceMs: number;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
+  private readonly profileOptions: unknown;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: AntigravityAdapterOptions = {}) {
     this.binary = opts.binary ?? 'agy';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
+    this.profileOptions = opts.agentOptions;
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -52,7 +57,12 @@ export class AntigravityAdapter implements AgentAdapter {
     });
   }
 
-  async prepareRun(): Promise<void> {
+  async prepareRun(opts: AgentRunOptions): Promise<void> {
+    const parsed = parseAntigravityAgentOptions(
+      mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
+      false,
+    );
+    assertAntigravitySandbox(parsed.sandbox);
     const availability = await this.checkAvailability();
     if (!availability.ok) {
       throw new SpawnFailed(
@@ -68,6 +78,11 @@ export class AntigravityAdapter implements AgentAdapter {
     if (!opts.cwd) {
       throw new Error('cwd is required for AntigravityAdapter.run');
     }
+    const parsed = parseAntigravityAgentOptions(
+      mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
+      false,
+    );
+    assertAntigravitySandbox(parsed.sandbox);
 
     return runJsonlCli({
       runId: opts.runId,
@@ -76,6 +91,7 @@ export class AntigravityAdapter implements AgentAdapter {
         prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
         ...(opts.resumeHandle ? { conversationId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
+        ...(parsed.sandbox ? { sandbox: parsed.sandbox } : {}),
       }),
       cwd: opts.cwd,
       env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),

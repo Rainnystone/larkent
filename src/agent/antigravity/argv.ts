@@ -1,3 +1,5 @@
+import type { AntigravitySandboxOption } from './options';
+
 export interface BuildAntigravityArgsInput {
   /**
    * Full prompt text (bridge system prompt already prefixed by the caller).
@@ -9,6 +11,26 @@ export interface BuildAntigravityArgsInput {
   conversationId?: string;
   /** Forwarded to `--model`. Omitted uses the CLI / settings default. */
   model?: string;
+  /**
+   * Policy sandbox from RunExecutor. Print mode always uses
+   * `--dangerously-skip-permissions` (always-proceed); restricted modes
+   * are not mapped onto agy permission prompts.
+   */
+  sandbox?: AntigravitySandboxOption;
+}
+
+/**
+ * Print mode always bypasses tool prompts. That is full host access, so
+ * reject read-only / workspace-write rather than silently ignoring the
+ * profile ceiling.
+ */
+export function assertAntigravitySandbox(sandbox?: AntigravitySandboxOption | string): void {
+  if (sandbox && sandbox !== 'danger-full-access') {
+    throw new Error(
+      `Antigravity CLI only supports full access; received sandbox ${sandbox}. ` +
+        'Restricted modes are not mapped onto agy --dangerously-skip-permissions.',
+    );
+  }
 }
 
 /**
@@ -20,6 +42,7 @@ export interface BuildAntigravityArgsInput {
  * `--conversation <id>`, never `-c/--continue` (workspace last-session).
  */
 export function buildAntigravityArgs(input: BuildAntigravityArgsInput): string[] {
+  assertAntigravitySandbox(input.sandbox);
   const args = [
     '-p',
     input.prompt,
