@@ -5,6 +5,32 @@ import {
   prefixBridgeSystemPrompt,
 } from '../../../src/agent/bridge-system-prompt';
 
+describe('bridge system prompt final-reply ownership', () => {
+  it('tells every agent the bridge posts the final answer to the triggering chat', () => {
+    expect(BRIDGE_SYSTEM_PROMPT).toContain('最终回答发到触发会话');
+    expect(BRIDGE_SYSTEM_PROMPT).toContain('bridge_context.chat_id');
+  });
+
+  it('forbids IM-send to the current chat as a way of answering', () => {
+    expect(BRIDGE_SYSTEM_PROMPT).toContain('+messages-send');
+    expect(BRIDGE_SYSTEM_PROMPT).toContain('+messages-reply');
+    expect(BRIDGE_SYSTEM_PROMPT).toContain('send-card');
+  });
+
+  it('allows sending to other chats or when the user explicitly asks for a lark-cli send', () => {
+    expect(BRIDGE_SYSTEM_PROMPT).toContain('向其他 chat 发送');
+    expect(BRIDGE_SYSTEM_PROMPT).toContain('用户明确要求你执行一次 lark-cli 发送');
+  });
+
+  it('keeps the final-reply rule free of profile, bot, host, and agent-kind names', () => {
+    const match = BRIDGE_SYSTEM_PROMPT.match(/## 最终回复\n\n([\s\S]*?)(\n## |$)/);
+    expect(match?.[1]).toEqual(expect.any(String));
+    const body = match?.[1] ?? '';
+    expect(body).not.toMatch(/Grok Bot|grokbot|larkent-for-grokbot|agentKind/i);
+    expect(body).not.toMatch(/\b(?:claude|codex|kimi|grok|cursor|antigravity)\b/i);
+  });
+});
+
 describe('bridge system prompt bot collaboration rules', () => {
   it('states that bots only receive messages via a real structured mention', () => {
     expect(BRIDGE_SYSTEM_PROMPT).toContain('只有被真实 @');

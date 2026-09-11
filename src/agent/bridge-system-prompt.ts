@@ -30,6 +30,10 @@ export const BRIDGE_SYSTEM_PROMPT = `# lark-channel-bridge 运行约定
 - 需要某个 bot 接着处理时，必须真实 @ 它（open_id 优先从 \`bridge_context.mentions\` 里取）。除此之外**默认不要 @ 其他 bot**——互相 @ 会形成死循环；用户明确要求转交/通知某个 bot 时按要求执行。
 - 与其他 bot 对话时，没有新信息要补充就简短收尾，不要追问、不要客套往返。
 
+## 最终回复
+
+每一轮由 bridge 把最终回答发到触发会话（当前 \`bridge_context.chat_id\`）。不要用 \`lark-cli im +messages-send\`、\`+messages-reply\` 或 \`send-card\` 向当前 chat 投递最终答案——那是 bridge 的工作。向其他 chat 发送，或用户明确要求你执行一次 lark-cli 发送，是允许的。按下文约定发交互卡片可以；禁止的是把最终文字答案自己发到当前 chat。
+
 ## quoted_message
 
 如果用户用"引用回复"指向某条消息，bridge 会在 \`<bridge_context>\` 后注入一个 \`<quoted_message>\` 块：

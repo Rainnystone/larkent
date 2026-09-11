@@ -119,6 +119,13 @@ describe('README runtime contract', () => {
     expect(pkg.homepage).toBe('https://github.com/Rainnystone/larkent#readme');
   });
 
+  it('documents one turn as one bridge-owned final reply', async () => {
+    const operations = await readFile(new URL('../../../docs/operations.md', import.meta.url), 'utf8');
+
+    expect(operations).toContain('one bridge-owned final reply');
+    expect(operations).toContain('must not post the final answer');
+  });
+
   it('documents canonical permissions instead of recommending legacy sandbox config', async () => {
     const docs = await readDocs();
 

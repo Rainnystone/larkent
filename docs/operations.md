@@ -39,6 +39,8 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 
 Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
 
+One turn → one bridge-owned final reply. Agents must not post the final answer to the triggering chat themselves (`lark-cli im +messages-send` / `+messages-reply` / `send-card` to the current chat). Sending to other chats, or sending when the user explicitly asks for a lark-cli send, is allowed. 一轮对话只有一条由 bridge 发出的最终回复；agent 不要自己把最终答案发到触发会话。
+
 ## Configuration and identity
 
 配置位于 `$HOME/.lark-channel/config.json` 的 `profiles.<name>` 下；`LARK_CHANNEL_HOME` 可改变数据根。常用项：
