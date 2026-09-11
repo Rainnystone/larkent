@@ -35,15 +35,6 @@ describe('backfill static contracts', () => {
     expect(missing, missing.join(', ')).toEqual([]);
   });
 
-  it('keeps REQUIRED_BACKFILL_EVENTS aligned with spec §13', () => {
-    const spec = read('docs/specs/wake-up-backfill.md');
-    const section = spec.split('## 13. Observability')[1]?.split('\n## 14.')[0] ?? '';
-    expect(section.length).toBeGreaterThan(0);
-
-    const fromSpec = eventsFromSpecSection(section);
-    expect([...fromSpec].sort()).toEqual([...REQUIRED_BACKFILL_EVENTS].sort());
-  });
-
   it('keeps ledger / watermark / backfill / defaults free of identifiers', () => {
     const schema = read('src/config/schema.ts');
     const backfillSchema = extractBackfillSchema(schema);
@@ -88,19 +79,6 @@ function emittedInSource(source: string, fullName: string): boolean {
   const event = fullName.slice(dot + 1);
   const call = new RegExp(`['"]${escapeRegExp(component)}['"]\\s*,\\s*['"]${escapeRegExp(event)}['"]`);
   return call.test(source);
-}
-
-function eventsFromSpecSection(section: string): string[] {
-  const names = new Set<string>();
-  for (const match of section.matchAll(/`([a-z][a-z0-9.*-]*)`/g)) {
-    const captured = match[1];
-    if (captured === undefined) continue;
-    let name = captured;
-    if (name.includes('*')) continue;
-    if (name.startsWith('skip-') && !name.includes('.')) name = `backfill.${name}`;
-    if (name.startsWith('backfill.') || name === 'intake.skip-duplicate') names.add(name);
-  }
-  return [...names];
 }
 
 function extractBackfillSchema(schema: string): string {

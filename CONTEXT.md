@@ -46,8 +46,6 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 
 ## Self-heal and backfill
 
-Design: [docs/specs/wake-up-backfill.md](docs/specs/wake-up-backfill.md).
-
 - **self-heal**: recovery the bridge performs on its own after a disconnect, sleep, freeze or restart. No external watcher, poller or host routine is assumed. Lives in `src/bot/`, identical for every profile and agent kind.
 - **recovery signal**: an event that may mean messages were missed: a successful `channel.connect()` inside `startChannel` (covers keepalive wake-up → `controls.restart()`, `/reconnect`, `/account`, process start) or the SDK's `reconnected` event.
 - **backfill**: the idempotent catch-up routine that runs on a recovery signal: pull recent group history with **bot identity**, keep messages that @-mention this bot and are not in the processed ledger, and hand them to the normal `intakeMessage` path. Not a poller; it never runs on a timer.
