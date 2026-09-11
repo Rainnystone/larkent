@@ -79,7 +79,7 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
     'final-answer-only adapter skips the extra final post in %s mode',
     async (mode) => {
       const info = vi.spyOn(log, 'info').mockImplementation(() => {});
-      const h = await harness('codex', scriptedSend(true), mode);
+      const h = await harness('kimi', scriptedSend(true), mode);
 
       await h.channel.handlers.message?.(message(MSG, 'please answer'));
       await waitFor(() => h.agent.runs.length === 1);
@@ -151,6 +151,9 @@ async function harness(
       cotMessages: 'off',
       showToolCalls: false,
     },
+    ...(kind === 'codex'
+      ? { codex: { binaryPath: '/usr/local/bin/codex', inheritCodexHome: false } }
+      : {}),
   });
   profileConfig.workspaces.default = workspace;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));

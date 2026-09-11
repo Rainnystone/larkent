@@ -37,7 +37,7 @@ function bashResult(output: string, isError = false): AgentEvent {
   return { type: 'tool_result', id: 'tool-1', output, isError };
 }
 
-function done(reason: AgentEvent extends { type: 'done'; terminationReason: infer R } ? R : never = 'normal'): AgentEvent {
+function done(reason: 'normal' | 'interrupted' | 'timeout' = 'normal'): AgentEvent {
   return { type: 'done', terminationReason: reason };
 }
 
