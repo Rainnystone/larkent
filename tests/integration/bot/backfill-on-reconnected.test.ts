@@ -278,8 +278,10 @@ function liveMention(
     resources: [],
     mentionedBot: true,
     createTime,
+    mentions: [],
+    mentionAll: false,
     ...(threadId ? { threadId } : {}),
-  } as NormalizedMessage;
+  } as unknown as NormalizedMessage;
 }
 
 function events(
