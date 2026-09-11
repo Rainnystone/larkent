@@ -25,6 +25,11 @@ describe('agent model catalog', () => {
     expect(cursor[0]?.value).toBe(DEFAULT_MODEL);
     expect(cursor.map((m) => m.value)).toContain('composer-2.5');
     expect(cursor.map((m) => m.value)).not.toContain('gpt-5-codex');
+    const antigravity = supportedModels('antigravity');
+    expect(antigravity[0]?.value).toBe(DEFAULT_MODEL);
+    expect(antigravity.map((m) => m.value)).toContain('claude-sonnet-4-6');
+    expect(antigravity.map((m) => m.value)).toContain('gpt-oss-120b-medium');
+    expect(antigravity.map((m) => m.value)).not.toContain('gpt-5-codex');
   });
 
   it('treats unset and the default sentinel as "use agent default"', () => {

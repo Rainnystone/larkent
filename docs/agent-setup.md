@@ -1,13 +1,13 @@
 # Agent setup：首次接入飞书
 
-供执行部署或接入任务的 agent 使用，适用于 Claude Code、Codex CLI、Kimi Code、Grok Build、Cursor CLI。每个 profile 的首次 setup 包含三项：**本机 coding CLI 登录、飞书应用注册/常规授权、owner 的完整用户身份 OAuth**。负责 setup 的 agent 必须主动请用户完成第三项，再验证 wiki/文档与跨群聊天记录读取；不能在 bot 上线后就交付“setup 完成”。
+供执行部署或接入任务的 agent 使用，适用于 Claude Code、Codex CLI、Kimi Code、Grok Build、Cursor CLI、Antigravity CLI。每个 profile 的首次 setup 包含三项：**本机 coding CLI 登录、飞书应用注册/常规授权、owner 的完整用户身份 OAuth**。负责 setup 的 agent 必须主动请用户完成第三项，再验证 wiki/文档与跨群聊天记录读取；不能在 bot 上线后就交付“setup 完成”。
 
 用户身份授权保存在当前 profile 的 lark-cli 目录。正常重启复用有效授权；新增 profile、授权过期/撤销或实际缺少权限时再补授权。它不是机器全局 lark-cli 登录，也不是 coding CLI 的模型账号登录。
 
 ## 1. 核对环境与安装
 
 1. 用 `git rev-parse --show-toplevel`、`git branch --show-current`、`git status --short` 核对用户指定的源码版本和 worktree。
-2. 按 [中文 README 的环境要求](../README.zh.md#环境要求)（[English](../README.md#requirements)）核对目标 CLI、登录、网络、Node 和 pnpm。版本要求以 `package.json` 为准；从已有源码接续时直接使用当前 checkout。
+2. 按 [中文 README 的环境要求](../README.zh.md#环境要求)（[English](../README.md#requirements)）核对目标 CLI、登录、网络、Node 和 pnpm。版本要求以 `package.json` 为准；从已有源码接续时直接使用当前 checkout。Antigravity CLI 的程序名是 `agy`（`agy --version`），不要用 `antigravity` 或 Gemini CLI；Cursor 的 `agent` 必须核实是 Cursor CLI。
 3. 安装依赖 `pnpm install --frozen-lockfile`，执行 `pnpm build`，再检查 `node bin/lark-channel-bridge.mjs --help`。后续运行这个 checkout 的本地入口。
 
 **完成条件：**依赖与构建成功，目标 CLI 已登录且能执行；记录实际 CLI 版本、源码 branch/SHA 和代码目录。

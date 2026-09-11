@@ -65,7 +65,7 @@ Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并�
 
 **lark-cli identity policy / lark-cli 身份策略**：发言保持 bot；读取用户资源显式使用 `--as user`。Token 保存在 profile-local lark-cli directory，即当前 profile 的 lark-cli 目录。首次完整授权、权限核验和续接步骤见 [setup 指南](agent-setup.md#3-主动请求一次完整用户身份授权)。
 
-`LARK_CHANNEL_CLAUDE_BIN`、`LARK_CHANNEL_CODEX_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_CURSOR_BIN` 用于创建 profile 时解析并保存程序路径。已有 profile 使用保存的 `agent.binaryPath`；更换程序前先停止 profile，再更新路径。数据根与 coding CLI 的登录目录是两回事。
+`LARK_CHANNEL_CLAUDE_BIN`、`LARK_CHANNEL_CODEX_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_CURSOR_BIN`、`LARK_CHANNEL_ANTIGRAVITY_BIN` 用于创建 profile 时解析并保存程序路径。已有 profile 使用保存的 `agent.binaryPath`；更换程序前先停止 profile，再更新路径。数据根与 coding CLI 的登录目录是两回事。Antigravity 的程序名是 `agy`。
 
 ## Logs and stored data
 
@@ -102,6 +102,7 @@ pnpm build
 GROK_REAL_SMOKE=1 pnpm exec vitest run tests/process/grok-real.smoke.test.ts
 KIMI_REAL_SMOKE=1 pnpm exec vitest run tests/process/kimi-real.smoke.test.ts
 CURSOR_REAL_SMOKE=1 pnpm exec vitest run tests/process/cursor-real.smoke.test.ts
+ANTIGRAVITY_REAL_SMOKE=1 pnpm exec vitest run tests/process/antigravity-real.smoke.test.ts
 ```
 
-测试文件路径相对 repo 根。真实 smoke 会调用已登录的 CLI；它验证适配器，不替代飞书主流程验收。
+测试文件路径相对 repo 根。真实 smoke 会调用已登录的 CLI；它验证适配器，不替代飞书主流程验收。Antigravity 的真实 smoke 使用 `claude-sonnet-4-6`，避免部分网络下 Gemini 返回 `User location is not supported`；profile 默认仍跟随 `agy` 的 settings，不强制该模型。

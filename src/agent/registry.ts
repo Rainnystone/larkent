@@ -1,3 +1,4 @@
+import { antigravityDescriptor } from './antigravity/descriptor';
 import { claudeDescriptor } from './claude/descriptor';
 import { codexDescriptor } from './codex/descriptor';
 import { cursorDescriptor } from './cursor/descriptor';
@@ -10,6 +11,7 @@ export const registeredAgentDescriptors = [
   kimiDescriptor,
   grokDescriptor,
   cursorDescriptor,
+  antigravityDescriptor,
 ] as const;
 
 export type AgentDescriptor = (typeof registeredAgentDescriptors)[number];

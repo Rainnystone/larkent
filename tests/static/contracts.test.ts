@@ -21,18 +21,18 @@ const collectTsFiles = (rel: string): string[] => {
 };
 
 describe('static architecture contracts', () => {
-  it('declares image and raw resume behavior for all five adapters', () => {
-    const descriptors = ['claude', 'codex', 'kimi', 'grok', 'cursor'].map(kind => descriptorFor(requireAgentKind(kind)));
-    expect(descriptors.map(d => d.acceptsImagePaths)).toEqual([false, true, false, false, false]);
-    expect(descriptors.map(d => d.acceptsRawResumeHandle)).toEqual([true, false, true, true, true]);
+  it('declares image and raw resume behavior for all six adapters', () => {
+    const descriptors = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'].map(kind => descriptorFor(requireAgentKind(kind)));
+    expect(descriptors.map(d => d.acceptsImagePaths)).toEqual([false, true, false, false, false, false]);
+    expect(descriptors.map(d => d.acceptsRawResumeHandle)).toEqual([true, false, true, true, true, true]);
   });
 
   it('routes factories and detection through descriptors without reverse adapter imports', () => {
     expect(read('src/runtime/agent-runtime.ts')).not.toMatch(/\bfactories\b|new \w+Adapter\b/);
     expect(read('src/cli/agent-detection.ts')).not.toMatch(
-      /\[\s*['"](?:claude|codex|kimi|grok|cursor)['"](?:\s*,\s*['"](?:claude|codex|kimi|grok|cursor)['"]){4}\s*,?\s*\]/,
+      /\[\s*['"](?:claude|codex|kimi|grok|cursor|antigravity)['"](?:\s*,\s*['"](?:claude|codex|kimi|grok|cursor|antigravity)['"]){5}\s*,?\s*\]/,
     );
-    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor']) {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity']) {
       expect(read(`src/agent/${kind}/adapter.ts`)).not.toMatch(/from ['"].*\/(?:registry|cli\/agent-detection)(?:\.js)?['"]/);
     }
   });
@@ -46,7 +46,7 @@ describe('static architecture contracts', () => {
   });
 
   it('keeps adapter metadata independent of the central registry', () => {
-    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const) {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const) {
       const metadataPath = `src/agent/${kind}/metadata.ts`;
       expect(existsSync(join(root, metadataPath)), metadataPath).toBe(true);
       expect(read(metadataPath), metadataPath).not.toMatch(
@@ -73,6 +73,7 @@ describe('static architecture contracts', () => {
       expect(read(file), file).not.toMatch(/agent\/grok/);
       expect(read(file), file).not.toMatch(/agent\/kimi/);
       expect(read(file), file).not.toMatch(/agent\/cursor/);
+      expect(read(file), file).not.toMatch(/agent\/antigravity/);
     }
   });
 
@@ -101,13 +102,13 @@ describe('static architecture contracts', () => {
     }
   });
 
-  it('keeps the five-kind union only in src/agent/registry.ts', () => {
+  it('keeps the six-kind union only in src/agent/registry.ts', () => {
     const files = [
       ...collectTsFiles('src'),
       ...collectTsFiles('web/src'),
     ].filter((file) => file !== 'src/agent/registry.ts' && !file.endsWith('.d.ts'));
     const strayUnion =
-      /['"](?:claude|codex|kimi|grok|cursor)['"](?:\s*\|\s*['"](?:claude|codex|kimi|grok|cursor)['"]){4}/;
+      /['"](?:claude|codex|kimi|grok|cursor|antigravity)['"](?:\s*\|\s*['"](?:claude|codex|kimi|grok|cursor|antigravity)['"]){5}/;
     for (const file of files) {
       const source = read(file)
         .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -117,7 +118,7 @@ describe('static architecture contracts', () => {
   });
 
   it('spawns agent CLIs only from JsonlCliRunner', () => {
-    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor'] as const) {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const) {
       for (const file of collectTsFiles(`src/agent/${kind}`)) {
         expect(read(file), file).not.toMatch(/\bspawnProcess\b/);
       }

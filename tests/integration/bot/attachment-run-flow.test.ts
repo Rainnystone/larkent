@@ -19,7 +19,7 @@ describe('attachment run flow', () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
-  it.each(['claude', 'codex', 'kimi', 'grok', 'cursor'] as const)('passes accepted image paths only when %s accepts images', async (kind) => {
+  it.each(['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const)('passes accepted image paths only when %s accepts images', async (kind) => {
     const h = await createHarness(kind);
 
     const result = await startRunFlow({

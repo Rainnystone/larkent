@@ -1,6 +1,6 @@
 # Larkent: Agent for lark
 
-Bring your coding agents into Feishu / Lark. Larkent connects conversations to Claude Code, Codex CLI, Kimi Code, Grok Build, and Cursor CLI running on your own machine or server.
+Bring your coding agents into Feishu / Lark. Larkent connects conversations to Claude Code, Codex CLI, Kimi Code, Grok Build, Cursor CLI, and Antigravity CLI running on your own machine or server.
 
 Inspired by [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge), Larkent has since undergone an architectural refactor: a shared agent registry and process runner, independent bot profiles, and consistent session and lifecycle handling across multiple CLIs.
 
@@ -23,8 +23,9 @@ Inspired by [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhang
 | Kimi Code | `kimi` | `kimi` |
 | Grok Build | `grok` | `grok` |
 | Cursor CLI | `cursor` | `cursor-agent` or Cursor's `agent` |
+| Antigravity CLI | `antigravity` | `agy` |
 
-All five use the same runtime contracts. CLI-specific options, image handling, and native history support remain adapter-specific. Select the agent explicitly when creating a profile.
+All six use the same runtime contracts. CLI-specific options, image handling, and native history support remain adapter-specific. Select the agent explicitly when creating a profile.
 
 ## Requirements
 
