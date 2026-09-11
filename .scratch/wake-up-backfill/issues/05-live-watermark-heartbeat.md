@@ -4,7 +4,7 @@
 
 **Blocked by:** 04
 
-**Status:** in-progress
+**Status:** done
 
 - [x] Keepalive gets an optional dependency that is invoked with `now` only on ticks where `getConnectionStatus().state === 'connected'`; it is **not** invoked on the wake-up / storm-guard early returns or while `ws-stuck`.
 - [x] Ledger exposes `touchLive(now)` that updates `lastLiveAt` in memory and persists at most once per 30 s (throttle inside the ledger, not in keepalive), plus a getter for the current watermark and `lastBackfillEnd`.
