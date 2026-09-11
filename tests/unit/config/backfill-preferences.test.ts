@@ -105,6 +105,16 @@ describe('preferences.backfill', () => {
     expect(warnings).toEqual([{ event: 'backfill-invalid', field: 'chats', value: { oc_a: true } }]);
   });
 
+  it('treats a non-object block as defaults and warns', () => {
+    expect(warningsOf(null)).toEqual({
+      value: DEFAULT_BACKFILL_PREFERENCES,
+      warnings: [{ event: 'backfill-invalid', field: 'backfill', value: null }],
+    });
+    expect(warningsOf(true).warnings).toEqual([
+      { event: 'backfill-invalid', field: 'backfill', value: true },
+    ]);
+  });
+
   it('exposes the ledger prune horizon as twice lookbackMs', () => {
     expect(getBackfillPruneHorizonMs({ accounts: { app } })).toBe(
       DEFAULT_BACKFILL_PREFERENCES.lookbackMs * 2,

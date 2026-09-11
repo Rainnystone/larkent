@@ -325,10 +325,10 @@ export function normalizeBackfillPreferences(
   raw: unknown,
   warn: (warning: BackfillNormalizeWarning) => void = () => {},
 ): BackfillPreferences {
-  if (raw === undefined || raw === null) {
+  if (raw === undefined) {
     return copyBackfill(DEFAULT_BACKFILL_PREFERENCES);
   }
-  if (typeof raw !== 'object' || Array.isArray(raw)) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
     warn({ event: 'backfill-invalid', field: 'backfill', value: raw });
     return copyBackfill(DEFAULT_BACKFILL_PREFERENCES);
   }
