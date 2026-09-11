@@ -56,6 +56,11 @@ Design: [docs/specs/wake-up-backfill.md](docs/specs/wake-up-backfill.md).
 - **processed ledger** (`backfill-state.json`, schema v1): per-profile store of processed `message_id`s plus the watermarks. Owned by the supervisor per profile and injected into `startChannel` like `sessions`, so it survives `controls.restart()`.
 - **claim**: the synchronous check-and-reserve of a `message_id` at `intakeMessage` entry. Released if the message is gated out, recorded as processed once it is accepted (queued or handled as a command).
 - **backfill mark**: bridge-side note that a queued message came from backfill; `runAgentBatch` turns it into one lateness hint in the prompt. `NormalizedMessage` is not extended.
+- **lateness hint**: the single `extraInstructions` line that tells the agent the triggering messages were posted while the bot was offline. A backfilled run differs from the identical live run by this line only.
+- **kill switch**: `preferences.backfill.enabled: false`. No scan; the live watermark still advances.
+- **dry-run**: `preferences.backfill.dryRun: true`. The scan runs and logs `backfill.would-enqueue`; nothing is handed to intake.
+- **coalesce**: a second recovery signal while a scan is in-flight returns the same promise and logs `backfill.coalesced`.
+- **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`).
 
 ## Words we do not use
 

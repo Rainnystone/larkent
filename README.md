@@ -65,7 +65,7 @@ Once setup is complete, send the bot a direct message or mention it in a group. 
 
 ## Running and configuration
 
-Use the [operations guide](docs/operations.md) for background services, the web console, chat commands, configuration, logs, and troubleshooting.
+Use the [operations guide](docs/operations.md) for background services, the web console, chat commands, configuration, logs, and troubleshooting. Self-heal after sleep, restart, or a WebSocket blip is in the [Self-heal](docs/operations.md#self-heal) section.
 
 The executable retains its existing filename, `bin/lark-channel-bridge.mjs`. The default data directory is `$HOME/.lark-channel`; set `LARK_CHANNEL_HOME` to use another location. Each profile keeps its own credentials and session state. Runtime isolation does not isolate files in a workspace shared by multiple agents.
 

@@ -37,6 +37,7 @@ export const REQUIRED_BACKFILL_EVENTS = [
   'backfill.raw-truncated',
   'backfill.mentions-truncated',
   'backfill.topic-partial',
+  'intake.skip-duplicate',
 ] as const;
 
 export type RequiredBackfillEvent = (typeof REQUIRED_BACKFILL_EVENTS)[number];

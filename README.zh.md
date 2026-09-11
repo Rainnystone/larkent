@@ -65,7 +65,7 @@ node bin/lark-channel-bridge.mjs run --profile my-agent
 
 ## 运行与配置
 
-后台服务、Web 控制台、聊天命令、配置、日志和排错方法统一见 [运行指南](docs/operations.md)。
+后台服务、Web 控制台、聊天命令、配置、日志和排错方法统一见 [运行指南](docs/operations.md)。休眠、重启或 WebSocket 闪断后的自愈见 [Self-heal](docs/operations.md#self-heal)。
 
 CLI 入口沿用 `bin/lark-channel-bridge.mjs`。默认数据目录为 `$HOME/.lark-channel`，可以通过 `LARK_CHANNEL_HOME` 指定其它位置。每个 profile 单独保存凭据与会话；多个 agent 共用工作目录时，运行状态隔离不等于目录内文件隔离。
 

@@ -126,6 +126,13 @@ describe('README runtime contract', () => {
     expect(operations).toContain('must not post the final answer');
   });
 
+  it('documents self-heal recovery and a generic staged rollout', async () => {
+    const operations = await readFile(new URL('../../../docs/operations.md', import.meta.url), 'utf8');
+
+    expect(operations).toContain('keepalive.wake-up` or `ws.reconnected');
+    expect(operations).toContain('enable on one profile, watch one recovery cycle, then the others');
+  });
+
   it('documents canonical permissions instead of recommending legacy sandbox config', async () => {
     const docs = await readDocs();
 

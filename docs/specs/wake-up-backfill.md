@@ -329,17 +329,32 @@ All lines use the existing `log.<level>('backfill', event, fields)` shape. Requi
 | Event | Level | Fields |
 |-------|-------|--------|
 | `backfill.trigger` | info | `trigger: 'connect' \| 'reconnected'`, `gapMs`, `windowStart`, `windowEnd` |
-| `backfill.skip-short-gap` / `skip-disabled` / `skip-no-identity` | info | `gapMs` |
+| `backfill.skip-short-gap` | info | `gapMs` |
+| `backfill.skip-disabled` | info | `gapMs` |
+| `backfill.skip-no-identity` | info | `gapMs` |
 | `backfill.watermark-initialized` | info | — |
 | `backfill.chats` | info | `listed`, `inScope`, `truncated` |
+| `backfill.chats-truncated` | info | `dropped` |
 | `backfill.chat-scanned` | info | `chatId`, `raw`, `mentions`, `enqueued`, `skippedProcessed`, `skippedCommand`, `truncated` |
 | `backfill.enqueued` | info | `chatId`, `msgId`, `ageMs`, `scope` |
 | `backfill.would-enqueue` | info | same fields; emitted instead of `enqueued` when `dryRun` is on |
 | `backfill.done` | info | `chats`, `enqueuedTotal`, `durationMs`, `lastBackfillEnd` |
 | `backfill.coalesced` | info | — |
-| `backfill.*-failed`, `backfill.clock-skew` | warn | `err`, `code`, `chatId` as applicable |
+| `backfill.aborted` | info | — |
+| `backfill.chats-fetch-failed` | warn | `err` |
+| `backfill.chat-fetch-failed` | warn | `err`, `code`, `chatId` |
+| `backfill.normalize-failed` | warn | `err`, `chatId`, `msgId` |
+| `backfill.clock-skew` | warn | `lastLiveAt`, `now` |
+| `backfill.skip-deleted` | info | `msgId`, `chatId` |
+| `backfill.skip-self` | info | `msgId`, `chatId` |
+| `backfill.skip-processed` | info | `msgId`, `chatId` |
+| `backfill.skip-command` | info | `msgId`, `chatId` |
+| `backfill.raw-truncated` | info | `chatId`, `seen`, `kept`, `dropped` |
+| `backfill.mentions-truncated` | info | `chatId`, `count` |
+| `backfill.topic-partial` | info | `chatId` |
 | `intake.skip-duplicate` | info | `msgId`, `source`, `scope` |
-| `outbound` lines for backfilled runs are unchanged; the `prompt.built` line gains `backfilled: <count>` |
+
+`outbound` lines for backfilled runs are unchanged; the `prompt.built` line gains `backfilled: <count>`.
 
 Metrics via `reportMetric`: `backfill_enqueued` (count), `backfill_duration_ms`, `backfill_chat_fetch_failed` (count), `intake_duplicate_dropped` (count, tag `source`).
 

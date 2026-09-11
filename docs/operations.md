@@ -70,6 +70,20 @@ Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并�
 
 `LARK_CHANNEL_CLAUDE_BIN`、`LARK_CHANNEL_CODEX_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_CURSOR_BIN`、`LARK_CHANNEL_ANTIGRAVITY_BIN` 用于创建 profile 时解析并保存程序路径。已有 profile 使用保存的 `agent.binaryPath`；更换程序前先停止 profile，再更新路径。数据根与 coding CLI 的登录目录是两回事。Antigravity 的程序名是 `agy`。
 
+## Self-heal
+
+Sleep, a process restart, or a short WebSocket blip can drop live @mentions. The bridge catches them up on its own: it pulls recent group history with bot identity, runs each missed @ through the normal intake path once, and adds one lateness hint to the prompt. No external poller or host routine.
+
+Watch the profile log for this sequence:
+
+`keepalive.wake-up` or `ws.reconnected` → `backfill.trigger` → `backfill.done`
+
+`/doctor` prints a `self-heal:` line with the ledger path, `lastLiveAt` age, and processed-id count.
+
+Kill switch: set `preferences.backfill.enabled` to `false`. Scans stop; the live watermark still advances so a later re-enable has a fresh window. Dry-run: set `preferences.backfill.dryRun` to `true`. The scan runs and logs `backfill.would-enqueue` per survivor, then posts nothing.
+
+Staged rollout is an operations choice, not product behavior: enable on one profile, watch one recovery cycle, then the others. Every profile runs the same code.
+
 ## Logs and stored data
 
 - profile 结构化日志：`<data-root>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`。
