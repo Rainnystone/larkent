@@ -50,6 +50,7 @@ One turn → one bridge-owned final reply. Agents must not post the final answer
 | `workspaces.default` | profile 默认工作目录 |
 | `preferences.model` | 传给对应 CLI 的模型选择 |
 | `preferences.showToolCalls` | 是否展示工具过程 |
+| `preferences.backfill` | 离线 @mention 回补的开关与窗口（`enabled` / `dryRun` / lookback 等；缺省即默认值） |
 | `mode` | `team` 或带访问名单的 `personal` |
 | `access.allowedUsers/allowedChats/admins` | 用户、群和管理员名单 |
 | `larkCli.identityPreset` | `user-default` 允许使用已授权用户身份 |

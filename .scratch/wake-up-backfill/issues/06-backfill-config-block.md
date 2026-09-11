@@ -4,12 +4,12 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Typed `BackfillPreferences` on the shared `AppPreferences` (not on any adapter's options); profile normalizer fills defaults; typed getter(s) in the schema module following the existing `getRunIdleTimeoutMs`-style pattern.
-- [ ] Round-trips through profile load/save without adding the block to profiles that never set it (omit when equal to defaults, like `chatRequireMention`), or always writes it — pick one and pin it with a fixture test.
-- [ ] Web console / `/config` card **not** required; if touched, changes are display-only.
-- [ ] `/doctor` shows the effective block on one line (or appended to ticket 05's self-heal line).
-- [ ] Ledger pruning horizon (ticket 04) now reads `2 × lookbackMs` from this block.
-- [ ] Tests: absent block → defaults; partial block → merged; garbage values → normalized with warnings; fixture-based load parity for existing profiles of every registered agent kind (extend the existing profile fixtures, do not add kind-specific ones).
-- [ ] `docs/operations.md` config table gains one row for `preferences.backfill` (behaviour text lands with ticket 09).
+- [x] Typed `BackfillPreferences` on the shared `AppPreferences` (not on any adapter's options); profile normalizer fills defaults; typed getter(s) in the schema module following the existing `getRunIdleTimeoutMs`-style pattern.
+- [x] Round-trips through profile load/save without adding the block to profiles that never set it (omit when equal to defaults, like `chatRequireMention`), or always writes it — pick one and pin it with a fixture test.
+- [x] Web console / `/config` card **not** required; if touched, changes are display-only.
+- [x] `/doctor` shows the effective block on one line (or appended to ticket 05's self-heal line).
+- [x] Ledger pruning horizon (ticket 04) now reads `2 × lookbackMs` from this block.
+- [x] Tests: absent block → defaults; partial block → merged; garbage values → normalized with warnings; fixture-based load parity for existing profiles of every registered agent kind (extend the existing profile fixtures, do not add kind-specific ones).
+- [x] `docs/operations.md` config table gains one row for `preferences.backfill` (behaviour text lands with ticket 09).

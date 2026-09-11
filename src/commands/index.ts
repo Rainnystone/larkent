@@ -26,7 +26,9 @@ import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/m
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
 import type { AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
+  formatBackfillPreferences,
   getAgentStopGraceMs,
+  getBackfillPreferences,
   getCotMessages,
   getMaxConcurrentRuns,
   getMessageReplyMode,
@@ -1187,6 +1189,7 @@ function buildDoctorReport(
     `owner API: ${formatOwnerState(ctx)}`,
     `queue: ${queueLine}`,
     `run executor: ${ctx.runExecutor ? 'available' : 'unavailable'}`,
+    `backfill: ${formatBackfillPreferences(getBackfillPreferences(ctx.controls.cfg))}`,
     ...(opts.workspaceCheck ? [`workspace check: ${opts.workspaceCheck}`] : []),
     ...(opts.policyCheck ? [`policy check: ${opts.policyCheck}`] : []),
     ...(opts.echoCheck ? [`agent echo check: ${opts.echoCheck}`] : []),

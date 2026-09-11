@@ -67,6 +67,30 @@ describe('/status and /doctor diagnostics', () => {
     expect(h.agent.runOptions).toHaveLength(0);
     expect(lastMarkdownOrText(h.channel)).toContain('未设置工作目录');
     expect(lastMarkdownOrText(h.channel)).toContain('self-check');
+    expect(lastMarkdownOrText(h.channel)).toContain(
+      'backfill: enabled=true dryRun=false lookbackMs=21600000 minGapMs=60000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
+    );
+  });
+
+  it('prints a customized backfill block on the doctor self-check line', async () => {
+    const h = await createHarness({ configuredWorkspace: false, bindWorkspace: false });
+    h.controls.profileConfig.preferences.backfill = {
+      enabled: false,
+      dryRun: true,
+      lookbackMs: 3_600_000,
+      minGapMs: 15_000,
+      maxChats: 4,
+      maxRawPerChat: 10,
+      maxMentionsPerChat: 2,
+      chats: ['oc_only'],
+    };
+    h.controls.cfg = h.controls.profileConfig;
+
+    await expect(h.run('/doctor')).resolves.toBe(true);
+
+    expect(lastMarkdownOrText(h.channel)).toContain(
+      'backfill: enabled=false dryRun=true lookbackMs=3600000 minGapMs=15000 maxChats=4 maxRawPerChat=10 maxMentionsPerChat=2 chats=oc_only',
+    );
   });
 
   it('uses RunExecutor for a sessionless read-only agent echo check', async () => {
