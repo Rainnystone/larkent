@@ -75,6 +75,20 @@ export function formatBackfillLatenessHint(input: {
   );
 }
 
+export function createBackfillRun(): (deps: RunBackfillDeps) => Promise<void> {
+  let inFlight: Promise<void> | undefined;
+  return (deps) => {
+    if (inFlight) {
+      log.info('backfill', 'coalesced');
+      return inFlight;
+    }
+    inFlight = runBackfill(deps).finally(() => {
+      inFlight = undefined;
+    });
+    return inFlight;
+  };
+}
+
 export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   const now = (deps.now ?? Date.now)();
   const startedAt = Date.now();

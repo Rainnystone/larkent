@@ -24,6 +24,7 @@ export const REQUIRED_BACKFILL_EVENTS = [
   'backfill.enqueued',
   'backfill.would-enqueue',
   'backfill.done',
+  'backfill.coalesced',
   'backfill.aborted',
   'backfill.chats-fetch-failed',
   'backfill.chat-fetch-failed',

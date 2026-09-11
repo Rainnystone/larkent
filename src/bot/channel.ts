@@ -61,7 +61,13 @@ import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, type RunHandle } from './active-runs';
-import { formatBackfillLatenessHint, runBackfill, type BackfillChannel, type BackfillMark } from './backfill';
+import {
+  createBackfillRun,
+  formatBackfillLatenessHint,
+  type BackfillChannel,
+  type BackfillMark,
+  type BackfillTrigger,
+} from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
@@ -296,6 +302,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // batch (only flushed once 600ms of silence has passed *after* the run).
   let closing = false;
   const backfillMarks = new Map<string, BackfillMark>();
+  const runScheduledBackfill = createBackfillRun();
   const runConsumers = new Set<Promise<void>>();
   const trackConsumer = (work: Promise<void>, phase: string): Promise<void> => {
     runConsumers.add(work);
@@ -387,6 +394,23 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       log.fail('intake', err);
     });
 
+  const launchBackfill = (trigger: BackfillTrigger): void => {
+    if (!ledger) return;
+    void trackConsumer(runScheduledBackfill({
+      trigger,
+      channel: channel as unknown as BackfillChannel,
+      ledger,
+      prefs: getBackfillPreferences(controls.cfg),
+      profile: controls.profileConfig,
+      marks: backfillMarks,
+      isClosing: () => closing,
+      refreshKnownChats: (chats) => {
+        controls.knownChats = chats;
+      },
+      intake: (msg) => handOffIntake(msg, 'backfill'),
+    }), 'backfill');
+  };
+
   channel.on({
     message: async (msg) => {
       if (closing) return;
@@ -452,6 +476,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         log.info('ws', 'reconnected');
       }
       consecutiveReconnects = 0;
+      launchBackfill('reconnected');
     },
     // Classify common WS errors into the `network` phase so /doctor and grep
     // can find them without scanning generic `ws.fail` entries.
@@ -535,21 +560,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     appId: cfg.accounts.app.id,
     procId: controls.processId,
   });
-  if (ledger) {
-    void trackConsumer(runBackfill({
-      trigger: 'connect',
-      channel: channel as unknown as BackfillChannel,
-      ledger,
-      prefs: getBackfillPreferences(controls.cfg),
-      profile: controls.profileConfig,
-      marks: backfillMarks,
-      isClosing: () => closing,
-      refreshKnownChats: (chats) => {
-        controls.knownChats = chats;
-      },
-      intake: (msg) => handOffIntake(msg, 'backfill'),
-    }), 'backfill');
-  }
+  launchBackfill('connect');
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
   // App-level keepalive: 15s probe + wake-up detection + HTTP reachability.

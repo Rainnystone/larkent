@@ -4,11 +4,11 @@
 
 **Blocked by:** 07
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `channel.on({ reconnected })` calls the shared backfill routine after its existing logging; the routine is the only place that decides to skip or scan.
-- [ ] Mutex: a second trigger during a scan returns the same promise and logs `backfill.coalesced`; after completion a new trigger runs a new scan; the mutex is per bridge instance (a new bridge from `controls.restart()` has its own, and the shared ledger keeps them consistent).
-- [ ] Ten `reconnected` events within a minute after one real 5 min gap → exactly one scan, nine `coalesced` or `skip-short-gap` lines, no extra `listChats` calls.
-- [ ] Late-WS race test (B2, reconnected variant): backfill hands id X to intake, then the live event for X arrives → one run, one `intake.skip-duplicate` with `source: 'ws'`; and the mirror order with `source: 'backfill'`.
-- [ ] `backfill.trigger` carries `trigger: 'connect' | 'reconnected'`, `gapMs`, `windowStart`, `windowEnd`.
-- [ ] Still no timer-based trigger anywhere; the keepalive `wake-up` line remains a log, not a trigger.
+- [x] `channel.on({ reconnected })` calls the shared backfill routine after its existing logging; the routine is the only place that decides to skip or scan.
+- [x] Mutex: a second trigger during a scan returns the same promise and logs `backfill.coalesced`; after completion a new trigger runs a new scan; the mutex is per bridge instance (a new bridge from `controls.restart()` has its own, and the shared ledger keeps them consistent).
+- [x] Ten `reconnected` events within a minute after one real 5 min gap → exactly one scan, nine `coalesced` or `skip-short-gap` lines, no extra `listChats` calls.
+- [x] Late-WS race test (B2, reconnected variant): backfill hands id X to intake, then the live event for X arrives → one run, one `intake.skip-duplicate` with `source: 'ws'`; and the mirror order with `source: 'backfill'`.
+- [x] `backfill.trigger` carries `trigger: 'connect' | 'reconnected'`, `gapMs`, `windowStart`, `windowEnd`.
+- [x] Still no timer-based trigger anywhere; the keepalive `wake-up` line remains a log, not a trigger.

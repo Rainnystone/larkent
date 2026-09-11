@@ -6,6 +6,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import {
   WATERMARK_MARGIN_MS,
+  createBackfillRun,
   formatBackfillLatenessHint,
   resolveBackfillWindow,
   runBackfill,
@@ -362,6 +363,27 @@ describe('runBackfill', () => {
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
+  it('logs trigger reconnected with gap and window bounds', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({ lastLiveAt, chats: [{ id: CHAT_A, name: 'A' }] });
+    const info = spyInfo();
+    await runBackfill(await deps({ ...h, trigger: 'reconnected' }));
+    const window = resolveBackfillWindow({
+      now: NOW,
+      lastLiveAt,
+      lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
+    });
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'trigger',
+        trigger: 'reconnected',
+        gapMs: window.gapMs,
+        windowStart: window.windowStart,
+        windowEnd: window.windowEnd,
+      }),
+    );
+  });
+
   it('pages chat history with second-resolution bounds and bot-identity list', async () => {
     const lastLiveAt = NOW - 3 * HOUR;
     const h = await harness({
@@ -383,6 +405,76 @@ describe('runBackfill', () => {
       sort_type: 'ByCreateTimeAsc',
       page_size: 50,
     });
+  });
+});
+
+describe('createBackfillRun coalescing mutex', () => {
+  it('returns the in-flight promise and logs coalesced for overlapping triggers', async () => {
+    let release: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_1', CHAT_A, 'late', NOW - 10_000)] },
+    });
+    const run = createBackfillRun();
+    const firstDeps = await deps({ ...h, listChatsHold: hold, trigger: 'reconnected' });
+    const secondDeps = await deps({ ...h, listChatsHold: hold, trigger: 'connect' });
+    const info = spyInfo();
+    const first = run(firstDeps);
+    const second = run(secondDeps);
+    expect(second).toBe(first);
+    expect(h.listed).toHaveLength(1);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'coalesced' }),
+    );
+    release();
+    await first;
+    expect(h.listed).toHaveLength(1);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_1']);
+  });
+
+  it('starts a fresh scan after the in-flight one completes', async () => {
+    let now = NOW;
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_again', CHAT_A, 'again', NOW - 10_000)] },
+    });
+    const run = createBackfillRun();
+    await run(await deps({ ...h, now: () => now }));
+    expect(h.listed).toHaveLength(1);
+
+    now = NOW + 5 * 60_000;
+    h.intake.length = 0;
+    const info = spyInfo();
+    const next = await deps({ ...h, now: () => now, trigger: 'reconnected' });
+    await run(next);
+    expect(h.listed).toHaveLength(2);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'trigger', trigger: 'reconnected' }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'coalesced')).toEqual([]);
+  });
+
+  it('does not share an in-flight scan across runner instances', async () => {
+    let release: () => void = () => {};
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const leftH = await harness({ chats: [{ id: CHAT_A, name: 'A' }] });
+    const rightH = await harness({ chats: [{ id: CHAT_B, name: 'B' }] });
+    const left = createBackfillRun();
+    const right = createBackfillRun();
+    const info = spyInfo();
+    const first = left(await deps({ ...leftH, listChatsHold: hold }));
+    const second = right(await deps({ ...rightH, listChatsHold: hold }));
+    expect(second).not.toBe(first);
+    expect(leftH.listed).toHaveLength(1);
+    expect(rightH.listed).toHaveLength(1);
+    expect(events(info, 'backfill').filter((row) => row.event === 'coalesced')).toEqual([]);
+    release();
+    await Promise.all([first, second]);
   });
 });
 
@@ -432,9 +524,12 @@ async function harness(opts: {
 
 async function deps(input: Awaited<ReturnType<typeof harness>> & {
   listChatsError?: Error;
+  listChatsHold?: Promise<void>;
   prefs?: BackfillPreferences;
   profile?: { mode: 'team' | 'personal'; access: { allowedChats: string[] } };
   botOpenId?: string | null;
+  trigger?: RunBackfillDeps['trigger'];
+  now?: () => number;
   refreshKnownChats?: (chats: Array<{ id: string; name: string }>) => void;
   isClosing?: () => boolean;
   onIntake?: (msg: NormalizedMessage) => void;
@@ -448,15 +543,16 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     messages: input.messages,
     listErrors: input.listErrors,
     listChatsError: input.listChatsError,
+    listChatsHold: input.listChatsHold,
   });
   const marks = new Map<string, { detectedAt: number }>();
   return {
-    trigger: 'connect',
+    trigger: input.trigger ?? 'connect',
     channel,
     ledger: input.ledger,
     prefs: input.prefs ?? DEFAULT_BACKFILL_PREFERENCES,
     profile: input.profile ?? { mode: 'team', access: { allowedChats: [] } },
-    now: () => NOW,
+    now: input.now ?? (() => NOW),
     marks,
     isClosing: input.isClosing ?? (() => false),
     refreshKnownChats: input.refreshKnownChats,
@@ -477,6 +573,7 @@ function fakeChannel(opts: {
   messages: Record<string, Record<string, unknown>[]>;
   listErrors: Record<string, Error>;
   listChatsError?: Error;
+  listChatsHold?: Promise<void>;
 }): BackfillChannel {
   const pages = new Map<string, Record<string, unknown>[][]>();
   for (const [chatId, items] of Object.entries(opts.messages)) {
@@ -486,6 +583,7 @@ function fakeChannel(opts: {
     botIdentity: opts.identity,
     async listChats(query) {
       opts.listed.push(query ?? {});
+      if (opts.listChatsHold) await opts.listChatsHold;
       if (opts.listChatsError) throw opts.listChatsError;
       return opts.chats;
     },

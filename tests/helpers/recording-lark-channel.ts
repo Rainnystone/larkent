@@ -6,9 +6,13 @@ export interface RecordingLarkChannel extends FakeChannel {
     message?: (msg: unknown) => Promise<void> | void;
     cardAction?: (evt: unknown) => Promise<void> | void;
     comment?: (evt: unknown) => Promise<void> | void;
+    reconnecting?: () => void;
+    reconnected?: () => void;
   };
   readonly callLog: RecordingCall[];
+  readonly listChatsCalls: number;
   on(handlers: RecordingLarkChannel['handlers']): void;
+  emit(event: 'reconnecting' | 'reconnected'): void;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
@@ -39,6 +43,7 @@ export function createRecordingLarkChannel(options: {
   const callLog: RecordingCall[] = [];
   const handlers: RecordingLarkChannel['handlers'] = {};
   let reactionSeq = 1;
+  let listChatsCalls = 0;
 
   const origSend = inner.send.bind(inner);
   const origStream = inner.stream.bind(inner);
@@ -84,8 +89,14 @@ export function createRecordingLarkChannel(options: {
     botIdentity: { ...(options.botIdentity ?? { openId: 'ou_bot', name: 'Pin Bot' }) },
     handlers,
     callLog,
+    get listChatsCalls() {
+      return listChatsCalls;
+    },
     on(next) {
       Object.assign(handlers, next);
+    },
+    emit(event) {
+      handlers[event]?.();
     },
     async connect() {},
     async disconnect() {},
@@ -96,6 +107,7 @@ export function createRecordingLarkChannel(options: {
       return { state: 'connected', reconnectAttempts: 0 };
     },
     async listChats() {
+      listChatsCalls += 1;
       return options.chats ?? [];
     },
     async getAppInfo() {
