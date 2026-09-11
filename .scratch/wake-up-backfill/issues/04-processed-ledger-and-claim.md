@@ -4,13 +4,13 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Ledger document: `{ schemaVersion: 1, lastLiveAt?, lastBackfillEnd?, processed: { [messageId]: createTimeMs } }`, written atomically with mode 0o600 through a serial persist queue; `load()` on start, `flush()` on profile shutdown, persistence failures surfaced the way other stores surface them.
-- [ ] Loader follows CONTEXT.md persistence rules: ENOENT → empty; corrupt or unknown future `schemaVersion` → warn `backfill.ledger-load-failed`, run with an empty in-memory ledger, **never overwrite** the original file.
-- [ ] Ledger instance is created once per managed profile in the supervisor and passed through `StartChannelDeps`; a `controls.restart()` reuses the same instance (test: two bridges, one ledger, one file writer).
-- [ ] `claim(messageId)` is synchronous and is the first thing `intakeMessage` does; returns `false` when the id is processed or currently claimed. `release(messageId)` on gate-out; `record(messageId, createTime)` on acceptance (after `pending.push` or when `tryHandleCommand` returns handled).
-- [ ] Duplicate path logs `intake.skip-duplicate` with `msgId`, `scope`, `source: 'ws'` (source value becomes `'backfill'` in ticket 07); metric `intake_duplicate_dropped` tagged by source.
-- [ ] Pruning: entries with `createTime < now − 2 × lookbackMs` (12 h with spec defaults; use the constant until ticket 06 makes it configurable) dropped on load and after each record burst; hard cap 5000 ids, evict oldest.
-- [ ] Tests (B2 mirror orders, B6): same id twice within one bridge → one `queued`, one `skip-duplicate`; same id across restart → one run; a gated-out message does not end up in the file; ledger survives `controls.restart()`; corrupt file is left untouched.
-- [ ] `/doctor` unchanged in this ticket (ticket 05 adds the line). No `agentKind` branching; no profile or host names.
+- [x] Ledger document: `{ schemaVersion: 1, lastLiveAt?, lastBackfillEnd?, processed: { [messageId]: createTimeMs } }`, written atomically with mode 0o600 through a serial persist queue; `load()` on start, `flush()` on profile shutdown, persistence failures surfaced the way other stores surface them.
+- [x] Loader follows CONTEXT.md persistence rules: ENOENT → empty; corrupt or unknown future `schemaVersion` → warn `backfill.ledger-load-failed`, run with an empty in-memory ledger, **never overwrite** the original file.
+- [x] Ledger instance is created once per managed profile in the supervisor and passed through `StartChannelDeps`; a `controls.restart()` reuses the same instance (test: two bridges, one ledger, one file writer).
+- [x] `claim(messageId)` is synchronous and is the first thing `intakeMessage` does; returns `false` when the id is processed or currently claimed. `release(messageId)` on gate-out; `record(messageId, createTime)` on acceptance (after `pending.push` or when `tryHandleCommand` returns handled).
+- [x] Duplicate path logs `intake.skip-duplicate` with `msgId`, `scope`, `source: 'ws'` (source value becomes `'backfill'` in ticket 07); metric `intake_duplicate_dropped` tagged by source.
+- [x] Pruning: entries with `createTime < now − 2 × lookbackMs` (12 h with spec defaults; use the constant until ticket 06 makes it configurable) dropped on load and after each record burst; hard cap 5000 ids, evict oldest.
+- [x] Tests (B2 mirror orders, B6): same id twice within one bridge → one `queued`, one `skip-duplicate`; same id across restart → one run; a gated-out message does not end up in the file; ledger survives `controls.restart()`; corrupt file is left untouched.
+- [x] `/doctor` unchanged in this ticket (ticket 05 adds the line). No `agentKind` branching; no profile or host names.
