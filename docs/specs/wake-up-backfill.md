@@ -334,6 +334,7 @@ All lines use the existing `log.<level>('backfill', event, fields)` shape. Requi
 | `backfill.chats` | info | `listed`, `inScope`, `truncated` |
 | `backfill.chat-scanned` | info | `chatId`, `raw`, `mentions`, `enqueued`, `skippedProcessed`, `skippedCommand`, `truncated` |
 | `backfill.enqueued` | info | `chatId`, `msgId`, `ageMs`, `scope` |
+| `backfill.would-enqueue` | info | same fields; emitted instead of `enqueued` when `dryRun` is on |
 | `backfill.done` | info | `chats`, `enqueuedTotal`, `durationMs`, `lastBackfillEnd` |
 | `backfill.coalesced` | info | — |
 | `backfill.*-failed`, `backfill.clock-skew` | warn | `err`, `code`, `chatId` as applicable |
@@ -355,6 +356,7 @@ Profile `preferences.backfill` (shared `AppPreferences` in `src/config/schema.ts
   "preferences": {
     "backfill": {
       "enabled": true,            // kill switch
+      "dryRun": false,            // true: full scan, log `backfill.would-enqueue` per survivor, hand nothing to intake, advance watermark
       "lookbackMs": 21600000,     // 6 h hard cap on window
       "minGapMs": 60000,          // skip scans for gaps shorter than this
       "maxChats": 50,
@@ -389,7 +391,7 @@ No default, path or constant in code refers to a profile name, bot name or agent
 
 Any staged rollout is an operations choice, not product behavior:
 
-1. Deploy with `backfill.enabled: true` on one profile; leave others `false` if you prefer a canary.
+1. Deploy with `backfill.enabled: true` on one profile; leave others `false` if you prefer a canary. `dryRun: true` gives a zero-risk first look: the scan runs and logs what it *would* replay without posting.
 2. Wait for at least one real recovery cycle (`keepalive.wake-up` or `ws.reconnected` followed by `backfill.trigger` … `backfill.done` in that profile's log) and confirm no `intake.skip-duplicate` storms and no unwanted late replies.
 3. Enable on the remaining profiles. All profiles run identical code; there is no per-agent tuning.
 
