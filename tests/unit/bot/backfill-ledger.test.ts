@@ -26,7 +26,9 @@ afterEach(async () => {
   );
   atomic.mockReset().mockImplementation(actual.writeFileAtomic);
   vi.restoreAllMocks();
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(dirs.splice(0).map((dir) =>
+    rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }),
+  ));
 });
 
 async function fixture(now = () => 1_760_000_000_000) {

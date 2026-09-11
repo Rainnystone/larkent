@@ -13,7 +13,9 @@ afterEach(async () => {
   for (const handle of handles.splice(0)) handle.stop();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(dirs.splice(0).map((dir) =>
+    rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }),
+  ));
 });
 
 describe('keepalive live-watermark hook', () => {

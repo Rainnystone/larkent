@@ -25,10 +25,14 @@ const CHAT_C = 'oc_chat_c';
 const HOUR = 3_600_000;
 
 const dirs: string[] = [];
+const ledgers: BackfillLedger[] = [];
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  await Promise.all(ledgers.splice(0).map((ledger) => ledger.flush().catch(() => {})));
+  await Promise.all(dirs.splice(0).map((dir) =>
+    rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }),
+  ));
 });
 
 describe('resolveBackfillWindow', () => {
@@ -503,6 +507,7 @@ async function harness(opts: {
   const dir = await mkdtemp(join(tmpdir(), 'backfill-'));
   dirs.push(dir);
   const ledger = new BackfillLedger(join(dir, 'backfill-state.json'), { now: () => NOW });
+  ledgers.push(ledger);
   await ledger.load();
   if (opts.lastLiveAt !== undefined) ledger.touchLive(opts.lastLiveAt);
   else if (!('lastLiveAt' in opts)) ledger.touchLive(NOW - 5 * 60_000);
