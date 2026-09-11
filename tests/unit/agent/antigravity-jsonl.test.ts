@@ -186,4 +186,53 @@ describe('AntigravityJsonlTranslator', () => {
       },
     ]);
   });
+
+  it('fail() flushes held-back reply text and a resume handle from step_update', () => {
+    const t = new AntigravityJsonlTranslator();
+    expect(
+      collect(t, [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'ACTIVE',
+            step_type: 'agent_response',
+            text_delta: 'partial answer',
+          },
+        },
+      ]),
+    ).toEqual([]);
+    expect(t.fail('agy exited with code 1')).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+      { type: 'final_text', content: 'partial answer' },
+      { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
+    ]);
+    expect(t.fail('again')).toEqual([]);
+  });
+
+  it('finish(failed) flushes held-back reply text when the stream had no result', () => {
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: 'truncated\n',
+        },
+      },
+    ]);
+    expect(t.finish()).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+      { type: 'final_text', content: 'truncated\n' },
+      {
+        type: 'error',
+        message: 'antigravity stream ended before a terminal event',
+        terminationReason: 'failed',
+      },
+    ]);
+  });
 });

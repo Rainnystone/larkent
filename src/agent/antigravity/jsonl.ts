@@ -55,28 +55,23 @@ export class AntigravityJsonlTranslator {
     if (this.terminal) return [];
     this.terminal = true;
     if (reason === 'failed') {
-      return [
+      return this.prependHeldBack([
         {
           type: 'error',
           message: 'antigravity stream ended before a terminal event',
           terminationReason: 'failed',
         },
-      ];
+      ]);
     }
-    const events: AgentEvent[] = [];
-    events.push(...this.systemEvents());
-    if (this.pendingText) {
-      events.push({ type: 'final_text', content: this.pendingText });
-      this.pendingText = '';
-    }
-    events.push(this.doneEvent(reason));
-    return events;
+    return this.prependHeldBack([this.doneEvent(reason)]);
   }
 
   fail(message: string): AgentEvent[] {
     if (this.terminal) return [];
     this.terminal = true;
-    return [{ type: 'error', message: truncate(message, 4096), terminationReason: 'failed' }];
+    return this.prependHeldBack([
+      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
+    ]);
   }
 
   protocolDrift(): ProtocolDriftState {
@@ -145,6 +140,15 @@ export class AntigravityJsonlTranslator {
   private rememberConversation(value: unknown): void {
     const id = stringValue(value);
     if (id) this.conversationId = id;
+  }
+
+  private prependHeldBack(events: AgentEvent[]): AgentEvent[] {
+    const prefix: AgentEvent[] = [...this.systemEvents()];
+    if (this.pendingText) {
+      prefix.push({ type: 'final_text', content: this.pendingText });
+      this.pendingText = '';
+    }
+    return prefix.length > 0 ? [...prefix, ...events] : events;
   }
 
   private systemEvents(): AgentEvent[] {
