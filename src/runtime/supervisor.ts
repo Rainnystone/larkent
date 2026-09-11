@@ -3,7 +3,7 @@ import { BackfillLedger } from '../bot/backfill-ledger';
 import { startChannel as realStartChannel, type BridgeChannel } from '../bot/channel';
 import type { Controls } from '../commands';
 import type { AppPaths } from '../config/app-paths';
-import { isComplete, type AppConfig } from '../config/schema';
+import { getBackfillPruneHorizonMs, isComplete, type AppConfig } from '../config/schema';
 import type { AgentKind, ProfileConfig } from '../config/profile-schema';
 import type { AgentAdapter } from '../agent/types';
 import { log } from '../core/logger';
@@ -70,6 +70,7 @@ class ManagedProfile {
   private stopped = false;
   private shutdownFailure: { error: unknown } | undefined;
   private readonly pendingDisconnects = new Set<BridgeChannel>();
+  private readonly ledger: BackfillLedger;
 
   constructor(
     readonly profile: string,
@@ -81,10 +82,13 @@ class ManagedProfile {
     private sessions: SessionStore,
     private sessionCatalog: SessionCatalog,
     private workspaces: WorkspaceStore,
-    private ledger: BackfillLedger,
     private startChannelFn: StartChannelFn,
     private onExitCommand: (profile: string) => Promise<void>,
-  ) {}
+  ) {
+    this.ledger = new BackfillLedger(appPaths.backfillStateFile, {
+      pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
+    });
+  }
 
   get appId(): string {
     return this.cfg.accounts.app.id;
@@ -454,7 +458,6 @@ export class Supervisor {
     const sessions = new SessionStore(appPaths.sessionsFile);
     const sessionCatalog = new SessionCatalog(`${appPaths.sessionsFile}.catalog.json`);
     const workspaces = new WorkspaceStore(appPaths.workspacesFile);
-    const ledger = new BackfillLedger(appPaths.backfillStateFile);
 
     const managed = new ManagedProfile(
       appPaths.profile,
@@ -466,7 +469,6 @@ export class Supervisor {
       sessions,
       sessionCatalog,
       workspaces,
-      ledger,
       this.startChannelFn,
       (p) => this.stopProfile(p),
     );

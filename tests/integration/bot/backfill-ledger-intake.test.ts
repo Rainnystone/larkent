@@ -218,13 +218,13 @@ function mention(
   } as NormalizedMessage;
 }
 
-function intakeEvents(info: ReturnType<typeof vi.spyOn<typeof logger.log, 'info'>>) {
+function intakeEvents(info: { mock: { calls: unknown[][] } }) {
   return info.mock.calls
-    .filter(([phase, event]) => (
-      phase === 'intake' && (event === 'queued' || event === 'skip-duplicate' || event === 'command')
+    .filter((call): call is [string, string, { msgId?: string; scope?: string; source?: string }?] => (
+      call[0] === 'intake' && (call[1] === 'queued' || call[1] === 'skip-duplicate' || call[1] === 'command')
     ))
     .map(([, event, fields]) => {
-      const row = fields as { msgId?: string; scope?: string; source?: string };
+      const row = fields ?? {};
       if (event === 'skip-duplicate') {
         return { event, msgId: row.msgId, scope: row.scope, source: row.source };
       }
