@@ -19,12 +19,15 @@ import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
 import { CallbackNonceStore } from '../card/callback-store';
 import { renderCard } from '../card/run-renderer';
+import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
 import {
   finalizeIfRunning,
   initialState,
   markIdleTimeout,
   markInterrupted,
   reduce,
+  seedRunState,
+  shouldSkipFinalReply,
   type RunState,
 } from '../card/run-state';
 import { renderText } from '../card/text-renderer';
@@ -1109,6 +1112,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const replyMode = getMessageReplyMode(controls.cfg);
   const finalAnswerOnly =
     descriptorFor(controls.profileConfig.agentKind).replyMode === 'final-answer';
+  const runContext = {
+    chatId,
+    batchMessageIds: batch.map((msg) => msg.messageId),
+  };
   log.info('flush', 'reply-mode', { mode: replyMode });
   const cotMessages = getCotMessages(controls.cfg);
   const cotEnabled = cotMessages !== 'off';
@@ -1167,6 +1174,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           idleTimeoutMs,
           recordSession,
           async () => {},
+          runContext,
         );
         await cotDone;
         if (cotPublisher.degradedReason) {
@@ -1193,7 +1201,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
 
     if (replyMode === 'card') {
-      let latestState: RunState = initialState;
+      let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
       let cardCtrl:
         | { update(next: object | ((current: object) => object)): Promise<void> }
@@ -1229,6 +1237,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
           }
         },
+        runContext,
       );
       try {
         await awaitRenderAwareStream({
@@ -1257,13 +1266,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           chatId,
           scope,
           state: finalReplyState(progress, filterForPrefs(latestState)),
+          skipFrom: latestState,
           replyMode,
           sendOpts,
           cardRenderOptions,
         });
       }
     } else if (replyMode === 'markdown') {
-      let latestState: RunState = initialState;
+      let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
       let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
@@ -1294,6 +1304,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             await markdownCtrl.setContent(renderText(filterForPrefs(state)));
           }
         },
+        runContext,
       );
       try {
         await awaitRenderAwareStream({
@@ -1320,6 +1331,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           chatId,
           scope,
           state: finalReplyState(progress, filterForPrefs(latestState)),
+          skipFrom: latestState,
           replyMode,
           sendOpts,
           cardRenderOptions,
@@ -1336,6 +1348,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         idleTimeoutMs,
         recordSession,
         async () => {},
+        runContext,
       );
       await sendFinalReply({
         channel,
@@ -1513,10 +1526,22 @@ async function sendFinalReply(input: {
   chatId: string;
   scope: string;
   state: RunState;
+  /** Run outcome before reply-state projection (card/markdown may force `done`). */
+  skipFrom?: RunState;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
 }): Promise<void> {
+  if (shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)) {
+    log.info('outbound', 'skip-cli-already-sent', {
+      scope: input.scope,
+      chatId: input.chatId,
+      mode: input.replyMode,
+    });
+    reportMetric(OUTBOUND_SKIP_CLI_SENT_METRIC, 1);
+    return;
+  }
+
   const body = renderText(input.state);
 
   // Nothing deliverable to send (agent produced no text on a clean finish;
@@ -1621,9 +1646,10 @@ async function processAgentStream(
   idleTimeoutMs: number | undefined,
   recordSession: (event: AgentEvent) => void,
   flush: (state: RunState) => Promise<void>,
+  runContext?: { chatId: string; batchMessageIds: readonly string[] },
 ): Promise<RunState> {
   const runStart = Date.now();
-  let state: RunState = initialState;
+  let state: RunState = seedRunState(runContext ?? {});
 
   // Idle watchdog: claude going silent for `idleTimeoutMs` is treated as
   // "presumed hung", we stop() and surface a timeout marker on the card.

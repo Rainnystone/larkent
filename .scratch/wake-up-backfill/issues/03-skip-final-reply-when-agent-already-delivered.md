@@ -4,7 +4,7 @@
 
 **Blocked by:** 02
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [ ] Reducer recognises a lark-cli IM send from `tool_use` input (command string containing `lark-cli im` with `+messages-send`, `+messages-reply` or `send-card` and a `--chat-id <oc_/ou_…>` — also the reply form where the chat is implied by `--message-id`, resolved to the current chat when the message id belongs to the batch) and confirms success from the matching `tool_result` (exit success / JSON without error code). Unsuccessful or malformed sends record nothing.
 - [ ] `RunState.directImSentChatIds` is populated per run and is not persisted anywhere.
