@@ -93,7 +93,9 @@ function emittedInSource(source: string, fullName: string): boolean {
 function eventsFromSpecSection(section: string): string[] {
   const names = new Set<string>();
   for (const match of section.matchAll(/`([a-z][a-z0-9.*-]*)`/g)) {
-    let name = match[1];
+    const captured = match[1];
+    if (captured === undefined) continue;
+    let name = captured;
     if (name.includes('*')) continue;
     if (name.startsWith('skip-') && !name.includes('.')) name = `backfill.${name}`;
     if (name.startsWith('backfill.') || name === 'intake.skip-duplicate') names.add(name);
