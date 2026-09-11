@@ -1,9 +1,13 @@
 import { isAbsolute } from 'node:path';
-import type {
-  AppCredentials,
-  AppPreferences,
-  MessageReplyMode,
-  SecretsConfig,
+import { log } from '../core/logger';
+import {
+  isDefaultBackfillPreferences,
+  normalizeBackfillPreferences,
+  type AppCredentials,
+  type AppPreferences,
+  type BackfillNormalizeWarning,
+  type MessageReplyMode,
+  type SecretsConfig,
 } from './schema';
 import {
   normalizePermissions,
@@ -378,19 +382,41 @@ function normalizePreferences(
     access: _access,
     requireMentionInGroup: _mention,
     messageReply,
+    backfill,
     ...rest
   } = preferences ?? {};
-  if (messageReply !== undefined && isMessageReply(messageReply)) {
-    return {
-      ...rest,
-      messageReply,
-    };
+  const normalizedBackfill = normalizeBackfillPreferences(backfill, logBackfillWarning);
+  const base =
+    messageReply !== undefined && isMessageReply(messageReply)
+      ? { ...rest, messageReply }
+      : rest;
+  if (backfill === undefined || isDefaultBackfillPreferences(normalizedBackfill)) {
+    return base;
   }
-  return rest;
+  return { ...base, backfill: normalizedBackfill };
 }
 
 function isMessageReply(value: unknown): value is MessageReplyMode {
   return value === 'card' || value === 'markdown' || value === 'text';
+}
+
+function logBackfillWarning(warning: BackfillNormalizeWarning): void {
+  switch (warning.event) {
+    case 'backfill-invalid':
+      log.warn('config', warning.event, { field: warning.field, value: warning.value });
+      return;
+    case 'backfill-dropped-chat':
+      log.warn(
+        'config',
+        warning.event,
+        'chatId' in warning ? { chatId: warning.chatId } : { value: warning.value },
+      );
+      return;
+    default: {
+      const _exhaustive: never = warning;
+      return _exhaustive;
+    }
+  }
 }
 
 function normalizeAccess(

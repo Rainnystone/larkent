@@ -13,6 +13,8 @@ import { log, reportMetric } from '../core/logger';
  *  2. Wake-up detection — if the timer was skipped for > SLEEP_DETECT_MS, the
  *     machine likely slept (laptop lid / hibernate / suspend). Reset counters
  *     and bail out for this tick: don't trust state captured pre-sleep.
+ *     `onWakeUp` runs here so a still-`connected` socket cannot erase the
+ *     offline gap by advancing the live watermark on the next probe.
  *
  *  3. Timer storm guard — when machine wakes, multiple intervals can fire
  *     back-to-back. If less than TIMER_STORM_GUARD_MS since last tick, skip.
@@ -39,14 +41,24 @@ export interface KeepaliveDeps {
   domain: string;
   /** Force-reconnect callback. Bridge uses `controls.restart`. */
   forceReconnect: () => Promise<void>;
+  now?: () => number;
+  /** Called with `now` only on ticks that observe WS `connected`. */
+  onConnectedTick?: (now: number) => void;
+  /**
+   * Called on the sleep-detection early return. Bridge launches backfill
+   * here so a surviving WS cannot advance `lastLiveAt` before the scan.
+   */
+  onWakeUp?: () => void;
 }
 
 export interface KeepaliveHandle {
   stop(): void;
+  tick(): Promise<void>;
 }
 
 export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
-  const { channel, domain, forceReconnect } = deps;
+  const { channel, domain, forceReconnect, onConnectedTick, onWakeUp } = deps;
+  const nowFn = deps.now ?? Date.now;
 
   let lastTick = 0;
   let consecutiveDown = 0;
@@ -55,7 +67,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
 
   const tick = async (): Promise<void> => {
     if (stopped) return;
-    const now = Date.now();
+    const now = nowFn();
     const sinceLast = lastTick > 0 ? now - lastTick : 0;
 
     // (3) Timer storm — multiple intervals firing at once on wake-up.
@@ -68,6 +80,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       consecutiveDown = 0;
       networkDownTicks = 0;
       lastTick = now;
+      onWakeUp?.();
       return;
     }
     lastTick = now;
@@ -83,6 +96,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       }
       consecutiveDown = 0;
       networkDownTicks = 0;
+      onConnectedTick?.(now);
       return;
     }
 
@@ -136,6 +150,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       stopped = true;
       clearInterval(timer);
     },
+    tick,
   };
 }
 

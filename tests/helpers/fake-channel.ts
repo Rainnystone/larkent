@@ -44,6 +44,7 @@ export interface FakeChannel {
           create(params: unknown): Promise<unknown>;
           reply(params: unknown): Promise<unknown>;
           delete(params: unknown): Promise<unknown>;
+          list(params: unknown): Promise<unknown>;
         };
       };
     };
@@ -116,6 +117,10 @@ export function createFakeChannel(): FakeChannel {
             async delete(params: unknown): Promise<unknown> {
               requests.push({ method: 'im.v1.message.delete', params });
               return {};
+            },
+            async list(params: unknown): Promise<unknown> {
+              requests.push({ method: 'im.v1.message.list', params });
+              return { data: { items: [], has_more: false } };
             },
           },
         },

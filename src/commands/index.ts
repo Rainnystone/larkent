@@ -6,6 +6,7 @@ import { capabilityForProfile } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
+import { formatSelfHealLine, type BackfillLedger } from '../bot/backfill-ledger';
 import {
   accountCurrentCard,
   accountFailureCard,
@@ -26,7 +27,9 @@ import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/m
 import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
 import type { AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
+  formatBackfillPreferences,
   getAgentStopGraceMs,
+  getBackfillPreferences,
   getCotMessages,
   getMaxConcurrentRuns,
   getMessageReplyMode,
@@ -129,6 +132,7 @@ export interface CommandContext {
   sessionCatalog?: SessionCatalog;
   sessionCatalogIdentity?: SessionCatalogIdentity;
   workspaces: WorkspaceStore;
+  ledger?: BackfillLedger;
   agent: AgentAdapter;
   activeRuns: ActiveRuns;
   processPool?: ProcessPool;
@@ -195,12 +199,20 @@ function isAdminCommand(cmd: string): boolean {
   return ADMIN_COMMANDS.has(cmd.startsWith('/') ? cmd : `/${cmd}`);
 }
 
+export function isRegisteredSlashCommand(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('/')) return false;
+  const cmd = trimmed.split(/\s+/)[0] ?? '';
+  return Object.hasOwn(handlers, cmd);
+}
+
 export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {
   const trimmed = ctx.msg.content.trim();
   if (!trimmed.startsWith('/')) return false;
   const parts = trimmed.split(/\s+/);
   const cmd = parts[0] ?? '';
   const args = parts.slice(1).join(' ');
+  if (!isRegisteredSlashCommand(trimmed)) return false;
   const h = handlers[cmd];
   if (!h) return false;
   if (
@@ -1187,6 +1199,13 @@ function buildDoctorReport(
     `owner API: ${formatOwnerState(ctx)}`,
     `queue: ${queueLine}`,
     `run executor: ${ctx.runExecutor ? 'available' : 'unavailable'}`,
+    `backfill: ${formatBackfillPreferences(getBackfillPreferences(ctx.controls.cfg))}`,
+    formatSelfHealLine({
+      path: ctx.ledger?.getFilePath(),
+      lastLiveAt: ctx.ledger?.getLiveAt(),
+      processedCount: ctx.ledger?.getProcessedCount(),
+      now: Date.now(),
+    }),
     ...(opts.workspaceCheck ? [`workspace check: ${opts.workspaceCheck}`] : []),
     ...(opts.policyCheck ? [`policy check: ${opts.policyCheck}`] : []),
     ...(opts.echoCheck ? [`agent echo check: ${opts.echoCheck}`] : []),

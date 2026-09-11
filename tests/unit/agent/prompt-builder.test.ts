@@ -122,6 +122,15 @@ describe('agent prompt builder', () => {
     expect(source).not.toContain('env -u LARK_CHANNEL lark-cli auth login');
   });
 
+  it('tells agents the bridge owns the final reply to the current chat', () => {
+    const source = readFileSync(join(process.cwd(), 'src/agent/bridge-system-prompt.ts'), 'utf8');
+
+    expect(source).toContain('最终回答发到触发会话');
+    expect(source).toContain('+messages-send');
+    expect(source).toContain('+messages-reply');
+    expect(source).toContain('用户明确要求你执行一次 lark-cli 发送');
+  });
+
   it('keeps lark-cli user identity policy details out of user-facing OAuth replies', () => {
     const source = readFileSync(join(process.cwd(), 'src/agent/bridge-system-prompt.ts'), 'utf8');
 

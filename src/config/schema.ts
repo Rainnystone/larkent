@@ -70,6 +70,43 @@ export type MessageReplyMode = 'card' | 'markdown' | 'text';
 export type CotMessagesMode = 'off' | 'brief' | 'detailed';
 
 /**
+ * Shared wake-up @mention backfill knobs. The same block applies to every
+ * profile and agent kind; getters and the profile normalizer fill these
+ * defaults when the key is absent.
+ */
+export interface BackfillPreferences {
+  /** Kill switch. Default true. */
+  enabled: boolean;
+  /** Full scan + `backfill.would-enqueue` logs, no intake hand-off. Default false. */
+  dryRun: boolean;
+  /** Hard cap on the scan window, milliseconds. Default 6 h. */
+  lookbackMs: number;
+  /** Skip scans for gaps shorter than this, milliseconds. Default 60 s. */
+  minGapMs: number;
+  maxChats: number;
+  maxRawPerChat: number;
+  maxMentionsPerChat: number;
+  /** Optional `oc_…` allowlist; empty means every group the bot is in. */
+  chats: string[];
+}
+
+export type BackfillNormalizeWarning =
+  | { event: 'backfill-invalid'; field: string; value: unknown }
+  | { event: 'backfill-dropped-chat'; chatId: string }
+  | { event: 'backfill-dropped-chat'; value: unknown };
+
+export const DEFAULT_BACKFILL_PREFERENCES: BackfillPreferences = {
+  enabled: true,
+  dryRun: false,
+  lookbackMs: 6 * 60 * 60 * 1000,
+  minGapMs: 60 * 1000,
+  maxChats: 50,
+  maxRawPerChat: 200,
+  maxMentionsPerChat: 20,
+  chats: [],
+};
+
+/**
  * Access control settings. Empty lists are fail-closed in the v2 policy:
  * no DM senders, no group chats, and only the runtime owner can administer
  * the bot. Runtime owner/admin bypass is applied by the policy layer because
@@ -155,6 +192,12 @@ export interface AppPreferences {
    * Range 100-30000; out-of-range values fall back to default.
    */
   agentStopGraceMs?: number;
+  /**
+   * Wake-up @mention backfill. Absent means {@link DEFAULT_BACKFILL_PREFERENCES}.
+   * Partial objects are merged onto those defaults; the profile normalizer
+   * omits a block that equals the defaults so untouched profiles stay clean.
+   */
+  backfill?: Partial<BackfillPreferences>;
 }
 
 /**
@@ -276,4 +319,151 @@ export function getRunIdleTimeoutMs(cfg: AppConfig): number | undefined {
   if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return undefined;
   const clamped = Math.min(Math.max(Math.floor(raw), 1), 120);
   return clamped * 60_000;
+}
+
+export function normalizeBackfillPreferences(
+  raw: unknown,
+  warn: (warning: BackfillNormalizeWarning) => void = () => {},
+): BackfillPreferences {
+  if (raw === undefined) {
+    return copyBackfill(DEFAULT_BACKFILL_PREFERENCES);
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    warn({ event: 'backfill-invalid', field: 'backfill', value: raw });
+    return copyBackfill(DEFAULT_BACKFILL_PREFERENCES);
+  }
+  const input = raw as Record<string, unknown>;
+  return {
+    enabled: boolOr(input.enabled, DEFAULT_BACKFILL_PREFERENCES.enabled, 'enabled', warn),
+    dryRun: boolOr(input.dryRun, DEFAULT_BACKFILL_PREFERENCES.dryRun, 'dryRun', warn),
+    lookbackMs: positiveIntOr(
+      input.lookbackMs,
+      DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
+      'lookbackMs',
+      warn,
+    ),
+    minGapMs: positiveIntOr(
+      input.minGapMs,
+      DEFAULT_BACKFILL_PREFERENCES.minGapMs,
+      'minGapMs',
+      warn,
+    ),
+    maxChats: positiveIntOr(
+      input.maxChats,
+      DEFAULT_BACKFILL_PREFERENCES.maxChats,
+      'maxChats',
+      warn,
+    ),
+    maxRawPerChat: positiveIntOr(
+      input.maxRawPerChat,
+      DEFAULT_BACKFILL_PREFERENCES.maxRawPerChat,
+      'maxRawPerChat',
+      warn,
+    ),
+    maxMentionsPerChat: positiveIntOr(
+      input.maxMentionsPerChat,
+      DEFAULT_BACKFILL_PREFERENCES.maxMentionsPerChat,
+      'maxMentionsPerChat',
+      warn,
+    ),
+    chats: normalizeBackfillChats(input.chats, warn),
+  };
+}
+
+/** Resolve the effective backfill block. Unset / garbage inherit the defaults. */
+export function getBackfillPreferences(cfg: AppConfig): BackfillPreferences {
+  return normalizeBackfillPreferences(cfg.preferences?.backfill);
+}
+
+/** Ledger prune horizon: entries older than `2 × lookbackMs` can never re-enter a window. */
+export function getBackfillPruneHorizonMs(cfg: AppConfig): number {
+  return getBackfillPreferences(cfg).lookbackMs * 2;
+}
+
+export function isDefaultBackfillPreferences(value: BackfillPreferences): boolean {
+  return (
+    value.enabled === DEFAULT_BACKFILL_PREFERENCES.enabled &&
+    value.dryRun === DEFAULT_BACKFILL_PREFERENCES.dryRun &&
+    value.lookbackMs === DEFAULT_BACKFILL_PREFERENCES.lookbackMs &&
+    value.minGapMs === DEFAULT_BACKFILL_PREFERENCES.minGapMs &&
+    value.maxChats === DEFAULT_BACKFILL_PREFERENCES.maxChats &&
+    value.maxRawPerChat === DEFAULT_BACKFILL_PREFERENCES.maxRawPerChat &&
+    value.maxMentionsPerChat === DEFAULT_BACKFILL_PREFERENCES.maxMentionsPerChat &&
+    value.chats.length === 0
+  );
+}
+
+export function formatBackfillPreferences(prefs: BackfillPreferences): string {
+  const chats = prefs.chats.length === 0 ? 'all' : prefs.chats.join(',');
+  return [
+    `enabled=${prefs.enabled}`,
+    `dryRun=${prefs.dryRun}`,
+    `lookbackMs=${prefs.lookbackMs}`,
+    `minGapMs=${prefs.minGapMs}`,
+    `maxChats=${prefs.maxChats}`,
+    `maxRawPerChat=${prefs.maxRawPerChat}`,
+    `maxMentionsPerChat=${prefs.maxMentionsPerChat}`,
+    `chats=${chats}`,
+  ].join(' ');
+}
+
+function copyBackfill(value: BackfillPreferences): BackfillPreferences {
+  return { ...value, chats: [...value.chats] };
+}
+
+function boolOr(
+  value: unknown,
+  fallback: boolean,
+  field: string,
+  warn: (warning: BackfillNormalizeWarning) => void,
+): boolean {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'boolean') {
+    warn({ event: 'backfill-invalid', field, value });
+    return fallback;
+  }
+  return value;
+}
+
+function positiveIntOr(
+  value: unknown,
+  fallback: number,
+  field: string,
+  warn: (warning: BackfillNormalizeWarning) => void,
+): number {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    warn({ event: 'backfill-invalid', field, value });
+    return fallback;
+  }
+  const floored = Math.floor(value);
+  if (floored < 1) {
+    warn({ event: 'backfill-invalid', field, value });
+    return fallback;
+  }
+  return floored;
+}
+
+function normalizeBackfillChats(
+  value: unknown,
+  warn: (warning: BackfillNormalizeWarning) => void,
+): string[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    warn({ event: 'backfill-invalid', field: 'chats', value });
+    return [];
+  }
+  const chats: string[] = [];
+  for (const item of value) {
+    if (typeof item === 'string' && item.startsWith('oc_')) {
+      chats.push(item);
+      continue;
+    }
+    if (typeof item === 'string') {
+      warn({ event: 'backfill-dropped-chat', chatId: item });
+    } else {
+      warn({ event: 'backfill-dropped-chat', value: item });
+    }
+  }
+  return chats;
 }

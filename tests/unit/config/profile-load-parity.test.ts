@@ -1,10 +1,16 @@
+import { readdirSync } from 'node:fs';
 import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { AGENT_KINDS } from '../../../src/agent/registry.js';
 import { resolveCursorBinary } from '../../../src/cli/agent-detection.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { loadRootConfig } from '../../../src/config/profile-store.js';
+import {
+  DEFAULT_BACKFILL_PREFERENCES,
+  getBackfillPreferences,
+} from '../../../src/config/schema.js';
 import { createRuntimeAgent, resolveProfileBinary } from '../../../src/runtime/agent-runtime.js';
 import { writeVersionExecutable, writeScriptedJsonlExecutableFile } from '../../helpers/fake-executable.js';
 import {
@@ -180,6 +186,21 @@ console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 1, o
       });
     });
     expect(cursorVersionedHelpText()).toContain('--approve-mcps');
+  });
+
+  it('loads default backfill for every registered agent kind from existing profile fixtures', async () => {
+    const seen = new Set<string>();
+    for (const dir of readdirSync(fixtureRoot, { withFileTypes: true })) {
+      if (!dir.isDirectory()) continue;
+      const root = await loadRootConfig(join(fixtureRoot, dir.name, 'config.json'));
+      expect(root, dir.name).toBeDefined();
+      for (const profile of Object.values(root!.profiles)) {
+        seen.add(profile.agentKind);
+        expect(profile.preferences, profile.agentKind).not.toHaveProperty('backfill');
+        expect(getBackfillPreferences(profile)).toEqual(DEFAULT_BACKFILL_PREFERENCES);
+      }
+    }
+    expect([...seen].sort()).toEqual([...AGENT_KINDS].sort());
   });
 });
 

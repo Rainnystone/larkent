@@ -1,8 +1,9 @@
 import pkg from '../../package.json';
+import { BackfillLedger } from '../bot/backfill-ledger';
 import { startChannel as realStartChannel, type BridgeChannel } from '../bot/channel';
 import type { Controls } from '../commands';
 import type { AppPaths } from '../config/app-paths';
-import { isComplete, type AppConfig } from '../config/schema';
+import { getBackfillPruneHorizonMs, isComplete, type AppConfig } from '../config/schema';
 import type { AgentKind, ProfileConfig } from '../config/profile-schema';
 import type { AgentAdapter } from '../agent/types';
 import { log } from '../core/logger';
@@ -69,6 +70,7 @@ class ManagedProfile {
   private stopped = false;
   private shutdownFailure: { error: unknown } | undefined;
   private readonly pendingDisconnects = new Set<BridgeChannel>();
+  private readonly ledger: BackfillLedger;
 
   constructor(
     readonly profile: string,
@@ -82,7 +84,11 @@ class ManagedProfile {
     private workspaces: WorkspaceStore,
     private startChannelFn: StartChannelFn,
     private onExitCommand: (profile: string) => Promise<void>,
-  ) {}
+  ) {
+    this.ledger = new BackfillLedger(appPaths.backfillStateFile, {
+      pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
+    });
+  }
 
   get appId(): string {
     return this.cfg.accounts.app.id;
@@ -109,6 +115,7 @@ class ManagedProfile {
     await this.sessions.load();
     await this.sessionCatalog.load();
     await this.workspaces.load();
+    await this.ledger.load();
     this.entry = await register({
       appId: this.appId,
       tenant: this.cfg.accounts.app.tenant,
@@ -125,6 +132,7 @@ class ManagedProfile {
       sessions: this.sessions,
       sessionCatalog: this.sessionCatalog,
       workspaces: this.workspaces,
+      ledger: this.ledger,
       controls: this.controls,
       appPaths: this.appPaths,
     });
@@ -284,6 +292,7 @@ class ManagedProfile {
         sessions: this.sessions,
         sessionCatalog: this.sessionCatalog,
         workspaces: this.workspaces,
+        ledger: this.ledger,
         controls: nextControls,
         appPaths: nextRuntime.appPaths,
       });

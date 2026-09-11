@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { consumeCotEvents, CotClient, CotPublisher, cotBriefToolTitle, finalAnswerOnlyState } from '../../../src/bot/cot.js';
 import type { AgentEvent } from '../../../src/agent/types.js';
-import type { RunState } from '../../../src/card/run-state.js';
+import { initialState, type RunState } from '../../../src/card/run-state.js';
 
 describe('COT event mapping', () => {
   it('publishes assistant progress text and brief tool summaries', async () => {
@@ -67,6 +67,7 @@ describe('COT event mapping', () => {
 
   it('derives final answer state from text blocks only', () => {
     const state: RunState = {
+      ...initialState,
       blocks: [
         { kind: 'tool', tool: { id: 'tool', name: 'command_execution', input: {}, status: 'done' } },
         { kind: 'text', content: 'final', streaming: false },

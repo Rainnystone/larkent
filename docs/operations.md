@@ -39,6 +39,8 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 
 Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
 
+One turn → one bridge-owned final reply. Agents must not post the final answer to the triggering chat themselves (`lark-cli im +messages-send` / `+messages-reply` / `send-card` to the current chat). Sending to other chats, or sending when the user explicitly asks for a lark-cli send, is allowed. 一轮对话只有一条由 bridge 发出的最终回复；agent 不要自己把最终答案发到触发会话。
+
 ## Configuration and identity
 
 配置位于 `$HOME/.lark-channel/config.json` 的 `profiles.<name>` 下；`LARK_CHANNEL_HOME` 可改变数据根。常用项：
@@ -48,6 +50,7 @@ Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：�
 | `workspaces.default` | profile 默认工作目录 |
 | `preferences.model` | 传给对应 CLI 的模型选择 |
 | `preferences.showToolCalls` | 是否展示工具过程 |
+| `preferences.backfill` | 离线 @mention 回补的开关与窗口（`enabled` / `dryRun` / lookback 等；缺省即默认值） |
 | `mode` | `team` 或带访问名单的 `personal` |
 | `access.allowedUsers/allowedChats/admins` | 用户、群和管理员名单 |
 | `larkCli.identityPreset` | `user-default` 允许使用已授权用户身份 |
@@ -66,6 +69,20 @@ Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并�
 **lark-cli identity policy / lark-cli 身份策略**：发言保持 bot；读取用户资源显式使用 `--as user`。Token 保存在 profile-local lark-cli directory，即当前 profile 的 lark-cli 目录。首次完整授权、权限核验和续接步骤见 [setup 指南](agent-setup.md#3-主动请求一次完整用户身份授权)。
 
 `LARK_CHANNEL_CLAUDE_BIN`、`LARK_CHANNEL_CODEX_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_CURSOR_BIN`、`LARK_CHANNEL_ANTIGRAVITY_BIN` 用于创建 profile 时解析并保存程序路径。已有 profile 使用保存的 `agent.binaryPath`；更换程序前先停止 profile，再更新路径。数据根与 coding CLI 的登录目录是两回事。Antigravity 的程序名是 `agy`。
+
+## Self-heal
+
+Sleep, a process restart, or a short WebSocket blip can drop live @mentions. The bridge catches them up on its own: it pulls recent group history with bot identity, runs each missed @ through the normal intake path once, and adds one lateness hint to the prompt. No external poller or host routine.
+
+Watch the profile log for this sequence:
+
+`keepalive.wake-up` or `ws.reconnected` → `backfill.trigger` → `backfill.done`
+
+`/doctor` prints a `self-heal:` line with the ledger path, `lastLiveAt` age, and processed-id count.
+
+Kill switch: set `preferences.backfill.enabled` to `false`. Scans stop; the live watermark still advances so a later re-enable has a fresh window. Dry-run: set `preferences.backfill.dryRun` to `true`. The scan runs and logs `backfill.would-enqueue` per survivor, then posts nothing.
+
+Staged rollout is an operations choice, not product behavior: enable on one profile, watch one recovery cycle, then the others. Every profile runs the same code.
 
 ## Logs and stored data
 

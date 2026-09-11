@@ -1,4 +1,9 @@
 import type { AgentEvent } from '../agent/types';
+import {
+  confirmDirectImSend,
+  rememberDirectImSend,
+  type DirectImSendTarget,
+} from './direct-im-send';
 
 export type ToolStatus = 'running' | 'done' | 'error';
 
@@ -27,6 +32,15 @@ export interface RunState {
   /** Set when terminal === 'idle_timeout' — how long claude was idle before
    * the watchdog gave up (so the message can say "N 分钟无响应"). */
   idleTimeoutMinutes?: number;
+  /**
+   * Chat ids the agent successfully IM-sent to during this in-memory run.
+   * Never persisted. Detection is in the shared reducer (not a post-run
+   * history check by bot identity).
+   */
+  directImSentChatIds: ReadonlySet<string>;
+  pendingDirectImSends: ReadonlyMap<string, DirectImSendTarget>;
+  currentChatId?: string;
+  batchMessageIds?: ReadonlySet<string>;
 }
 
 export const initialState: RunState = {
@@ -34,7 +48,28 @@ export const initialState: RunState = {
   reasoning: { content: '', active: false },
   footer: 'thinking',
   terminal: 'running',
+  directImSentChatIds: new Set(),
+  pendingDirectImSends: new Map(),
 };
+
+export function seedRunState(input: {
+  currentChatId?: string;
+  batchMessageIds?: readonly string[];
+}): RunState {
+  return {
+    ...initialState,
+    directImSentChatIds: new Set(),
+    pendingDirectImSends: new Map(),
+    ...(input.currentChatId ? { currentChatId: input.currentChatId } : {}),
+    ...(input.batchMessageIds && input.batchMessageIds.length > 0
+      ? { batchMessageIds: new Set(input.batchMessageIds) }
+      : {}),
+  };
+}
+
+export function shouldSkipFinalReply(state: RunState, chatId: string): boolean {
+  return state.terminal === 'done' && state.directImSentChatIds.has(chatId);
+}
 
 function closeStreamingText(blocks: Block[]): Block[] {
   return blocks.map((b) =>
@@ -86,6 +121,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
         blocks: [...closeStreamingText(state.blocks), { kind: 'tool', tool }],
         reasoning: { ...state.reasoning, active: false },
         footer: 'tool_running',
+        pendingDirectImSends: rememberDirectImSend(state, evt.id, evt.input),
       };
     }
 
@@ -101,7 +137,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
           },
         };
       });
-      return { ...state, blocks };
+      return { ...state, blocks, ...confirmDirectImSend(state, evt.id, evt.output, evt.isError) };
     }
 
     case 'error': {

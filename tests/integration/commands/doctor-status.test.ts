@@ -12,6 +12,7 @@ import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter, type FakeAgentRun } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
+import { BackfillLedger } from '../../../src/bot/backfill-ledger.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
 
 interface Harness {
@@ -23,6 +24,7 @@ interface Harness {
   pool: ProcessPool;
   agent: FakeAgentAdapter;
   controls: Controls;
+  ledger?: BackfillLedger;
   run(content: string): Promise<boolean>;
 }
 
@@ -30,6 +32,7 @@ const cleanups: Array<() => Promise<void>> = [];
 
 describe('/status and /doctor diagnostics', () => {
   afterEach(async () => {
+    vi.useRealTimers();
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
@@ -67,6 +70,58 @@ describe('/status and /doctor diagnostics', () => {
     expect(h.agent.runOptions).toHaveLength(0);
     expect(lastMarkdownOrText(h.channel)).toContain('未设置工作目录');
     expect(lastMarkdownOrText(h.channel)).toContain('self-check');
+    expect(lastMarkdownOrText(h.channel)).toContain(
+      'backfill: enabled=true dryRun=false lookbackMs=21600000 minGapMs=60000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
+    );
+    expect(lastMarkdownOrText(h.channel)).toContain(
+      'self-heal: ledger=unavailable lastLiveAt=not yet recorded processed=0',
+    );
+  });
+
+  it('renders the self-heal line from ledger watermark and processed count', async () => {
+    const now = 1_700_000_045_000;
+    vi.useFakeTimers();
+    vi.setSystemTime(now);
+    const h = await createHarness({ configuredWorkspace: false, bindWorkspace: false });
+    const file = join(h.tmp.profile, 'backfill-state.json');
+    const ledger = new BackfillLedger(file, { now: () => now });
+    await ledger.load();
+    ledger.touchLive(now - 45_000);
+    expect(ledger.claim('om_one')).toBe(true);
+    ledger.record('om_one', now - 1_000);
+    expect(ledger.claim('om_two')).toBe(true);
+    ledger.record('om_two', now - 2_000);
+    await ledger.flush();
+    h.ledger = ledger;
+
+    await expect(h.run('/doctor')).resolves.toBe(true);
+
+    const report = lastMarkdownOrText(h.channel);
+    const line = report.split('\n').find((row) => row.startsWith('self-heal:'));
+    expect(line).toBe(`self-heal: ledger=${file} lastLiveAt=45s ago processed=2`);
+    expect(line).not.toMatch(/claude|codex|kimi|grok|cursor|antigravity/i);
+    vi.useRealTimers();
+  });
+
+  it('prints a customized backfill block on the doctor self-check line', async () => {
+    const h = await createHarness({ configuredWorkspace: false, bindWorkspace: false });
+    h.controls.profileConfig.preferences.backfill = {
+      enabled: false,
+      dryRun: true,
+      lookbackMs: 3_600_000,
+      minGapMs: 15_000,
+      maxChats: 4,
+      maxRawPerChat: 10,
+      maxMentionsPerChat: 2,
+      chats: ['oc_only'],
+    };
+    h.controls.cfg = h.controls.profileConfig;
+
+    await expect(h.run('/doctor')).resolves.toBe(true);
+
+    expect(lastMarkdownOrText(h.channel)).toContain(
+      'backfill: enabled=false dryRun=true lookbackMs=3600000 minGapMs=15000 maxChats=4 maxRawPerChat=10 maxMentionsPerChat=2 chats=oc_only',
+    );
   });
 
   it('uses RunExecutor for a sessionless read-only agent echo check', async () => {
@@ -170,28 +225,39 @@ async function createHarness(options: {
     postDoneExitGraceMs: 10,
   });
 
-  const run = (content: string): Promise<boolean> =>
-    tryHandleCommand({
-      resumeCandidates,
-      channel: channel as unknown as CommandContext['channel'],
-      msg: message(content),
-      scope: 'chat-1',
-      chatMode: 'p2p',
-      sessions,
-      workspaces,
-      agent,
-      activeRuns,
-      processPool: pool,
-      runExecutor: executor,
-      controls,
-    });
+  const harness: Harness = {
+    tmp,
+    channel,
+    sessions,
+    workspaces,
+    activeRuns,
+    pool,
+    agent,
+    controls,
+    run: (content: string): Promise<boolean> =>
+      tryHandleCommand({
+        resumeCandidates,
+        channel: channel as unknown as CommandContext['channel'],
+        msg: message(content),
+        scope: 'chat-1',
+        chatMode: 'p2p',
+        sessions,
+        workspaces,
+        agent,
+        activeRuns,
+        processPool: pool,
+        runExecutor: executor,
+        controls,
+        ledger: harness.ledger,
+      }),
+  };
 
   cleanups.push(async () => {
     await Promise.all([sessions.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
 
-  return { tmp, channel, sessions, workspaces, activeRuns, pool, agent, controls, run };
+  return harness;
 }
 
 function appConfig(defaultWorkspace: string | undefined): ProfileConfig {

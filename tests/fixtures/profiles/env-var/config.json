@@ -100,6 +100,55 @@
       "larkCli": {
         "identityPreset": "user-default"
       }
+    },
+    "antigravity": {
+      "schemaVersion": 2,
+      "agentKind": "antigravity",
+      "mode": "team",
+      "accounts": {
+        "app": {
+          "id": "cli_antigravity_env",
+          "secret": "secret",
+          "tenant": "feishu"
+        }
+      },
+      "preferences": {},
+      "access": {
+        "allowedUsers": [],
+        "allowedChats": [],
+        "admins": [],
+        "requireMentionInGroup": true
+      },
+      "workspaces": {},
+      "permissions": {
+        "defaultAccess": "full",
+        "maxAccess": "full"
+      },
+      "attachments": {
+        "maxCount": 10,
+        "maxBytes": 104857600,
+        "maxFileBytes": 26214400,
+        "imageMaxBytes": 26214400,
+        "cacheTtlMs": 86400000,
+        "cacheMaxBytes": 536870912
+      },
+      "comments": {},
+      "meeting": {
+        "enabled": false,
+        "autoJoinOnInvite": false,
+        "transcript": {
+          "keep": 200,
+          "stabilizeMs": 0
+        },
+        "respondIn": "meeting",
+        "trigger": "@bot",
+        "pollIntervalMs": 3000,
+        "summaryOnEnd": false,
+        "summaryTarget": "origin"
+      },
+      "larkCli": {
+        "identityPreset": "user-default"
+      }
     }
   }
 }
