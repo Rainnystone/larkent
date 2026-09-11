@@ -59,8 +59,9 @@ describe('processed ledger claim at intake', () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_gated', 'no mention', { mentionedBot: false }));
     await h.ledger.flush();
-    await expect(readFile(h.file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
     expect(h.ledger.has('om_gated')).toBe(false);
+    const gatedDoc = JSON.parse(await readFile(h.file, 'utf8')) as { processed?: Record<string, number> };
+    expect(gatedDoc.processed ?? {}).not.toHaveProperty('om_gated');
 
     const accepted = mention('om_gated', 'now mentioned');
     await h.channel.handlers.message?.(accepted);

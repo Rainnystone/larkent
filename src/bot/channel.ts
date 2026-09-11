@@ -35,6 +35,7 @@ import { tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
   getAgentStopGraceMs,
+  getBackfillPreferences,
   getCotMessages,
   getMaxConcurrentRuns,
   getMessageReplyMode,
@@ -60,6 +61,7 @@ import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, type RunHandle } from './active-runs';
+import { formatBackfillLatenessHint, runBackfill, type BackfillChannel, type BackfillMark } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
@@ -293,6 +295,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // chat in flight, and everything sent during a run merges into the next
   // batch (only flushed once 600ms of silence has passed *after* the run).
   let closing = false;
+  const backfillMarks = new Map<string, BackfillMark>();
   const runConsumers = new Set<Promise<void>>();
   const trackConsumer = (work: Promise<void>, phase: string): Promise<void> => {
     runConsumers.add(work);
@@ -347,6 +350,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           canRecordSession: sessionWriter.isCurrent,
           scope,
           mode,
+          backfillMarks,
         });
       } finally {
         sessionWriter.release();
@@ -359,28 +363,34 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // Counter for stdout reconnect escalation; reset on `reconnected`.
   let consecutiveReconnects = 0;
 
+  const handOffIntake = (msg: NormalizedMessage, source: IntakeSource): Promise<void> =>
+    withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
+      intakeMessage({
+        channel,
+        agent,
+        sessions,
+        sessionCatalog,
+        resumeCandidates,
+        workspaces,
+        ledger,
+        intakeSource: source,
+        activeRuns,
+        pending,
+        msg,
+        controls,
+        chatModeCache,
+        logThreadModeOverride,
+        executor,
+        pool,
+      }),
+    ).catch((err) => {
+      log.fail('intake', err);
+    });
+
   channel.on({
     message: async (msg) => {
       if (closing) return;
-      await withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
-        intakeMessage({
-          channel,
-          agent,
-          sessions,
-          sessionCatalog,
-          resumeCandidates,
-          workspaces,
-          ledger,
-          activeRuns,
-          pending,
-          msg,
-          controls,
-          chatModeCache,
-          logThreadModeOverride,
-          executor,
-          pool,
-        }),
-      ).catch((err) => log.fail('intake', err));
+      await handOffIntake(msg, 'ws');
     },
     reject: (evt) => {
       log.info('intake', 'reject', { chatId: evt.chatId, reason: evt.reason });
@@ -525,6 +535,21 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     appId: cfg.accounts.app.id,
     procId: controls.processId,
   });
+  if (ledger) {
+    void trackConsumer(runBackfill({
+      trigger: 'connect',
+      channel: channel as unknown as BackfillChannel,
+      ledger,
+      prefs: getBackfillPreferences(controls.cfg),
+      profile: controls.profileConfig,
+      marks: backfillMarks,
+      isClosing: () => closing,
+      refreshKnownChats: (chats) => {
+        controls.knownChats = chats;
+      },
+      intake: (msg) => handOffIntake(msg, 'backfill'),
+    }), 'backfill');
+  }
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
   // App-level keepalive: 15s probe + wake-up detection + HTTP reachability.
@@ -879,6 +904,7 @@ interface RunBatchDeps {
   canRecordSession(): boolean;
   scope: string;
   mode: ChatMode;
+  backfillMarks: Map<string, BackfillMark>;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -897,6 +923,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     lastRunModelByScope,
     scope,
     mode,
+    backfillMarks,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -984,12 +1011,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const prevModel = lastRunModelByScope.get(scope);
   const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
   lastRunModelByScope.set(scope, modelSelection);
-  const extraInstructions = modelSwitched
-    ? [
-        `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
-          '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
-      ]
-    : undefined;
+  const extraInstructions: string[] = [];
+  if (modelSwitched) {
+    extraInstructions.push(
+      `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
+        '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
+    );
+  }
+  const backfilled = consumeBackfillMarks(batch, backfillMarks);
+  if (backfilled.length > 0) {
+    const oldest = backfilled.reduce((current, msg) => (
+      msg.createTime < current.createTime ? msg : current
+    ));
+    extraInstructions.push(formatBackfillLatenessHint({
+      createTimeMs: oldest.createTime,
+      nowMs: Date.now(),
+    }));
+  }
 
   const prompt = buildPrompt(
     batch,
@@ -997,13 +1035,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     quotes,
     topicContext,
     channel.botIdentity,
-    extraInstructions,
+    extraInstructions.length > 0 ? extraInstructions : undefined,
   );
   log.info('prompt', 'built', {
     promptChars: prompt.length,
     quotes: quotes.length,
     topicContext: topicContext.length,
     ...(modelSwitched ? { modelSwitchedTo: modelSelection } : {}),
+    ...(backfilled.length > 0 ? { backfilled: backfilled.length } : {}),
   });
 
   // For topic groups: thread the reply so it lands in the same topic as the
@@ -1897,6 +1936,19 @@ function scheduleWorkingReactionCleanup(
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function consumeBackfillMarks(
+  batch: NormalizedMessage[],
+  marks: Map<string, BackfillMark>,
+): NormalizedMessage[] {
+  const marked: NormalizedMessage[] = [];
+  for (const msg of batch) {
+    if (!marks.has(msg.messageId)) continue;
+    marks.delete(msg.messageId);
+    marked.push(msg);
+  }
+  return marked;
 }
 
 function buildPrompt(

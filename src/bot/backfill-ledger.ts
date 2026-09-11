@@ -113,6 +113,15 @@ export class BackfillLedger {
     return this.lastBackfillEnd;
   }
 
+  markScanComplete(windowEnd: number, now: number): void {
+    if (!Number.isFinite(windowEnd) || !Number.isFinite(now)) return;
+    this.lastBackfillEnd = windowEnd;
+    this.lastLiveAt = now;
+    this.lastLivePersistAt = now;
+    this.prune();
+    this.schedulePersist();
+  }
+
   getProcessedCount(): number {
     return this.processed.size;
   }

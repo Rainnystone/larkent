@@ -4,17 +4,17 @@
 
 **Blocked by:** 01, 04, 05, 06
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Trigger: launched (not awaited) inside `startChannel` after `channel.connect()`, `ownerRefresh.start()` and `agent.setBotIdentity`; tracked so `disconnect()` waits for it and the `closing` flag turns remaining hand-offs into no-ops (`backfill.aborted`).
-- [ ] Window: `[max(now − lookbackMs, min(lastLiveAt, lastBackfillEnd) − 2 min), now]`; `gap < minGapMs` → `backfill.skip-short-gap`; `enabled: false` → `backfill.skip-disabled`; no bot identity → `backfill.skip-no-identity`; absent watermark → write it, `backfill.watermark-initialized`, no scan.
-- [ ] Chat discovery: fresh `listChats` (also refreshes `controls.knownChats`), `chats` override intersection, `team` = all / `personal` = `allowedChats` only, cap `maxChats` with `backfill.chats-truncated`.
-- [ ] Fetch: `message.list` by chat with second-resolution `start_time`/`end_time`, ascending, page 50, stop at `maxRawPerChat` keeping the newest (`backfill.raw-truncated`); shape follows ticket 01's notes (topic coverage or `backfill.topic-partial`).
-- [ ] Normalize: synthesized raw event with real `chat_id`, `chat_type: 'group'`, `thread_id`/`root_id`/`parent_id` when present, mentions, sender id and type; SDK `normalize` with the live path's options and the existing merge-forward sub-fetch.
-- [ ] Filters R1–R6 with their log events; R6 truncated ids are recorded in the ledger; other bots' messages are not filtered.
-- [ ] Hand-off: survivors oldest-first per chat into `intakeMessage`; claim/record from ticket 04 apply with `source: 'backfill'`; a backfill mark keyed by message id is consumed by `runAgentBatch` to append exactly one lateness hint line (`extraInstructions`), and `prompt.built` logs `backfilled: <count>`. `NormalizedMessage` is not extended and nothing is written into `raw`.
-- [ ] Dry run: identical scan and logging, `backfill.would-enqueue` per survivor, nothing handed to intake, nothing recorded as processed, watermark advanced.
-- [ ] Completion: `lastBackfillEnd = windowEnd`, `lastLiveAt = now`; `backfill.done` with `chats`, `enqueuedTotal`, `durationMs`; metrics `backfill_enqueued`, `backfill_duration_ms`, `backfill_chat_fetch_failed`.
-- [ ] Failure isolation: `listChats` failure aborts without advancing the watermark; a single chat's `message.list` failure (incl. rate limit) skips that chat only; `normalize` failure skips that item.
-- [ ] Tests (B1, B4, B5, B7, B8): idempotent replay; caps; window math incl. initialize/skew/short-gap/6 h cap; command skip; failure isolation; dry-run hands nothing off; a topic-group message replies in-thread; hint line present exactly once for a merged batch. Fake channel only — no live tenant in tests.
-- [ ] No `agentKind` branching, no profile/bot/host names, no timers: the routine runs only on the recovery signal.
+- [x] Trigger: launched (not awaited) inside `startChannel` after `channel.connect()`, `ownerRefresh.start()` and `agent.setBotIdentity`; tracked so `disconnect()` waits for it and the `closing` flag turns remaining hand-offs into no-ops (`backfill.aborted`).
+- [x] Window: `[max(now − lookbackMs, min(lastLiveAt, lastBackfillEnd) − 2 min), now]`; `gap < minGapMs` → `backfill.skip-short-gap`; `enabled: false` → `backfill.skip-disabled`; no bot identity → `backfill.skip-no-identity`; absent watermark → write it, `backfill.watermark-initialized`, no scan.
+- [x] Chat discovery: fresh `listChats` (also refreshes `controls.knownChats`), `chats` override intersection, `team` = all / `personal` = `allowedChats` only, cap `maxChats` with `backfill.chats-truncated`.
+- [x] Fetch: `message.list` by chat with second-resolution `start_time`/`end_time`, ascending, page 50, stop at `maxRawPerChat` keeping the newest (`backfill.raw-truncated`); shape follows ticket 01's notes (topic coverage or `backfill.topic-partial`).
+- [x] Normalize: synthesized raw event with real `chat_id`, `chat_type: 'group'`, `thread_id`/`root_id`/`parent_id` when present, mentions, sender id and type; SDK `normalize` with the live path's options and the existing merge-forward sub-fetch.
+- [x] Filters R1–R6 with their log events; R6 truncated ids are recorded in the ledger; other bots' messages are not filtered.
+- [x] Hand-off: survivors oldest-first per chat into `intakeMessage`; claim/record from ticket 04 apply with `source: 'backfill'`; a backfill mark keyed by message id is consumed by `runAgentBatch` to append exactly one lateness hint line (`extraInstructions`), and `prompt.built` logs `backfilled: <count>`. `NormalizedMessage` is not extended and nothing is written into `raw`.
+- [x] Dry run: identical scan and logging, `backfill.would-enqueue` per survivor, nothing handed to intake, nothing recorded as processed, watermark advanced.
+- [x] Completion: `lastBackfillEnd = windowEnd`, `lastLiveAt = now`; `backfill.done` with `chats`, `enqueuedTotal`, `durationMs`; metrics `backfill_enqueued`, `backfill_duration_ms`, `backfill_chat_fetch_failed`.
+- [x] Failure isolation: `listChats` failure aborts without advancing the watermark; a single chat's `message.list` failure (incl. rate limit) skips that chat only; `normalize` failure skips that item.
+- [x] Tests (B1, B4, B5, B7, B8): idempotent replay; caps; window math incl. initialize/skew/short-gap/6 h cap; command skip; failure isolation; dry-run hands nothing off; a topic-group message replies in-thread; hint line present exactly once for a merged batch. Fake channel only — no live tenant in tests.
+- [x] No `agentKind` branching, no profile/bot/host names, no timers: the routine runs only on the recovery signal.

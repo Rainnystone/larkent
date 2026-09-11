@@ -237,8 +237,17 @@ export async function fetchTopicContext(
  * same distinction @larksuite/channel makes on the live-event path. Passed into
  * `normalize` as `fetchSubMessages`.
  */
-async function fetchSubTreeItems(
-  channel: LarkChannel,
+export function createMergeForwardFetch(
+  channel: Pick<LarkChannel, 'fetchRawMessage'>,
+): (messageId: string) => Promise<ApiMessageItem[]> {
+  return async (messageId) => {
+    const items = await fetchSubTreeItems(channel, messageId);
+    return items.map(preExpandInteractive);
+  };
+}
+
+export async function fetchSubTreeItems(
+  channel: Pick<LarkChannel, 'fetchRawMessage'>,
   messageId: string,
 ): Promise<ApiMessageItem[]> {
   try {

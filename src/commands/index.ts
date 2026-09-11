@@ -199,12 +199,20 @@ function isAdminCommand(cmd: string): boolean {
   return ADMIN_COMMANDS.has(cmd.startsWith('/') ? cmd : `/${cmd}`);
 }
 
+export function isRegisteredSlashCommand(content: string): boolean {
+  const trimmed = content.trim();
+  if (!trimmed.startsWith('/')) return false;
+  const cmd = trimmed.split(/\s+/)[0] ?? '';
+  return Object.hasOwn(handlers, cmd);
+}
+
 export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {
   const trimmed = ctx.msg.content.trim();
   if (!trimmed.startsWith('/')) return false;
   const parts = trimmed.split(/\s+/);
   const cmd = parts[0] ?? '';
   const args = parts.slice(1).join(' ');
+  if (!isRegisteredSlashCommand(trimmed)) return false;
   const h = handlers[cmd];
   if (!h) return false;
   if (

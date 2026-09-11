@@ -31,6 +31,9 @@ export type RecordingCall =
 
 export function createRecordingLarkChannel(options: {
   botIdentity?: RecordingLarkChannel['botIdentity'];
+  chats?: Array<{ id: string; name: string }>;
+  messagesByChat?: Record<string, unknown[]>;
+  chatMode?: 'group' | 'topic';
 } = {}): RecordingLarkChannel {
   const inner = createFakeChannel();
   const callLog: RecordingCall[] = [];
@@ -44,6 +47,17 @@ export function createRecordingLarkChannel(options: {
     const result = await origSend(chatId, content, options);
     callLog.push({ op: 'send', chatId, content: inner.sent.at(-1)?.content ?? content, options });
     return result;
+  };
+
+  const origList = inner.rawClient.im.v1.message.list.bind(inner.rawClient.im.v1.message);
+  inner.rawClient.im.v1.message.list = async (params: unknown) => {
+    const containerId = extractContainerId(params);
+    const scripted = containerId ? options.messagesByChat?.[containerId] : undefined;
+    if (scripted) {
+      inner.rawClient.requests.push({ method: 'im.v1.message.list', params });
+      return { data: { items: scripted, has_more: false } };
+    }
+    return origList(params);
   };
 
   inner.stream = async (chatId, input, options) => {
@@ -76,13 +90,13 @@ export function createRecordingLarkChannel(options: {
     async connect() {},
     async disconnect() {},
     async getChatMode() {
-      return 'group';
+      return options.chatMode ?? 'group';
     },
     getConnectionStatus() {
       return { state: 'connected', reconnectAttempts: 0 };
     },
     async listChats() {
-      return [];
+      return options.chats ?? [];
     },
     async getAppInfo() {
       return { ownerId: 'ou_owner' };
@@ -104,6 +118,12 @@ export function createRecordingLarkChannel(options: {
   };
 
   return channel;
+}
+
+function extractContainerId(params: unknown): string | undefined {
+  if (!isRecord(params)) return undefined;
+  const nested = isRecord(params.params) ? params.params : params;
+  return typeof nested.container_id === 'string' ? nested.container_id : undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
