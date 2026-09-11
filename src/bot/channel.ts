@@ -305,6 +305,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const runScheduledBackfill = createBackfillRun();
   const runConsumers = new Set<Promise<void>>();
   const trackConsumer = (work: Promise<void>, phase: string): Promise<void> => {
+    if (runConsumers.has(work)) return work;
     runConsumers.add(work);
     void work.then(
       () => { runConsumers.delete(work); },
