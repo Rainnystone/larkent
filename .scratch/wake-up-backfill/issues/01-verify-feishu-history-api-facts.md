@@ -4,11 +4,11 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] V1 answered: does `im.v1.message.list` with `container_id_type: 'chat'` on a **topic group** return messages posted inside topics (threads), or only top-level messages? Include a redacted sample item from each case.
-- [ ] V2 answered: do list items expose `thread_id` (and `root_id` / `parent_id`, `deleted`, `chat_id`)? Record the exact field names observed; note that the SDK `ApiMessageItem` type omits them so the fetch step will read them off the raw item.
-- [ ] V3 answered: with the bot's current scopes, does `message.list` succeed for a group the bot is a member of? Record the scope set that worked and the error code seen if any scope was missing.
-- [ ] Confirmed `start_time` / `end_time` units (seconds) and behaviour of `sort_type: 'ByCreateTimeAsc'` with `page_size: 50` paging.
-- [ ] Notes file states the resulting decision for ticket 07: "chat listing covers topics" **or** "topic groups are top-level only in v1; log `backfill.topic-partial`".
-- [ ] No human user's OAuth was used; no secrets, tenant keys or full open_ids appear in the notes.
+- [x] V1 answered: does `im.v1.message.list` with `container_id_type: 'chat'` on a **topic group** return messages posted inside topics (threads), or only top-level messages? Include a redacted sample item from each case.
+- [x] V2 answered: do list items expose `thread_id` (and `root_id` / `parent_id`, `deleted`, `chat_id`)? Record the exact field names observed; note that the SDK `ApiMessageItem` type omits them so the fetch step will read them off the raw item.
+- [x] V3 answered: with the bot's current scopes, does `message.list` succeed for a group the bot is a member of? Record the scope set that worked and the error code seen if any scope was missing.
+- [x] Confirmed `start_time` / `end_time` units (seconds) and behaviour of `sort_type: 'ByCreateTimeAsc'` with `page_size: 50` paging.
+- [x] Notes file states the resulting decision for ticket 07: "chat listing covers topics" **or** "topic groups are top-level only in v1; log `backfill.topic-partial`".
+- [x] No human user's OAuth was used; no secrets, tenant keys or full open_ids appear in the notes.
