@@ -6,7 +6,9 @@ import { writeFileAtomic } from '../../../src/platform/atomic-write';
 import {
   BACKFILL_LEDGER_MAX_IDS,
   BACKFILL_LOOKBACK_MS,
+  LIVE_WATERMARK_THROTTLE_MS,
   BackfillLedger,
+  formatSelfHealLine,
 } from '../../../src/bot/backfill-ledger';
 import { log } from '../../../src/core/logger';
 
@@ -217,5 +219,119 @@ describe('BackfillLedger', () => {
     expect(ledger.has('om_first')).toBe(true);
     expect(ledger.has('om_second')).toBe(true);
     expect(ledger.claim('om_first')).toBe(false);
+  });
+
+  it('touchLive writes lastLiveAt, exposes getters, and persists at most once per 30s', async () => {
+    let now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await ledger.load();
+    expect(ledger.getLiveAt()).toBeUndefined();
+    expect(ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(ledger.getProcessedCount()).toBe(0);
+    expect(ledger.getFilePath()).toBe(file);
+
+    ledger.touchLive(now);
+    await ledger.flush();
+    expect(ledger.getLiveAt()).toBe(now);
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      lastLiveAt: now,
+      processed: {},
+    });
+    const writes = atomic.mock.calls.length;
+
+    now += 15_000;
+    ledger.touchLive(now);
+    await ledger.flush();
+    expect(ledger.getLiveAt()).toBe(now);
+    expect(atomic.mock.calls.length).toBe(writes);
+    expect(JSON.parse(await readFile(file, 'utf8')).lastLiveAt).toBe(now - 15_000);
+
+    now += LIVE_WATERMARK_THROTTLE_MS - 15_000;
+    ledger.touchLive(now);
+    await ledger.flush();
+    expect(ledger.getLiveAt()).toBe(now);
+    expect(JSON.parse(await readFile(file, 'utf8')).lastLiveAt).toBe(now);
+  });
+
+  it('does not persist when touchLive is called with the same watermark', async () => {
+    const now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.touchLive(now);
+    await ledger.flush();
+    const writes = atomic.mock.calls.length;
+    ledger.touchLive(now);
+    await ledger.flush();
+    expect(atomic.mock.calls.length).toBe(writes);
+    expect(JSON.parse(await readFile(file, 'utf8')).lastLiveAt).toBe(now);
+  });
+
+  it('rewrites a backwards clock to now and warns clock-skew once', async () => {
+    const { file, ledger } = await fixture();
+    await ledger.load();
+    ledger.touchLive(1_760_000_030_000);
+    await ledger.flush();
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    ledger.touchLive(1_760_000_000_000);
+    ledger.touchLive(1_759_999_000_000);
+    await ledger.flush();
+    expect(ledger.getLiveAt()).toBe(1_759_999_000_000);
+    expect(JSON.parse(await readFile(file, 'utf8')).lastLiveAt).toBe(1_759_999_000_000);
+    expect(warn.mock.calls.map(([phase, event]) => `${phase}.${event}`)).toEqual([
+      'backfill.clock-skew',
+    ]);
+  });
+
+  it('reloads watermarks and processed count for doctor', async () => {
+    const now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await writeFile(file, `${JSON.stringify({
+      schemaVersion: 1,
+      lastLiveAt: now - 45_000,
+      lastBackfillEnd: now - 120_000,
+      processed: { om_a: now - 1_000, om_b: now - 2_000 },
+    }, null, 2)}\n`);
+    await ledger.load();
+    expect(ledger.getLiveAt()).toBe(now - 45_000);
+    expect(ledger.getLastBackfillEnd()).toBe(now - 120_000);
+    expect(ledger.getProcessedCount()).toBe(2);
+  });
+});
+
+describe('formatSelfHealLine', () => {
+  it('renders ledger path, watermark age, and processed count without naming an agent', () => {
+    expect(formatSelfHealLine({
+      path: '/tmp/profile/backfill-state.json',
+      processedCount: 0,
+      now: 1_760_000_000_000,
+    })).toBe(
+      'self-heal: ledger=/tmp/profile/backfill-state.json lastLiveAt=not yet recorded processed=0',
+    );
+    expect(formatSelfHealLine({
+      path: '/tmp/profile/backfill-state.json',
+      lastLiveAt: 1_760_000_000_000 - 45_000,
+      processedCount: 3,
+      now: 1_760_000_000_000,
+    })).toBe(
+      'self-heal: ledger=/tmp/profile/backfill-state.json lastLiveAt=45s ago processed=3',
+    );
+    expect(formatSelfHealLine({
+      lastLiveAt: 1_760_000_000_000 - 3 * 60_000,
+      processedCount: 1,
+      now: 1_760_000_000_000,
+    })).toBe('self-heal: ledger=unavailable lastLiveAt=3m ago processed=1');
+    expect(formatSelfHealLine({
+      path: '/tmp/profile/backfill-state.json',
+      lastLiveAt: 1_760_000_000_000 - 2 * 3_600_000,
+      processedCount: 0,
+      now: 1_760_000_000_000,
+    })).toContain('2h ago');
+    expect(formatSelfHealLine({
+      path: '/tmp/profile/backfill-state.json',
+      lastLiveAt: 1_760_000_000_000,
+      processedCount: 0,
+      now: 1_760_000_000_000,
+    })).not.toMatch(/claude|codex|kimi|grok|cursor|antigravity|bot/i);
   });
 });

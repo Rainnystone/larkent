@@ -1,6 +1,7 @@
 import type { CardActionEvent, LarkChannel, NormalizedMessage } from '@larksuite/channel';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
+import type { BackfillLedger } from '../bot/backfill-ledger';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
@@ -32,6 +33,7 @@ export interface CardDispatchDeps {
   resumeCandidates: ResumeCandidates;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
+  ledger?: BackfillLedger;
   activeRuns: ActiveRuns;
   agent: AgentAdapter;
   processPool?: ProcessPool;
@@ -109,6 +111,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
         access: accessDecision,
       }),
       workspaces: deps.workspaces,
+      ledger: deps.ledger,
       activeRuns: deps.activeRuns,
       agent: deps.agent,
       processPool: deps.processPool,

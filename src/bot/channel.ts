@@ -395,6 +395,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           resumeCandidates,
           sessionCatalog,
           workspaces,
+          ledger,
           activeRuns,
           agent,
           processPool: pool,
@@ -537,6 +538,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     channel,
     domain: probeDomain,
     forceReconnect: () => controls.restart(),
+    ...(ledger ? { onConnectedTick: (now) => ledger.touchLive(now) } : {}),
   });
 
   return {
@@ -825,6 +827,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     sessions,
     resumeCandidates,
     workspaces,
+    ledger,
     agent,
     activeRuns,
     sessionCatalog,

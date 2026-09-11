@@ -7,6 +7,7 @@ import { log } from '../core/logger';
 export const BACKFILL_LOOKBACK_MS = DEFAULT_BACKFILL_PREFERENCES.lookbackMs;
 export const BACKFILL_LEDGER_MAX_IDS = 5000;
 export const BACKFILL_LEDGER_SCHEMA_VERSION = 1 as const;
+export const LIVE_WATERMARK_THROTTLE_MS = 30_000;
 
 export type IntakeSource = 'ws' | 'backfill';
 
@@ -30,6 +31,8 @@ export class BackfillLedger {
   private readonly claimed = new Set<string>();
   private lastLiveAt: number | undefined;
   private lastBackfillEnd: number | undefined;
+  private lastLivePersistAt: number | undefined;
+  private clockSkewWarned = false;
   private queue = new PersistenceQueue();
   private loading: Promise<void> | undefined;
   private persistenceDisabled = false;
@@ -77,6 +80,47 @@ export class BackfillLedger {
     this.schedulePersist();
   }
 
+  touchLive(now: number): void {
+    if (!Number.isFinite(now)) return;
+    const previous = this.lastLiveAt;
+    if (previous !== undefined && now < previous) {
+      this.lastLiveAt = now;
+      if (!this.clockSkewWarned) {
+        this.clockSkewWarned = true;
+        log.warn('backfill', 'clock-skew', { lastLiveAt: previous, now });
+      }
+      this.lastLivePersistAt = now;
+      this.schedulePersist();
+      return;
+    }
+    if (previous === now) return;
+    this.lastLiveAt = now;
+    if (
+      this.lastLivePersistAt !== undefined
+      && now - this.lastLivePersistAt < LIVE_WATERMARK_THROTTLE_MS
+    ) {
+      return;
+    }
+    this.lastLivePersistAt = now;
+    this.schedulePersist();
+  }
+
+  getLiveAt(): number | undefined {
+    return this.lastLiveAt;
+  }
+
+  getLastBackfillEnd(): number | undefined {
+    return this.lastBackfillEnd;
+  }
+
+  getProcessedCount(): number {
+    return this.processed.size;
+  }
+
+  getFilePath(): string {
+    return this.path;
+  }
+
   private async loadDocument(): Promise<void> {
     await this.queue.flush().catch(() => {});
     this.claimed.clear();
@@ -106,6 +150,8 @@ export class BackfillLedger {
     this.processed = document.processed;
     this.lastLiveAt = document.lastLiveAt;
     this.lastBackfillEnd = document.lastBackfillEnd;
+    this.lastLivePersistAt = document.lastLiveAt;
+    this.clockSkewWarned = false;
     this.persistenceDisabled = persistenceDisabled;
     this.queue = new PersistenceQueue();
   }
@@ -193,4 +239,24 @@ function optionalTime(value: unknown): number | undefined {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function formatSelfHealLine(input: {
+  path?: string;
+  lastLiveAt?: number;
+  processedCount?: number;
+  now: number;
+}): string {
+  const lastLiveAt = input.lastLiveAt === undefined
+    ? 'not yet recorded'
+    : formatWatermarkAge(input.now - input.lastLiveAt);
+  return `self-heal: ledger=${input.path ?? 'unavailable'} lastLiveAt=${lastLiveAt} processed=${input.processedCount ?? 0}`;
+}
+
+function formatWatermarkAge(ageMs: number): string {
+  const ms = Number.isFinite(ageMs) ? Math.max(0, ageMs) : 0;
+  if (ms < 60_000) return `${Math.floor(ms / 1000)}s ago`;
+  if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+  if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+  return `${Math.floor(ms / 86_400_000)}d ago`;
 }

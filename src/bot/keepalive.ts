@@ -39,14 +39,19 @@ export interface KeepaliveDeps {
   domain: string;
   /** Force-reconnect callback. Bridge uses `controls.restart`. */
   forceReconnect: () => Promise<void>;
+  now?: () => number;
+  /** Called with `now` only on ticks that observe WS `connected`. */
+  onConnectedTick?: (now: number) => void;
 }
 
 export interface KeepaliveHandle {
   stop(): void;
+  tick(): Promise<void>;
 }
 
 export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
-  const { channel, domain, forceReconnect } = deps;
+  const { channel, domain, forceReconnect, onConnectedTick } = deps;
+  const nowFn = deps.now ?? Date.now;
 
   let lastTick = 0;
   let consecutiveDown = 0;
@@ -55,7 +60,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
 
   const tick = async (): Promise<void> => {
     if (stopped) return;
-    const now = Date.now();
+    const now = nowFn();
     const sinceLast = lastTick > 0 ? now - lastTick : 0;
 
     // (3) Timer storm — multiple intervals firing at once on wake-up.
@@ -83,6 +88,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       }
       consecutiveDown = 0;
       networkDownTicks = 0;
+      onConnectedTick?.(now);
       return;
     }
 
@@ -136,6 +142,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       stopped = true;
       clearInterval(timer);
     },
+    tick,
   };
 }
 

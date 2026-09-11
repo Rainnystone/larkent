@@ -4,11 +4,11 @@
 
 **Blocked by:** 04
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
-- [ ] Keepalive gets an optional dependency that is invoked with `now` only on ticks where `getConnectionStatus().state === 'connected'`; it is **not** invoked on the wake-up / storm-guard early returns or while `ws-stuck`.
-- [ ] Ledger exposes `touchLive(now)` that updates `lastLiveAt` in memory and persists at most once per 30 s (throttle inside the ledger, not in keepalive), plus a getter for the current watermark and `lastBackfillEnd`.
-- [ ] Clock going backwards (`now < lastLiveAt`) is tolerated: watermark rewritten to `now`, warn `backfill.clock-skew` once.
-- [ ] `/doctor` prints a "self-heal" line: ledger path, `lastLiveAt` age in human units (or "not yet recorded"), processed count; wording is profile-generic and does not mention any agent kind.
-- [ ] Tests: fake clock + fake channel status — connected ticks advance the watermark at most every 30 s; disconnected/stuck ticks do not; no write when the value did not change; `/doctor` renders the line from ledger state.
-- [ ] No new timers: the heartbeat rides the existing 15 s keepalive interval.
+- [x] Keepalive gets an optional dependency that is invoked with `now` only on ticks where `getConnectionStatus().state === 'connected'`; it is **not** invoked on the wake-up / storm-guard early returns or while `ws-stuck`.
+- [x] Ledger exposes `touchLive(now)` that updates `lastLiveAt` in memory and persists at most once per 30 s (throttle inside the ledger, not in keepalive), plus a getter for the current watermark and `lastBackfillEnd`.
+- [x] Clock going backwards (`now < lastLiveAt`) is tolerated: watermark rewritten to `now`, warn `backfill.clock-skew` once.
+- [x] `/doctor` prints a "self-heal" line: ledger path, `lastLiveAt` age in human units (or "not yet recorded"), processed count; wording is profile-generic and does not mention any agent kind.
+- [x] Tests: fake clock + fake channel status — connected ticks advance the watermark at most every 30 s; disconnected/stuck ticks do not; no write when the value did not change; `/doctor` renders the line from ledger state.
+- [x] No new timers: the heartbeat rides the existing 15 s keepalive interval.

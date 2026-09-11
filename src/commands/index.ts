@@ -6,6 +6,7 @@ import { capabilityForProfile } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
+import { formatSelfHealLine, type BackfillLedger } from '../bot/backfill-ledger';
 import {
   accountCurrentCard,
   accountFailureCard,
@@ -131,6 +132,7 @@ export interface CommandContext {
   sessionCatalog?: SessionCatalog;
   sessionCatalogIdentity?: SessionCatalogIdentity;
   workspaces: WorkspaceStore;
+  ledger?: BackfillLedger;
   agent: AgentAdapter;
   activeRuns: ActiveRuns;
   processPool?: ProcessPool;
@@ -1190,6 +1192,12 @@ function buildDoctorReport(
     `queue: ${queueLine}`,
     `run executor: ${ctx.runExecutor ? 'available' : 'unavailable'}`,
     `backfill: ${formatBackfillPreferences(getBackfillPreferences(ctx.controls.cfg))}`,
+    formatSelfHealLine({
+      path: ctx.ledger?.getFilePath(),
+      lastLiveAt: ctx.ledger?.getLiveAt(),
+      processedCount: ctx.ledger?.getProcessedCount(),
+      now: Date.now(),
+    }),
     ...(opts.workspaceCheck ? [`workspace check: ${opts.workspaceCheck}`] : []),
     ...(opts.policyCheck ? [`policy check: ${opts.policyCheck}`] : []),
     ...(opts.echoCheck ? [`agent echo check: ${opts.echoCheck}`] : []),
