@@ -9,7 +9,7 @@ import { createMergeForwardFetch } from './quote';
 
 export const WATERMARK_MARGIN_MS = 120_000;
 
-export type BackfillTrigger = 'connect' | 'reconnected';
+export type BackfillTrigger = 'connect' | 'reconnected' | 'wake-up';
 
 export interface BackfillMark {
   detectedAt: number;

@@ -69,6 +69,11 @@ describe('backfill static contracts', () => {
 
     expect([...seen].sort()).toEqual([...AGENT_KINDS].sort());
   });
+
+  it('wires keepalive wake-up to backfill without touching lastLiveAt first', () => {
+    expect(read('src/bot/channel.ts')).toMatch(/onWakeUp:\s*\(\)\s*=>\s*launchBackfill\('wake-up'\)/);
+    expect(read('src/bot/keepalive.ts')).toMatch(/onWakeUp\?\.\(\)/);
+  });
 });
 
 function emittedInSource(source: string, fullName: string): boolean {

@@ -13,6 +13,8 @@ import { log, reportMetric } from '../core/logger';
  *  2. Wake-up detection — if the timer was skipped for > SLEEP_DETECT_MS, the
  *     machine likely slept (laptop lid / hibernate / suspend). Reset counters
  *     and bail out for this tick: don't trust state captured pre-sleep.
+ *     `onWakeUp` runs here so a still-`connected` socket cannot erase the
+ *     offline gap by advancing the live watermark on the next probe.
  *
  *  3. Timer storm guard — when machine wakes, multiple intervals can fire
  *     back-to-back. If less than TIMER_STORM_GUARD_MS since last tick, skip.
@@ -42,6 +44,11 @@ export interface KeepaliveDeps {
   now?: () => number;
   /** Called with `now` only on ticks that observe WS `connected`. */
   onConnectedTick?: (now: number) => void;
+  /**
+   * Called on the sleep-detection early return. Bridge launches backfill
+   * here so a surviving WS cannot advance `lastLiveAt` before the scan.
+   */
+  onWakeUp?: () => void;
 }
 
 export interface KeepaliveHandle {
@@ -50,7 +57,7 @@ export interface KeepaliveHandle {
 }
 
 export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
-  const { channel, domain, forceReconnect, onConnectedTick } = deps;
+  const { channel, domain, forceReconnect, onConnectedTick, onWakeUp } = deps;
   const nowFn = deps.now ?? Date.now;
 
   let lastTick = 0;
@@ -73,6 +80,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
       consecutiveDown = 0;
       networkDownTicks = 0;
       lastTick = now;
+      onWakeUp?.();
       return;
     }
     lastTick = now;

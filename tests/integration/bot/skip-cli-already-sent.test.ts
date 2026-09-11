@@ -75,6 +75,23 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
     ).toBe(false);
   }, 15_000);
 
+  it('skips the extra final post when the agent replied with --message-id only', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const h = await harness(
+      'kimi',
+      scriptedSend(true, `lark-cli im +messages-reply --message-id ${MSG} --text already delivered`),
+      'text',
+    );
+
+    await h.channel.handlers.message?.(message(MSG, 'please answer'));
+    await waitFor(() => h.agent.runs.length === 1);
+    await waitFor(() =>
+      info.mock.calls.some((call) => call[0] === 'outbound' && call[1] === 'skip-cli-already-sent'),
+    );
+
+    expect(h.channel.sent).toEqual([]);
+  }, 15_000);
+
   it.each(['card', 'markdown', 'text'] as const)(
     'final-answer-only adapter skips the extra final post in %s mode',
     async (mode) => {
@@ -114,13 +131,13 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
   }, 15_000);
 });
 
-function scriptedSend(success: boolean): AgentEvent[] {
+function scriptedSend(success: boolean, command = SEND_CMD): AgentEvent[] {
   return [
     {
       type: 'tool_use',
       id: 'tool-1',
       name: 'Bash',
-      input: { command: SEND_CMD },
+      input: { command },
     },
     {
       type: 'tool_result',

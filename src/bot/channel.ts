@@ -575,7 +575,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     channel,
     domain: probeDomain,
     forceReconnect: () => controls.restart(),
-    ...(ledger ? { onConnectedTick: (now) => ledger.touchLive(now) } : {}),
+    ...(ledger
+      ? {
+          onConnectedTick: (now) => ledger.touchLive(now),
+          // Surviving-socket sleep: scan before the next connected tick
+          // can advance lastLiveAt and close the offline gap.
+          onWakeUp: () => launchBackfill('wake-up'),
+        }
+      : {}),
   });
 
   return {
@@ -1167,7 +1174,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const finalAnswerOnly =
     descriptorFor(controls.profileConfig.agentKind).replyMode === 'final-answer';
   const runContext = {
-    chatId,
+    currentChatId: chatId,
     batchMessageIds: batch.map((msg) => msg.messageId),
   };
   log.info('flush', 'reply-mode', { mode: replyMode });
@@ -1700,7 +1707,7 @@ async function processAgentStream(
   idleTimeoutMs: number | undefined,
   recordSession: (event: AgentEvent) => void,
   flush: (state: RunState) => Promise<void>,
-  runContext?: { chatId: string; batchMessageIds: readonly string[] },
+  runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
 ): Promise<RunState> {
   const runStart = Date.now();
   let state: RunState = seedRunState(runContext ?? {});
