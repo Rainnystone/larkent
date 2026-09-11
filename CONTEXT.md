@@ -44,9 +44,23 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - New-profile bootstrap resolves binary env settings into `agent.binaryPath`; stored profile paths take precedence afterward. Bridge data roots do not replace `HOME` or CLI login state.
 - A code rollback does not downgrade data. Restore matching data backups before running an older version.
 
+## Self-heal and backfill
+
+Design: [docs/specs/wake-up-backfill.md](docs/specs/wake-up-backfill.md).
+
+- **self-heal**: recovery the bridge performs on its own after a disconnect, sleep, freeze or restart. No external watcher, poller or host routine is assumed. Lives in `src/bot/`, identical for every profile and agent kind.
+- **recovery signal**: an event that may mean messages were missed: a successful `channel.connect()` inside `startChannel` (covers keepalive wake-up → `controls.restart()`, `/reconnect`, `/account`, process start) or the SDK's `reconnected` event.
+- **backfill**: the idempotent catch-up routine that runs on a recovery signal: pull recent group history with **bot identity**, keep messages that @-mention this bot and are not in the processed ledger, and hand them to the normal `intakeMessage` path. Not a poller; it never runs on a timer.
+- **live watermark** (`lastLiveAt`): the last keepalive tick that observed the WS in `connected` state, persisted per profile. The backfill window starts at the watermark minus a fixed margin and is capped by `lookbackMs`.
+- **backfill window**: `[max(now − lookbackMs, min(lastLiveAt, lastBackfillEnd) − margin), now]`. A missing watermark initializes it without scanning.
+- **processed ledger** (`backfill-state.json`, schema v1): per-profile store of processed `message_id`s plus the watermarks. Owned by the supervisor per profile and injected into `startChannel` like `sessions`, so it survives `controls.restart()`.
+- **claim**: the synchronous check-and-reserve of a `message_id` at `intakeMessage` entry. Released if the message is gated out, recorded as processed once it is accepted (queued or handled as a command).
+- **backfill mark**: bridge-side note that a queued message came from backfill; `runAgentBatch` turns it into one lateness hint in the prompt. `NormalizedMessage` is not extended.
+
 ## Words we do not use
 
 - "default agent". There is none.
+- "poller" or "patrol" for recovery. Backfill runs on recovery signals, never on a schedule.
 - Agent resume fields named `sessionId` or `threadId` outside an adapter or a migration. Shared agent code says `resumeHandle`.
 - "built-in" versus "added" agents. All registered kinds are equal.
 
