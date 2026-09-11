@@ -4,13 +4,13 @@
 
 **Blocked by:** 02
 
-**Status:** in-progress
+**Status:** done
 
-- [ ] Reducer recognises a lark-cli IM send from `tool_use` input (command string containing `lark-cli im` with `+messages-send`, `+messages-reply` or `send-card` and a `--chat-id <oc_/ou_…>` — also the reply form where the chat is implied by `--message-id`, resolved to the current chat when the message id belongs to the batch) and confirms success from the matching `tool_result` (exit success / JSON without error code). Unsuccessful or malformed sends record nothing.
-- [ ] `RunState.directImSentChatIds` is populated per run and is not persisted anywhere.
-- [ ] `sendFinalReply` skips only when `terminal === 'done'` **and** the target chat id is recorded; all other terminals behave as today.
-- [ ] Skip is logged as `outbound.skip-cli-already-sent` with `scope`, `chatId`, `mode`; metric `outbound_skip_cli_sent` counted.
-- [ ] Card / markdown / text reply modes and final-answer-only adapters all honour the skip (the streamed progress card, if any, is still finalized; only the *extra* final post is suppressed).
-- [ ] Rejected approach documented in a code comment or the PR: post-run history check by bot identity (spec ticket quiz option c) — not implemented.
-- [ ] Tests: parameterized over all `AGENT_KINDS` with a scripted JSONL stream containing a successful CLI send → exactly one outbound post; the same stream with a failed send → bridge posts the final as today.
-- [ ] No `agentKind` branching; no profile or host names.
+- [x] Reducer recognises a lark-cli IM send from `tool_use` input (command string containing `lark-cli im` with `+messages-send`, `+messages-reply` or `send-card` and a `--chat-id <oc_/ou_…>` — also the reply form where the chat is implied by `--message-id`, resolved to the current chat when the message id belongs to the batch) and confirms success from the matching `tool_result` (exit success / JSON without error code). Unsuccessful or malformed sends record nothing.
+- [x] `RunState.directImSentChatIds` is populated per run and is not persisted anywhere.
+- [x] `sendFinalReply` skips only when `terminal === 'done'` **and** the target chat id is recorded; all other terminals behave as today.
+- [x] Skip is logged as `outbound.skip-cli-already-sent` with `scope`, `chatId`, `mode`; metric `outbound_skip_cli_sent` counted.
+- [x] Card / markdown / text reply modes and final-answer-only adapters all honour the skip (the streamed progress card, if any, is still finalized; only the *extra* final post is suppressed).
+- [x] Rejected approach documented in a code comment or the PR: post-run history check by bot identity (spec ticket quiz option c) — not implemented.
+- [x] Tests: parameterized over all `AGENT_KINDS` with a scripted JSONL stream containing a successful CLI send → exactly one outbound post; the same stream with a failed send → bridge posts the final as today.
+- [x] No `agentKind` branching; no profile or host names.
