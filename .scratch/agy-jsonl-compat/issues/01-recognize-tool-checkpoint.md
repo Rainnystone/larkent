@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Parent
 
@@ -22,12 +22,12 @@ This ticket does **not** classify empty SUCCESS or add `--print-timeout`.
 
 ## Acceptance criteria
 
-- [ ] A committed JSONL fixture with at least one `tool` step (including `tool_name` / `tool_info`) and one `checkpoint` step, plus `init`, yields `protocolDrift().unknownEvents === 0` for those lines and no `tool_use` / `tool_result` events.
-- [ ] The same fixture may include both `ACTIVE` and `DONE` for the same tool index without logging `unknown_event` for `tool`.
-- [ ] An existing captured success stream (`user_input` + `agent_response` + SUCCESS `response`) still maps to system + `final_text` + `done(normal)` as today.
-- [ ] A still-unknown `step_type` (and an unknown top-level `event`) still increment `unknownEvents` and do not throw.
-- [ ] Already-silent `user_input` / `system_message` / `error_message` stay silent (no new events, no new drift).
-- [ ] Tests run at the translator seam with fixtures. Live agy capture is optional local evidence only.
+- [x] A committed JSONL fixture with at least one `tool` step (including `tool_name` / `tool_info`) and one `checkpoint` step, plus `init`, yields `protocolDrift().unknownEvents === 0` for those lines and no `tool_use` / `tool_result` events.
+- [x] The same fixture may include both `ACTIVE` and `DONE` for the same tool index without logging `unknown_event` for `tool`.
+- [x] An existing captured success stream (`user_input` + `agent_response` + SUCCESS `response`) still maps to system + `final_text` + `done(normal)` as today.
+- [x] A still-unknown `step_type` (and an unknown top-level `event`) still increment `unknownEvents` and do not throw.
+- [x] Already-silent `user_input` / `system_message` / `error_message` stay silent (no new events, no new drift).
+- [x] Tests run at the translator seam with fixtures. Live agy capture is optional local evidence only.
 
 ## Blocked by
 
