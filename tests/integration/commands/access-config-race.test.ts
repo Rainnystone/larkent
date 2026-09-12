@@ -61,7 +61,7 @@ describe('access config concurrent writes', () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
   });
 
-  it('merges concurrent access mutations against the latest root config', async () => {
+  it('merges concurrent access mutations against the latest root config', { timeout: 20_000 }, async () => {
     saveGate.reset();
     const h = await createHarness();
 

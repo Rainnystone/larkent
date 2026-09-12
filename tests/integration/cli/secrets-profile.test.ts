@@ -32,11 +32,16 @@ async function makeRoot(): Promise<string> {
 afterEach(async () => {
   vi.restoreAllMocks();
   clearKeystoreDerivedKeyCache();
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+  await Promise.all(
+    roots.splice(0).map((root) =>
+      rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 }),
+    ),
+  );
 });
 
 describe('profile-aware secrets commands', () => {
-  it('resolves secrets active-first, then by profile name, and warns on duplicates', async () => {
+  // Three isolated keystores each pay PBKDF2-100k; Windows CI workers contend.
+  it('resolves secrets active-first, then by profile name, and warns on duplicates', { timeout: 20_000 }, async () => {
     const root = await makeRoot();
     await writeProfiles(root, 'codex-dev', ['alpha', 'codex-dev', 'zeta']);
     const duplicate = secretKeyForApp('cli_duplicate');

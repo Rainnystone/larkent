@@ -3,6 +3,9 @@ import { log } from '../../core/logger';
 
 export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
+const PRINT_TIMEOUT_HINT =
+  'Antigravity print-timeout reached before a reply was produced.';
+
 export interface ProtocolDriftState {
   unknownEvents: number;
   anomalies: number;
@@ -13,18 +16,25 @@ export interface ProtocolDriftState {
  * AgentEvents. Captured line shapes (Antigravity CLI 1.2.1):
  *
  *   {"event":"init","conversation_id":"<uuid>","init":{...}}
- *   {"event":"step_update","step_update":{"conversation_id","step_index","state","step_type","text_delta"?}}
+ *   {"event":"step_update","step_update":{"conversation_id","step_index","state","step_type","text_delta"?,"tool_name"?,"tool_info"?}}
  *   {"event":"result","result":{"conversation_id","status":"SUCCESS"|"ERROR","response","error"?,"usage"?}}
  *
- * `text_delta` fragments are held back. The reply body is `result.response`
- * (verified against a live Claude Sonnet print + resume). Unknown step types
- * increment protocol drift instead of throwing.
+ * Official `step_type` values `user_input`, `agent_response`, `tool`,
+ * `checkpoint`, plus silent `system_message` / `error_message`, are known.
+ * `agent_response` `text_delta` fragments are held back. `tool` and
+ * `checkpoint` are parse-only (no tool/text events). An empty SUCCESS
+ * after print-timeout is classified (official timeout field, else the
+ * incident heuristic) and emits a `final_text` hint so outbound is not
+ * muted. The reply body is `result.response` (verified against a live
+ * Claude Sonnet print + resume). Unknown step types increment protocol
+ * drift instead of throwing.
  */
 export class AntigravityJsonlTranslator {
   private conversationId: string | undefined;
   private terminal = false;
   private pendingText = '';
   private systemEmitted = false;
+  private sawRecognizedToolOrCheckpoint = false;
   private drift: ProtocolDriftState = {
     unknownEvents: 0,
     anomalies: 0,
@@ -105,6 +115,10 @@ export class AntigravityJsonlTranslator {
     ) {
       return [];
     }
+    if (stepType === 'tool' || stepType === 'checkpoint') {
+      this.sawRecognizedToolOrCheckpoint = true;
+      return [];
+    }
     if (stepType) {
       this.drift.unknownEvents++;
       log.warn('jsonl', 'unknown_event', { eventType: stepType });
@@ -132,9 +146,20 @@ export class AntigravityJsonlTranslator {
     const response = typeof result.response === 'string' ? result.response : undefined;
     const content = response !== undefined && response.length > 0 ? response : this.pendingText;
     this.pendingText = '';
-    if (content) events.push({ type: 'final_text', content });
+    if (content) {
+      events.push({ type: 'final_text', content });
+    } else {
+      const hint = this.emptySuccessHint(result);
+      if (hint) events.push({ type: 'final_text', content: hint });
+    }
     events.push(this.doneEvent('normal'));
     return events;
+  }
+
+  private emptySuccessHint(result: Record<string, unknown>): string | undefined {
+    if (officialPrintTimeoutSignal(result)) return PRINT_TIMEOUT_HINT;
+    if (this.sawRecognizedToolOrCheckpoint) return PRINT_TIMEOUT_HINT;
+    return undefined;
   }
 
   private rememberConversation(value: unknown): void {
@@ -201,6 +226,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function officialPrintTimeoutSignal(result: Record<string, unknown>): boolean {
+  return isTimeoutSignal(stringValue(result.error)) || isTimeoutSignal(stringValue(result.reason));
+}
+
+function isTimeoutSignal(value: string | undefined): boolean {
+  return value !== undefined && /timeout/i.test(value);
 }
 
 function numberValue(value: unknown): number | undefined {
