@@ -83,6 +83,9 @@ describe('backfill on connect', () => {
       },
     });
     await waitForDebounce();
+    await waitFor(() =>
+      info.mock.calls.some((call) => call[0] === 'flush' && call[1] === 'reply-target'),
+    );
     expect(info.mock.calls).toContainEqual([
       'flush',
       'reply-target',
