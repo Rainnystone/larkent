@@ -11,7 +11,7 @@ import {
 } from '../../../src/agent/antigravity/options';
 
 describe('parseAntigravityAgentOptions', () => {
-  it.each(['30s', '5m', '10m', '1h', '1h30m'] as const)(
+  it.each(['30s', '5m', '10m', '1h', '1h30m', '0.5s'] as const)(
     'accepts printTimeout duration %s',
     (printTimeout) => {
       expect(parseAntigravityAgentOptions({ printTimeout }, true)).toEqual({ printTimeout });
@@ -42,6 +42,8 @@ describe('parseAntigravityAgentOptions', () => {
     '5M',
     '-5m',
     '0s',
+    '.1ns',
+    '999999999999999999999h',
     ' 5m',
     '5m ',
     10,

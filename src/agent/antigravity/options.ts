@@ -7,6 +7,18 @@ import {
 const ANTIGRAVITY_SANDBOXES = ['read-only', 'workspace-write', 'danger-full-access'] as const;
 const ANTIGRAVITY_OPTION_KEYS = new Set(['sandbox', 'printTimeout']);
 const AGY_DURATION = /^(?:(?:\d+(?:\.\d+)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h))+$/;
+const AGY_DURATION_TOKEN = /(?:\d+(?:\.\d+)?|\.\d+)(?:ns|us|µs|μs|ms|s|m|h)/g;
+const MAX_GO_DURATION_NS = 9_223_372_036_854_775_807n;
+const UNIT_NS = {
+  ns: 1n,
+  us: 1_000n,
+  'µs': 1_000n,
+  'μs': 1_000n,
+  ms: 1_000_000n,
+  s: 1_000_000_000n,
+  m: 60_000_000_000n,
+  h: 3_600_000_000_000n,
+} as const;
 
 export type AntigravitySandboxOption = (typeof ANTIGRAVITY_SANDBOXES)[number];
 
@@ -20,8 +32,35 @@ function isAntigravitySandboxOption(value: unknown): value is AntigravitySandbox
   return typeof value === 'string' && (ANTIGRAVITY_SANDBOXES as readonly string[]).includes(value);
 }
 
+function goDurationTokenNs(token: string): bigint | undefined {
+  const match = /^(\d+(?:\.\d+)?|\.\d+)(ns|us|µs|μs|ms|s|m|h)$/.exec(token);
+  if (!match) return undefined;
+  const amount = match[1];
+  const unit = match[2];
+  if (amount === undefined || unit === undefined || !(unit in UNIT_NS)) return undefined;
+  const unitNs = UNIT_NS[unit as keyof typeof UNIT_NS];
+  const dot = amount.indexOf('.');
+  const intPart = dot === -1 ? amount : amount.slice(0, dot) || '0';
+  const fracPart = dot === -1 ? '' : amount.slice(dot + 1);
+  let ns = BigInt(intPart) * unitNs;
+  if (fracPart) ns += (BigInt(fracPart) * unitNs) / 10n ** BigInt(fracPart.length);
+  return ns;
+}
+
+function isPositiveRepresentableGoDuration(value: string): boolean {
+  if (!AGY_DURATION.test(value)) return false;
+  let total = 0n;
+  for (const token of value.match(AGY_DURATION_TOKEN) ?? []) {
+    const ns = goDurationTokenNs(token);
+    if (ns === undefined) return false;
+    total += ns;
+    if (total <= 0n || total > MAX_GO_DURATION_NS) return false;
+  }
+  return total > 0n;
+}
+
 function isAgyPrintTimeout(value: unknown): value is string {
-  return typeof value === 'string' && AGY_DURATION.test(value) && /[1-9]/.test(value);
+  return typeof value === 'string' && isPositiveRepresentableGoDuration(value);
 }
 
 export function parseAntigravityAgentOptions(
