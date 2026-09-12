@@ -13,12 +13,15 @@ export interface ProtocolDriftState {
  * AgentEvents. Captured line shapes (Antigravity CLI 1.2.1):
  *
  *   {"event":"init","conversation_id":"<uuid>","init":{...}}
- *   {"event":"step_update","step_update":{"conversation_id","step_index","state","step_type","text_delta"?}}
+ *   {"event":"step_update","step_update":{"conversation_id","step_index","state","step_type","text_delta"?,"tool_name"?,"tool_info"?}}
  *   {"event":"result","result":{"conversation_id","status":"SUCCESS"|"ERROR","response","error"?,"usage"?}}
  *
- * `text_delta` fragments are held back. The reply body is `result.response`
- * (verified against a live Claude Sonnet print + resume). Unknown step types
- * increment protocol drift instead of throwing.
+ * Official `step_type` values `user_input`, `agent_response`, `tool`,
+ * `checkpoint`, plus silent `system_message` / `error_message`, are known.
+ * `agent_response` `text_delta` fragments are held back. `tool` and
+ * `checkpoint` are parse-only (no tool/text events). The reply body is
+ * `result.response` (verified against a live Claude Sonnet print + resume).
+ * Unknown step types increment protocol drift instead of throwing.
  */
 export class AntigravityJsonlTranslator {
   private conversationId: string | undefined;
@@ -101,7 +104,9 @@ export class AntigravityJsonlTranslator {
     if (
       stepType === 'user_input' ||
       stepType === 'system_message' ||
-      stepType === 'error_message'
+      stepType === 'error_message' ||
+      stepType === 'tool' ||
+      stepType === 'checkpoint'
     ) {
       return [];
     }

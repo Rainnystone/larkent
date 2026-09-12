@@ -1,8 +1,21 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl';
 import type { AgentEvent } from '../../../src/agent/types';
 
 const CONVERSATION = 'f8c7af3a-4080-4505-981e-87dc09f7f50e';
+const TOOL_CHECKPOINT_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/tool-checkpoint-steps.jsonl',
+);
+
+function loadJsonl(path: string): unknown[] {
+  return readFileSync(path, 'utf8')
+    .split('\n')
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line) as unknown);
+}
 
 const INIT = {
   event: 'init',
@@ -165,15 +178,36 @@ describe('AntigravityJsonlTranslator', () => {
     expect(t.terminalEmitted()).toBe(true);
   });
 
+  it('recognizes official tool and checkpoint steps without tool events or drift', () => {
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, loadJsonl(TOOL_CHECKPOINT_FIXTURE));
+    expect(events).toEqual([{ type: 'system', resumeHandle: CONVERSATION }]);
+    expect(events.filter((e) => e.type === 'tool_use' || e.type === 'tool_result')).toEqual([]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('keeps already-silent official steps from incrementing drift', () => {
+    const t = new AntigravityJsonlTranslator();
+    expect(
+      collect(t, [
+        { event: 'step_update', step_update: { step_type: 'user_input', state: 'DONE' } },
+        { event: 'step_update', step_update: { step_type: 'system_message', state: 'DONE' } },
+        { event: 'step_update', step_update: { step_type: 'error_message', state: 'DONE' } },
+      ]),
+    ).toEqual([]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
   it('ignores unknown events and step types without throwing', () => {
     const t = new AntigravityJsonlTranslator();
     expect(
       collect(t, [
         { event: 'step_update', step_update: { step_type: 'system_message', state: 'DONE' } },
+        { event: 'step_update', step_update: { step_type: 'not_a_real_step', state: 'DONE' } },
         { event: 'not-a-real-event' },
       ]),
     ).toEqual([]);
-    expect(t.protocolDrift().unknownEvents).toBe(1);
+    expect(t.protocolDrift().unknownEvents).toBe(2);
   });
 
   it('finish(failed) surfaces an error when the stream had no result', () => {
