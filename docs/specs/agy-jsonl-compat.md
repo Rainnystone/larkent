@@ -3,7 +3,7 @@
 Status: ready-for-agent (docs track). Grill closed by product owner. Do not reopen locked decisions.
 Written 2026-09-12 from the verified 哈基米 / cursor-agy incident (~263c7d) and official agy Headless `stream-json` vocabulary.
 
-This document is the destination. Tickets under `.scratch/agy-jsonl-compat/issues/` are disposable execution slices. Implementers claim tickets from the docs draft PR; they push product code only to a later, separate feat PR.
+This document is the destination. Tickets under `.scratch/agy-jsonl-compat/issues/` are disposable execution slices. Implementers claim tickets from docs draft PR [#27](https://github.com/Rainnystone/larkent/pull/27); they push product code only to a later, separate feat PR.
 
 ---
 

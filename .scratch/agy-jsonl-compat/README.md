@@ -8,7 +8,7 @@ Grill is closed. The Spec is [docs/specs/agy-jsonl-compat.md](../../docs/specs/a
 
 | Track | Branch | PR | What it may contain |
 | --- | --- | --- | --- |
-| Docs (this) | `cursor/agy-jsonl-compat-docs-c396` | **docs draft PR** — number filled after open | Spec, tickets, this README, delivery-note **placeholders** |
+| Docs (this) | `cursor/agy-jsonl-compat-docs-c396` | **[#27](https://github.com/Rainnystone/larkent/pull/27)** (draft) | Spec, tickets, this README, delivery-note **placeholders** |
 | Code (later) | a clean `feat/…` from latest `master` | a **separate** feat PR, opened later | Product code + tests only |
 
 Do **not** merge this docs PR to `master` as a substitute for the feat PR. Do **not** open a feature/code PR from this branch. Do **not** copy `.scratch/` scaffolding, Spec files, or delivery-note templates onto the feat branch.
@@ -16,7 +16,7 @@ Do **not** merge this docs PR to `master` as a substitute for the feat PR. Do **
 ## How an implementer claims a ticket
 
 1. Read the Spec. Then read **one** ticket whose blockers are all done.
-2. Claim it **on this docs PR** (edit the ticket Status / delivery-note placeholder, or comment on the docs PR). Read-only claim: you are recording who is working it, not implementing here.
+2. Claim it **on docs PR [#27](https://github.com/Rainnystone/larkent/pull/27)** (edit the ticket Status / delivery-note placeholder, or comment on that PR). Read-only claim: you are recording who is working it, not implementing here.
 3. Branch **from latest `master`**, not from this docs branch.
 4. Implement only that ticket. Push code only to the feat PR.
 5. Fill the matching delivery-note placeholder (evidence, residual risk) and point it at the feat PR. Leave the docs PR as the ticket board.

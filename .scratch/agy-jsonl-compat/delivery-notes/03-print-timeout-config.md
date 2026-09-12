@@ -4,7 +4,7 @@ Fill this when the feat PR lands ticket 03. Do not implement on the docs branch.
 
 **Status:** unclaimed
 **Claimed by:** —
-**Docs PR:** (this draft — number filled after open)
+**Docs PR:** [#27](https://github.com/Rainnystone/larkent/pull/27)
 **Feat PR:** —
 
 ## Evidence
