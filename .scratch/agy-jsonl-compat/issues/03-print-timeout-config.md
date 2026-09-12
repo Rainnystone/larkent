@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately). Independent of 01 and 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Parent
 
@@ -20,13 +20,13 @@ Do not put `printTimeout` into the policy fingerprint. Do not pass the flag for 
 
 ## Acceptance criteria
 
-- [ ] `printTimeout` is a documented, parsed antigravity `agent.options` field. Invalid values fail parse; unknown option keys still fail the existing strict path.
-- [ ] When `printTimeout` is set to a valid duration, print-mode argv contains `--print-timeout` followed by that exact value, and still includes today's unattended flags (`-p`, `--output-format stream-json`, `--dangerously-skip-permissions`, `--disable-slash-commands`).
-- [ ] When `printTimeout` is unset, argv does **not** contain `--print-timeout` (agy default unchanged).
-- [ ] Resume (`--conversation`) and `--model` still work when `printTimeout` is set.
-- [ ] Restricted sandbox still throws before spawn; this option does not bypass that.
-- [ ] Policy fingerprint inputs for antigravity stay empty with respect to `printTimeout` (changing the ceiling does not invalidate resume).
-- [ ] Tests cover options parse + argv at the existing options/argv seam. No live agy. No `10m` default hardcoded as the product default.
+- [x] `printTimeout` is a documented, parsed antigravity `agent.options` field. Invalid values fail parse; unknown option keys still fail the existing strict path.
+- [x] When `printTimeout` is set to a valid duration, print-mode argv contains `--print-timeout` followed by that exact value, and still includes today's unattended flags (`-p`, `--output-format stream-json`, `--dangerously-skip-permissions`, `--disable-slash-commands`).
+- [x] When `printTimeout` is unset, argv does **not** contain `--print-timeout` (agy default unchanged).
+- [x] Resume (`--conversation`) and `--model` still work when `printTimeout` is set.
+- [x] Restricted sandbox still throws before spawn; this option does not bypass that.
+- [x] Policy fingerprint inputs for antigravity stay empty with respect to `printTimeout` (changing the ceiling does not invalidate resume).
+- [x] Tests cover options parse + argv at the existing options/argv seam. No live agy. No `10m` default hardcoded as the product default.
 
 ## Blocked by
 
