@@ -17,6 +17,11 @@ export interface BuildAntigravityArgsInput {
    * are not mapped onto agy permission prompts.
    */
   sandbox?: AntigravitySandboxOption;
+  /**
+   * Forwarded to `--print-timeout` as the exact configured duration.
+   * Omitted so agy keeps its own default. Not a product default.
+   */
+  printTimeout?: string;
 }
 
 /**
@@ -53,5 +58,6 @@ export function buildAntigravityArgs(input: BuildAntigravityArgsInput): string[]
   ];
   if (input.conversationId) args.push('--conversation', input.conversationId);
   if (input.model) args.push('--model', input.model);
+  if (input.printTimeout) args.push('--print-timeout', input.printTimeout);
   return args;
 }

@@ -149,7 +149,12 @@ describe('policy fingerprint', () => {
       codexHome: '/state/codex-home',
       inheritCodexHome: true,
     });
+    expect(descriptorFor('antigravity').policyInputs({ printTimeout: '10m' })).toEqual({});
+    expect(policyFingerprintFromAgentOptions(shared, 'antigravity', { printTimeout: '10m' })).toBe(
+      policyFingerprintFromAgentOptions(shared, 'antigravity', {}),
+    );
   });
+
 
   it('sorts access and resource allowlists so ordering does not change digests', () => {
     const profile = createDefaultProfileConfig({

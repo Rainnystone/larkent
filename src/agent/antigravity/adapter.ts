@@ -92,6 +92,7 @@ export class AntigravityAdapter implements AgentAdapter {
         ...(opts.resumeHandle ? { conversationId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
         ...(parsed.sandbox ? { sandbox: parsed.sandbox } : {}),
+        ...(parsed.printTimeout ? { printTimeout: parsed.printTimeout } : {}),
       }),
       cwd: opts.cwd,
       env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),

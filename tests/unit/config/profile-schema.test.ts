@@ -393,6 +393,22 @@ describe('profile schema', () => {
       accounts: { app },
     });
     expect(loaded.agent.options).toEqual({ sandbox: 'read-only' });
+
+    const antigravity = normalizeProfileConfig({
+      schemaVersion: 3,
+      agent: { kind: 'antigravity', options: { printTimeout: '15m' } },
+      agentKind: 'antigravity',
+      accounts: { app },
+    });
+    expect(antigravity.agent.options).toEqual({ printTimeout: '15m' });
+    expect(() =>
+      normalizeProfileConfig({
+        schemaVersion: 3,
+        agent: { kind: 'antigravity', options: { printTimeout: 'nope' } },
+        agentKind: 'antigravity',
+        accounts: { app },
+      }),
+    ).toThrow(/invalid antigravity agent option printTimeout/);
   });
 
   it('aligns Codex history with agent.binaryPath when the two fields disagree', () => {
