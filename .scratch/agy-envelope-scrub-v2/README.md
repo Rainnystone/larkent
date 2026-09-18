@@ -10,20 +10,20 @@ Tickets below are tracer-bullet slices of that Spec. They are not product code.
 
 | Track | Branch | PR | What it may contain |
 | --- | --- | --- | --- |
-| Docs (this) | `docs/agy-envelope-scrub-v2` | **[TBD](https://github.com/Rainnystone/larkent/pull/TBD)** (draft) | Spec, tickets, this README, delivery-note placeholders |
-| Code | `feat/agy-envelope-scrub-v2` | **[TBD](https://github.com/Rainnystone/larkent/pull/TBD)** (draft) | Product code + tests only (opened empty) |
+| Docs (this) | `docs/agy-envelope-scrub-v2` | **[#31](https://github.com/Rainnystone/larkent/pull/31)** (draft) | Spec, tickets, this README, delivery-note placeholders |
+| Code | `feat/agy-envelope-scrub-v2` | **[#32](https://github.com/Rainnystone/larkent/pull/32)** (draft) | Product code + tests only (opened empty) |
 
 Do **not** merge this docs PR to `master` as a substitute for the feat PR. Do **not** open a feature/code PR from this branch. Do **not** copy `.scratch/` scaffolding, Spec files, or delivery-note templates onto the feat branch.
 
 ## How an implementer claims a ticket
 
 1. Read the Spec. Then read **one** ticket whose blockers are all done.
-2. Claim it **on the docs PR** (edit Status / delivery-note placeholder, or comment). Read-only claim: recording who is working it, not implementing here.
+2. Claim it **on docs PR [#31](https://github.com/Rainnystone/larkent/pull/31)** (edit Status / delivery-note placeholder, or comment). Read-only claim: recording who is working it, not implementing here.
 3. Branch work from the **code** PR branch (`feat/agy-envelope-scrub-v2`), not from this docs branch.
 4. `/implement` + in-session `/code-review` for that ticket only. Push only to the code PR.
 5. Fill the matching delivery-note placeholder; leave the docs PR as the ticket board.
 
-Work the frontier: any ticket whose `Blocked by` is empty or already delivered. **Do not jump to implement until claiming.**
+Work the frontier: any ticket whose `Blocked by` is empty or already delivered. **Do not jump to implement until claiming.** Main flow: Spec → `/to-tickets` (this board) → later `/implement`.
 
 ## Tickets
 
