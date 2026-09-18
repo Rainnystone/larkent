@@ -28,7 +28,7 @@ export interface ProtocolDriftState {
  * incident heuristic) and emits a `final_text` hint so outbound is not
  * muted. The reply body is `result.response` (verified against a live
  * Claude Sonnet print + resume). Strings that become `final_text` run
- * through the SYSTEM_MESSAGE envelope classifier first.
+ * through the envelope classifier first.
  * Unknown step types increment protocol drift instead of throwing.
  */
 export class AntigravityJsonlTranslator {
@@ -256,18 +256,32 @@ function emitScrubbedFinalText(
   sawSystemMessageStep: boolean,
 ): AgentEvent | undefined {
   const scrubbed = scrubSystemMessageEnvelopes(content);
-  if (scrubbed.removedCount > 0) {
+  if (scrubbed.removedByFamily.system_message > 0) {
     log.info('jsonl', 'system_message_scrubbed', {
       beforeLength: scrubbed.beforeLength,
       afterLength: scrubbed.afterLength,
-      removedCount: scrubbed.removedCount,
+      removedCount: scrubbed.removedByFamily.system_message,
       unclosed: scrubbed.unclosed,
       preambleRemoved: scrubbed.preambleRemoved,
       sawSystemMessageStep,
     });
   }
+  if (scrubbed.removedByFamily.task_notification > 0) {
+    log.info('jsonl', 'task_notification_scrubbed', {
+      beforeLength: scrubbed.beforeLength,
+      afterLength: scrubbed.afterLength,
+      removedCount: scrubbed.removedByFamily.task_notification,
+      unclosed: scrubbed.unclosed,
+      preambleRemoved: scrubbed.preambleRemoved,
+      family: 'task_notification',
+      sawSystemMessageStep,
+    });
+  }
   for (const reason of scrubbed.retainedReasons) {
     log.info('jsonl', 'system_message_tag_retained', { reason });
+  }
+  for (const reason of scrubbed.taskNotificationRetainedReasons) {
+    log.info('jsonl', 'task_notification_tag_retained', { reason });
   }
   if (!scrubbed.text) return undefined;
   return { type: 'final_text', content: scrubbed.text };

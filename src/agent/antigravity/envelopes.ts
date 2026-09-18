@@ -1,5 +1,9 @@
 export const SYSTEM_MESSAGE_OPEN = '<SYSTEM_MESSAGE>';
 export const SYSTEM_MESSAGE_CLOSE = '</SYSTEM_MESSAGE>';
+export const TASK_NOTIFICATION_OPEN = '<task_notification>';
+export const TASK_NOTIFICATION_CLOSE = '</task_notification>';
+
+export type EnvelopeFamilyId = 'system_message' | 'task_notification';
 
 export type SystemMessageRetainReason =
   | 'mid-line'
@@ -26,6 +30,8 @@ export const SYSTEM_MESSAGE_ENVELOPE_SHAPES: readonly SystemMessageEnvelopeShape
   },
 ];
 
+export const TASK_NOTIFICATION_ENVELOPE_SHAPES: readonly SystemMessageEnvelopeShape[] = [];
+
 export interface SystemMessageScrubResult {
   text: string;
   beforeLength: number;
@@ -34,6 +40,8 @@ export interface SystemMessageScrubResult {
   unclosed: boolean;
   preambleRemoved: boolean;
   retainedReasons: SystemMessageRetainReason[];
+  taskNotificationRetainedReasons: SystemMessageRetainReason[];
+  removedByFamily: Record<EnvelopeFamilyId, number>;
 }
 
 interface StripRange {
@@ -43,16 +51,90 @@ interface StripRange {
   preambleRemoved: boolean;
 }
 
+interface EnvelopeFamily {
+  readonly id: EnvelopeFamilyId;
+  readonly open: string;
+  readonly close: string;
+  readonly shapes: readonly SystemMessageEnvelopeShape[];
+}
+
+interface FamilyScrubPass {
+  text: string;
+  removedCount: number;
+  unclosed: boolean;
+  preambleRemoved: boolean;
+  retainedReasons: SystemMessageRetainReason[];
+}
+
 const FENCE_LINE = /^ {0,3}(?:`{3,}|~{3,})/;
 
+const ENVELOPE_FAMILIES: readonly EnvelopeFamily[] = [
+  {
+    id: 'system_message',
+    open: SYSTEM_MESSAGE_OPEN,
+    close: SYSTEM_MESSAGE_CLOSE,
+    shapes: SYSTEM_MESSAGE_ENVELOPE_SHAPES,
+  },
+  {
+    id: 'task_notification',
+    open: TASK_NOTIFICATION_OPEN,
+    close: TASK_NOTIFICATION_CLOSE,
+    shapes: TASK_NOTIFICATION_ENVELOPE_SHAPES,
+  },
+];
+
 export function scrubSystemMessageEnvelopes(input: string): SystemMessageScrubResult {
-  const ranges = findStripRanges(input);
-  const retainedReasons = collectRetainReasons(input, ranges);
+  let text = input;
+  let removedCount = 0;
+  let unclosed = false;
+  let preambleRemoved = false;
+  let retainedReasons: SystemMessageRetainReason[] = [];
+  let taskNotificationRetainedReasons: SystemMessageRetainReason[] = [];
+  const removedByFamily: Record<EnvelopeFamilyId, number> = {
+    system_message: 0,
+    task_notification: 0,
+  };
+
+  for (const family of ENVELOPE_FAMILIES) {
+    const pass = scrubFamily(text, family);
+    text = pass.text;
+    removedCount += pass.removedCount;
+    unclosed ||= pass.unclosed;
+    preambleRemoved ||= pass.preambleRemoved;
+    removedByFamily[family.id] = pass.removedCount;
+    switch (family.id) {
+      case 'system_message':
+        retainedReasons = pass.retainedReasons;
+        break;
+      case 'task_notification':
+        taskNotificationRetainedReasons = pass.retainedReasons;
+        break;
+      default: {
+        const _exhaustive: never = family.id;
+        throw new Error(`unhandled envelope family ${_exhaustive}`);
+      }
+    }
+  }
+
+  return {
+    text,
+    beforeLength: input.length,
+    afterLength: text.length,
+    removedCount,
+    unclosed,
+    preambleRemoved,
+    retainedReasons,
+    taskNotificationRetainedReasons,
+    removedByFamily,
+  };
+}
+
+function scrubFamily(input: string, family: EnvelopeFamily): FamilyScrubPass {
+  const ranges = findStripRanges(input, family);
+  const retainedReasons = collectRetainReasons(input, ranges, family);
   if (ranges.length === 0) {
     return {
       text: input,
-      beforeLength: input.length,
-      afterLength: input.length,
       removedCount: 0,
       unclosed: false,
       preambleRemoved: false,
@@ -71,11 +153,8 @@ export function scrubSystemMessageEnvelopes(input: string): SystemMessageScrubRe
     if (range.preambleRemoved) preambleRemoved = true;
   }
   output += input.slice(cursor);
-  const text = output.trim();
   return {
-    text,
-    beforeLength: input.length,
-    afterLength: text.length,
+    text: output.trim(),
     removedCount: ranges.length,
     unclosed,
     preambleRemoved,
@@ -83,24 +162,24 @@ export function scrubSystemMessageEnvelopes(input: string): SystemMessageScrubRe
   };
 }
 
-function findStripRanges(input: string): StripRange[] {
+function findStripRanges(input: string, family: EnvelopeFamily): StripRange[] {
   const ranges: StripRange[] = [];
   let index = 0;
   while (index < input.length) {
-    const openAt = input.indexOf(SYSTEM_MESSAGE_OPEN, index);
+    const openAt = input.indexOf(family.open, index);
     if (openAt === -1) break;
     if (classifyOpen(input, openAt) !== 'candidate') {
-      index = openAt + SYSTEM_MESSAGE_OPEN.length;
+      index = openAt + family.open.length;
       continue;
     }
-    const afterOpen = openAt + SYSTEM_MESSAGE_OPEN.length;
-    const closeAt = input.indexOf(SYSTEM_MESSAGE_CLOSE, afterOpen);
-    if (closeAt === -1 && !isFingerprinted(input, openAt)) {
+    const afterOpen = openAt + family.open.length;
+    const closeAt = input.indexOf(family.close, afterOpen);
+    if (closeAt === -1 && !isFingerprinted(input, openAt, family)) {
       index = afterOpen;
       continue;
     }
-    const end = closeAt === -1 ? input.length : closeAt + SYSTEM_MESSAGE_CLOSE.length;
-    const preambleStart = matchingPreambleStart(input, openAt);
+    const end = closeAt === -1 ? input.length : closeAt + family.close.length;
+    const preambleStart = matchingPreambleStart(input, openAt, family);
     ranges.push({
       start: preambleStart ?? openAt,
       end,
@@ -112,13 +191,17 @@ function findStripRanges(input: string): StripRange[] {
   return ranges;
 }
 
-function collectRetainReasons(input: string, ranges: StripRange[]): SystemMessageRetainReason[] {
+function collectRetainReasons(
+  input: string,
+  ranges: StripRange[],
+  family: EnvelopeFamily,
+): SystemMessageRetainReason[] {
   const reasons: SystemMessageRetainReason[] = [];
   let index = 0;
   while (index < input.length) {
-    const openAt = input.indexOf(SYSTEM_MESSAGE_OPEN, index);
+    const openAt = input.indexOf(family.open, index);
     if (openAt === -1) break;
-    const next = openAt + SYSTEM_MESSAGE_OPEN.length;
+    const next = openAt + family.open.length;
     if (ranges.some((range) => openAt >= range.start && openAt < range.end)) {
       index = next;
       continue;
@@ -142,9 +225,9 @@ function classifyOpen(input: string, openAt: number): SystemMessageRetainReason 
   return 'candidate';
 }
 
-function isFingerprinted(input: string, openAt: number): boolean {
-  const afterOpen = openAt + SYSTEM_MESSAGE_OPEN.length;
-  for (const shape of SYSTEM_MESSAGE_ENVELOPE_SHAPES) {
+function isFingerprinted(input: string, openAt: number, family: EnvelopeFamily): boolean {
+  const afterOpen = openAt + family.open.length;
+  for (const shape of family.shapes) {
     if (shape.afterOpen) {
       const windowChars = shape.windowChars ?? 64;
       if (shape.afterOpen.test(input.slice(afterOpen, afterOpen + windowChars))) {
@@ -161,12 +244,16 @@ function isFingerprinted(input: string, openAt: number): boolean {
   return false;
 }
 
-function matchingPreambleStart(input: string, openAt: number): number | undefined {
+function matchingPreambleStart(
+  input: string,
+  openAt: number,
+  family: EnvelopeFamily,
+): number | undefined {
   const previousStart = previousLineStart(input, openAt);
   if (previousStart === undefined) return undefined;
   const previous = previousLine(input, openAt);
   if (previous === undefined) return undefined;
-  for (const shape of SYSTEM_MESSAGE_ENVELOPE_SHAPES) {
+  for (const shape of family.shapes) {
     if (
       shape.precedingLinePrefix &&
       previous.trimStart().startsWith(shape.precedingLinePrefix)
