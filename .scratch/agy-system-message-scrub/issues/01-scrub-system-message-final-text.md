@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready
+**Status:** delivered (code PR #30 `dea83e0`)
 
 ## Parent
 
