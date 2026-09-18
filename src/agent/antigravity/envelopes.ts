@@ -338,9 +338,10 @@ function parseFenceLine(line: string): { char: '`' | '~'; length: number; info: 
   const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
   if (!match) return undefined;
   const marker = match[2];
+  const info = match[3];
+  if (marker === undefined || info === undefined) return undefined;
   const char = marker[0];
   if (char !== '`' && char !== '~') return undefined;
-  const info = match[3];
   if (char === '`' && info.includes('`')) return undefined;
   return { char, length: marker.length, info };
 }
