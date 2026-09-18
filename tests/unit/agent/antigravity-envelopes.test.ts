@@ -36,6 +36,19 @@ describe('scrubSystemMessageEnvelopes', () => {
     const row = matrixRow('B4');
     expect(scrubSystemMessageEnvelopes(row.input).text).toBe(row.input);
   });
+
+  it.each([
+    ['leftover mid-line closer', matrixRow('B5').input],
+    ['inline code closer', 'Use `</SYSTEM_MESSAGE>` when writing the prompt.'],
+    ['fenced closer', ['```', '</SYSTEM_MESSAGE>', '```', 'kept after fence'].join('\n')],
+  ])('does not peel a B4 opener through a later %s', (_label, citedCloser) => {
+    const input = [matrixRow('B4').input, citedCloser].join('\n');
+    const result = scrubSystemMessageEnvelopes(input);
+    expect(result.text).toBe(input);
+    expect(result.removedCount).toBe(0);
+    expect(result.unclosed).toBe(false);
+    expect(result.retainedReasons).toEqual(['unclosed-no-fingerprint']);
+  });
 });
 
 describe('task_notification envelope family #2', () => {
@@ -56,6 +69,14 @@ describe('task_notification envelope family #2', () => {
       }
     },
   );
+
+  it('does not peel an unfingerprinted task_notification opener through a later cited closer', () => {
+    const input = `${taskNotificationRow('TN6').input}\noops </task_notification> leftover closer`;
+    const result = scrubSystemMessageEnvelopes(input);
+    expect(result.text).toBe(input);
+    expect(result.removedCount).toBe(0);
+    expect(result.taskNotificationRetainedReasons).toEqual(['unclosed-no-fingerprint']);
+  });
 
   it('TN1 drops the task_notification envelope and keeps the vitest title plus Chinese answer', () => {
     const row = taskNotificationRow('TN1');

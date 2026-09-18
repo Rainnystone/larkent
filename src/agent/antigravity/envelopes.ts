@@ -11,6 +11,8 @@ export type SystemMessageRetainReason =
   | 'fence'
   | 'unclosed-no-fingerprint';
 
+type EnvelopeTagContext = Exclude<SystemMessageRetainReason, 'unclosed-no-fingerprint'> | 'candidate';
+
 export interface SystemMessageEnvelopeShape {
   readonly id: string;
   readonly afterOpen?: RegExp;
@@ -173,7 +175,7 @@ function findStripRanges(input: string, family: EnvelopeFamily): StripRange[] {
       continue;
     }
     const afterOpen = openAt + family.open.length;
-    const closeAt = input.indexOf(family.close, afterOpen);
+    const closeAt = findMatchingClose(input, afterOpen, family.close, openAt);
     if (closeAt === -1 && !isFingerprinted(input, openAt, family)) {
       index = afterOpen;
       continue;
@@ -217,12 +219,45 @@ function collectRetainReasons(
   return reasons;
 }
 
-function classifyOpen(input: string, openAt: number): SystemMessageRetainReason | 'candidate' {
+function findMatchingClose(
+  input: string,
+  afterOpen: number,
+  close: string,
+  openAt: number,
+): number {
+  let searchFrom = afterOpen;
+  while (searchFrom < input.length) {
+    const closeAt = input.indexOf(close, searchFrom);
+    if (closeAt === -1) return -1;
+    if (!isCitedCloser(input, closeAt, openAt)) return closeAt;
+    searchFrom = closeAt + close.length;
+  }
+  return -1;
+}
+
+function classifyOpen(input: string, openAt: number): EnvelopeTagContext {
   if (fenceCountBefore(input, openAt) % 2 === 1) return 'fence';
   const prefix = input.slice(lineStartIndex(input, openAt), openAt);
   if (backtickCount(prefix) % 2 === 1) return 'code-span';
   if (prefix.length > 0 && !/^\s*$/.test(prefix)) return 'mid-line';
   return 'candidate';
+}
+
+function isCitedCloser(input: string, closeAt: number, openAt: number): boolean {
+  const decision = classifyOpen(input, closeAt);
+  switch (decision) {
+    case 'candidate':
+      return false;
+    case 'fence':
+    case 'code-span':
+      return true;
+    case 'mid-line':
+      return lineStartIndex(input, closeAt) !== lineStartIndex(input, openAt);
+    default: {
+      const _exhaustive: never = decision;
+      throw new Error(`unhandled closer classification ${_exhaustive}`);
+    }
+  }
 }
 
 function isFingerprinted(input: string, openAt: number, family: EnvelopeFamily): boolean {
