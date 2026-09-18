@@ -4,7 +4,7 @@
 
 **Blocked by:** 01 (classifier module + SYSTEM_MESSAGE rules must already land so TN1 does not reintroduce #30 peel-to-end, and 02 only adds a family row).
 
-**Status:** ready-for-agent (blocked until 01 delivered)
+**Status:** in-progress (claimed on docs PR #31 by cursor-grok-4.6-high-fast `bc-83d74dc0-bf84-5a3c-932a-e31928688e49`; code on #32)
 
 ## Parent
 
@@ -27,7 +27,7 @@ This ticket does **not** rework the SYSTEM_MESSAGE classifier (01). It does **no
 
 ## Acceptance criteria
 
-- [ ] TN1 fixture (or inline): `<task_notification>…</task_notification>` (or unclosed blob if fingerprinted) + vitest failure line with `<SYSTEM_MESSAGE>` in the test **title** + trailing Chinese user-facing answer → `final_text` contains the Chinese answer, contains **no** `<task_notification`, and still contains the test-title citation region byte-identical for the SYSTEM_MESSAGE mention (no peel-to-end).
+- [ ] TN1 fixture (or inline): `<task_notification>…</task_notification>` (or unclosed blob if fingerprinted) + vitest failure line with `<SYSTEM_MESSAGE>` in the test **title** + trailing Chinese answer → `final_text` contains the Chinese answer, contains **no** `<task_notification`, and still contains the test-title citation region byte-identical for the SYSTEM_MESSAGE mention (no peel-to-end).
 - [ ] Balanced task_notification + clean prose → prose only.
 - [ ] Mid-line / code-span / fence citation of `task_notification` retained.
 - [ ] ERROR path still untouched.
