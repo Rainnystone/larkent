@@ -196,7 +196,7 @@ export const ENVELOPE_CLASSIFIER_MATRIX: EnvelopeMatrixRow[] = [
   {
     id: 'B6',
     input: B6_INPUT,
-    expectedText: `${B6_FENCE}\n${INCIDENT_A_PROSE}`,
+    expectedText: `${B6_FENCE}\n\n${INCIDENT_A_PROSE}`,
     removedCount: 1,
     unclosed: false,
     preambleRemoved: false,

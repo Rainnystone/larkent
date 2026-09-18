@@ -68,8 +68,6 @@ interface FamilyScrubPass {
   retainedReasons: SystemMessageRetainReason[];
 }
 
-const FENCE_LINE = /^ {0,3}(?:`{3,}|~{3,})/;
-
 const ENVELOPE_FAMILIES: readonly EnvelopeFamily[] = [
   {
     id: 'system_message',
@@ -97,24 +95,30 @@ export function scrubSystemMessageEnvelopes(input: string): SystemMessageScrubRe
     task_notification: 0,
   };
 
-  for (const family of ENVELOPE_FAMILIES) {
-    const pass = scrubFamily(text, family);
-    text = pass.text;
-    removedCount += pass.removedCount;
-    unclosed ||= pass.unclosed;
-    preambleRemoved ||= pass.preambleRemoved;
-    removedByFamily[family.id] = pass.removedCount;
-    switch (family.id) {
-      case 'system_message':
-        retainedReasons = pass.retainedReasons;
-        break;
-      case 'task_notification':
-        taskNotificationRetainedReasons = pass.retainedReasons;
-        break;
-      default: {
-        const _exhaustive: never = family.id;
-        throw new Error(`unhandled envelope family ${_exhaustive}`);
+  let progress = true;
+  while (progress) {
+    progress = false;
+    for (const family of ENVELOPE_FAMILIES) {
+      const pass = scrubFamily(text, family);
+      switch (family.id) {
+        case 'system_message':
+          retainedReasons = pass.retainedReasons;
+          break;
+        case 'task_notification':
+          taskNotificationRetainedReasons = pass.retainedReasons;
+          break;
+        default: {
+          const _exhaustive: never = family.id;
+          throw new Error(`unhandled envelope family ${_exhaustive}`);
+        }
       }
+      if (pass.removedCount === 0) continue;
+      text = pass.text;
+      removedCount += pass.removedCount;
+      unclosed ||= pass.unclosed;
+      preambleRemoved ||= pass.preambleRemoved;
+      removedByFamily[family.id] += pass.removedCount;
+      progress = true;
     }
   }
 
@@ -149,14 +153,16 @@ function scrubFamily(input: string, family: EnvelopeFamily): FamilyScrubPass {
   let unclosed = false;
   let preambleRemoved = false;
   for (const range of ranges) {
-    output += input.slice(cursor, range.start);
-    cursor = range.end;
+    const expanded = expandStripRange(input, range);
+    output += input.slice(cursor, expanded.start);
+    cursor = expanded.end;
     if (range.unclosed) unclosed = true;
     if (range.preambleRemoved) preambleRemoved = true;
   }
   output += input.slice(cursor);
+  const text = /^\s*$/.test(output) ? '' : output.replace(/^\n+/, '').replace(/\n+$/, '');
   return {
-    text: output.trim(),
+    text,
     removedCount: ranges.length,
     unclosed,
     preambleRemoved,
@@ -236,11 +242,19 @@ function findMatchingClose(
 }
 
 function classifyOpen(input: string, openAt: number): EnvelopeTagContext {
-  if (fenceCountBefore(input, openAt) % 2 === 1) return 'fence';
+  if (isInsideFence(input, openAt)) return 'fence';
   const prefix = input.slice(lineStartIndex(input, openAt), openAt);
   if (backtickCount(prefix) % 2 === 1) return 'code-span';
   if (prefix.length > 0 && !/^\s*$/.test(prefix)) return 'mid-line';
   return 'candidate';
+}
+
+function expandStripRange(input: string, range: StripRange): StripRange {
+  const lineStart = lineStartIndex(input, range.start);
+  if (lineStart < range.start && /^\s*$/.test(input.slice(lineStart, range.start))) {
+    return { ...range, start: lineStart };
+  }
+  return range;
 }
 
 function isCitedCloser(input: string, closeAt: number, openAt: number): boolean {
@@ -315,14 +329,42 @@ function previousLine(input: string, openAt: number): string | undefined {
   return input.slice(lineStartIndex(input, currentLineStart - 1), currentLineStart - 1);
 }
 
-function fenceCountBefore(input: string, index: number): number {
+interface FenceOpen {
+  char: '`' | '~';
+  length: number;
+}
+
+function parseFenceLine(line: string): { char: '`' | '~'; length: number; info: string } | undefined {
+  const match = /^( {0,3})(`{3,}|~{3,})(.*)$/.exec(line);
+  if (!match) return undefined;
+  const marker = match[2];
+  const char = marker[0];
+  if (char !== '`' && char !== '~') return undefined;
+  const info = match[3];
+  if (char === '`' && info.includes('`')) return undefined;
+  return { char, length: marker.length, info };
+}
+
+function isInsideFence(input: string, index: number): boolean {
   const before = input.slice(0, lineStartIndex(input, index));
-  if (before.length === 0) return 0;
-  let count = 0;
+  if (before.length === 0) return false;
+  let active: FenceOpen | undefined;
   for (const line of before.split('\n')) {
-    if (FENCE_LINE.test(line)) count += 1;
+    const parsed = parseFenceLine(line);
+    if (!parsed) continue;
+    if (active === undefined) {
+      active = { char: parsed.char, length: parsed.length };
+      continue;
+    }
+    if (
+      parsed.char === active.char &&
+      parsed.length >= active.length &&
+      parsed.info.trim() === ''
+    ) {
+      active = undefined;
+    }
   }
-  return count;
+  return active !== undefined;
 }
 
 function backtickCount(text: string): number {
