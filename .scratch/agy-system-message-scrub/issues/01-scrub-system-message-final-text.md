@@ -20,13 +20,13 @@ This ticket does **not** change channel.ts, CoT, or other agent translators unle
 
 ## Acceptance criteria
 
-- [ ] Committed fixture (or inline objects) shaped like the 2026-09-18 incident: SUCCESS / agent_response text containing a `<SYSTEM_MESSAGE>…</SYSTEM_MESSAGE>` block prepended to user-facing Chinese prose → emitted `final_text` contains the prose and **no** `<SYSTEM_MESSAGE` substring.
-- [ ] A clean SUCCESS with only user prose is unchanged.
-- [ ] Envelope-only content yields no user-facing `final_text` from that content (empty path / existing hint rules).
-- [ ] ERROR / FAILED mapping stays unchanged.
-- [ ] Both `translateResult` and `prependHeldBack` paths are covered (or proven equivalent by shared scrub helper used by both).
-- [ ] Scrub that removes content produces one structured log with lengths (no full envelope body).
-- [ ] Tests at the translator seam; no live Feishu / agy required in CI.
+- [x] Committed fixture (or inline objects) shaped like the 2026-09-18 incident: SUCCESS / agent_response text containing a `<SYSTEM_MESSAGE>…</SYSTEM_MESSAGE>` block prepended to user-facing Chinese prose → emitted `final_text` contains the prose and **no** `<SYSTEM_MESSAGE` substring.
+- [x] A clean SUCCESS with only user prose is unchanged.
+- [x] Envelope-only content yields no user-facing `final_text` from that content (empty path / existing hint rules).
+- [x] ERROR / FAILED mapping stays unchanged.
+- [x] Both `translateResult` and `prependHeldBack` paths are covered (or proven equivalent by shared scrub helper used by both).
+- [x] Scrub that removes content produces one structured log with lengths (no full envelope body).
+- [x] Tests at the translator seam; no live Feishu / agy required in CI.
 
 ## Blocked by
 
