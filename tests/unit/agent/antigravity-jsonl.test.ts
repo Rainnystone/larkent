@@ -11,7 +11,11 @@ import {
   INCIDENT_A_ENVELOPE,
   INCIDENT_A_MESSAGE_ID,
   INCIDENT_A_PROSE,
+  TASK_NOTIFICATION_CHINESE_ANSWER,
+  TASK_NOTIFICATION_ENVELOPE,
+  VITEST_TITLE_WITH_SYSTEM_MESSAGE,
   matrixRow,
+  taskNotificationRow,
 } from '../../fixtures/antigravity/envelope-classifier-matrix';
 
 const CONVERSATION = 'f8c7af3a-4080-4505-981e-87dc09f7f50e';
@@ -809,6 +813,181 @@ describe('AntigravityJsonlTranslator', () => {
     expect(JSON.stringify(info.mock.calls)).not.toContain(INCIDENT_PROSE);
     expect(JSON.stringify(info.mock.calls)).not.toContain('[Message]');
   });
+
+  it('TN1: translateResult drops task_notification and keeps the title citation plus Chinese answer', () => {
+    const row = taskNotificationRow('TN1');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+    expect(JSON.stringify(events)).toContain(TASK_NOTIFICATION_CHINESE_ANSWER);
+    expect(JSON.stringify(events)).toContain(VITEST_TITLE_WITH_SYSTEM_MESSAGE);
+    expect(JSON.stringify(events)).not.toContain('<task_notification');
+  });
+
+  it('TN2: translateResult strips a balanced task_notification and keeps clean prose', () => {
+    const row = taskNotificationRow('TN2');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+  });
+
+  it.each(['TN3', 'TN4', 'TN5', 'TN6'] as const)(
+    '%s: translateResult retains a task_notification citation or unclosed non-fingerprinted opener',
+    (id) => {
+      const row = taskNotificationRow(id);
+      const t = new AntigravityJsonlTranslator();
+      const events = collect(t, [
+        INIT,
+        {
+          event: 'result',
+          result: {
+            conversation_id: CONVERSATION,
+            status: 'SUCCESS',
+            response: row.input,
+          },
+        },
+      ]);
+      expect(events.find((event) => event.type === 'final_text')).toEqual({
+        type: 'final_text',
+        content: row.expectedText,
+      });
+    },
+  );
+
+  it('TN1: prependHeldBack drops task_notification and keeps the title citation plus Chinese answer', () => {
+    const row = taskNotificationRow('TN1');
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: row.input,
+        },
+      },
+    ]);
+    expect(t.fail('agy exited with code 1')).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+      { type: 'final_text', content: row.expectedText },
+      { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
+    ]);
+  });
+
+  it('C3: does not rewrite ERROR results that mention task_notification in the error text', () => {
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'ERROR',
+          response: `${TASK_NOTIFICATION_ENVELOPE}\n${TASK_NOTIFICATION_CHINESE_ANSWER}`,
+          error: `FAILED_PRECONDITION: leaked ${TASK_NOTIFICATION_ENVELOPE}`,
+        },
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'final_text')).toEqual([]);
+    expect(events.filter((event) => event.type === 'error')).toEqual([
+      {
+        type: 'error',
+        message: `FAILED_PRECONDITION: leaked ${TASK_NOTIFICATION_ENVELOPE}`,
+        terminationReason: 'failed',
+      },
+    ]);
+  });
+
+  it('TN1: logs task_notification_scrubbed lengths plus SYSTEM_MESSAGE retain and never the body', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const row = taskNotificationRow('TN1');
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(info.mock.calls).toEqual([
+      [
+        'jsonl',
+        'task_notification_scrubbed',
+        {
+          beforeLength: row.input.length,
+          afterLength: row.expectedText.length,
+          removedCount: 1,
+          unclosed: false,
+          preambleRemoved: false,
+          family: 'task_notification',
+          sawSystemMessageStep: false,
+        },
+      ],
+      ['jsonl', 'system_message_tag_retained', { reason: 'mid-line' }],
+    ]);
+    expect(JSON.stringify(info.mock.calls)).not.toContain('<task_notification');
+    expect(JSON.stringify(info.mock.calls)).not.toContain('<SYSTEM_MESSAGE');
+    expect(JSON.stringify(info.mock.calls)).not.toContain(TASK_NOTIFICATION_CHINESE_ANSWER);
+  });
+
+  it.each(['TN3', 'TN4', 'TN5', 'TN6'] as const)(
+    'logs task_notification_tag_retained with the %s reason and never the body',
+    (id) => {
+      const row = taskNotificationRow(id);
+      const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+      const t = new AntigravityJsonlTranslator();
+      collect(t, [
+        INIT,
+        {
+          event: 'result',
+          result: {
+            conversation_id: CONVERSATION,
+            status: 'SUCCESS',
+            response: row.input,
+          },
+        },
+      ]);
+      const retained = info.mock.calls.filter(
+        (call) => call[0] === 'jsonl' && call[1] === 'task_notification_tag_retained',
+      );
+      expect(retained.map((call) => call[2])).toEqual(
+        row.taskNotificationRetainedReasons.map((reason) => ({ reason })),
+      );
+      expect(JSON.stringify(info.mock.calls)).not.toContain(row.input);
+    },
+  );
 
   it.each(['B1', 'B2', 'B3', 'B4'] as const)(
     'T1: logs system_message_tag_retained with the %s reason and never the body',
