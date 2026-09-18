@@ -7,6 +7,12 @@ import { finalAnswerOnlyState } from '../../../src/bot/cot';
 import { initialState, reduce } from '../../../src/card/run-state';
 import { renderText } from '../../../src/card/text-renderer';
 import { log } from '../../../src/core/logger';
+import {
+  INCIDENT_A_ENVELOPE,
+  INCIDENT_A_MESSAGE_ID,
+  INCIDENT_A_PROSE,
+  matrixRow,
+} from '../../fixtures/antigravity/envelope-classifier-matrix';
 
 const CONVERSATION = 'f8c7af3a-4080-4505-981e-87dc09f7f50e';
 const TOOL_CHECKPOINT_FIXTURE = join(
@@ -23,9 +29,8 @@ const SYSTEM_MESSAGE_ENVELOPE_INCIDENT_FIXTURE = join(
 );
 const PRINT_TIMEOUT_HINT = 'Antigravity print-timeout reached before a reply was produced.';
 const IDLE_WATCHDOG_COPY = '分钟无响应';
-const INCIDENT_PROSE = '收到！已经根据你的要求整理完初稿。';
-const INCIDENT_ENVELOPE =
-  '<SYSTEM_MESSAGE>\n{"type":"task_complete","task_id":"bg-1","cwd":"/tmp/workspace"}\n</SYSTEM_MESSAGE>';
+const INCIDENT_PROSE = INCIDENT_A_PROSE;
+const INCIDENT_ENVELOPE = INCIDENT_A_ENVELOPE;
 
 function loadJsonl(path: string): unknown[] {
   return readFileSync(path, 'utf8')
@@ -545,7 +550,8 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
   });
 
-  it('strips every envelope in one body including an unclosed opener', () => {
+  it('B4: keeps an unclosed non-fingerprinted opener and trailing prose byte-identical', () => {
+    const row = matrixRow('B4');
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, [
       INIT,
@@ -554,15 +560,162 @@ describe('AntigravityJsonlTranslator', () => {
         result: {
           conversation_id: CONVERSATION,
           status: 'SUCCESS',
-          response: `${INCIDENT_ENVELOPE}前半段<SYSTEM_MESSAGE>mid</SYSTEM_MESSAGE>后半段<SYSTEM_MESSAGE>unclosed`,
+          response: `${INCIDENT_ENVELOPE}\n前半段\n<SYSTEM_MESSAGE>mid</SYSTEM_MESSAGE>\n后半段\n${row.input}`,
         },
       },
     ]);
     expect(events.find((event) => event.type === 'final_text')).toEqual({
       type: 'final_text',
-      content: '前半段后半段',
+      content: `前半段\n\n后半段\n${row.input}`,
     });
-    expect(JSON.stringify(events)).not.toContain('<SYSTEM_MESSAGE');
+  });
+
+  it.each(['B1', 'B2', 'B3', 'B5'] as const)(
+    '%s: translateResult leaves citation or stray closer byte-identical',
+    (id) => {
+      const row = matrixRow(id);
+      const t = new AntigravityJsonlTranslator();
+      const events = collect(t, [
+        INIT,
+        {
+          event: 'result',
+          result: {
+            conversation_id: CONVERSATION,
+            status: 'SUCCESS',
+            response: row.input,
+          },
+        },
+      ]);
+      expect(events.find((event) => event.type === 'final_text')).toEqual({
+        type: 'final_text',
+        content: row.expectedText,
+      });
+    },
+  );
+
+  it('A3: strips an unclosed fingerprinted envelope through end on result.response', () => {
+    const row = matrixRow('A3');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'final_text')).toEqual([]);
+    expect(JSON.stringify(events)).not.toContain('[Message]');
+    expect(JSON.stringify(events)).not.toContain('truncated envelope body that must not leak');
+  });
+
+  it('A4: removes the preamble companion with the envelope on result.response', () => {
+    const row = matrixRow('A4');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+    expect(JSON.stringify(events)).not.toContain('The following is a');
+  });
+
+  it('C1: first closer wins on nested-looking opens without a depth matcher', () => {
+    const row = matrixRow('C1');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+  });
+
+  it('A2: scrubs the Incident A envelope shape cited by om_x100b65e6a11b3cb4b10254b74b00974', () => {
+    expect(INCIDENT_A_MESSAGE_ID).toBe('om_x100b65e6a11b3cb4b10254b74b00974');
+    const row = matrixRow('A2');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+  });
+
+  it('B4: prependHeldBack leaves a vitest-title unclosed opener byte-identical', () => {
+    const row = matrixRow('B4');
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: row.input,
+        },
+      },
+    ]);
+    expect(t.fail('agy exited with code 1')).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+      { type: 'final_text', content: row.input },
+      { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
+    ]);
+  });
+
+  it('A1: prependHeldBack strips a fingerprinted envelope and keeps the prose', () => {
+    const row = matrixRow('A1');
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: row.input,
+        },
+      },
+    ]);
+    expect(t.fail('agy exited with code 1')).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+      { type: 'final_text', content: row.expectedText },
+      { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
+    ]);
   });
 
   it('does not rewrite ERROR results that mention SYSTEM_MESSAGE in the error text', () => {
@@ -589,18 +742,27 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
   });
 
-  it('logs before and after lengths once when scrub removes content and never logs the body', () => {
+  it('T1: logs scrub lengths plus classifier fields and never logs the body', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
-    const raw = `${INCIDENT_ENVELOPE}\n${INCIDENT_PROSE}\n`;
+    const row = matrixRow('T1');
     const t = new AntigravityJsonlTranslator();
     collect(t, [
       INIT,
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'system_message',
+        },
+      },
       {
         event: 'result',
         result: {
           conversation_id: CONVERSATION,
           status: 'SUCCESS',
-          response: raw,
+          response: row.input,
         },
       },
     ]);
@@ -608,10 +770,46 @@ describe('AntigravityJsonlTranslator', () => {
       [
         'jsonl',
         'system_message_scrubbed',
-        { beforeLength: raw.length, afterLength: INCIDENT_PROSE.length },
+        {
+          beforeLength: row.input.length,
+          afterLength: row.expectedText.length,
+          removedCount: 1,
+          unclosed: false,
+          preambleRemoved: false,
+          sawSystemMessageStep: true,
+        },
       ],
+      ['jsonl', 'system_message_tag_retained', { reason: 'mid-line' }],
     ]);
     expect(JSON.stringify(info.mock.calls)).not.toContain('<SYSTEM_MESSAGE');
     expect(JSON.stringify(info.mock.calls)).not.toContain(INCIDENT_PROSE);
+    expect(JSON.stringify(info.mock.calls)).not.toContain('[Message]');
   });
+
+  it.each(['B1', 'B2', 'B3', 'B4'] as const)(
+    'T1: logs system_message_tag_retained with the %s reason and never the body',
+    (id) => {
+      const row = matrixRow(id);
+      const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+      const t = new AntigravityJsonlTranslator();
+      collect(t, [
+        INIT,
+        {
+          event: 'result',
+          result: {
+            conversation_id: CONVERSATION,
+            status: 'SUCCESS',
+            response: row.input,
+          },
+        },
+      ]);
+      const retained = info.mock.calls.filter(
+        (call) => call[0] === 'jsonl' && call[1] === 'system_message_tag_retained',
+      );
+      expect(retained.map((call) => call[2])).toEqual(
+        row.retainedReasons.map((reason) => ({ reason })),
+      );
+      expect(JSON.stringify(info.mock.calls)).not.toContain(row.input);
+    },
+  );
 });
