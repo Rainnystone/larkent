@@ -1,5 +1,6 @@
 import type { AgentEvent } from '../types';
 import { log } from '../../core/logger';
+import { scrubSystemMessageEnvelopes } from './envelopes';
 
 export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
@@ -26,8 +27,8 @@ export interface ProtocolDriftState {
  * after print-timeout is classified (official timeout field, else the
  * incident heuristic) and emits a `final_text` hint so outbound is not
  * muted. The reply body is `result.response` (verified against a live
- * Claude Sonnet print + resume). Strings that become `final_text` have
- * balanced `<SYSTEM_MESSAGE>…</SYSTEM_MESSAGE>` envelopes stripped first.
+ * Claude Sonnet print + resume). Strings that become `final_text` run
+ * through the envelope classifier first.
  * Unknown step types increment protocol drift instead of throwing.
  */
 export class AntigravityJsonlTranslator {
@@ -36,6 +37,7 @@ export class AntigravityJsonlTranslator {
   private pendingText = '';
   private systemEmitted = false;
   private sawRecognizedToolOrCheckpoint = false;
+  private sawSystemMessageStep = false;
   private drift: ProtocolDriftState = {
     unknownEvents: 0,
     anomalies: 0,
@@ -109,11 +111,11 @@ export class AntigravityJsonlTranslator {
       if (delta) this.pendingText += delta;
       return [];
     }
-    if (
-      stepType === 'user_input' ||
-      stepType === 'system_message' ||
-      stepType === 'error_message'
-    ) {
+    if (stepType === 'system_message') {
+      this.sawSystemMessageStep = true;
+      return [];
+    }
+    if (stepType === 'user_input' || stepType === 'error_message') {
       return [];
     }
     if (stepType === 'tool' || stepType === 'checkpoint') {
@@ -147,7 +149,9 @@ export class AntigravityJsonlTranslator {
     const response = typeof result.response === 'string' ? result.response : undefined;
     const content = response !== undefined && response.length > 0 ? response : this.pendingText;
     this.pendingText = '';
-    const finalText = content ? emitScrubbedFinalText(content) : undefined;
+    const finalText = content
+      ? emitScrubbedFinalText(content, this.sawSystemMessageStep)
+      : undefined;
     if (finalText) {
       events.push(finalText);
     } else {
@@ -172,7 +176,7 @@ export class AntigravityJsonlTranslator {
   private prependHeldBack(events: AgentEvent[]): AgentEvent[] {
     const prefix: AgentEvent[] = [...this.systemEvents()];
     if (this.pendingText) {
-      const finalText = emitScrubbedFinalText(this.pendingText);
+      const finalText = emitScrubbedFinalText(this.pendingText, this.sawSystemMessageStep);
       this.pendingText = '';
       if (finalText) prefix.push(finalText);
     }
@@ -247,62 +251,38 @@ function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
 }
 
-const SYSTEM_MESSAGE_OPEN = '<SYSTEM_MESSAGE>';
-const SYSTEM_MESSAGE_CLOSE = '</SYSTEM_MESSAGE>';
-
-function emitScrubbedFinalText(content: string): AgentEvent | undefined {
+function emitScrubbedFinalText(
+  content: string,
+  sawSystemMessageStep: boolean,
+): AgentEvent | undefined {
   const scrubbed = scrubSystemMessageEnvelopes(content);
-  if (scrubbed.removed) {
+  if (scrubbed.removedByFamily.system_message > 0) {
     log.info('jsonl', 'system_message_scrubbed', {
       beforeLength: scrubbed.beforeLength,
       afterLength: scrubbed.afterLength,
+      removedCount: scrubbed.removedByFamily.system_message,
+      unclosed: scrubbed.unclosed,
+      preambleRemoved: scrubbed.preambleRemoved,
+      sawSystemMessageStep,
     });
+  }
+  if (scrubbed.removedByFamily.task_notification > 0) {
+    log.info('jsonl', 'task_notification_scrubbed', {
+      beforeLength: scrubbed.beforeLength,
+      afterLength: scrubbed.afterLength,
+      removedCount: scrubbed.removedByFamily.task_notification,
+      unclosed: scrubbed.unclosed,
+      preambleRemoved: scrubbed.preambleRemoved,
+      family: 'task_notification',
+      sawSystemMessageStep,
+    });
+  }
+  for (const reason of scrubbed.retainedReasons) {
+    log.info('jsonl', 'system_message_tag_retained', { reason });
+  }
+  for (const reason of scrubbed.taskNotificationRetainedReasons) {
+    log.info('jsonl', 'task_notification_tag_retained', { reason });
   }
   if (!scrubbed.text) return undefined;
   return { type: 'final_text', content: scrubbed.text };
-}
-
-function scrubSystemMessageEnvelopes(input: string): {
-  text: string;
-  removed: boolean;
-  beforeLength: number;
-  afterLength: number;
-} {
-  const beforeLength = input.length;
-  let output = '';
-  let index = 0;
-  let removed = false;
-  while (index < input.length) {
-    const openAt = input.indexOf(SYSTEM_MESSAGE_OPEN, index);
-    if (openAt === -1) {
-      output += input.slice(index);
-      break;
-    }
-    output += input.slice(index, openAt);
-    removed = true;
-    const closeAt = matchingSystemMessageClose(input, openAt + SYSTEM_MESSAGE_OPEN.length);
-    if (closeAt === -1) break;
-    index = closeAt + SYSTEM_MESSAGE_CLOSE.length;
-  }
-  const text = removed ? output.trim() : input;
-  return { text, removed, beforeLength, afterLength: text.length };
-}
-
-function matchingSystemMessageClose(input: string, from: number): number {
-  let depth = 1;
-  let scan = from;
-  while (scan < input.length) {
-    const nextOpen = input.indexOf(SYSTEM_MESSAGE_OPEN, scan);
-    const nextClose = input.indexOf(SYSTEM_MESSAGE_CLOSE, scan);
-    if (nextClose === -1) return -1;
-    if (nextOpen !== -1 && nextOpen < nextClose) {
-      depth++;
-      scan = nextOpen + SYSTEM_MESSAGE_OPEN.length;
-      continue;
-    }
-    depth--;
-    if (depth === 0) return nextClose;
-    scan = nextClose + SYSTEM_MESSAGE_CLOSE.length;
-  }
-  return -1;
 }

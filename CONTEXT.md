@@ -16,6 +16,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **adapter** (`src/agent/<kind>/`): argv building, JSONL translation, model list, capability declaration, per-agent options schema. Knows nothing about Feishu.
 - **JSONL process runner** (`runJsonlCli`, `src/agent/runner/`): shared implementation for agent run subprocesses, stdout/stderr, exit, stop and cleanup. Optional signal/timeouts belong to this runner API; production business idle remains in the bot. Binary probes and history queries have their own adapter-owned calls.
 - **translator**: a **per-run** object with `translate(line)`, `finish()`, and `fail(error)`. It may hold session, pending text, and tool-call state. It is not a shared pure function on the descriptor. Each adapter run constructs a fresh translator and passes it to the runner.
+- **envelope**: an Antigravity `<SYSTEM_MESSAGE>…</SYSTEM_MESSAGE>` block that must not become Feishu `final_text`. The translator runs a classifier in `src/agent/antigravity/envelopes.ts` immediately before emitting `final_text` from `result.response` or held-back `pendingText`. Citations stay. A balanced pair is stripped. An unclosed opener is stripped through end only when it matches an **envelope fingerprint** (a `[Message]` field within ~64 characters after the tag, or an immediately preceding **preamble** line `The following is a <SYSTEM_MESSAGE> not actually sent by the user…`). This is not the session-catalog **policy fingerprint**.
 
 ## Runs and sessions
 
