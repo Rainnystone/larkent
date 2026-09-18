@@ -1,9 +1,9 @@
 # Delivery note: 02 task_notification envelope family #2
 
-**Status:** pending (blocked by 01)
+**Status:** in-progress (claimed)
 
-- Code PR: (fill after claim)
-- SHA: (fill)
+- Code PR: https://github.com/Rainnystone/larkent/pull/32
+- SHA: (fill after red/green)
 - Evidence:
   - TN1 fixture behavior: (fill)
   - `pnpm ci:local`: (fill)
