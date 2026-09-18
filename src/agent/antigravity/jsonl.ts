@@ -26,8 +26,9 @@ export interface ProtocolDriftState {
  * after print-timeout is classified (official timeout field, else the
  * incident heuristic) and emits a `final_text` hint so outbound is not
  * muted. The reply body is `result.response` (verified against a live
- * Claude Sonnet print + resume). Unknown step types increment protocol
- * drift instead of throwing.
+ * Claude Sonnet print + resume). Strings that become `final_text` have
+ * balanced `<SYSTEM_MESSAGE>…</SYSTEM_MESSAGE>` envelopes stripped first.
+ * Unknown step types increment protocol drift instead of throwing.
  */
 export class AntigravityJsonlTranslator {
   private conversationId: string | undefined;
@@ -146,8 +147,9 @@ export class AntigravityJsonlTranslator {
     const response = typeof result.response === 'string' ? result.response : undefined;
     const content = response !== undefined && response.length > 0 ? response : this.pendingText;
     this.pendingText = '';
-    if (content) {
-      events.push({ type: 'final_text', content });
+    const finalText = content ? emitScrubbedFinalText(content) : undefined;
+    if (finalText) {
+      events.push(finalText);
     } else {
       const hint = this.emptySuccessHint(result);
       if (hint) events.push({ type: 'final_text', content: hint });
@@ -170,8 +172,9 @@ export class AntigravityJsonlTranslator {
   private prependHeldBack(events: AgentEvent[]): AgentEvent[] {
     const prefix: AgentEvent[] = [...this.systemEvents()];
     if (this.pendingText) {
-      prefix.push({ type: 'final_text', content: this.pendingText });
+      const finalText = emitScrubbedFinalText(this.pendingText);
       this.pendingText = '';
+      if (finalText) prefix.push(finalText);
     }
     return prefix.length > 0 ? [...prefix, ...events] : events;
   }
@@ -242,4 +245,64 @@ function numberValue(value: unknown): number | undefined {
 
 function truncate(value: string, max: number): string {
   return value.length > max ? value.slice(0, max) : value;
+}
+
+const SYSTEM_MESSAGE_OPEN = '<SYSTEM_MESSAGE>';
+const SYSTEM_MESSAGE_CLOSE = '</SYSTEM_MESSAGE>';
+
+function emitScrubbedFinalText(content: string): AgentEvent | undefined {
+  const scrubbed = scrubSystemMessageEnvelopes(content);
+  if (scrubbed.removed) {
+    log.info('jsonl', 'system_message_scrubbed', {
+      beforeLength: scrubbed.beforeLength,
+      afterLength: scrubbed.afterLength,
+    });
+  }
+  if (!scrubbed.text) return undefined;
+  return { type: 'final_text', content: scrubbed.text };
+}
+
+function scrubSystemMessageEnvelopes(input: string): {
+  text: string;
+  removed: boolean;
+  beforeLength: number;
+  afterLength: number;
+} {
+  const beforeLength = input.length;
+  let output = '';
+  let index = 0;
+  let removed = false;
+  while (index < input.length) {
+    const openAt = input.indexOf(SYSTEM_MESSAGE_OPEN, index);
+    if (openAt === -1) {
+      output += input.slice(index);
+      break;
+    }
+    output += input.slice(index, openAt);
+    removed = true;
+    const closeAt = matchingSystemMessageClose(input, openAt + SYSTEM_MESSAGE_OPEN.length);
+    if (closeAt === -1) break;
+    index = closeAt + SYSTEM_MESSAGE_CLOSE.length;
+  }
+  const text = removed ? output.trim() : input;
+  return { text, removed, beforeLength, afterLength: text.length };
+}
+
+function matchingSystemMessageClose(input: string, from: number): number {
+  let depth = 1;
+  let scan = from;
+  while (scan < input.length) {
+    const nextOpen = input.indexOf(SYSTEM_MESSAGE_OPEN, scan);
+    const nextClose = input.indexOf(SYSTEM_MESSAGE_CLOSE, scan);
+    if (nextClose === -1) return -1;
+    if (nextOpen !== -1 && nextOpen < nextClose) {
+      depth++;
+      scan = nextOpen + SYSTEM_MESSAGE_OPEN.length;
+      continue;
+    }
+    depth--;
+    if (depth === 0) return nextClose;
+    scan = nextClose + SYSTEM_MESSAGE_CLOSE.length;
+  }
+  return -1;
 }
