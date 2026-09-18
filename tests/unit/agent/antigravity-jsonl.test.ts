@@ -489,7 +489,7 @@ describe('AntigravityJsonlTranslator', () => {
     });
   });
 
-  it('treats envelope-only SUCCESS as empty so existing skip-empty rules apply', () => {
+  it('C2: treats envelope-only SUCCESS as empty so existing skip-empty rules apply', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, [
       INIT,
@@ -509,7 +509,7 @@ describe('AntigravityJsonlTranslator', () => {
     expect(projectedRenderText(events).trim()).toBe('');
   });
 
-  it('falls through to the print-timeout hint when envelope-only SUCCESS follows tools', () => {
+  it('C2: falls through to the print-timeout hint when envelope-only SUCCESS follows tools', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, [
       ...loadJsonl(TOOL_CHECKPOINT_FIXTURE),
@@ -718,7 +718,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
   });
 
-  it('does not rewrite ERROR results that mention SYSTEM_MESSAGE in the error text', () => {
+  it('C3: does not rewrite ERROR results that mention SYSTEM_MESSAGE in the error text', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, [
       INIT,
@@ -737,6 +737,30 @@ describe('AntigravityJsonlTranslator', () => {
       {
         type: 'error',
         message: `FAILED_PRECONDITION: leaked ${INCIDENT_ENVELOPE}`,
+        terminationReason: 'failed',
+      },
+    ]);
+  });
+
+  it('C3: does not rewrite FAILED results that mention SYSTEM_MESSAGE in the error text', () => {
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'FAILED',
+          response: `${INCIDENT_ENVELOPE}\n${INCIDENT_PROSE}`,
+          error: `FAILED: leaked ${INCIDENT_ENVELOPE}`,
+        },
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'final_text')).toEqual([]);
+    expect(events.filter((event) => event.type === 'error')).toEqual([
+      {
+        type: 'error',
+        message: `FAILED: leaked ${INCIDENT_ENVELOPE}`,
         terminationReason: 'failed',
       },
     ]);

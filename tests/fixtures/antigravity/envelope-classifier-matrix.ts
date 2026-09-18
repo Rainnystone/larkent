@@ -12,7 +12,7 @@ export const PREAMBLE_LINE =
   'The following is a <SYSTEM_MESSAGE> not actually sent by the user.';
 
 export interface EnvelopeMatrixRow {
-  id: 'A1' | 'A2' | 'A3' | 'A4' | 'B1' | 'B2' | 'B3' | 'B4' | 'B5' | 'C1' | 'T1';
+  id: 'A1' | 'A2' | 'A3' | 'A4' | 'B1' | 'B2' | 'B3' | 'B4' | 'B5' | 'C1' | 'C2' | 'T1';
   input: string;
   expectedText: string;
   removedCount: number;
@@ -68,7 +68,9 @@ const B4_INPUT = [
 
 const B5_INPUT = 'oops </SYSTEM_MESSAGE> leftover closer';
 
-const C1_INPUT = '<SYSTEM_MESSAGE>outer<SYSTEM_MESSAGE>inner</SYSTEM_MESSAGE>keep';
+const C1_INPUT =
+  '<SYSTEM_MESSAGE>outer<SYSTEM_MESSAGE>inner</SYSTEM_MESSAGE>keep</SYSTEM_MESSAGE>after';
+const C2_INPUT = INCIDENT_A_ENVELOPE;
 
 const T1_INPUT = [
   '<SYSTEM_MESSAGE>',
@@ -163,7 +165,16 @@ export const ENVELOPE_CLASSIFIER_MATRIX: EnvelopeMatrixRow[] = [
   {
     id: 'C1',
     input: C1_INPUT,
-    expectedText: 'keep',
+    expectedText: 'keep</SYSTEM_MESSAGE>after',
+    removedCount: 1,
+    unclosed: false,
+    preambleRemoved: false,
+    retainedReasons: [],
+  },
+  {
+    id: 'C2',
+    input: C2_INPUT,
+    expectedText: '',
     removedCount: 1,
     unclosed: false,
     preambleRemoved: false,
