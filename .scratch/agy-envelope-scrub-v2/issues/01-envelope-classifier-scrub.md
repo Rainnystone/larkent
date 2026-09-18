@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** delivered (code PR https://github.com/Rainnystone/larkent/pull/32 @ `eaacee9`)
 
 ## Parent
 
@@ -34,21 +34,21 @@ This ticket does **not** implement `<task_notification>` (that is 02). It **does
 
 ## Acceptance criteria
 
-- [ ] Pure envelopes helper exists and is covered by unit tests for matrix rows A1–A4, B1–B5, C1–C3, T1 (inline objects and/or fixtures).
-- [ ] A1: balanced fingerprinted envelope + prose → prose only, no `<SYSTEM_MESSAGE` in `final_text`.
-- [ ] A2: Incident A–shaped (or redacted citing `om_x100b65e6a11b3cb4b10254b74b00974`) → envelope stripped, user answer kept.
-- [ ] A3: unclosed + fingerprinted → strip-through-end; no leak of envelope body.
-- [ ] A4: preamble line + envelope + prose → preamble and envelope gone; prose kept.
-- [ ] B1–B3: mid-line / inline-code / fence citations retained; `jsonl.system_message_tag_retained` reasons when applicable.
-- [ ] B4: unclosed, no fingerprint → **whole string byte-identical** (rewrites #30 unclosed peel-to-end expectation).
-- [ ] B5: stray closer alone left alone.
-- [ ] C1: nested-looking opens → first closer wins (no depth).
-- [ ] C2: envelope-only → no user-facing `final_text` from that content (empty / existing hint path).
-- [ ] C3: ERROR / FAILED mapping unchanged even if error text mentions the tag.
-- [ ] T1: scrub log includes lengths + removed count + unclosed + preambleRemoved (+ sawSystemMessageStep when applicable); never the body.
-- [ ] Both `translateResult` and `prependHeldBack` paths use the shared helper.
-- [ ] Code PR has two commits: (1) red tests/fixtures (2) green implementation; `pnpm ci:local` passes on (2).
-- [ ] No `.scratch/` or Spec files on the code PR. No channel.ts / keepalive changes.
+- [x] Pure envelopes helper exists and is covered by unit tests for matrix rows A1–A4, B1–B5, C1–C3, T1 (inline objects and/or fixtures).
+- [x] A1: balanced fingerprinted envelope + prose → prose only, no `<SYSTEM_MESSAGE` in `final_text`.
+- [x] A2: Incident A–shaped (or redacted citing `om_x100b65e6a11b3cb4b10254b74b00974`) → envelope stripped, user answer kept.
+- [x] A3: unclosed + fingerprinted → strip-through-end; no leak of envelope body.
+- [x] A4: preamble line + envelope + prose → preamble and envelope gone; prose kept.
+- [x] B1–B3: mid-line / inline-code / fence citations retained; `jsonl.system_message_tag_retained` reasons when applicable.
+- [x] B4: unclosed, no fingerprint → **whole string byte-identical** (rewrites #30 unclosed peel-to-end expectation).
+- [x] B5: stray closer alone left alone.
+- [x] C1: nested-looking opens → first closer wins (no depth).
+- [x] C2: envelope-only → no user-facing `final_text` from that content (empty / existing hint path).
+- [x] C3: ERROR / FAILED mapping unchanged even if error text mentions the tag.
+- [x] T1: scrub log includes lengths + removed count + unclosed + preambleRemoved (+ sawSystemMessageStep when applicable); never the body.
+- [x] Both `translateResult` and `prependHeldBack` paths use the shared helper.
+- [x] Code PR has two commits: (1) red tests/fixtures (2) green implementation; `pnpm ci:local` passes on (2).
+- [x] No `.scratch/` or Spec files on the code PR. No channel.ts / keepalive changes.
 
 ## Blocked by
 
