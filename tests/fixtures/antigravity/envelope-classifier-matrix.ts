@@ -12,7 +12,21 @@ export const PREAMBLE_LINE =
   'The following is a <SYSTEM_MESSAGE> not actually sent by the user.';
 
 export interface EnvelopeMatrixRow {
-  id: 'A1' | 'A2' | 'A3' | 'A4' | 'B1' | 'B2' | 'B3' | 'B4' | 'B5' | 'C1' | 'C2' | 'T1';
+  id:
+    | 'A1'
+    | 'A2'
+    | 'A3'
+    | 'A4'
+    | 'B1'
+    | 'B2'
+    | 'B3'
+    | 'B4'
+    | 'B5'
+    | 'B6'
+    | 'B7'
+    | 'C1'
+    | 'C2'
+    | 'T1';
   input: string;
   expectedText: string;
   removedCount: number;
@@ -67,6 +81,23 @@ const B4_INPUT = [
 ].join('\n');
 
 const B5_INPUT = 'oops </SYSTEM_MESSAGE> leftover closer';
+const B6_FENCE = ['````md', '```js', 'example', '````'].join('\n');
+const B6_INPUT = [
+  B6_FENCE,
+  '<SYSTEM_MESSAGE>',
+  '[Message] content=task_complete',
+  '</SYSTEM_MESSAGE>',
+  INCIDENT_A_PROSE,
+].join('\n');
+const B7_INPUT = [
+  '````md',
+  '```js',
+  '<SYSTEM_MESSAGE>',
+  '[Message] content=task_complete',
+  '</SYSTEM_MESSAGE>',
+  '````',
+  'kept after fence',
+].join('\n');
 
 const C1_INPUT =
   '<SYSTEM_MESSAGE>outer<SYSTEM_MESSAGE>inner</SYSTEM_MESSAGE>keep</SYSTEM_MESSAGE>after';
@@ -163,6 +194,24 @@ export const ENVELOPE_CLASSIFIER_MATRIX: EnvelopeMatrixRow[] = [
     retainedReasons: [],
   },
   {
+    id: 'B6',
+    input: B6_INPUT,
+    expectedText: `${B6_FENCE}\n${INCIDENT_A_PROSE}`,
+    removedCount: 1,
+    unclosed: false,
+    preambleRemoved: false,
+    retainedReasons: [],
+  },
+  {
+    id: 'B7',
+    input: B7_INPUT,
+    expectedText: B7_INPUT,
+    removedCount: 0,
+    unclosed: false,
+    preambleRemoved: false,
+    retainedReasons: ['fence'],
+  },
+  {
     id: 'C1',
     input: C1_INPUT,
     expectedText: 'keep</SYSTEM_MESSAGE>after',
@@ -199,7 +248,15 @@ export function matrixRow(id: EnvelopeMatrixRow['id']): EnvelopeMatrixRow {
   return row;
 }
 
-export type TaskNotificationMatrixId = 'TN1' | 'TN2' | 'TN3' | 'TN4' | 'TN5' | 'TN6';
+export type TaskNotificationMatrixId =
+  | 'TN1'
+  | 'TN2'
+  | 'TN3'
+  | 'TN4'
+  | 'TN5'
+  | 'TN6'
+  | 'TN7'
+  | 'TN8';
 
 export interface TaskNotificationMatrixRow {
   id: TaskNotificationMatrixId;
@@ -216,6 +273,12 @@ export const TASK_NOTIFICATION_CHINESE_ANSWER = '这是给用户看的中文答�
 export const TASK_NOTIFICATION_PROSE = '干净的答复。';
 export const TASK_NOTIFICATION_ENVELOPE =
   '<task_notification>\n{"type":"task_update","task_id":"tn-1"}\n</task_notification>';
+export const INDENTED_MARKDOWN_CODE = '    def foo():\n        return 1';
+const TN7_SYSTEM_ENVELOPE = [
+  '<SYSTEM_MESSAGE>',
+  '[Message] content=task_complete',
+  '</SYSTEM_MESSAGE>',
+].join('\n');
 export const VITEST_TITLE_WITH_SYSTEM_MESSAGE =
   'FAIL tests/unit/agent/antigravity-jsonl.test.ts > scrubs multi-line and nested <SYSTEM_MESSAGE> blocks';
 
@@ -235,6 +298,8 @@ const TN5_INPUT = ['```', '<task_notification>', '{"type":"task_update"}', '```'
 const TN6_INPUT = ['<task_notification>', '{"type":"task_update","task_id":"tn-open"}', TASK_NOTIFICATION_CHINESE_ANSWER].join(
   '\n',
 );
+const TN7_INPUT = `${TASK_NOTIFICATION_ENVELOPE}${TN7_SYSTEM_ENVELOPE}\n${TASK_NOTIFICATION_PROSE}`;
+const TN8_INPUT = `${INDENTED_MARKDOWN_CODE}\n${TASK_NOTIFICATION_ENVELOPE}`;
 
 export const TASK_NOTIFICATION_MATRIX: TaskNotificationMatrixRow[] = [
   {
@@ -296,6 +361,26 @@ export const TASK_NOTIFICATION_MATRIX: TaskNotificationMatrixRow[] = [
     preambleRemoved: false,
     retainedReasons: [],
     taskNotificationRetainedReasons: ['unclosed-no-fingerprint'],
+  },
+  {
+    id: 'TN7',
+    input: TN7_INPUT,
+    expectedText: TASK_NOTIFICATION_PROSE,
+    removedCount: 2,
+    unclosed: false,
+    preambleRemoved: false,
+    retainedReasons: [],
+    taskNotificationRetainedReasons: [],
+  },
+  {
+    id: 'TN8',
+    input: TN8_INPUT,
+    expectedText: INDENTED_MARKDOWN_CODE,
+    removedCount: 1,
+    unclosed: false,
+    preambleRemoved: false,
+    retainedReasons: [],
+    taskNotificationRetainedReasons: [],
   },
 ];
 

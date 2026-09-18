@@ -3,8 +3,11 @@ import { scrubSystemMessageEnvelopes } from '../../../src/agent/antigravity/enve
 import {
   ENVELOPE_CLASSIFIER_MATRIX,
   INCIDENT_A_MESSAGE_ID,
+  INCIDENT_A_PROSE,
+  INDENTED_MARKDOWN_CODE,
   TASK_NOTIFICATION_CHINESE_ANSWER,
   TASK_NOTIFICATION_MATRIX,
+  TASK_NOTIFICATION_PROSE,
   VITEST_TITLE_WITH_SYSTEM_MESSAGE,
   matrixRow,
   taskNotificationRow,
@@ -49,6 +52,23 @@ describe('scrubSystemMessageEnvelopes', () => {
     expect(result.unclosed).toBe(false);
     expect(result.retainedReasons).toEqual(['unclosed-no-fingerprint']);
   });
+
+  it('B6 strips a real envelope after a longer fence that contained a shorter fence line', () => {
+    const row = matrixRow('B6');
+    const result = scrubSystemMessageEnvelopes(row.input);
+    expect(result.text).toBe(row.expectedText);
+    expect(result.text).toContain(INCIDENT_A_PROSE);
+    expect(result.text).not.toContain('<SYSTEM_MESSAGE');
+    expect(result.retainedReasons).toEqual([]);
+  });
+
+  it('B7 retains a tag inside a longer fence that contains a shorter fence-like line', () => {
+    const row = matrixRow('B7');
+    const result = scrubSystemMessageEnvelopes(row.input);
+    expect(result.text).toBe(row.input);
+    expect(result.removedCount).toBe(0);
+    expect(result.retainedReasons).toEqual(['fence']);
+  });
 });
 
 describe('task_notification envelope family #2', () => {
@@ -89,5 +109,28 @@ describe('task_notification envelope family #2', () => {
     expect(result.text.slice(titleIndex, titleIndex + VITEST_TITLE_WITH_SYSTEM_MESSAGE.length)).toBe(
       VITEST_TITLE_WITH_SYSTEM_MESSAGE,
     );
+  });
+
+  it('TN7 strips a system envelope that was mid-line only because a task_notification preceded it', () => {
+    const row = taskNotificationRow('TN7');
+    const result = scrubSystemMessageEnvelopes(row.input);
+    expect(result.text).toBe(TASK_NOTIFICATION_PROSE);
+    expect(result.removedCount).toBe(2);
+    expect(result.removedByFamily).toEqual({
+      system_message: 1,
+      task_notification: 1,
+    });
+    expect(result.retainedReasons).toEqual([]);
+    expect(result.text).not.toContain('<SYSTEM_MESSAGE');
+    expect(result.text).not.toContain('<task_notification');
+  });
+
+  it('TN8 keeps four-space Markdown indentation when a trailing task_notification is removed', () => {
+    const row = taskNotificationRow('TN8');
+    const result = scrubSystemMessageEnvelopes(row.input);
+    expect(result.text).toBe(INDENTED_MARKDOWN_CODE);
+    expect(result.text.startsWith('    ')).toBe(true);
+    expect(result.removedCount).toBe(1);
+    expect(result.text).not.toContain('<task_notification');
   });
 });

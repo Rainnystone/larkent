@@ -574,7 +574,7 @@ describe('AntigravityJsonlTranslator', () => {
     });
   });
 
-  it.each(['B1', 'B2', 'B3', 'B5'] as const)(
+  it.each(['B1', 'B2', 'B3', 'B5', 'B7'] as const)(
     '%s: translateResult leaves citation or stray closer byte-identical',
     (id) => {
       const row = matrixRow(id);
@@ -596,6 +596,28 @@ describe('AntigravityJsonlTranslator', () => {
       });
     },
   );
+
+  it('B6: translateResult strips a real envelope after a nested longer fence', () => {
+    const row = matrixRow('B6');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+    expect(JSON.stringify(events)).toContain(INCIDENT_PROSE);
+    expect(JSON.stringify(events)).not.toContain('<SYSTEM_MESSAGE');
+  });
 
   it('A3: strips an unclosed fingerprinted envelope through end on result.response', () => {
     const row = matrixRow('A3');
@@ -857,6 +879,50 @@ describe('AntigravityJsonlTranslator', () => {
     });
   });
 
+  it('TN7: translateResult strips a system envelope exposed after task_notification removal', () => {
+    const row = taskNotificationRow('TN7');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+    expect(JSON.stringify(events)).not.toContain('<SYSTEM_MESSAGE');
+    expect(JSON.stringify(events)).not.toContain('<task_notification');
+  });
+
+  it('TN8: translateResult keeps four-space Markdown indentation after dropping task_notification', () => {
+    const row = taskNotificationRow('TN8');
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: row.input,
+        },
+      },
+    ]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: row.expectedText,
+    });
+    const finalText = events.find((event) => event.type === 'final_text');
+    expect(finalText?.type === 'final_text' ? finalText.content : '').toMatch(/^    def foo/);
+  });
+
   it.each(['TN3', 'TN4', 'TN5', 'TN6'] as const)(
     '%s: translateResult retains a task_notification citation or unclosed non-fingerprinted opener',
     (id) => {
@@ -989,7 +1055,7 @@ describe('AntigravityJsonlTranslator', () => {
     },
   );
 
-  it.each(['B1', 'B2', 'B3', 'B4'] as const)(
+  it.each(['B1', 'B2', 'B3', 'B4', 'B7'] as const)(
     'T1: logs system_message_tag_retained with the %s reason and never the body',
     (id) => {
       const row = matrixRow(id);
