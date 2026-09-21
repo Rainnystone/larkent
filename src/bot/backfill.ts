@@ -249,9 +249,26 @@ function selectInScopeChats(
   }
   const dropped = Math.max(0, scoped.length - prefs.maxChats);
   return {
-    chats: dropped > 0 ? scoped.slice(0, prefs.maxChats) : scoped,
+    chats: dropped > 0 ? capCombinedChats(scoped, sessionP2pIds, prefs.maxChats) : scoped,
     dropped,
   };
+}
+
+function capCombinedChats(
+  scoped: Array<{ id: string; name: string }>,
+  sessionP2pIds: Set<string>,
+  maxChats: number,
+): Array<{ id: string; name: string }> {
+  const p2p: Array<{ id: string; name: string }> = [];
+  const groups: Array<{ id: string; name: string }> = [];
+  for (const chat of scoped) {
+    if (sessionP2pIds.has(chat.id)) p2p.push(chat);
+    else groups.push(chat);
+  }
+  const keptP2p = p2p.slice(0, maxChats);
+  const keptGroups = groups.slice(0, Math.max(0, maxChats - keptP2p.length));
+  const keep = new Set([...keptP2p, ...keptGroups].map((chat) => chat.id));
+  return scoped.filter((chat) => keep.has(chat.id));
 }
 
 async function scanChat(input: {
