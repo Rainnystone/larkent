@@ -575,10 +575,8 @@ describe('runBackfill', () => {
       chatModes: { [CHAT_P2P]: 'p2p' },
       prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxChats: 3 },
     }));
-    expect(h.list).toContain(CHAT_P2P);
-    expect(h.list).not.toEqual(expect.arrayContaining([CHAT_A, CHAT_B, CHAT_C, CHAT_P2P]));
-    expect(h.list).toHaveLength(3);
-    expect(h.intake.map((msg) => msg.messageId)).toContain('om_dm');
+    expect(h.list).toEqual([CHAT_A, CHAT_B, CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a', 'om_b', 'om_dm']);
     expect(h.intake.find((msg) => msg.messageId === 'om_dm')?.chatType).toBe('p2p');
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({ event: 'chats-truncated', dropped: 1 }),
