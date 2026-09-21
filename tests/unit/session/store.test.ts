@@ -18,6 +18,7 @@ describe('SessionStore v2', () => {
       const store = new SessionStore(file);
       await store.load();
       expect(store.resumeFor('oc_a:thread_1', '/work/a')).toBe('session-a');
+      expect(store.scopeIds().sort()).toEqual(['oc_a:thread_1', 'oc_a:thread_2']);
       expect(store.getRaw('oc_a:thread_2')).toEqual({ updatedAt: 11, idleTimeoutMinutes: 0 });
       expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({ schemaVersion: 2, entries: {
         'oc_a:thread_1': { resumeHandle: 'session-a', cwd: '/work/a', updatedAt: 10, idleTimeoutMinutes: 7 },
