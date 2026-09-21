@@ -181,6 +181,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
       now,
       deps,
       botOpenId: identity.openId,
+      sessionP2pIds,
       resolveMode,
     });
     if (result === 'aborted') {
@@ -259,9 +260,10 @@ async function scanChat(input: {
   now: number;
   deps: RunBackfillDeps;
   botOpenId: string;
+  sessionP2pIds: Set<string>;
   resolveMode: (chatId: string) => Promise<ChatMode>;
 }): Promise<{ enqueued: number } | 'fetch-failed' | 'aborted'> {
-  const { chatId, window, now, deps, botOpenId, resolveMode } = input;
+  const { chatId, window, now, deps, botOpenId, sessionP2pIds, resolveMode } = input;
   let rawItems: HistoryItem[];
   try {
     rawItems = await listChatHistory(deps.channel, chatId, window, deps.prefs.maxRawPerChat);
@@ -274,8 +276,8 @@ async function scanChat(input: {
     return 'fetch-failed';
   }
 
-  const chatType = await resolveMode(chatId);
-  if (rawItems.some((item) => Boolean(item.thread_id)) || chatType === 'topic') {
+  const chatType: ChatMode = sessionP2pIds.has(chatId) ? 'p2p' : 'group';
+  if (chatType !== 'p2p' && await isTopicPartial(resolveMode, chatId, rawItems)) {
     log.info('backfill', 'topic-partial', { chatId });
   }
 
@@ -494,6 +496,15 @@ async function classifySessionP2pIds(
     if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
   }
   return ids;
+}
+
+async function isTopicPartial(
+  resolveMode: (chatId: string) => Promise<ChatMode>,
+  chatId: string,
+  items: HistoryItem[],
+): Promise<boolean> {
+  if (items.some((item) => Boolean(item.thread_id))) return true;
+  return await resolveMode(chatId) === 'topic';
 }
 
 function createChatModeResolver(
