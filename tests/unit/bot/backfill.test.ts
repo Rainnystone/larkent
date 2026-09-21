@@ -530,6 +530,80 @@ describe('runBackfill', () => {
     expect(events(info, 'backfill').filter((row) => row.event === 'enqueued')).toEqual([]);
   });
 
+  it('caps newest human messages on a session-known p2p chat', async () => {
+    const humans = Array.from({ length: 4 }, (_, i) =>
+      humanItem(`om_p2p_${i}`, CHAT_P2P, `ask ${i}`, NOW - 40_000 + i * 100),
+    );
+    const h = await harness({
+      chats: [],
+      messages: { [CHAT_P2P]: humans },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxMentionsPerChat: 2 },
+    }));
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'mentions-truncated', chatId: CHAT_P2P, count: 2 }),
+    );
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_p2p_2', 'om_p2p_3']);
+    expect(h.intake.every((msg) => msg.chatType === 'p2p' && msg.mentionedBot === false)).toBe(true);
+    expect(h.ledger.has('om_p2p_0')).toBe(true);
+    expect(h.ledger.has('om_p2p_1')).toBe(true);
+  });
+
+  it('preserves session-known p2p chats when maxChats truncates a long group list', async () => {
+    const h = await harness({
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+        { id: CHAT_C, name: 'C' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'a', NOW - 10_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'b', NOW - 10_000)],
+        [CHAT_C]: [mentionItem('om_c', CHAT_C, 'c', NOW - 10_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxChats: 3 },
+    }));
+    expect(h.list).toContain(CHAT_P2P);
+    expect(h.list).not.toEqual(expect.arrayContaining([CHAT_A, CHAT_B, CHAT_C, CHAT_P2P]));
+    expect(h.list).toHaveLength(3);
+    expect(h.intake.map((msg) => msg.messageId)).toContain('om_dm');
+    expect(h.intake.find((msg) => msg.messageId === 'om_dm')?.chatType).toBe('p2p');
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'chats-truncated', dropped: 1 }),
+    );
+  });
+
+  it('scans session-known p2p in personal mode without a chat allowlist', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      profile: { mode: 'personal', access: { allowedChats: [] } },
+    }));
+    expect(h.list).toEqual([CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_dm']);
+    expect(h.intake[0]?.chatType).toBe('p2p');
+  });
+
   it('marks a p2p chat-fetch failure incomplete without advancing lastBackfillEnd', async () => {
     const lastLiveAt = NOW - 5 * 60_000;
     const h = await harness({
