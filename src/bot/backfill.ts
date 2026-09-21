@@ -148,7 +148,8 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     name: chat.name || '(无名)',
   })));
 
-  const sessionP2pIds = await classifySessionP2pIds(deps.channel, deps.sessionChatIds ?? []);
+  const resolveMode = createChatModeResolver(deps.channel);
+  const sessionP2pIds = await classifySessionP2pIds(resolveMode, deps.sessionChatIds ?? []);
   const listedIds = new Set(listed.map((chat) => chat.id));
   const combined = [
     ...listed,
@@ -180,6 +181,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
       now,
       deps,
       botOpenId: identity.openId,
+      resolveMode,
     });
     if (result === 'aborted') {
       aborted = true;
@@ -257,8 +259,9 @@ async function scanChat(input: {
   now: number;
   deps: RunBackfillDeps;
   botOpenId: string;
+  resolveMode: (chatId: string) => Promise<ChatMode>;
 }): Promise<{ enqueued: number } | 'fetch-failed' | 'aborted'> {
-  const { chatId, window, now, deps, botOpenId } = input;
+  const { chatId, window, now, deps, botOpenId, resolveMode } = input;
   let rawItems: HistoryItem[];
   try {
     rawItems = await listChatHistory(deps.channel, chatId, window, deps.prefs.maxRawPerChat);
@@ -271,7 +274,7 @@ async function scanChat(input: {
     return 'fetch-failed';
   }
 
-  const chatType = await resolveChatMode(deps.channel, chatId);
+  const chatType = await resolveMode(chatId);
   if (rawItems.some((item) => Boolean(item.thread_id)) || chatType === 'topic') {
     log.info('backfill', 'topic-partial', { chatId });
   }
@@ -481,16 +484,29 @@ async function listChatHistory(
 }
 
 async function classifySessionP2pIds(
-  channel: BackfillChannel,
+  resolveMode: (chatId: string) => Promise<ChatMode>,
   sessionChatIds: string[],
 ): Promise<Set<string>> {
   const ids = new Set<string>();
   for (const scope of sessionChatIds) {
     const chatId = chatIdFromScope(scope);
     if (!chatId || ids.has(chatId)) continue;
-    if (await resolveChatMode(channel, chatId) === 'p2p') ids.add(chatId);
+    if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
   }
   return ids;
+}
+
+function createChatModeResolver(
+  channel: BackfillChannel,
+): (chatId: string) => Promise<ChatMode> {
+  const cache = new Map<string, ChatMode>();
+  return async (chatId) => {
+    const hit = cache.get(chatId);
+    if (hit) return hit;
+    const mode = await resolveChatMode(channel, chatId);
+    cache.set(chatId, mode);
+    return mode;
+  };
 }
 
 function rawChatType(chatType: ChatMode): 'p2p' | 'group' {
