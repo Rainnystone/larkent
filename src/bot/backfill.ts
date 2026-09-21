@@ -152,8 +152,14 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   }
 
   const resolveMode = createChatModeResolver(deps.channel);
-  const sessionP2pIds = await classifySessionP2pIds(resolveMode, deps.sessionChatIds ?? []);
   const listedIds = new Set(listed.map((chat) => chat.id));
+  const classified = await classifySessionP2pIds(
+    resolveMode,
+    deps.sessionChatIds ?? [],
+    listedIds,
+    deps.prefs.maxChats,
+  );
+  const sessionP2pIds = classified.ids;
   const combined = [
     ...listed,
     ...[...sessionP2pIds]
@@ -201,12 +207,13 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   }
 
   const durationMs = Date.now() - startedAt;
-  if (fetchFailures > 0 || chatsFetchFailed) {
+  if (fetchFailures > 0 || chatsFetchFailed || classified.unresolved > 0) {
     deps.ledger.markScanIncomplete(lastLiveAt);
     log.info('backfill', 'incomplete', {
       chats: inScope.chats.length,
       enqueuedTotal,
       fetchFailures,
+      modeLookupFailures: classified.unresolved,
       durationMs,
     });
     reportMetric('backfill_enqueued', enqueuedTotal);
@@ -505,17 +512,50 @@ async function listChatHistory(
   return kept;
 }
 
+const SESSION_CHAT_MODE_CONCURRENCY = 8;
+
 async function classifySessionP2pIds(
   resolveMode: (chatId: string) => Promise<ChatMode>,
   sessionChatIds: string[],
-): Promise<Set<string>> {
+  listedIds: Set<string>,
+  maxChats: number,
+): Promise<{ ids: Set<string>; unresolved: number }> {
   const ids = new Set<string>();
+  let unresolved = 0;
+  await mapPool(
+    uniqueSessionChatIds(sessionChatIds, listedIds, maxChats),
+    SESSION_CHAT_MODE_CONCURRENCY,
+    async (chatId) => {
+      try {
+        if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
+      } catch (error) {
+        unresolved += 1;
+        log.warn('backfill', 'mode-resolve-failed', {
+          chatId,
+          err: errorMessage(error),
+        });
+      }
+    },
+  );
+  return { ids, unresolved };
+}
+
+function uniqueSessionChatIds(
+  sessionChatIds: string[],
+  listedIds: Set<string>,
+  maxChats: number,
+): string[] {
+  const unlisted: string[] = [];
+  const listed: string[] = [];
+  const seen = new Set<string>();
   for (const scope of sessionChatIds) {
     const chatId = chatIdFromScope(scope);
-    if (!chatId || ids.has(chatId)) continue;
-    if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
+    if (!chatId || seen.has(chatId)) continue;
+    seen.add(chatId);
+    if (listedIds.has(chatId)) listed.push(chatId);
+    else unlisted.push(chatId);
   }
-  return ids;
+  return [...unlisted, ...listed].slice(0, maxChats);
 }
 
 async function isTopicPartial(
@@ -524,7 +564,11 @@ async function isTopicPartial(
   items: HistoryItem[],
 ): Promise<boolean> {
   if (items.some((item) => Boolean(item.thread_id))) return true;
-  return await resolveMode(chatId) === 'topic';
+  try {
+    return await resolveMode(chatId) === 'topic';
+  } catch {
+    return false;
+  }
 }
 
 function createChatModeResolver(
@@ -559,11 +603,7 @@ async function resolveChatMode(
   chatId: string,
 ): Promise<ChatMode> {
   if (!channel.getChatMode) return 'group';
-  try {
-    return await channel.getChatMode(chatId);
-  } catch {
-    return 'group';
-  }
+  return await channel.getChatMode(chatId);
 }
 
 function chatIdFromScope(scope: string): string {
@@ -672,4 +712,24 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function mapPool<T>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      const item = items[index];
+      if (item === undefined) return;
+      await fn(item);
+    }
+  };
+  const n = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
 }

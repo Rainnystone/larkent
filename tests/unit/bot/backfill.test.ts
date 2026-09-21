@@ -656,6 +656,88 @@ describe('runBackfill', () => {
     expect(h.ledger.getIncompleteFrom()).toBeUndefined();
   });
 
+  it('keeps the scan incomplete when session p2p mode lookup fails', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: new Error('mode down') },
+    }));
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'mode-resolve-failed', chatId: CHAT_P2P }),
+    );
+    expect(h.list).toEqual([CHAT_A]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_group']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        fetchFailures: 0,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+  });
+
+  it('deduplicates session scopes and bounds unique mode lookups to maxChats, unlisted first', async () => {
+    const extras = Array.from({ length: 4 }, (_, i) => `oc_extra_${i}`);
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'a', NOW - 10_000, { threadId: 'omt_a' })],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    const modeLookups: string[] = [];
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [
+        CHAT_A,
+        `${CHAT_A}:thread`,
+        CHAT_P2P,
+        CHAT_P2P,
+        `${CHAT_P2P}:topic`,
+        ...extras,
+      ],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      modeLookups,
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxChats: 2 },
+    }));
+    expect(modeLookups.slice().sort()).toEqual([CHAT_P2P, 'oc_extra_0'].sort());
+    expect(h.list).toEqual([CHAT_A, CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a', 'om_dm']);
+  });
+
+  it('classifies unique session chats concurrently', async () => {
+    const chats = ['oc_p2p_a', 'oc_p2p_b', 'oc_p2p_c', 'oc_p2p_d'];
+    const h = await harness({ chats: [], messages: {} });
+    let inFlight = 0;
+    let peak = 0;
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: chats,
+      chatModes: Object.fromEntries(chats.map((id) => [id, 'p2p' as const])),
+      onGetChatMode: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        inFlight -= 1;
+      },
+    }));
+    expect(peak).toBeGreaterThan(1);
+  });
+
   it('scans session-known p2p in personal mode without a chat allowlist', async () => {
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
@@ -853,6 +935,9 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   onIntake?: (msg: NormalizedMessage) => void;
   sessionChatIds?: string[];
   chatModes?: Record<string, 'p2p' | 'group' | 'topic'>;
+  chatModeErrors?: Record<string, Error>;
+  modeLookups?: string[];
+  onGetChatMode?: (chatId: string) => Promise<void>;
 }): Promise<RunBackfillDeps> {
   const channel = fakeChannel({
     identity: input.botOpenId === null ? undefined : { openId: input.botOpenId ?? BOT, name: 'Bot' },
@@ -865,6 +950,9 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     listChatsError: input.listChatsError,
     listChatsHold: input.listChatsHold,
     chatModes: input.chatModes,
+    chatModeErrors: input.chatModeErrors,
+    modeLookups: input.modeLookups,
+    onGetChatMode: input.onGetChatMode,
   });
   const marks = new Map<string, { detectedAt: number }>();
   return {
@@ -897,6 +985,9 @@ function fakeChannel(opts: {
   listChatsError?: Error;
   listChatsHold?: Promise<void>;
   chatModes?: Record<string, 'p2p' | 'group' | 'topic'>;
+  chatModeErrors?: Record<string, Error>;
+  modeLookups?: string[];
+  onGetChatMode?: (chatId: string) => Promise<void>;
 }): BackfillChannel {
   return {
     botIdentity: opts.identity,
@@ -907,6 +998,10 @@ function fakeChannel(opts: {
       return opts.chats;
     },
     async getChatMode(chatId) {
+      opts.modeLookups?.push(chatId);
+      await opts.onGetChatMode?.(chatId);
+      const error = opts.chatModeErrors?.[chatId];
+      if (error) throw error;
       return opts.chatModes?.[chatId] ?? 'group';
     },
     async fetchRawMessage() {
