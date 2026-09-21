@@ -74,6 +74,16 @@ describe('backfill static contracts', () => {
     expect(read('src/bot/channel.ts')).toMatch(/onWakeUp:\s*\(\)\s*=>\s*launchBackfill\('wake-up'\)/);
     expect(read('src/bot/keepalive.ts')).toMatch(/onWakeUp\?\.\(\)/);
   });
+
+  it('hands session-known chat ids into the backfill scan', () => {
+    expect(read('src/bot/channel.ts')).toMatch(/sessionChatIds:/);
+    expect(read('src/bot/backfill.ts')).toMatch(/sessionChatIds\??:/);
+  });
+
+  it('keeps personal-mode DM denial on the intake path', () => {
+    expect(read('src/bot/backfill.ts')).not.toMatch(/canUseDm|allowedUsers/);
+    expect(read('src/bot/channel.ts')).toMatch(/canUseDm\(/);
+  });
 });
 
 function emittedInSource(source: string, fullName: string): boolean {

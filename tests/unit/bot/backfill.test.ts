@@ -22,6 +22,7 @@ const USER = 'ou_user';
 const CHAT_A = 'oc_chat_a';
 const CHAT_B = 'oc_chat_b';
 const CHAT_C = 'oc_chat_c';
+const CHAT_P2P = 'oc_p2p';
 const HOUR = 3_600_000;
 
 const dirs: string[] = [];
@@ -282,6 +283,7 @@ describe('runBackfill', () => {
   it('listChats failure aborts without advancing the watermark', async () => {
     const lastLiveAt = NOW - 5 * 60_000;
     const h = await harness({ lastLiveAt });
+    const info = spyInfo();
     const warn = spyWarn();
     await runBackfill(await deps({
       ...h,
@@ -291,8 +293,12 @@ describe('runBackfill', () => {
       expect.objectContaining({ event: 'chats-fetch-failed' }),
     );
     expect(h.intake).toEqual([]);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete' }),
+    );
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
     expect(h.ledger.getLiveAt()).toBe(lastLiveAt);
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
   });
 
   it('drops deleted, self, and not-mentioned items; keeps other bots', async () => {
@@ -415,6 +421,366 @@ describe('runBackfill', () => {
         windowEnd: window.windowEnd,
       }),
     );
+  });
+
+  it('enqueues a session-known p2p human message without mentions, then skips it on the next trigger', async () => {
+    const h = await harness({
+      chats: [],
+      messages: { [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 15_000)] },
+    });
+    const first = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.list).toEqual([CHAT_P2P]);
+    expect(h.intake).toHaveLength(1);
+    expect(h.intake[0]?.messageId).toBe('om_dm');
+    expect(h.intake[0]?.chatType).toBe('p2p');
+    expect(h.intake[0]?.mentionedBot).toBe(false);
+    expect(events(first, 'backfill').filter((row) => row.event === 'enqueued')).toHaveLength(1);
+
+    h.intake.length = 0;
+    h.ledger.touchLive(NOW - 5 * 60_000);
+    const second = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake).toEqual([]);
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-processed', msgId: 'om_dm' }),
+    );
+  });
+
+  it('does not enqueue bot-self or slash-command items from a session-known p2p chat', async () => {
+    const h = await harness({
+      chats: [],
+      messages: {
+        [CHAT_P2P]: [
+          humanItem('om_self', CHAT_P2P, 'I said this', NOW - 30_000, { senderId: BOT }),
+          humanItem('om_slash', CHAT_P2P, '/stop', NOW - 20_000),
+          humanItem('om_ok', CHAT_P2P, 'please answer', NOW - 10_000),
+        ],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_ok']);
+    expect(h.intake[0]?.chatType).toBe('p2p');
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_self' }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-command', msgId: 'om_slash' }),
+    );
+  });
+
+  it('keeps group @mention enqueue and still drops group messages without mentionedBot', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          chatterItem('om_quiet', CHAT_A, NOW - 20_000),
+          mentionItem('om_mention', CHAT_A, 'please answer', NOW - 10_000),
+        ],
+      },
+    });
+    await runBackfill(await deps(h));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_mention']);
+    expect(h.intake[0]?.chatType).toBe('group');
+    expect(h.intake[0]?.mentionedBot).toBe(true);
+  });
+
+  it('does not enqueue p2p when sessions are empty and listChats returns only groups', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [chatterItem('om_group_quiet', CHAT_A, NOW - 20_000)],
+        [CHAT_P2P]: [humanItem('om_hidden_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.list).toEqual([CHAT_A]);
+    expect(h.intake).toEqual([]);
+  });
+
+  it('dry-run logs would-enqueue for a session-known p2p message and does not intake', async () => {
+    const h = await harness({
+      chats: [],
+      messages: { [CHAT_P2P]: [humanItem('om_dry_dm', CHAT_P2P, '在？', NOW - 15_000)] },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, dryRun: true },
+    }));
+    expect(h.intake).toEqual([]);
+    expect(h.ledger.has('om_dry_dm')).toBe(false);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'would-enqueue', msgId: 'om_dry_dm', chatId: CHAT_P2P }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'enqueued')).toEqual([]);
+  });
+
+  it('caps newest human messages on a session-known p2p chat', async () => {
+    const humans = Array.from({ length: 4 }, (_, i) =>
+      humanItem(`om_p2p_${i}`, CHAT_P2P, `ask ${i}`, NOW - 40_000 + i * 100),
+    );
+    const h = await harness({
+      chats: [],
+      messages: { [CHAT_P2P]: humans },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxMentionsPerChat: 2 },
+    }));
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'mentions-truncated', chatId: CHAT_P2P, count: 2 }),
+    );
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_p2p_2', 'om_p2p_3']);
+    expect(h.intake.every((msg) => msg.chatType === 'p2p' && msg.mentionedBot === false)).toBe(true);
+    expect(h.ledger.has('om_p2p_0')).toBe(true);
+    expect(h.ledger.has('om_p2p_1')).toBe(true);
+  });
+
+  it('preserves session-known p2p chats when maxChats truncates a long group list', async () => {
+    const h = await harness({
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+        { id: CHAT_C, name: 'C' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'a', NOW - 10_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'b', NOW - 10_000)],
+        [CHAT_C]: [mentionItem('om_c', CHAT_C, 'c', NOW - 10_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxChats: 3 },
+    }));
+    expect(h.list).toEqual([CHAT_A, CHAT_B, CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a', 'om_b', 'om_dm']);
+    expect(h.intake.find((msg) => msg.messageId === 'om_dm')?.chatType).toBe('p2p');
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'chats-truncated', dropped: 1 }),
+    );
+  });
+
+  it('keeps session-known p2p when prefs.chats allowlists groups', async () => {
+    const h = await harness({
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'a', NOW - 10_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'b', NOW - 10_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, chats: [CHAT_B] },
+    }));
+    expect(h.list).toEqual([CHAT_B, CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_b', 'om_dm']);
+    expect(h.intake.find((msg) => msg.messageId === 'om_dm')?.chatType).toBe('p2p');
+  });
+
+  it('scans session-known p2p when listChats fails and keeps the incomplete window', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      listChatsError: new Error('chats down'),
+    }));
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'chats-fetch-failed' }),
+    );
+    expect(h.list).toEqual([CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_dm']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', fetchFailures: 0, enqueuedTotal: 1 }),
+    );
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+
+    h.intake.length = 0;
+    h.ledger.touchLive(NOW);
+    const retry = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_group']);
+    expect(events(retry, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'done', enqueuedTotal: 1 }),
+    );
+    expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
+  });
+
+  it('keeps the scan incomplete when session p2p mode lookup fails', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: new Error('mode down') },
+    }));
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'mode-resolve-failed', chatId: CHAT_P2P }),
+    );
+    expect(h.list).toEqual([CHAT_A]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_group']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        fetchFailures: 0,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+  });
+
+  it('deduplicates session scopes and bounds unique mode lookups to maxChats, unlisted first', async () => {
+    const extras = Array.from({ length: 4 }, (_, i) => `oc_extra_${i}`);
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'a', NOW - 10_000, { threadId: 'omt_a' })],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    const modeLookups: string[] = [];
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [
+        CHAT_A,
+        `${CHAT_A}:thread`,
+        CHAT_P2P,
+        CHAT_P2P,
+        `${CHAT_P2P}:topic`,
+        ...extras,
+      ],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      modeLookups,
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxChats: 2 },
+    }));
+    expect(modeLookups.slice().sort()).toEqual([CHAT_P2P, 'oc_extra_0'].sort());
+    expect(h.list).toEqual([CHAT_A, CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a', 'om_dm']);
+  });
+
+  it('classifies unique session chats concurrently', async () => {
+    const chats = ['oc_p2p_a', 'oc_p2p_b', 'oc_p2p_c', 'oc_p2p_d'];
+    const h = await harness({ chats: [], messages: {} });
+    let inFlight = 0;
+    let peak = 0;
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: chats,
+      chatModes: Object.fromEntries(chats.map((id) => [id, 'p2p' as const])),
+      onGetChatMode: async () => {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        inFlight -= 1;
+      },
+    }));
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it('scans session-known p2p in personal mode without a chat allowlist', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
+        [CHAT_P2P]: [humanItem('om_dm', CHAT_P2P, '在？', NOW - 10_000)],
+      },
+    });
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      profile: { mode: 'personal', access: { allowedChats: [] } },
+    }));
+    expect(h.list).toEqual([CHAT_P2P]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_dm']);
+    expect(h.intake[0]?.chatType).toBe('p2p');
+  });
+
+  it('marks a p2p chat-fetch failure incomplete without advancing lastBackfillEnd', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 10_000)] },
+      listErrors: { [CHAT_P2P]: Object.assign(new Error('dm denied'), { code: 99991663 }) },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_group']);
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'chat-fetch-failed', chatId: CHAT_P2P, code: 99991663 }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', fetchFailures: 1, enqueuedTotal: 1 }),
+    );
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
   });
 
   it('pages chat history with second-resolution bounds and bot-identity list', async () => {
@@ -567,6 +933,11 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   refreshKnownChats?: (chats: Array<{ id: string; name: string }>) => void;
   isClosing?: () => boolean;
   onIntake?: (msg: NormalizedMessage) => void;
+  sessionChatIds?: string[];
+  chatModes?: Record<string, 'p2p' | 'group' | 'topic'>;
+  chatModeErrors?: Record<string, Error>;
+  modeLookups?: string[];
+  onGetChatMode?: (chatId: string) => Promise<void>;
 }): Promise<RunBackfillDeps> {
   const channel = fakeChannel({
     identity: input.botOpenId === null ? undefined : { openId: input.botOpenId ?? BOT, name: 'Bot' },
@@ -578,6 +949,10 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     listErrors: input.listErrors,
     listChatsError: input.listChatsError,
     listChatsHold: input.listChatsHold,
+    chatModes: input.chatModes,
+    chatModeErrors: input.chatModeErrors,
+    modeLookups: input.modeLookups,
+    onGetChatMode: input.onGetChatMode,
   });
   const marks = new Map<string, { detectedAt: number }>();
   return {
@@ -590,6 +965,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     marks,
     isClosing: input.isClosing ?? (() => false),
     refreshKnownChats: input.refreshKnownChats,
+    sessionChatIds: input.sessionChatIds,
     intake: async (msg) => {
       input.intake.push(msg);
       input.onIntake?.(msg);
@@ -608,6 +984,10 @@ function fakeChannel(opts: {
   listErrors: Record<string, Error>;
   listChatsError?: Error;
   listChatsHold?: Promise<void>;
+  chatModes?: Record<string, 'p2p' | 'group' | 'topic'>;
+  chatModeErrors?: Record<string, Error>;
+  modeLookups?: string[];
+  onGetChatMode?: (chatId: string) => Promise<void>;
 }): BackfillChannel {
   return {
     botIdentity: opts.identity,
@@ -617,8 +997,12 @@ function fakeChannel(opts: {
       if (opts.listChatsError) throw opts.listChatsError;
       return opts.chats;
     },
-    async getChatMode() {
-      return 'group';
+    async getChatMode(chatId) {
+      opts.modeLookups?.push(chatId);
+      await opts.onGetChatMode?.(chatId);
+      const error = opts.chatModeErrors?.[chatId];
+      if (error) throw error;
+      return opts.chatModes?.[chatId] ?? 'group';
     },
     async fetchRawMessage() {
       return [];
@@ -681,6 +1065,29 @@ function mentionItem(
     body: { content: JSON.stringify({ text: `@_user_1 ${text}` }) },
     mentions: [{ key: '@_user_1', id: BOT, id_type: 'open_id', name: 'Bot' }],
     ...(extra.threadId ? { thread_id: extra.threadId } : {}),
+  };
+}
+
+function humanItem(
+  messageId: string,
+  chatId: string,
+  text: string,
+  createTime: number,
+  extra: { senderId?: string } = {},
+): Record<string, unknown> {
+  return {
+    message_id: messageId,
+    chat_id: chatId,
+    msg_type: 'text',
+    create_time: String(createTime),
+    deleted: false,
+    sender: {
+      id: extra.senderId ?? USER,
+      id_type: 'open_id',
+      sender_type: 'user',
+    },
+    body: { content: JSON.stringify({ text }) },
+    mentions: [],
   };
 }
 

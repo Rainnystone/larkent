@@ -29,6 +29,7 @@ export const REQUIRED_BACKFILL_EVENTS = [
   'backfill.aborted',
   'backfill.chats-fetch-failed',
   'backfill.chat-fetch-failed',
+  'backfill.mode-resolve-failed',
   'backfill.normalize-failed',
   'backfill.clock-skew',
   'backfill.skip-deleted',

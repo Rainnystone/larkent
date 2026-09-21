@@ -50,7 +50,7 @@ One turn → one bridge-owned final reply. Agents must not post the final answer
 | `workspaces.default` | profile 默认工作目录 |
 | `preferences.model` | 传给对应 CLI 的模型选择 |
 | `preferences.showToolCalls` | 是否展示工具过程 |
-| `preferences.backfill` | 离线 @mention 回补的开关与窗口（`enabled` / `dryRun` / lookback 等；缺省即默认值） |
+| `preferences.backfill` | 离线回补的开关与窗口（`enabled` / `dryRun` / lookback 等；`maxMentionsPerChat` 对群 @ 和 session-known p2p 人话都封顶；缺省即默认值） |
 | `mode` | `team` 或带访问名单的 `personal` |
 | `access.allowedUsers/allowedChats/admins` | 用户、群和管理员名单 |
 | `larkCli.identityPreset` | `user-default` 允许使用已授权用户身份 |
@@ -72,7 +72,7 @@ Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并�
 
 ## Self-heal
 
-Sleep, a process restart, or a short WebSocket blip can drop live @mentions. The bridge catches them up on its own: it pulls recent group history with bot identity, runs each missed @ through the normal intake path once, and adds one lateness hint to the prompt. No external poller or host routine.
+Sleep, a process restart, or a short WebSocket blip can drop live messages. The bridge catches them up on its own: it pulls recent group history plus session-known DMs with bot identity, runs each survivor through the normal intake path once, and adds one lateness hint to the prompt. Groups still need an @mention. Ordinary human DMs do not. A first-contact DM with no prior session is out of scope (the user can resend). `maxMentionsPerChat` caps newest-first enqueue per chat for both. Personal-mode DM allowlisting stays on the live intake path. There is no `/config` toggle for backfill. No external poller or host routine.
 
 Watch the profile log for this sequence:
 

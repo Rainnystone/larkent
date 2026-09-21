@@ -408,6 +408,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       refreshKnownChats: (chats) => {
         controls.knownChats = chats;
       },
+      sessionChatIds: [
+        ...sessions.scopeIds(),
+        ...(sessionCatalog?.entries().map((entry) => entry.scopeId) ?? []),
+      ],
       intake: (msg) => handOffIntake(msg, 'backfill'),
     }), 'backfill');
   };

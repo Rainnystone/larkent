@@ -4,6 +4,7 @@ import type { BackfillPreferences } from '../config/schema';
 import type { ProfileMode } from '../config/profile-schema';
 import { log, reportMetric } from '../core/logger';
 import type { BackfillLedger } from './backfill-ledger';
+import type { ChatMode } from './chat-mode-cache';
 import type { KnownChat } from './lark-info';
 import { createMergeForwardFetch } from './quote';
 
@@ -41,6 +42,7 @@ export interface RunBackfillDeps {
   marks: Map<string, BackfillMark>;
   isClosing?: () => boolean;
   refreshKnownChats?: (chats: KnownChat[]) => void;
+  sessionChatIds?: string[];
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -134,19 +136,37 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     windowEnd: window.windowEnd,
   });
 
-  let listed: Array<{ id: string; name: string }>;
+  let listed: Array<{ id: string; name: string }> = [];
+  let chatsFetchFailed = false;
   try {
     listed = await deps.channel.listChats({ pageSize: 100, maxPages: 5 });
   } catch (error) {
     log.warn('backfill', 'chats-fetch-failed', { err: errorMessage(error) });
-    return;
+    chatsFetchFailed = true;
   }
-  deps.refreshKnownChats?.(listed.map((chat) => ({
-    id: chat.id,
-    name: chat.name || '(无名)',
-  })));
+  if (!chatsFetchFailed) {
+    deps.refreshKnownChats?.(listed.map((chat) => ({
+      id: chat.id,
+      name: chat.name || '(无名)',
+    })));
+  }
 
-  const inScope = selectInScopeChats(listed, deps.prefs, deps.profile);
+  const resolveMode = createChatModeResolver(deps.channel);
+  const listedIds = new Set(listed.map((chat) => chat.id));
+  const classified = await classifySessionP2pIds(
+    resolveMode,
+    deps.sessionChatIds ?? [],
+    listedIds,
+    deps.prefs.maxChats,
+  );
+  const sessionP2pIds = classified.ids;
+  const combined = [
+    ...listed,
+    ...[...sessionP2pIds]
+      .filter((chatId) => !listedIds.has(chatId))
+      .map((chatId) => ({ id: chatId, name: '' })),
+  ];
+  const inScope = selectInScopeChats(combined, sessionP2pIds, deps.prefs, deps.profile);
   log.info('backfill', 'chats', {
     listed: listed.length,
     inScope: inScope.chats.length,
@@ -170,6 +190,8 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
       now,
       deps,
       botOpenId: identity.openId,
+      sessionP2pIds,
+      resolveMode,
     });
     if (result === 'aborted') {
       aborted = true;
@@ -185,17 +207,18 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   }
 
   const durationMs = Date.now() - startedAt;
-  if (fetchFailures > 0) {
+  if (fetchFailures > 0 || chatsFetchFailed || classified.unresolved > 0) {
     deps.ledger.markScanIncomplete(lastLiveAt);
     log.info('backfill', 'incomplete', {
       chats: inScope.chats.length,
       enqueuedTotal,
       fetchFailures,
+      modeLookupFailures: classified.unresolved,
       durationMs,
     });
     reportMetric('backfill_enqueued', enqueuedTotal);
     reportMetric('backfill_duration_ms', durationMs);
-    reportMetric('backfill_chat_fetch_failed', fetchFailures);
+    if (fetchFailures > 0) reportMetric('backfill_chat_fetch_failed', fetchFailures);
     return;
   }
 
@@ -212,20 +235,21 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
 
 function selectInScopeChats(
   listed: Array<{ id: string; name: string }>,
+  sessionP2pIds: Set<string>,
   prefs: BackfillPreferences,
   profile: { mode: ProfileMode; access: { allowedChats: string[] } },
 ): { chats: Array<{ id: string; name: string }>; dropped: number } {
   let scoped = listed;
   if (prefs.chats.length > 0) {
     const allow = new Set(prefs.chats);
-    scoped = scoped.filter((chat) => allow.has(chat.id));
+    scoped = scoped.filter((chat) => sessionP2pIds.has(chat.id) || allow.has(chat.id));
   }
   switch (profile.mode) {
     case 'team':
       break;
     case 'personal': {
       const allow = new Set(profile.access.allowedChats);
-      scoped = scoped.filter((chat) => allow.has(chat.id));
+      scoped = scoped.filter((chat) => sessionP2pIds.has(chat.id) || allow.has(chat.id));
       break;
     }
     default: {
@@ -235,9 +259,26 @@ function selectInScopeChats(
   }
   const dropped = Math.max(0, scoped.length - prefs.maxChats);
   return {
-    chats: dropped > 0 ? scoped.slice(0, prefs.maxChats) : scoped,
+    chats: dropped > 0 ? capCombinedChats(scoped, sessionP2pIds, prefs.maxChats) : scoped,
     dropped,
   };
+}
+
+function capCombinedChats(
+  scoped: Array<{ id: string; name: string }>,
+  sessionP2pIds: Set<string>,
+  maxChats: number,
+): Array<{ id: string; name: string }> {
+  const p2p: Array<{ id: string; name: string }> = [];
+  const groups: Array<{ id: string; name: string }> = [];
+  for (const chat of scoped) {
+    if (sessionP2pIds.has(chat.id)) p2p.push(chat);
+    else groups.push(chat);
+  }
+  const keptP2p = p2p.slice(0, maxChats);
+  const keptGroups = groups.slice(0, Math.max(0, maxChats - keptP2p.length));
+  const keep = new Set([...keptP2p, ...keptGroups].map((chat) => chat.id));
+  return scoped.filter((chat) => keep.has(chat.id));
 }
 
 async function scanChat(input: {
@@ -246,8 +287,10 @@ async function scanChat(input: {
   now: number;
   deps: RunBackfillDeps;
   botOpenId: string;
+  sessionP2pIds: Set<string>;
+  resolveMode: (chatId: string) => Promise<ChatMode>;
 }): Promise<{ enqueued: number } | 'fetch-failed' | 'aborted'> {
-  const { chatId, window, now, deps, botOpenId } = input;
+  const { chatId, window, now, deps, botOpenId, sessionP2pIds, resolveMode } = input;
   let rawItems: HistoryItem[];
   try {
     rawItems = await listChatHistory(deps.channel, chatId, window, deps.prefs.maxRawPerChat);
@@ -260,7 +303,8 @@ async function scanChat(input: {
     return 'fetch-failed';
   }
 
-  if (await isTopicPartial(deps.channel, chatId, rawItems)) {
+  const chatType: ChatMode = sessionP2pIds.has(chatId) ? 'p2p' : 'group';
+  if (chatType !== 'p2p' && await isTopicPartial(resolveMode, chatId, rawItems)) {
     log.info('backfill', 'topic-partial', { chatId });
   }
 
@@ -268,7 +312,7 @@ async function scanChat(input: {
   let skippedProcessed = 0;
   let skippedCommand = 0;
   for (const item of rawItems) {
-    const filtered = await filterHistoryItem(item, chatId, botOpenId, deps);
+    const filtered = await filterHistoryItem(item, chatId, chatType, botOpenId, deps);
     if (filtered.kind === 'mention') mentions.push(filtered.msg);
     else if (filtered.kind === 'processed') skippedProcessed += 1;
     else if (filtered.kind === 'command') skippedCommand += 1;
@@ -323,6 +367,7 @@ async function scanChat(input: {
 async function filterHistoryItem(
   item: HistoryItem,
   chatId: string,
+  chatType: ChatMode,
   botOpenId: string,
   deps: RunBackfillDeps,
 ): Promise<
@@ -341,7 +386,7 @@ async function filterHistoryItem(
   }
   let msg: NormalizedMessage;
   try {
-    msg = await normalizeHistoryItem(item, chatId, deps.channel, botOpenId);
+    msg = await normalizeHistoryItem(item, chatId, chatType, deps.channel, botOpenId);
   } catch (error) {
     log.warn('backfill', 'normalize-failed', {
       chatId,
@@ -350,7 +395,18 @@ async function filterHistoryItem(
     });
     return { kind: 'drop' };
   }
-  if (!msg.mentionedBot) return { kind: 'drop' };
+  switch (chatType) {
+    case 'p2p':
+      break;
+    case 'group':
+    case 'topic':
+      if (!msg.mentionedBot) return { kind: 'drop' };
+      break;
+    default: {
+      const _exhaustive: never = chatType;
+      return _exhaustive;
+    }
+  }
   if (deps.ledger.has(msg.messageId)) {
     log.info('backfill', 'skip-processed', { msgId: msg.messageId, chatId });
     return { kind: 'processed' };
@@ -365,6 +421,7 @@ async function filterHistoryItem(
 async function normalizeHistoryItem(
   item: HistoryItem,
   chatId: string,
+  chatType: ChatMode,
   channel: BackfillChannel,
   botOpenId: string,
 ): Promise<NormalizedMessage> {
@@ -377,7 +434,7 @@ async function normalizeHistoryItem(
     message: {
       message_id: item.message_id ?? '',
       chat_id: item.chat_id || chatId,
-      chat_type: 'group',
+      chat_type: rawChatType(chatType),
       message_type: item.msg_type ?? 'text',
       content: item.body?.content ?? '',
       ...(item.create_time !== undefined ? { create_time: String(item.create_time) } : {}),
@@ -455,18 +512,103 @@ async function listChatHistory(
   return kept;
 }
 
+const SESSION_CHAT_MODE_CONCURRENCY = 8;
+
+async function classifySessionP2pIds(
+  resolveMode: (chatId: string) => Promise<ChatMode>,
+  sessionChatIds: string[],
+  listedIds: Set<string>,
+  maxChats: number,
+): Promise<{ ids: Set<string>; unresolved: number }> {
+  const ids = new Set<string>();
+  let unresolved = 0;
+  await mapPool(
+    uniqueSessionChatIds(sessionChatIds, listedIds, maxChats),
+    SESSION_CHAT_MODE_CONCURRENCY,
+    async (chatId) => {
+      try {
+        if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
+      } catch (error) {
+        unresolved += 1;
+        log.warn('backfill', 'mode-resolve-failed', {
+          chatId,
+          err: errorMessage(error),
+        });
+      }
+    },
+  );
+  return { ids, unresolved };
+}
+
+function uniqueSessionChatIds(
+  sessionChatIds: string[],
+  listedIds: Set<string>,
+  maxChats: number,
+): string[] {
+  const unlisted: string[] = [];
+  const listed: string[] = [];
+  const seen = new Set<string>();
+  for (const scope of sessionChatIds) {
+    const chatId = chatIdFromScope(scope);
+    if (!chatId || seen.has(chatId)) continue;
+    seen.add(chatId);
+    if (listedIds.has(chatId)) listed.push(chatId);
+    else unlisted.push(chatId);
+  }
+  return [...unlisted, ...listed].slice(0, maxChats);
+}
+
 async function isTopicPartial(
-  channel: BackfillChannel,
+  resolveMode: (chatId: string) => Promise<ChatMode>,
   chatId: string,
   items: HistoryItem[],
 ): Promise<boolean> {
   if (items.some((item) => Boolean(item.thread_id))) return true;
-  if (!channel.getChatMode) return false;
   try {
-    return await channel.getChatMode(chatId) === 'topic';
+    return await resolveMode(chatId) === 'topic';
   } catch {
     return false;
   }
+}
+
+function createChatModeResolver(
+  channel: BackfillChannel,
+): (chatId: string) => Promise<ChatMode> {
+  const cache = new Map<string, ChatMode>();
+  return async (chatId) => {
+    const hit = cache.get(chatId);
+    if (hit) return hit;
+    const mode = await resolveChatMode(channel, chatId);
+    cache.set(chatId, mode);
+    return mode;
+  };
+}
+
+function rawChatType(chatType: ChatMode): 'p2p' | 'group' {
+  switch (chatType) {
+    case 'p2p':
+      return 'p2p';
+    case 'group':
+    case 'topic':
+      return 'group';
+    default: {
+      const _exhaustive: never = chatType;
+      return _exhaustive;
+    }
+  }
+}
+
+async function resolveChatMode(
+  channel: BackfillChannel,
+  chatId: string,
+): Promise<ChatMode> {
+  if (!channel.getChatMode) return 'group';
+  return await channel.getChatMode(chatId);
+}
+
+function chatIdFromScope(scope: string): string {
+  const cut = scope.indexOf(':');
+  return (cut === -1 ? scope : scope.slice(0, cut)).trim();
 }
 
 function isBackfillCommand(content: string): boolean {
@@ -570,4 +712,24 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+async function mapPool<T>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  if (items.length === 0) return;
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next;
+      next += 1;
+      const item = items[index];
+      if (item === undefined) return;
+      await fn(item);
+    }
+  };
+  const n = Math.min(Math.max(1, concurrency), items.length);
+  await Promise.all(Array.from({ length: n }, () => worker()));
 }

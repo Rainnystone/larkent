@@ -67,6 +67,10 @@ export class SessionStore {
     return this.data[chatId];
   }
 
+  scopeIds(): string[] {
+    return Object.keys(this.data);
+  }
+
   set(chatId: string, resumeHandle: string, cwd: string): void {
     this.assertMutable();
     // Preserve idleTimeoutMinutes across run starts — it's a per-scope
