@@ -4,6 +4,7 @@ import type { BackfillPreferences } from '../config/schema';
 import type { ProfileMode } from '../config/profile-schema';
 import { log, reportMetric } from '../core/logger';
 import type { BackfillLedger } from './backfill-ledger';
+import type { ChatMode } from './chat-mode-cache';
 import type { KnownChat } from './lark-info';
 import { createMergeForwardFetch } from './quote';
 
@@ -41,6 +42,7 @@ export interface RunBackfillDeps {
   marks: Map<string, BackfillMark>;
   isClosing?: () => boolean;
   refreshKnownChats?: (chats: KnownChat[]) => void;
+  sessionChatIds?: string[];
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -146,7 +148,15 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     name: chat.name || '(无名)',
   })));
 
-  const inScope = selectInScopeChats(listed, deps.prefs, deps.profile);
+  const sessionP2pIds = await classifySessionP2pIds(deps.channel, deps.sessionChatIds ?? []);
+  const listedIds = new Set(listed.map((chat) => chat.id));
+  const combined = [
+    ...listed,
+    ...[...sessionP2pIds]
+      .filter((chatId) => !listedIds.has(chatId))
+      .map((chatId) => ({ id: chatId, name: '' })),
+  ];
+  const inScope = selectInScopeChats(combined, sessionP2pIds, deps.prefs, deps.profile);
   log.info('backfill', 'chats', {
     listed: listed.length,
     inScope: inScope.chats.length,
@@ -212,6 +222,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
 
 function selectInScopeChats(
   listed: Array<{ id: string; name: string }>,
+  sessionP2pIds: Set<string>,
   prefs: BackfillPreferences,
   profile: { mode: ProfileMode; access: { allowedChats: string[] } },
 ): { chats: Array<{ id: string; name: string }>; dropped: number } {
@@ -225,7 +236,7 @@ function selectInScopeChats(
       break;
     case 'personal': {
       const allow = new Set(profile.access.allowedChats);
-      scoped = scoped.filter((chat) => allow.has(chat.id));
+      scoped = scoped.filter((chat) => sessionP2pIds.has(chat.id) || allow.has(chat.id));
       break;
     }
     default: {
@@ -260,7 +271,8 @@ async function scanChat(input: {
     return 'fetch-failed';
   }
 
-  if (await isTopicPartial(deps.channel, chatId, rawItems)) {
+  const chatType = await resolveChatMode(deps.channel, chatId);
+  if (rawItems.some((item) => Boolean(item.thread_id)) || chatType === 'topic') {
     log.info('backfill', 'topic-partial', { chatId });
   }
 
@@ -268,7 +280,7 @@ async function scanChat(input: {
   let skippedProcessed = 0;
   let skippedCommand = 0;
   for (const item of rawItems) {
-    const filtered = await filterHistoryItem(item, chatId, botOpenId, deps);
+    const filtered = await filterHistoryItem(item, chatId, chatType, botOpenId, deps);
     if (filtered.kind === 'mention') mentions.push(filtered.msg);
     else if (filtered.kind === 'processed') skippedProcessed += 1;
     else if (filtered.kind === 'command') skippedCommand += 1;
@@ -323,6 +335,7 @@ async function scanChat(input: {
 async function filterHistoryItem(
   item: HistoryItem,
   chatId: string,
+  chatType: ChatMode,
   botOpenId: string,
   deps: RunBackfillDeps,
 ): Promise<
@@ -341,7 +354,7 @@ async function filterHistoryItem(
   }
   let msg: NormalizedMessage;
   try {
-    msg = await normalizeHistoryItem(item, chatId, deps.channel, botOpenId);
+    msg = await normalizeHistoryItem(item, chatId, chatType, deps.channel, botOpenId);
   } catch (error) {
     log.warn('backfill', 'normalize-failed', {
       chatId,
@@ -350,7 +363,18 @@ async function filterHistoryItem(
     });
     return { kind: 'drop' };
   }
-  if (!msg.mentionedBot) return { kind: 'drop' };
+  switch (chatType) {
+    case 'p2p':
+      break;
+    case 'group':
+    case 'topic':
+      if (!msg.mentionedBot) return { kind: 'drop' };
+      break;
+    default: {
+      const _exhaustive: never = chatType;
+      return _exhaustive;
+    }
+  }
   if (deps.ledger.has(msg.messageId)) {
     log.info('backfill', 'skip-processed', { msgId: msg.messageId, chatId });
     return { kind: 'processed' };
@@ -365,6 +389,7 @@ async function filterHistoryItem(
 async function normalizeHistoryItem(
   item: HistoryItem,
   chatId: string,
+  chatType: ChatMode,
   channel: BackfillChannel,
   botOpenId: string,
 ): Promise<NormalizedMessage> {
@@ -377,7 +402,7 @@ async function normalizeHistoryItem(
     message: {
       message_id: item.message_id ?? '',
       chat_id: item.chat_id || chatId,
-      chat_type: 'group',
+      chat_type: rawChatType(chatType),
       message_type: item.msg_type ?? 'text',
       content: item.body?.content ?? '',
       ...(item.create_time !== undefined ? { create_time: String(item.create_time) } : {}),
@@ -455,18 +480,48 @@ async function listChatHistory(
   return kept;
 }
 
-async function isTopicPartial(
+async function classifySessionP2pIds(
+  channel: BackfillChannel,
+  sessionChatIds: string[],
+): Promise<Set<string>> {
+  const ids = new Set<string>();
+  for (const scope of sessionChatIds) {
+    const chatId = chatIdFromScope(scope);
+    if (!chatId || ids.has(chatId)) continue;
+    if (await resolveChatMode(channel, chatId) === 'p2p') ids.add(chatId);
+  }
+  return ids;
+}
+
+function rawChatType(chatType: ChatMode): 'p2p' | 'group' {
+  switch (chatType) {
+    case 'p2p':
+      return 'p2p';
+    case 'group':
+    case 'topic':
+      return 'group';
+    default: {
+      const _exhaustive: never = chatType;
+      return _exhaustive;
+    }
+  }
+}
+
+async function resolveChatMode(
   channel: BackfillChannel,
   chatId: string,
-  items: HistoryItem[],
-): Promise<boolean> {
-  if (items.some((item) => Boolean(item.thread_id))) return true;
-  if (!channel.getChatMode) return false;
+): Promise<ChatMode> {
+  if (!channel.getChatMode) return 'group';
   try {
-    return await channel.getChatMode(chatId) === 'topic';
+    return await channel.getChatMode(chatId);
   } catch {
-    return false;
+    return 'group';
   }
+}
+
+function chatIdFromScope(scope: string): string {
+  const cut = scope.indexOf(':');
+  return (cut === -1 ? scope : scope.slice(0, cut)).trim();
 }
 
 function isBackfillCommand(content: string): boolean {
