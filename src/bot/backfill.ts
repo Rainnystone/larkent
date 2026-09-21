@@ -136,17 +136,20 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     windowEnd: window.windowEnd,
   });
 
-  let listed: Array<{ id: string; name: string }>;
+  let listed: Array<{ id: string; name: string }> = [];
+  let chatsFetchFailed = false;
   try {
     listed = await deps.channel.listChats({ pageSize: 100, maxPages: 5 });
   } catch (error) {
     log.warn('backfill', 'chats-fetch-failed', { err: errorMessage(error) });
-    return;
+    chatsFetchFailed = true;
   }
-  deps.refreshKnownChats?.(listed.map((chat) => ({
-    id: chat.id,
-    name: chat.name || '(无名)',
-  })));
+  if (!chatsFetchFailed) {
+    deps.refreshKnownChats?.(listed.map((chat) => ({
+      id: chat.id,
+      name: chat.name || '(无名)',
+    })));
+  }
 
   const resolveMode = createChatModeResolver(deps.channel);
   const sessionP2pIds = await classifySessionP2pIds(resolveMode, deps.sessionChatIds ?? []);
@@ -198,7 +201,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   }
 
   const durationMs = Date.now() - startedAt;
-  if (fetchFailures > 0) {
+  if (fetchFailures > 0 || chatsFetchFailed) {
     deps.ledger.markScanIncomplete(lastLiveAt);
     log.info('backfill', 'incomplete', {
       chats: inScope.chats.length,
@@ -208,7 +211,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     });
     reportMetric('backfill_enqueued', enqueuedTotal);
     reportMetric('backfill_duration_ms', durationMs);
-    reportMetric('backfill_chat_fetch_failed', fetchFailures);
+    if (fetchFailures > 0) reportMetric('backfill_chat_fetch_failed', fetchFailures);
     return;
   }
 
@@ -232,7 +235,7 @@ function selectInScopeChats(
   let scoped = listed;
   if (prefs.chats.length > 0) {
     const allow = new Set(prefs.chats);
-    scoped = scoped.filter((chat) => allow.has(chat.id));
+    scoped = scoped.filter((chat) => sessionP2pIds.has(chat.id) || allow.has(chat.id));
   }
   switch (profile.mode) {
     case 'team':
