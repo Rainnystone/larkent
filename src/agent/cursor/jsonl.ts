@@ -20,9 +20,11 @@ export interface ProtocolDriftState {
  *   {"type":"tool_call","subtype":"completed","call_id":"...","tool_call":{...}}
  *   {"type":"result","subtype":"success","result":"...","session_id":"..."}
  *
- * Intermediate assistant texts are forwarded as `text` deltas; the last one
- * is held back as `final_text`. `result.result` concatenates every assistant
- * segment without separators, so it is never used as the reply body.
+ * Intermediate assistant texts are held back; the last one is emitted as
+ * `final_text`. On `tool_call`, pending assistant text is discarded so
+ * pre-tool plan monologues never reach Feishu. `result.result` concatenates
+ * every assistant segment without separators, so it is never used as the
+ * reply body.
  */
 export class CursorJsonlTranslator {
   private sessionId: string | undefined;
@@ -53,7 +55,8 @@ export class CursorJsonlTranslator {
       case 'assistant':
         return this.translateAssistant(raw);
       case 'tool_call':
-        return this.prependPendingText(this.translateToolCall(raw));
+        this.pendingAssistantText = undefined;
+        return this.translateToolCall(raw);
       case 'result':
         return this.translateResult(raw);
       default:
@@ -177,11 +180,8 @@ export class CursorJsonlTranslator {
 
   private queueAssistantText(message: string): AgentEvent[] {
     if (message === this.pendingAssistantText) return [];
-    const events = this.pendingAssistantText
-      ? [{ type: 'text' as const, delta: `${this.pendingAssistantText}\n\n` }]
-      : [];
     this.pendingAssistantText = message;
-    return events;
+    return [];
   }
 
   private prependPendingText(events: AgentEvent[]): AgentEvent[] {
