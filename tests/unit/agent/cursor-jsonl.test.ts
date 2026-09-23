@@ -27,6 +27,18 @@ function collect(translator: CursorJsonlTranslator, lines: unknown[]): AgentEven
   return lines.flatMap((line) => translator.translate(line));
 }
 
+function assistantMessage(text: string) {
+  return {
+    type: 'assistant',
+    message: { role: 'assistant', content: [{ type: 'text', text }] },
+    session_id: SESSION,
+  };
+}
+
+function textDeltas(events: AgentEvent[]): AgentEvent[] {
+  return events.filter((event) => event.type === 'text');
+}
+
 describe('CursorJsonlTranslator', () => {
   it('maps a plain text run to system + final_text + done from the result line', () => {
     const t = new CursorJsonlTranslator();
@@ -109,13 +121,10 @@ describe('CursorJsonlTranslator', () => {
     ]);
   });
 
-  it('streams intermediate assistant messages as text deltas', () => {
+  it('holds back pre-tool assistant text instead of streaming it as text deltas', () => {
     const t = new CursorJsonlTranslator();
     const events = collect(t, [
-      {
-        type: 'assistant',
-        message: { role: 'assistant', content: [{ type: 'text', text: 'Let me check.' }] },
-      },
+      assistantMessage('Let me check.'),
       {
         type: 'tool_call',
         subtype: 'started',
@@ -133,14 +142,11 @@ describe('CursorJsonlTranslator', () => {
           },
         },
       },
-      {
-        type: 'assistant',
-        message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] },
-      },
+      assistantMessage('Done.'),
       RESULT,
     ]);
+    expect(textDeltas(events)).toEqual([]);
     expect(events).toEqual([
-      { type: 'text', delta: 'Let me check.\n\n' },
       {
         type: 'tool_use',
         id: 'tool_1',
@@ -155,6 +161,197 @@ describe('CursorJsonlTranslator', () => {
       },
       { type: 'final_text', content: 'Done.' },
       { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
+    ]);
+  });
+
+  it('holds Opus-shaped multi-segment plan text and only emits the post-tool answer as final_text', () => {
+    const plan =
+      "I'll inspect the workspace first.\n\nPlan:\n1. Read the current file\n2. Summarize what I find";
+    const followUp = 'Starting with the README.';
+    const answer = 'The README describes Larkent.';
+    const t = new CursorJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      { type: 'thinking' },
+      assistantMessage(plan),
+      assistantMessage(followUp),
+      { type: 'thinking' },
+      {
+        type: 'tool_call',
+        subtype: 'started',
+        call_id: 'tool_1',
+        tool_call: { readToolCall: { args: { path: 'README.md' } } },
+        session_id: SESSION,
+      },
+      {
+        type: 'tool_call',
+        subtype: 'completed',
+        call_id: 'tool_1',
+        tool_call: {
+          readToolCall: {
+            args: { path: 'README.md' },
+            result: { success: { content: '# Larkent', totalLines: 1 } },
+          },
+        },
+        session_id: SESSION,
+      },
+      assistantMessage(answer),
+      RESULT,
+    ]);
+    expect(textDeltas(events)).toEqual([]);
+    expect(events.some((event) => 'delta' in event && String(event.delta).includes('Plan:'))).toBe(
+      false,
+    );
+    expect(events).toEqual([
+      { type: 'system', resumeHandle: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
+      { type: 'tool_use', id: 'tool_1', name: 'Read', input: { path: 'README.md' } },
+      {
+        type: 'tool_result',
+        id: 'tool_1',
+        output: JSON.stringify({ content: '# Larkent', totalLines: 1 }),
+        isError: false,
+      },
+      { type: 'final_text', content: answer },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('replaces a held assistant segment without emitting the earlier one as text', () => {
+    const t = new CursorJsonlTranslator();
+    const events = collect(t, [
+      assistantMessage('First draft.'),
+      assistantMessage('Better answer.'),
+      RESULT,
+    ]);
+    expect(textDeltas(events)).toEqual([]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: 'Better answer.',
+    });
+  });
+
+  it('clears pending assistant text on each tool_call and keeps only the last answer as final_text', () => {
+    const t = new CursorJsonlTranslator();
+    const events = collect(t, [
+      assistantMessage("I'll read the first file."),
+      {
+        type: 'tool_call',
+        subtype: 'started',
+        call_id: 'tool_1',
+        tool_call: { readToolCall: { args: { path: 'a.md' } } },
+      },
+      {
+        type: 'tool_call',
+        subtype: 'completed',
+        call_id: 'tool_1',
+        tool_call: {
+          readToolCall: {
+            args: { path: 'a.md' },
+            result: { success: { content: '', totalLines: 0 } },
+          },
+        },
+      },
+      assistantMessage('Now the second file.'),
+      {
+        type: 'tool_call',
+        subtype: 'started',
+        call_id: 'tool_2',
+        tool_call: { readToolCall: { args: { path: 'b.md' } } },
+      },
+      {
+        type: 'tool_call',
+        subtype: 'completed',
+        call_id: 'tool_2',
+        tool_call: {
+          readToolCall: {
+            args: { path: 'b.md' },
+            result: { success: { content: '', totalLines: 0 } },
+          },
+        },
+      },
+      assistantMessage('Both files are empty.'),
+      RESULT,
+    ]);
+    expect(textDeltas(events)).toEqual([]);
+    expect(events.filter((event) => event.type === 'final_text')).toEqual([
+      { type: 'final_text', content: 'Both files are empty.' },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_use')).toEqual([
+      { type: 'tool_use', id: 'tool_1', name: 'Read', input: { path: 'a.md' } },
+      { type: 'tool_use', id: 'tool_2', name: 'Read', input: { path: 'b.md' } },
+    ]);
+  });
+
+  it('does not emit text for a duplicated pre-tool assistant segment', () => {
+    const t = new CursorJsonlTranslator();
+    const events = collect(t, [
+      assistantMessage('Let me check.'),
+      assistantMessage('Let me check.'),
+      {
+        type: 'tool_call',
+        subtype: 'started',
+        call_id: 'tool_1',
+        tool_call: { writeToolCall: { args: { path: 'summary.txt', fileText: 'x' } } },
+      },
+      {
+        type: 'tool_call',
+        subtype: 'completed',
+        call_id: 'tool_1',
+        tool_call: {
+          writeToolCall: {
+            args: { path: 'summary.txt' },
+            result: { success: { path: '/tmp/summary.txt', linesCreated: 1 } },
+          },
+        },
+      },
+      assistantMessage('Done.'),
+      RESULT,
+    ]);
+    expect(textDeltas(events)).toEqual([]);
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: 'Done.',
+    });
+  });
+
+  it('does not resurrect discarded pre-tool assistant text on finish(failed) or fail()', () => {
+    const plan = 'Let me inspect the codebase before answering.';
+    const failed = new CursorJsonlTranslator();
+    const failedEvents = [
+      ...collect(failed, [
+        assistantMessage(plan),
+        {
+          type: 'tool_call',
+          subtype: 'started',
+          call_id: 'tool_1',
+          tool_call: { readToolCall: { args: { path: 'README.md' } } },
+        },
+      ]),
+      ...failed.finish('failed'),
+    ];
+    expect(textDeltas(failedEvents)).toEqual([]);
+    expect(failedEvents.some((event) => JSON.stringify(event).includes(plan))).toBe(false);
+    expect(failedEvents.some((event) => event.type === 'error')).toBe(true);
+
+    const errored = new CursorJsonlTranslator();
+    const failEvents = [
+      ...collect(errored, [
+        assistantMessage(plan),
+        {
+          type: 'tool_call',
+          subtype: 'started',
+          call_id: 'tool_1',
+          tool_call: { readToolCall: { args: { path: 'README.md' } } },
+        },
+      ]),
+      ...errored.fail('cursor exited'),
+    ];
+    expect(textDeltas(failEvents)).toEqual([]);
+    expect(failEvents.some((event) => JSON.stringify(event).includes(plan))).toBe(false);
+    expect(failEvents).toEqual([
+      { type: 'tool_use', id: 'tool_1', name: 'Read', input: { path: 'README.md' } },
+      { type: 'error', message: 'cursor exited', terminationReason: 'failed' },
     ]);
   });
 
