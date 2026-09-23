@@ -10,16 +10,16 @@ Tickets below are tracer-bullet slices of that Spec. They are not product code.
 
 | Track | Branch | PR | What it may contain |
 | --- | --- | --- | --- |
-| Docs (this) | `docs/cursor-assistant-cot-holdback` | _(fill after open)_ | Spec, tickets, this README, delivery-note placeholders |
-| Code | `feat/cursor-assistant-cot-holdback` | _(fill after open)_ | Product code + tests only (opened empty) |
+| Docs (this) | `docs/cursor-assistant-cot-holdback` | **[#35](https://github.com/Rainnystone/larkent/pull/35)** (draft) | Spec, tickets, this README, delivery-note placeholders |
+| Code | `feat/cursor-assistant-cot-holdback` | **[#36](https://github.com/Rainnystone/larkent/pull/36)** (draft) | Product code + tests only (opened empty) |
 
 Do **not** merge this docs PR to `master` as a substitute for the feat PR. Do **not** open a feature/code PR from this branch. Do **not** copy `.scratch/` scaffolding, Spec files, or delivery-note templates onto the feat branch.
 
 ## How an implementer claims a ticket
 
 1. Read the Spec. Then read **one** ticket whose blockers are all done.
-2. Claim it **on the docs PR** (edit Status / delivery-note placeholder, or comment). Read-only claim: recording who is working it, not implementing here.
-3. Branch work from the **code** PR branch (`feat/cursor-assistant-cot-holdback`), not from this docs branch.
+2. Claim it **on docs PR [#35](https://github.com/Rainnystone/larkent/pull/35)** (edit Status / delivery-note placeholder, or comment). Read-only claim: recording who is working it, not implementing here.
+3. Branch work from the **code** PR branch (`feat/cursor-assistant-cot-holdback` / [#36](https://github.com/Rainnystone/larkent/pull/36)), not from this docs branch.
 4. `/implement` + in-session `/code-review` for that ticket only. Push only to the code PR.
 5. Fill the matching delivery-note placeholder; leave the docs PR as the ticket board.
 
