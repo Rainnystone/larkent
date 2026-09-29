@@ -10,8 +10,8 @@ Tickets below are tracer-bullet slices of that Spec. They are not product code.
 
 | Track | Branch | PR | What it may contain |
 | --- | --- | --- | --- |
-| Docs (this) | `docs/backfill-self-echo` | **DOCS_PR** (draft) | Spec, tickets, this README, delivery-note placeholders |
-| Code | `feat/backfill-self-echo` | **CODE_PR** (draft) | Product code + tests only (opened empty) |
+| Docs (this) | `docs/backfill-self-echo` | **[#37](https://github.com/Rainnystone/larkent/pull/37)** (draft) | Spec, tickets, this README, delivery-note placeholders |
+| Code | `feat/backfill-self-echo` | **[#38](https://github.com/Rainnystone/larkent/pull/38)** (draft) | Product code + tests only (opened empty) |
 
 Do **not** merge this docs PR to `master` as a substitute for the feat PR. Do **not** open a feature/code PR from this branch. Do **not** copy `.scratch/` scaffolding, Spec files, or delivery-note templates onto the feat branch.
 
@@ -29,8 +29,8 @@ Parallel start set: **01** only (02 touches the same file, `src/bot/backfill.ts`
 ## How an implementer claims a ticket
 
 1. Read the Spec. Then read **one** ticket whose blockers are all done.
-2. Claim it **on docs PR DOCS_PR** (edit Status / delivery-note placeholder, or comment). Read-only claim: recording who is working it, not implementing here.
-3. Branch work from the **code** PR branch (`feat/backfill-self-echo` / CODE_PR), not from this docs branch.
+2. Claim it **on docs PR [#37](https://github.com/Rainnystone/larkent/pull/37)** (edit Status / delivery-note placeholder, or comment). Read-only claim: recording who is working it, not implementing here.
+3. Branch work from the **code** PR branch (`feat/backfill-self-echo` / [#38](https://github.com/Rainnystone/larkent/pull/38)), not from this docs branch.
 4. `/implement` (embeds `/tdd`) + in-session `/code-review` for that ticket only. Push only to the code PR.
 5. Fill the matching delivery-note placeholder; leave the docs PR as the ticket board.
 
