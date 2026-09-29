@@ -18,6 +18,8 @@ import * as logger from '../../../src/core/logger';
 
 const NOW = 1_760_000_000_000;
 const BOT = 'ou_bot';
+const APP_ID = 'cli_bot';
+const OTHER_APP = 'cli_other';
 const USER = 'ou_user';
 const CHAT_A = 'oc_chat_a';
 const CHAT_B = 'oc_chat_b';
@@ -482,6 +484,160 @@ describe('runBackfill', () => {
     );
   });
 
+  it('skips a p2p reply whose sender id is the bot app id', async () => {
+    const h = await harness({
+      chats: [],
+      messages: {
+        [CHAT_P2P]: [
+          humanItem('om_human', CHAT_P2P, '在？', NOW - 20_000),
+          humanItem('om_reply', CHAT_P2P, 'answer', NOW - 10_000, {
+            senderId: APP_ID,
+            senderType: 'app',
+          }),
+        ],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      botAppId: APP_ID,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply', chatId: CHAT_P2P }),
+    );
+    expect(h.ledger.has('om_reply')).toBe(false);
+  });
+
+  it('skips a p2p item whose sender type is app even when the id is not this bot', async () => {
+    const h = await harness({
+      chats: [],
+      messages: {
+        [CHAT_P2P]: [
+          humanItem('om_human', CHAT_P2P, '在？', NOW - 20_000),
+          humanItem('om_other_app', CHAT_P2P, 'from another app', NOW - 10_000, {
+            senderId: OTHER_APP,
+            senderType: 'app',
+          }),
+        ],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      botAppId: APP_ID,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_other_app', chatId: CHAT_P2P }),
+    );
+  });
+
+  it('skips a group mention whose sender id is the bot app id', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          mentionItem('om_self_app', CHAT_A, 'I mentioned myself', NOW - 20_000, {
+            senderId: APP_ID,
+            senderType: 'app',
+          }),
+          mentionItem('om_human', CHAT_A, 'human', NOW - 10_000),
+        ],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({ ...h, botAppId: APP_ID }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_self_app', chatId: CHAT_A }),
+    );
+  });
+
+  it('keeps a group mention from another app when the bot app id is known', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          humanItem('om_other_quiet', CHAT_A, 'no mention', NOW - 30_000, {
+            senderId: OTHER_APP,
+            senderType: 'app',
+          }),
+          mentionItem('om_other_app', CHAT_A, 'another bot', NOW - 20_000, {
+            senderId: OTHER_APP,
+            senderType: 'app',
+          }),
+          mentionItem('om_human', CHAT_A, 'human', NOW - 10_000),
+        ],
+      },
+    });
+    await runBackfill(await deps({ ...h, botAppId: APP_ID }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_other_app', 'om_human']);
+  });
+
+  it('does not enqueue the bot own replies on a second backfill of the same window', async () => {
+    const history = [
+      humanItem('om_human', CHAT_P2P, '在？', NOW - 30_000),
+      humanItem('om_reply_a', CHAT_P2P, 'first answer', NOW - 20_000, {
+        senderId: APP_ID,
+        senderType: 'app',
+      }),
+    ];
+    const h = await harness({
+      chats: [],
+      messages: { [CHAT_P2P]: history },
+    });
+    const accepted: string[] = [];
+    const pass = async (): Promise<ReturnType<typeof spyInfo>> => {
+      const info = spyInfo();
+      await runBackfill(await deps({
+        ...h,
+        botAppId: APP_ID,
+        sessionChatIds: [CHAT_P2P],
+        chatModes: { [CHAT_P2P]: 'p2p' },
+        onIntake: (msg) => {
+          accepted.push(msg.messageId);
+          recordAcceptedLike(h.ledger, msg);
+        },
+      }));
+      return info;
+    };
+
+    const first = await pass();
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(h.ledger.has('om_human')).toBe(true);
+    expect(h.ledger.has('om_reply_a')).toBe(false);
+    expect(events(first, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply_a', chatId: CHAT_P2P }),
+    );
+
+    history.push(humanItem('om_reply_b', CHAT_P2P, 'echo answer', NOW - 10_000, {
+      senderId: APP_ID,
+      senderType: 'app',
+    }));
+    h.intake.length = 0;
+    h.ledger.touchLive(NOW - 5 * 60_000);
+
+    const second = await pass();
+    expect(h.intake).toEqual([]);
+    expect(accepted).toEqual(['om_human']);
+    expect(h.ledger.has('om_reply_a')).toBe(false);
+    expect(h.ledger.has('om_reply_b')).toBe(false);
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-processed', msgId: 'om_human', chatId: CHAT_P2P }),
+    );
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply_a', chatId: CHAT_P2P }),
+    );
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply_b', chatId: CHAT_P2P }),
+    );
+  });
+
   it('keeps group @mention enqueue and still drops group messages without mentionedBot', async () => {
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
@@ -928,6 +1084,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   prefs?: BackfillPreferences;
   profile?: { mode: 'team' | 'personal'; access: { allowedChats: string[] } };
   botOpenId?: string | null;
+  botAppId?: string;
   trigger?: RunBackfillDeps['trigger'];
   now?: () => number;
   refreshKnownChats?: (chats: Array<{ id: string; name: string }>) => void;
@@ -966,6 +1123,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     isClosing: input.isClosing ?? (() => false),
     refreshKnownChats: input.refreshKnownChats,
     sessionChatIds: input.sessionChatIds,
+    ...(input.botAppId !== undefined ? { botAppId: input.botAppId } : {}),
     intake: async (msg) => {
       input.intake.push(msg);
       input.onIntake?.(msg);
@@ -1073,7 +1231,7 @@ function humanItem(
   chatId: string,
   text: string,
   createTime: number,
-  extra: { senderId?: string } = {},
+  extra: { senderId?: string; senderType?: string } = {},
 ): Record<string, unknown> {
   return {
     message_id: messageId,
@@ -1084,7 +1242,7 @@ function humanItem(
     sender: {
       id: extra.senderId ?? USER,
       id_type: 'open_id',
-      sender_type: 'user',
+      sender_type: extra.senderType ?? 'user',
     },
     body: { content: JSON.stringify({ text }) },
     mentions: [],
@@ -1120,6 +1278,13 @@ function spyWarn() {
 
 function spyMetrics() {
   return vi.spyOn(logger, 'reportMetric').mockImplementation(() => {});
+}
+
+function recordAcceptedLike(ledger: BackfillLedger, msg: NormalizedMessage): void {
+  const createTime = typeof msg.createTime === 'number' && Number.isFinite(msg.createTime)
+    ? msg.createTime
+    : NOW;
+  ledger.record(msg.messageId, createTime);
 }
 
 function events(
