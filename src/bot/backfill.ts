@@ -43,6 +43,7 @@ export interface RunBackfillDeps {
   isClosing?: () => boolean;
   refreshKnownChats?: (chats: KnownChat[]) => void;
   sessionChatIds?: string[];
+  botAppId?: string;
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -380,7 +381,13 @@ async function filterHistoryItem(
     log.info('backfill', 'skip-deleted', { msgId: item.message_id, chatId });
     return { kind: 'drop' };
   }
-  if (item.sender?.id === botOpenId) {
+  const senderId = item.sender?.id;
+  const botAppId = deps.botAppId;
+  if (
+    senderId === botOpenId
+    || (botAppId !== undefined && senderId === botAppId)
+    || (chatType === 'p2p' && item.sender?.sender_type === 'app')
+  ) {
     log.info('backfill', 'skip-self', { msgId: item.message_id, chatId });
     return { kind: 'drop' };
   }
