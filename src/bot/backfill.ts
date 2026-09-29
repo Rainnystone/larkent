@@ -303,7 +303,7 @@ async function scanChat(input: {
       ...(errorCode(error) !== undefined ? { code: errorCode(error) } : {}),
       ...(status !== undefined ? { status } : {}),
     });
-    if (isNonRetryableChatError(error)) return { enqueued: 0 };
+    if (isNonRetryableChatStatus(status)) return { enqueued: 0 };
     return 'fetch-failed';
   }
 
@@ -540,7 +540,7 @@ async function classifySessionP2pIds(
         if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
       } catch (error) {
         const status = httpStatus(error);
-        if (!isNonRetryableChatError(error)) unresolved += 1;
+        if (!isNonRetryableChatStatus(status)) unresolved += 1;
         log.warn('backfill', 'mode-resolve-failed', {
           chatId,
           err: errorMessage(error),
@@ -724,8 +724,7 @@ function httpStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
-function isNonRetryableChatError(error: unknown): boolean {
-  const status = httpStatus(error);
+function isNonRetryableChatStatus(status: number | undefined): boolean {
   return status !== undefined && status >= 400 && status < 500 && status !== 429;
 }
 

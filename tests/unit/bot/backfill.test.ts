@@ -850,11 +850,11 @@ describe('runBackfill', () => {
     expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
   });
 
-  it('completes a stuck window when session p2p mode lookup returns HTTP 400, then skips a short gap', async () => {
-    const stuckFrom = NOW - 6 * HOUR;
+  it('completes an open incomplete scan when session p2p mode lookup returns HTTP 400, then skips a short gap', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
     const lastLiveAt = NOW - 11_000;
     let now = NOW;
-    const { h } = await stuckWindow(lastLiveAt, stuckFrom);
+    const { h } = await openIncompleteScan(lastLiveAt, incompleteFrom);
     const info = spyInfo();
     const warn = spyWarn();
     await runBackfill(await deps({
@@ -897,9 +897,9 @@ describe('runBackfill', () => {
     expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
   });
 
-  it('keeps a stuck window incomplete when session p2p mode lookup returns HTTP 500', async () => {
-    const stuckFrom = NOW - 6 * HOUR;
-    const { h } = await stuckWindow(NOW - 11_000, stuckFrom);
+  it('keeps the incomplete scan when session p2p mode lookup returns HTTP 500', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
     const info = spyInfo();
     const warn = spyWarn();
     await runBackfill(await deps({
@@ -923,13 +923,13 @@ describe('runBackfill', () => {
       }),
     );
     expect(events(info, 'backfill').filter((row) => row.event === 'done')).toEqual([]);
-    expect(h.ledger.getIncompleteFrom()).toBe(stuckFrom);
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
-  it('keeps a stuck window incomplete when session p2p mode lookup returns HTTP 429', async () => {
-    const stuckFrom = NOW - 6 * HOUR;
-    const { h } = await stuckWindow(NOW - 11_000, stuckFrom);
+  it('keeps the incomplete scan when session p2p mode lookup returns HTTP 429', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
     const info = spyInfo();
     const warn = spyWarn();
     await runBackfill(await deps({
@@ -952,13 +952,13 @@ describe('runBackfill', () => {
         enqueuedTotal: 1,
       }),
     );
-    expect(h.ledger.getIncompleteFrom()).toBe(stuckFrom);
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
-  it('keeps a stuck window incomplete when session p2p mode lookup fails on the network', async () => {
-    const stuckFrom = NOW - 6 * HOUR;
-    const { h } = await stuckWindow(NOW - 11_000, stuckFrom);
+  it('keeps the incomplete scan when session p2p mode lookup fails on the network', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
     const info = spyInfo();
     const warn = spyWarn();
     await runBackfill(await deps({
@@ -978,13 +978,13 @@ describe('runBackfill', () => {
         enqueuedTotal: 1,
       }),
     );
-    expect(h.ledger.getIncompleteFrom()).toBe(stuckFrom);
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
-  it('keeps a stuck window incomplete when mode lookup error.code is 400 but HTTP status is absent', async () => {
-    const stuckFrom = NOW - 6 * HOUR;
-    const { h } = await stuckWindow(NOW - 11_000, stuckFrom);
+  it('keeps the incomplete scan when mode lookup error.code is 400 but HTTP status is absent', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
     const info = spyInfo();
     const warn = spyWarn();
     await runBackfill(await deps({
@@ -1000,7 +1000,7 @@ describe('runBackfill', () => {
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({ event: 'incomplete', modeLookupFailures: 1 }),
     );
-    expect(h.ledger.getIncompleteFrom()).toBe(stuckFrom);
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
@@ -1341,7 +1341,7 @@ function httpStatusError(status: number, message = `status ${status}`): Error {
   });
 }
 
-async function stuckWindow(lastLiveAt: number, stuckFrom: number) {
+async function openIncompleteScan(lastLiveAt: number, incompleteFrom: number) {
   const h = await harness({
     lastLiveAt,
     chats: [{ id: CHAT_A, name: 'A' }],
@@ -1349,7 +1349,7 @@ async function stuckWindow(lastLiveAt: number, stuckFrom: number) {
       [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
     },
   });
-  h.ledger.markScanIncomplete(stuckFrom);
+  h.ledger.markScanIncomplete(incompleteFrom);
   return { h };
 }
 
