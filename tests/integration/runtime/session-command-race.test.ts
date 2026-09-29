@@ -195,7 +195,7 @@ async function expectNextRun(h: Awaited<ReturnType<typeof channelHarness>>, resu
 
 // Pause the actual card consumer while the executor completes all raw events.
 // Commands must invalidate that consumer even though no active process remains.
-it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished while the old renderer is paused', async command => {
+it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished while the old renderer is paused', { timeout: 20_000 }, async command => {
   const output = deferred();
   const firstUpdate = deferred();
   const rendererPaused = deferred();

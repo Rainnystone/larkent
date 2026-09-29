@@ -43,6 +43,7 @@ export interface RunBackfillDeps {
   isClosing?: () => boolean;
   refreshKnownChats?: (chats: KnownChat[]) => void;
   sessionChatIds?: string[];
+  botAppId?: string;
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -295,11 +296,14 @@ async function scanChat(input: {
   try {
     rawItems = await listChatHistory(deps.channel, chatId, window, deps.prefs.maxRawPerChat);
   } catch (error) {
+    const status = httpStatus(error);
     log.warn('backfill', 'chat-fetch-failed', {
       chatId,
       err: errorMessage(error),
       ...(errorCode(error) !== undefined ? { code: errorCode(error) } : {}),
+      ...(status !== undefined ? { status } : {}),
     });
+    if (isNonRetryableChatStatus(status)) return { enqueued: 0 };
     return 'fetch-failed';
   }
 
@@ -380,7 +384,13 @@ async function filterHistoryItem(
     log.info('backfill', 'skip-deleted', { msgId: item.message_id, chatId });
     return { kind: 'drop' };
   }
-  if (item.sender?.id === botOpenId) {
+  const senderId = item.sender?.id;
+  const botAppId = deps.botAppId;
+  if (
+    senderId === botOpenId
+    || (botAppId !== undefined && senderId === botAppId)
+    || (chatType === 'p2p' && item.sender?.sender_type === 'app')
+  ) {
     log.info('backfill', 'skip-self', { msgId: item.message_id, chatId });
     return { kind: 'drop' };
   }
@@ -529,10 +539,12 @@ async function classifySessionP2pIds(
       try {
         if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
       } catch (error) {
-        unresolved += 1;
+        const status = httpStatus(error);
+        if (!isNonRetryableChatStatus(status)) unresolved += 1;
         log.warn('backfill', 'mode-resolve-failed', {
           chatId,
           err: errorMessage(error),
+          ...(status !== undefined ? { status } : {}),
         });
       }
     },
@@ -704,6 +716,20 @@ function errorCode(error: unknown): number | string | undefined {
     ? error.response.data.code
     : undefined;
   return typeof nested === 'number' || typeof nested === 'string' ? nested : undefined;
+}
+
+function httpStatus(error: unknown): number | undefined {
+  if (!isRecord(error) || !isRecord(error.response)) return undefined;
+  const status = error.response.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function isNonRetryableChatStatus(status: number | undefined): boolean {
+  return status !== undefined
+    && status >= 400
+    && status < 500
+    && status !== 408
+    && status !== 429;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

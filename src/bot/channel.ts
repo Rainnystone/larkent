@@ -402,6 +402,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       channel: channel as unknown as BackfillChannel,
       ledger,
       prefs: getBackfillPreferences(controls.cfg),
+      botAppId: controls.cfg.accounts.app.id,
       profile: controls.profileConfig,
       marks: backfillMarks,
       isClosing: () => closing,

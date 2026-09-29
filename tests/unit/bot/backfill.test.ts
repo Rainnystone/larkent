@@ -18,6 +18,8 @@ import * as logger from '../../../src/core/logger';
 
 const NOW = 1_760_000_000_000;
 const BOT = 'ou_bot';
+const APP_ID = 'cli_bot';
+const OTHER_APP = 'cli_other';
 const USER = 'ou_user';
 const CHAT_A = 'oc_chat_a';
 const CHAT_B = 'oc_chat_b';
@@ -482,6 +484,164 @@ describe('runBackfill', () => {
     );
   });
 
+  it('skips a p2p reply whose sender id is the bot app id', async () => {
+    const h = await harness({
+      chats: [],
+      messages: {
+        [CHAT_P2P]: [
+          humanItem('om_human', CHAT_P2P, '在？', NOW - 20_000),
+          humanItem('om_reply', CHAT_P2P, 'answer', NOW - 10_000, {
+            senderId: APP_ID,
+            senderType: 'app',
+          }),
+        ],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      botAppId: APP_ID,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply', chatId: CHAT_P2P }),
+    );
+    expect(h.ledger.has('om_reply')).toBe(false);
+  });
+
+  it('skips a p2p item whose sender type is app even when the id is not this bot', async () => {
+    const h = await harness({
+      chats: [],
+      messages: {
+        [CHAT_P2P]: [
+          humanItem('om_human', CHAT_P2P, '在？', NOW - 20_000),
+          humanItem('om_other_app', CHAT_P2P, 'from another app', NOW - 10_000, {
+            senderId: OTHER_APP,
+            senderType: 'app',
+          }),
+        ],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      botAppId: APP_ID,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_other_app', chatId: CHAT_P2P }),
+    );
+  });
+
+  it('skips a group mention whose sender id is the bot app id', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          mentionItem('om_self_app', CHAT_A, 'I mentioned myself', NOW - 20_000, {
+            senderId: APP_ID,
+            senderType: 'app',
+          }),
+          mentionItem('om_human', CHAT_A, 'human', NOW - 10_000),
+        ],
+      },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({ ...h, botAppId: APP_ID }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_self_app', chatId: CHAT_A }),
+    );
+  });
+
+  it('keeps a group mention from another app when the bot app id is known', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          humanItem('om_other_quiet', CHAT_A, 'no mention', NOW - 30_000, {
+            senderId: OTHER_APP,
+            senderType: 'app',
+          }),
+          mentionItem('om_other_app', CHAT_A, 'another bot', NOW - 20_000, {
+            senderId: OTHER_APP,
+            senderType: 'app',
+          }),
+          mentionItem('om_human', CHAT_A, 'human', NOW - 10_000),
+        ],
+      },
+    });
+    await runBackfill(await deps({ ...h, botAppId: APP_ID }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_other_app', 'om_human']);
+  });
+
+  it('does not enqueue the bot own replies on a second backfill of the same window', async () => {
+    const history = [
+      humanItem('om_human', CHAT_P2P, '在？', NOW - 30_000),
+      humanItem('om_reply_a', CHAT_P2P, 'first answer', NOW - 20_000, {
+        senderId: APP_ID,
+        senderType: 'app',
+      }),
+    ];
+    const h = await harness({
+      chats: [],
+      messages: { [CHAT_P2P]: history },
+    });
+    const accepted: string[] = [];
+    const pass = async (): Promise<ReturnType<typeof spyInfo>> => {
+      const info = spyInfo();
+      await runBackfill(await deps({
+        ...h,
+        botAppId: APP_ID,
+        sessionChatIds: [CHAT_P2P],
+        chatModes: { [CHAT_P2P]: 'p2p' },
+        onIntake: (msg) => {
+          accepted.push(msg.messageId);
+          // Mirror channel.ts recordAccepted so pass 2 only knows accepted inbound ids.
+          const createTime = typeof msg.createTime === 'number' && Number.isFinite(msg.createTime)
+            ? msg.createTime
+            : NOW;
+          h.ledger.record(msg.messageId, createTime);
+        },
+      }));
+      return info;
+    };
+
+    const first = await pass();
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_human']);
+    expect(h.ledger.has('om_human')).toBe(true);
+    expect(h.ledger.has('om_reply_a')).toBe(false);
+    expect(events(first, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply_a', chatId: CHAT_P2P }),
+    );
+
+    history.push(humanItem('om_reply_b', CHAT_P2P, 'echo answer', NOW - 10_000, {
+      senderId: APP_ID,
+      senderType: 'app',
+    }));
+    h.intake.length = 0;
+    h.ledger.touchLive(NOW - 5 * 60_000);
+
+    const second = await pass();
+    expect(h.intake).toEqual([]);
+    expect(accepted).toEqual(['om_human']);
+    expect(h.ledger.has('om_reply_a')).toBe(false);
+    expect(h.ledger.has('om_reply_b')).toBe(false);
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-processed', msgId: 'om_human', chatId: CHAT_P2P }),
+    );
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply_a', chatId: CHAT_P2P }),
+    );
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-self', msgId: 'om_reply_b', chatId: CHAT_P2P }),
+    );
+  });
+
   it('keeps group @mention enqueue and still drops group messages without mentionedBot', async () => {
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
@@ -690,6 +850,347 @@ describe('runBackfill', () => {
     expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
   });
 
+  it('completes an open incomplete scan when session p2p mode lookup returns HTTP 400, then skips a short gap', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const lastLiveAt = NOW - 11_000;
+    let now = NOW;
+    const { h } = await openIncompleteScan(lastLiveAt, incompleteFrom);
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      now: () => now,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: httpStatusError(400) },
+    }));
+
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_group']);
+    expect(h.list).toEqual([CHAT_A]);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'done', enqueuedTotal: 1 }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'incomplete')).toEqual([]);
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
+    expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'mode-resolve-failed',
+        chatId: CHAT_P2P,
+        status: 400,
+      }),
+    );
+
+    now = NOW + 11_000;
+    const listedBeforeSkip = h.listed.length;
+    const second = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      now: () => now,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: httpStatusError(400) },
+    }));
+    expect(events(second, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'skip-short-gap', gapMs: 11_000 }),
+    );
+    expect(h.listed).toHaveLength(listedBeforeSkip);
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
+    expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
+  });
+
+  it('keeps the incomplete scan when session p2p mode lookup returns HTTP 500', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: httpStatusError(500) },
+    }));
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'mode-resolve-failed',
+        chatId: CHAT_P2P,
+        status: 500,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        fetchFailures: 0,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'done')).toEqual([]);
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the incomplete scan when session p2p mode lookup returns HTTP 429', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: httpStatusError(429) },
+    }));
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'mode-resolve-failed',
+        chatId: CHAT_P2P,
+        status: 429,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        fetchFailures: 0,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the incomplete scan when session p2p mode lookup returns HTTP 408', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: httpStatusError(408) },
+    }));
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'mode-resolve-failed',
+        chatId: CHAT_P2P,
+        status: 408,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        fetchFailures: 0,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the incomplete scan when session p2p mode lookup fails on the network', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: {
+        [CHAT_P2P]: Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }),
+      },
+    }));
+    const modeWarn = events(warn, 'backfill').find((row) => row.event === 'mode-resolve-failed');
+    expect(modeWarn).toMatchObject({ chatId: CHAT_P2P });
+    expect(modeWarn).not.toHaveProperty('status');
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the incomplete scan when mode lookup error.code is 400 but HTTP status is absent', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: {
+        [CHAT_P2P]: Object.assign(new Error('ERR_BAD_REQUEST'), { code: 400 }),
+      },
+    }));
+    const modeWarn = events(warn, 'backfill').find((row) => row.event === 'mode-resolve-failed');
+    expect(modeWarn).toMatchObject({ chatId: CHAT_P2P });
+    expect(modeWarn).not.toHaveProperty('status');
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', modeLookupFailures: 1 }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('completes the window when one chat history fetch returns HTTP 400', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'from b', NOW - 15_000)],
+      },
+      listErrors: { [CHAT_B]: httpStatusError(400) },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps(h));
+
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'done', chats: 2, enqueuedTotal: 1 }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'incomplete')).toEqual([]);
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'chat-fetch-failed',
+        chatId: CHAT_B,
+        status: 400,
+        code: 'ERR_BAD_REQUEST',
+      }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
+    expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
+    expect(h.ledger.getLiveAt()).toBe(NOW);
+  });
+
+  it('keeps the scan incomplete when one chat history fetch returns HTTP 500', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'from b', NOW - 15_000)],
+      },
+      listErrors: { [CHAT_B]: httpStatusError(500) },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps(h));
+
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a']);
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'chat-fetch-failed',
+        chatId: CHAT_B,
+        status: 500,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', chats: 2, enqueuedTotal: 1, fetchFailures: 1 }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'done')).toEqual([]);
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the scan incomplete when one chat history fetch returns HTTP 429', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+      },
+      listErrors: { [CHAT_B]: httpStatusError(429) },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps(h));
+
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'chat-fetch-failed',
+        chatId: CHAT_B,
+        status: 429,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', fetchFailures: 1, enqueuedTotal: 1 }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the scan incomplete when one chat history fetch returns HTTP 408', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+      },
+      listErrors: { [CHAT_B]: httpStatusError(408) },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps(h));
+
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'chat-fetch-failed',
+        chatId: CHAT_B,
+        status: 408,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', fetchFailures: 1, enqueuedTotal: 1 }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the scan incomplete when a chat history fetch has error.code 400 and no HTTP status', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [{ id: CHAT_A, name: 'A' }, { id: CHAT_B, name: 'B' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+      },
+      listErrors: {
+        [CHAT_B]: Object.assign(new Error('bad request'), { code: 400 }),
+      },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps(h));
+
+    const fetchWarn = events(warn, 'backfill').find((row) => row.event === 'chat-fetch-failed');
+    expect(fetchWarn).toMatchObject({ chatId: CHAT_B, code: 400 });
+    expect(fetchWarn).not.toHaveProperty('status');
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', fetchFailures: 1 }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
   it('deduplicates session scopes and bounds unique mode lookups to maxChats, unlisted first', async () => {
     const extras = Array.from({ length: 4 }, (_, i) => `oc_extra_${i}`);
     const h = await harness({
@@ -893,6 +1394,25 @@ describe('formatBackfillLatenessHint', () => {
   });
 });
 
+function httpStatusError(status: number, message = `status ${status}`): Error {
+  return Object.assign(new Error(message), {
+    code: 'ERR_BAD_REQUEST',
+    response: { status, data: { code: 99991663 } },
+  });
+}
+
+async function openIncompleteScan(lastLiveAt: number, incompleteFrom: number) {
+  const h = await harness({
+    lastLiveAt,
+    chats: [{ id: CHAT_A, name: 'A' }],
+    messages: {
+      [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
+    },
+  });
+  h.ledger.markScanIncomplete(incompleteFrom);
+  return { h };
+}
+
 async function harness(opts: {
   lastLiveAt?: number | undefined;
   chats?: Array<{ id: string; name: string }>;
@@ -928,6 +1448,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   prefs?: BackfillPreferences;
   profile?: { mode: 'team' | 'personal'; access: { allowedChats: string[] } };
   botOpenId?: string | null;
+  botAppId?: string;
   trigger?: RunBackfillDeps['trigger'];
   now?: () => number;
   refreshKnownChats?: (chats: Array<{ id: string; name: string }>) => void;
@@ -966,6 +1487,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     isClosing: input.isClosing ?? (() => false),
     refreshKnownChats: input.refreshKnownChats,
     sessionChatIds: input.sessionChatIds,
+    ...(input.botAppId !== undefined ? { botAppId: input.botAppId } : {}),
     intake: async (msg) => {
       input.intake.push(msg);
       input.onIntake?.(msg);
@@ -1073,7 +1595,7 @@ function humanItem(
   chatId: string,
   text: string,
   createTime: number,
-  extra: { senderId?: string } = {},
+  extra: { senderId?: string; senderType?: string } = {},
 ): Record<string, unknown> {
   return {
     message_id: messageId,
@@ -1084,7 +1606,7 @@ function humanItem(
     sender: {
       id: extra.senderId ?? USER,
       id_type: 'open_id',
-      sender_type: 'user',
+      sender_type: extra.senderType ?? 'user',
     },
     body: { content: JSON.stringify({ text }) },
     mentions: [],
