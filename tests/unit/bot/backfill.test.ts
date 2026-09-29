@@ -601,7 +601,11 @@ describe('runBackfill', () => {
         chatModes: { [CHAT_P2P]: 'p2p' },
         onIntake: (msg) => {
           accepted.push(msg.messageId);
-          recordAcceptedLike(h.ledger, msg);
+          // Mirror channel.ts recordAccepted so pass 2 only knows accepted inbound ids.
+          const createTime = typeof msg.createTime === 'number' && Number.isFinite(msg.createTime)
+            ? msg.createTime
+            : NOW;
+          h.ledger.record(msg.messageId, createTime);
         },
       }));
       return info;
@@ -1278,13 +1282,6 @@ function spyWarn() {
 
 function spyMetrics() {
   return vi.spyOn(logger, 'reportMetric').mockImplementation(() => {});
-}
-
-function recordAcceptedLike(ledger: BackfillLedger, msg: NormalizedMessage): void {
-  const createTime = typeof msg.createTime === 'number' && Number.isFinite(msg.createTime)
-    ? msg.createTime
-    : NOW;
-  ledger.record(msg.messageId, createTime);
 }
 
 function events(
