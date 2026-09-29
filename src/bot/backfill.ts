@@ -296,11 +296,14 @@ async function scanChat(input: {
   try {
     rawItems = await listChatHistory(deps.channel, chatId, window, deps.prefs.maxRawPerChat);
   } catch (error) {
+    const status = httpStatus(error);
     log.warn('backfill', 'chat-fetch-failed', {
       chatId,
       err: errorMessage(error),
       ...(errorCode(error) !== undefined ? { code: errorCode(error) } : {}),
+      ...(status !== undefined ? { status } : {}),
     });
+    if (isNonRetryableChatError(error)) return { enqueued: 0 };
     return 'fetch-failed';
   }
 
@@ -536,10 +539,12 @@ async function classifySessionP2pIds(
       try {
         if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
       } catch (error) {
-        unresolved += 1;
+        const status = httpStatus(error);
+        if (!isNonRetryableChatError(error)) unresolved += 1;
         log.warn('backfill', 'mode-resolve-failed', {
           chatId,
           err: errorMessage(error),
+          ...(status !== undefined ? { status } : {}),
         });
       }
     },
@@ -711,6 +716,17 @@ function errorCode(error: unknown): number | string | undefined {
     ? error.response.data.code
     : undefined;
   return typeof nested === 'number' || typeof nested === 'string' ? nested : undefined;
+}
+
+function httpStatus(error: unknown): number | undefined {
+  if (!isRecord(error) || !isRecord(error.response)) return undefined;
+  const status = error.response.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function isNonRetryableChatError(error: unknown): boolean {
+  const status = httpStatus(error);
+  return status !== undefined && status >= 400 && status < 500 && status !== 429;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
