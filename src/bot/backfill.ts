@@ -725,7 +725,11 @@ function httpStatus(error: unknown): number | undefined {
 }
 
 function isNonRetryableChatStatus(status: number | undefined): boolean {
-  return status !== undefined && status >= 400 && status < 500 && status !== 429;
+  return status !== undefined
+    && status >= 400
+    && status < 500
+    && status !== 408
+    && status !== 429;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

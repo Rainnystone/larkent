@@ -956,6 +956,35 @@ describe('runBackfill', () => {
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
+  it('keeps the incomplete scan when session p2p mode lookup returns HTTP 408', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: httpStatusError(408) },
+    }));
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'mode-resolve-failed',
+        chatId: CHAT_P2P,
+        status: 408,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        fetchFailures: 0,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
   it('keeps the incomplete scan when session p2p mode lookup fails on the network', async () => {
     const incompleteFrom = NOW - 6 * HOUR;
     const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
@@ -1096,6 +1125,37 @@ describe('runBackfill', () => {
         event: 'chat-fetch-failed',
         chatId: CHAT_B,
         status: 429,
+      }),
+    );
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'incomplete', fetchFailures: 1, enqueuedTotal: 1 }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the scan incomplete when one chat history fetch returns HTTP 408', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+      },
+      listErrors: { [CHAT_B]: httpStatusError(408) },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps(h));
+
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'chat-fetch-failed',
+        chatId: CHAT_B,
+        status: 408,
       }),
     );
     expect(events(info, 'backfill')).toContainEqual(
