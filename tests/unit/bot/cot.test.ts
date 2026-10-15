@@ -84,13 +84,30 @@ describe('COT event mapping', () => {
     });
   });
 
+  it('does not promote streamed progress text into a final-answer notice', () => {
+    const state: RunState = {
+      ...initialState,
+      finalText: 'FINAL_SENTINEL',
+      blocks: [
+        { kind: 'text', content: 'progress update', streaming: false },
+      ],
+      reasoning: { content: '', active: false },
+      footer: null,
+      terminal: 'done',
+    };
+
+    expect(finalAnswerOnlyState(state).blocks).toEqual([
+      { kind: 'text', content: 'FINAL_SENTINEL', streaming: false },
+    ]);
+  });
+
   it('keeps a partial-outcome warning appended after finalText', () => {
     const state: RunState = {
       ...initialState,
       finalText: 'partial answer',
       blocks: [
         { kind: 'text', content: 'partial answer', streaming: false },
-        { kind: 'text', content: '输出不完整（打印超时），可稍后继续', streaming: false },
+        { kind: 'text', content: '输出不完整（打印超时），可稍后继续', streaming: false, notice: true },
       ],
       reasoning: { content: '', active: false },
       footer: null,
@@ -99,7 +116,7 @@ describe('COT event mapping', () => {
 
     expect(finalAnswerOnlyState(state).blocks).toEqual([
       { kind: 'text', content: 'partial answer', streaming: false },
-      { kind: 'text', content: '输出不完整（打印超时），可稍后继续', streaming: false },
+      { kind: 'text', content: '输出不完整（打印超时），可稍后继续', streaming: false, notice: true },
     ]);
   });
 

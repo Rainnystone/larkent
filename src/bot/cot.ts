@@ -263,12 +263,12 @@ export function finalAnswerOnlyState(state: RunState): RunState {
   };
 }
 
-/** Text the reducer appended after `finalText` (partial-outcome warnings). */
-export function outcomeNoticeBlocks(state: RunState): Array<{ kind: 'text'; content: string; streaming: false }> {
+/** Text `applyOutcomeToState` appended after `finalText` (partial-outcome warnings). */
+export function outcomeNoticeBlocks(state: RunState): Array<{ kind: 'text'; content: string; streaming: false; notice: true }> {
   if (!state.finalText) return [];
   return state.blocks.flatMap((block) => (
-    block.kind === 'text' && block.content !== state.finalText && !block.streaming
-      ? [{ kind: 'text' as const, content: block.content, streaming: false as const }]
+    block.kind === 'text' && block.notice === true && block.content !== state.finalText
+      ? [{ kind: 'text' as const, content: block.content, streaming: false as const, notice: true as const }]
       : []
   ));
 }

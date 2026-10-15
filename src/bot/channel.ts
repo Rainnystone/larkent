@@ -2388,7 +2388,7 @@ function applyOutcomeToState(
       if (!userMessage) return next;
       return {
         ...next,
-        blocks: [...next.blocks, { kind: 'text' as const, content: userMessage, streaming: false }],
+        blocks: [...next.blocks, { kind: 'text' as const, content: userMessage, streaming: false, notice: true }],
       };
     }
     case 'running':
