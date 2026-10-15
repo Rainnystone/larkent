@@ -40,7 +40,7 @@ Baseline the live working tree's uncommitted `src/bot/channel.ts` / `src/bot/kee
                                                   3-interruption-notice
 ```
 
-Parallel start set: none (0b delivered; ticket 1 still waits on the live redelivery experiment).
+Parallel start set: none (ticket 1 delivered; ticket 2 is next). The live `redelivery-short-gap` experiment is still pending isolated tester credentials — ticket 1 shipped `reliability.shortGapScan` (default off) for that result.
 
 ## How an implementer claims a ticket
 
@@ -56,8 +56,8 @@ Parallel start set: none (0b delivered; ticket 1 still waits on the live redeliv
 | --- | --- | --- | --- | --- | --- |
 | 1 | 0a | [issues/0a-hard-access-fence.md](issues/0a-hard-access-fence.md) | Hard access fence, machine-level app lock, live-root guard | None | delivered (`a5613bc`) |
 | 2 | 0b | [issues/0b-test-bridge.md](issues/0b-test-bridge.md) | Isolated test bridge + deterministic vitest layer | 0a | delivered (`670cc67`; live redelivery experiment still pending credentials) |
-| 3 | 1 | [issues/1-lost-message.md](issues/1-lost-message.md) | Lost-message fix (all paths) | 0b | blocked |
-| 4 | 2 | [issues/2-run-outcome.md](issues/2-run-outcome.md) | RunOutcome model + stop reason | 1 | blocked |
+| 3 | 1 | [issues/1-lost-message.md](issues/1-lost-message.md) | Lost-message fix (all paths) | 0b | delivered (`fde51ee`; live test-bridge replay still pending credentials) |
+| 4 | 2 | [issues/2-run-outcome.md](issues/2-run-outcome.md) | RunOutcome model + stop reason | 1 | ready |
 | 5 | 5 | [issues/5-cli-signatures.md](issues/5-cli-signatures.md) | CLI signature table, golden stderr, redaction, bounded stderr | 2 | blocked |
 | 6 | 4 | [issues/4-turn-journal.md](issues/4-turn-journal.md) | Turn journal | 2, 5 | blocked |
 | 7 | 3 | [issues/3-interruption-notice.md](issues/3-interruption-notice.md) | Interruption notice card | 4 | blocked |
