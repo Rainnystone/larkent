@@ -1,5 +1,6 @@
 import pkg from '../../package.json';
 import { BackfillLedger } from '../bot/backfill-ledger';
+import { TurnJournal } from '../bot/turn-journal';
 import { startChannel as realStartChannel, type BridgeChannel } from '../bot/channel';
 import type { Controls } from '../commands';
 import type { StopRequest } from '../bot/run-outcome';
@@ -73,6 +74,7 @@ class ManagedProfile {
   private shutdownFailure: { error: unknown } | undefined;
   private readonly pendingDisconnects = new Set<BridgeChannel>();
   private readonly ledger: BackfillLedger;
+  private readonly journal: TurnJournal;
 
   constructor(
     readonly profile: string,
@@ -90,6 +92,7 @@ class ManagedProfile {
     this.ledger = new BackfillLedger(appPaths.backfillStateFile, {
       pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
     });
+    this.journal = new TurnJournal(appPaths.turnJournalFile);
   }
 
   get appId(): string {
@@ -118,6 +121,7 @@ class ManagedProfile {
     await this.sessionCatalog.load();
     await this.workspaces.load();
     await this.ledger.load();
+    await this.journal.load();
     this.entry = await register({
       appId: this.appId,
       tenant: this.cfg.accounts.app.tenant,
@@ -135,6 +139,7 @@ class ManagedProfile {
       sessionCatalog: this.sessionCatalog,
       workspaces: this.workspaces,
       ledger: this.ledger,
+      journal: this.journal,
       controls: this.controls,
       appPaths: this.appPaths,
     });
@@ -295,6 +300,7 @@ class ManagedProfile {
         sessionCatalog: this.sessionCatalog,
         workspaces: this.workspaces,
         ledger: this.ledger,
+        journal: this.journal,
         controls: nextControls,
         appPaths: nextRuntime.appPaths,
       });

@@ -31,7 +31,7 @@ describe('stop request call sites', () => {
     expect(executor).toContain("requestStop(handle, { type: 'subscriber-abandoned' })");
     expect(executor).toContain('stopRequestFromTerminal(event)');
 
-    expect(spawn).toContain('Agent CLIs stay in the bridge process group');
-    expect(runner).not.toMatch(/detached:\s*true/);
+    expect(spawn).toContain('Turn journal reaps agent CLI orphans');
+    expect(runner).toMatch(/detached:\s*true/);
   });
 });

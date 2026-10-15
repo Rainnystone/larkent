@@ -35,6 +35,7 @@ pnpm e2e:fault -- ws-unfreeze
 pnpm e2e:send -- --text "continue"
 pnpm e2e:read
 pnpm e2e:scenario -- redelivery-short-gap [--gap-sec 25]
+pnpm e2e:scenario -- journal-kill-group [--up]
 ```
 
 `down` reads the pid file and refuses to signal a process whose cmdline is

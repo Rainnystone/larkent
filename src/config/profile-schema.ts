@@ -53,16 +53,35 @@ export interface ReliabilityConfig {
    * matches master (no signature table; cards show truncated raw stderr).
    */
   cliSignatures?: boolean;
+  /**
+   * Turn journal writes. Default on. Off matches master (no `turn-journal.json`).
+   */
+  journal?: boolean;
+  /**
+   * Journal recovery (undelivered resend + orphan reaping). Default on when
+   * writes are on. Off skips those actions while still allowing writes.
+   */
+  journalRecover?: boolean;
 }
 
 export function getReliabilityConfig(
   profile: Pick<ProfileConfig, 'reliability'>,
-): { lostMessage: boolean; shortGapScan: boolean; runOutcome: boolean; cliSignatures: boolean } {
+): {
+  lostMessage: boolean;
+  shortGapScan: boolean;
+  runOutcome: boolean;
+  cliSignatures: boolean;
+  journal: boolean;
+  journalRecover: boolean;
+} {
+  const journal = profile.reliability?.journal !== false;
   return {
     lostMessage: profile.reliability?.lostMessage !== false,
     shortGapScan: profile.reliability?.shortGapScan === true,
     runOutcome: profile.reliability?.runOutcome !== false,
     cliSignatures: profile.reliability?.cliSignatures !== false,
+    journal,
+    journalRecover: journal && profile.reliability?.journalRecover !== false,
   };
 }
 
@@ -485,11 +504,15 @@ function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
   const shortGapScan = raw.shortGapScan === true ? true : undefined;
   const runOutcome = raw.runOutcome === false ? false : undefined;
   const cliSignatures = raw.cliSignatures === false ? false : undefined;
+  const journal = raw.journal === false ? false : undefined;
+  const journalRecover = raw.journalRecover === false ? false : undefined;
   if (
     lostMessage === undefined
     && shortGapScan === undefined
     && runOutcome === undefined
     && cliSignatures === undefined
+    && journal === undefined
+    && journalRecover === undefined
   ) {
     return undefined;
   }
@@ -498,6 +521,8 @@ function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
     ...(shortGapScan === true ? { shortGapScan: true } : {}),
     ...(runOutcome === false ? { runOutcome: false } : {}),
     ...(cliSignatures === false ? { cliSignatures: false } : {}),
+    ...(journal === false ? { journal: false } : {}),
+    ...(journalRecover === false ? { journalRecover: false } : {}),
   };
 }
 

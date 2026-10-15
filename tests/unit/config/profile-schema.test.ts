@@ -668,4 +668,26 @@ describe('profile schema', () => {
     expect(off.reliability).toEqual({ cliSignatures: false });
     expect(getReliabilityConfig(off).cliSignatures).toBe(false);
   });
+
+  it('defaults journal write and recovery on, and stores explicit off flags', () => {
+    const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
+    expect(getReliabilityConfig(fresh).journal).toBe(true);
+    expect(getReliabilityConfig(fresh).journalRecover).toBe(true);
+    const off = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      reliability: { journal: false, journalRecover: false },
+    });
+    expect(off.reliability).toEqual({ journal: false, journalRecover: false });
+    expect(getReliabilityConfig(off).journal).toBe(false);
+    expect(getReliabilityConfig(off).journalRecover).toBe(false);
+    const writeOnly = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      reliability: { journalRecover: false },
+    });
+    expect(getReliabilityConfig(writeOnly)).toMatchObject({ journal: true, journalRecover: false });
+  });
 });

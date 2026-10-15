@@ -9,6 +9,7 @@ import {
 } from './driver';
 import { DEFAULT_LOCAL_CONFIG, defaultDataRoot } from './paths';
 import { PROXY_MODES, type FaultProxyMode } from './proxy';
+import { runJournalKillGroup } from './scenarios/journal-kill-group';
 import { runRedeliveryShortGap } from './scenarios/redelivery-short-gap';
 import { readTesterMessages, sendTesterMessage } from './tester';
 
@@ -164,8 +165,17 @@ async function cmdScenario(argv: string[]): Promise<void> {
       console.log(JSON.stringify(result));
       return;
     }
+    case 'journal-kill-group': {
+      const result = await runJournalKillGroup({
+        configPath: stringFlag(flags, 'config') ?? DEFAULT_LOCAL_CONFIG,
+        realCli: Boolean(flags['real-cli']),
+        startBridge: Boolean(flags.up),
+      });
+      console.log(JSON.stringify(result));
+      return;
+    }
     default:
-      throw new Error('usage: e2e:scenario redelivery-short-gap');
+      throw new Error('usage: e2e:scenario redelivery-short-gap|journal-kill-group');
   }
 }
 
@@ -223,6 +233,7 @@ function printHelp(): void {
   pnpm e2e:send -- --text ping
   pnpm e2e:read
   pnpm e2e:scenario -- redelivery-short-gap
+  pnpm e2e:scenario -- journal-kill-group [--up]
 `);
 }
 

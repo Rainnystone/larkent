@@ -1,5 +1,5 @@
 import type { AgentRun } from '../agent/types';
-import { requestStop, type StopRequest } from './run-outcome';
+import { requestStop, type RunOutcome, type StopRequest } from './run-outcome';
 
 export type { StopRequest };
 
@@ -7,9 +7,16 @@ export interface RunHandle {
   run: AgentRun;
   interrupted: boolean;
   stopRequest?: StopRequest;
+  outcome?: RunOutcome;
+}
+
+export interface ActiveRunsHooks {
+  onSupersede?: (scope: string) => void;
 }
 
 export class ActiveRuns {
+  constructor(private readonly hooks: ActiveRunsHooks = {}) {}
+
   private readonly handles = new Map<string, RunHandle>();
   private readonly reservations = new Set<string>();
   private readonly sessionWriters = new Map<string, Set<{ current: boolean }>>();
@@ -93,6 +100,7 @@ export class ActiveRuns {
 
   /** An accepted session choice revokes old consumers before requesting stop. */
   supersedeSession(scope: string, reason: StopRequest): boolean {
+    this.hooks.onSupersede?.(scope);
     for (const writer of this.sessionWriters.get(scope) ?? []) writer.current = false;
     return this.interrupt(scope, reason);
   }

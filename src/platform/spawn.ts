@@ -8,13 +8,11 @@ import type { Readable, Writable } from 'node:stream';
 import crossSpawn from 'cross-spawn';
 
 /**
- * Agent CLIs stay in the bridge process group. `spawnProcess` callers must
- * not pass `detached: true` for those children.
- *
- * A detached group would keep a supervise.sh / Ctrl-C group signal from
- * stopping an in-flight CLI, but a SIGKILL of the bridge would then leave
- * orphans. Ticket 4's turn journal is the orphan reaper; until that exists,
- * children share the bridge group so a group SIGTERM still stops the run.
+ * Turn journal reaps agent CLI orphans. The JSONL runner passes
+ * `detached: true` so a supervise.sh / Ctrl-C group signal does not kill an
+ * in-flight CLI, and a SIGKILL of the bridge leaves a child the journal can
+ * match by pid + start time. Other `spawnProcess` callers keep the default
+ * (same group) unless they opt in.
  */
 export function spawnProcess(
   command: string,

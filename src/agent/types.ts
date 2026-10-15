@@ -78,6 +78,10 @@ export interface AgentRun {
   readonly events: AsyncIterable<AgentEvent>;
   /** Head+tail snapshot of CLI stderr. Used for signature matching. */
   readonly stderrSnapshot?: string;
+  /** Child pid when the adapter spawned a real process. */
+  readonly pid?: number;
+  /** Wall-clock start time of that child, for journal orphan matching. */
+  readonly startedAt?: number;
   /** Resolves only after process exit and adapter cleanup; rejects if settlement fails. */
   stop(): Promise<void>;
   /**

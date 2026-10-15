@@ -27,6 +27,12 @@ export interface RunExecutorDeps {
     signatures: readonly CliSignature[];
     agent: string;
   };
+  onSpawn?: (input: {
+    scopeId: string;
+    runId: string;
+    pid?: number;
+    startedAt: number;
+  }) => void;
 }
 
 export interface SubmitRunInput {
@@ -66,6 +72,7 @@ export class RunExecutor {
   private readonly now: () => number;
   private readonly postDoneExitGraceMs: number;
   private readonly cliSignatures?: RunExecutorDeps['cliSignatures'];
+  private readonly onSpawn?: RunExecutorDeps['onSpawn'];
 
   constructor(deps: RunExecutorDeps) {
     this.agent = deps.agent;
@@ -75,6 +82,7 @@ export class RunExecutor {
     this.now = deps.now ?? Date.now;
     this.postDoneExitGraceMs = deps.postDoneExitGraceMs ?? DEFAULT_POST_DONE_EXIT_GRACE_MS;
     this.cliSignatures = deps.cliSignatures;
+    this.onSpawn = deps.onSpawn;
   }
 
   async submit(input: SubmitRunInput): Promise<RunExecution> {
@@ -216,6 +224,8 @@ export class RunExecutor {
       get stderrSnapshot() {
         return rawRun.stderrSnapshot;
       },
+      pid: rawRun.pid,
+      startedAt: rawRun.startedAt,
       waitForExit: timeoutMs => rawRun.waitForExit(timeoutMs),
       stop: () => {
         requestStop(handle, { type: 'subscriber-abandoned' });
@@ -237,6 +247,12 @@ export class RunExecutor {
         err instanceof Error ? err.message : 'another run is already active for this scope',
       );
     }
+    this.onSpawn?.({
+      scopeId: input.scopeId,
+      runId,
+      pid: rawRun.pid,
+      startedAt: rawRun.startedAt ?? startedAt,
+    });
     const fanout = new EventFanout(observeRunEvents(rawRun.events, {
       dimensions,
       startedAt,

@@ -4,6 +4,7 @@ import type {
   NormalizedMessage,
 } from '@larksuite/channel';
 import { createLarkChannel } from '@larksuite/channel';
+import { randomUUID } from 'node:crypto';
 import { dirname, join } from 'node:path';
 import { capabilityForProfile } from '../agent/capability';
 import { modelLabel, normalizeModelSelection, resolveModelArg } from '../agent/models';
@@ -88,6 +89,7 @@ import {
   type BackfillTrigger,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
+import type { TurnJournal, TurnJournalEntry } from './turn-journal';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
@@ -216,13 +218,19 @@ export interface StartChannelDeps {
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
   ledger?: BackfillLedger;
+  journal?: TurnJournal;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
-  const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, controls } = deps;
-  const activeRuns = new ActiveRuns();
+  const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, journal, controls } = deps;
+  const reliability = () => getReliabilityConfig(controls.profileConfig);
+  const activeRuns = new ActiveRuns({
+    onSupersede: (scope) => {
+      if (reliability().journal) journal?.voidScope(scope);
+    },
+  });
   const resumeCandidates = new ResumeCandidates();
   // ChatModeCache stays per-bridge-instance — invalidated on restart along
   // with everything else. Topic-mode chats only need one chat.get() call ever.
@@ -241,6 +249,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         signatures: rel.signatures ?? [],
         agent: rel.agent ?? 'unknown',
       };
+    },
+    onSpawn: (input) => {
+      if (!reliability().journal) return;
+      journal?.noteSpawn({
+        scope: input.scopeId,
+        runId: input.runId,
+        pid: input.pid,
+        startedAt: input.startedAt,
+      });
     },
   });
 
@@ -344,7 +361,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     );
     return work;
   };
-  const reliability = () => getReliabilityConfig(controls.profileConfig);
   const pending = new PendingQueue(DEBOUNCE_MS, (scope, batch) => {
     if (closing) {
       if (reliability().lostMessage && ledger) {
@@ -402,6 +418,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           mode,
           backfillMarks,
           ledger,
+          journal: reliability().journal ? journal : undefined,
         });
       } finally {
         sessionWriter.release();
@@ -465,6 +482,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           : true
       ),
     }), 'backfill');
+  };
+
+  const recoverJournal = (): Promise<void> => {
+    if (!journal || !reliability().journalRecover) return Promise.resolve();
+    return trackConsumer(journal.recover({
+      enabled: true,
+      resend: (entry) => resendJournalReply(channel, entry),
+    }).then(() => {}), 'journal');
   };
 
   channel.on({
@@ -536,6 +561,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       }
       consecutiveReconnects = 0;
       launchBackfill('reconnected');
+      void recoverJournal();
     },
     // Classify common WS errors into the `network` phase so /doctor and grep
     // can find them without scanning generic `ws.fail` entries.
@@ -628,6 +654,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     procId: controls.processId,
   });
   launchBackfill('connect');
+  void recoverJournal();
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
   // App-level keepalive: 15s probe + wake-up detection + HTTP reachability.
@@ -654,7 +681,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   return {
     channel,
-    recoverMissed: () => launchBackfill('handoff'),
+    recoverMissed: async () => {
+      await recoverJournal();
+      await launchBackfill('handoff');
+    },
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
       resumeCandidates.clear();
@@ -683,10 +713,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       // Both must settle before flush observes the last queued session write.
       const saved = await Promise.allSettled([
         sessions.flush(), sessionCatalog?.flush(), callbackNonceStore?.flush(), workspaces.flush(),
-        ledger?.flush(),
+        ledger?.flush(), journal?.flush(),
       ]);
       const steps = ['channel', 'stopAll', ...consumers.map(() => 'run-consumer'),
-        'sessions', 'catalog', 'callback-nonces', 'workspaces', 'ledger'];
+        'sessions', 'catalog', 'callback-nonces', 'workspaces', 'ledger', 'journal'];
       const failures: unknown[] = [];
       for (const [index, result] of [...first, ...saved].entries()) {
         if (result.status === 'rejected') {
@@ -1061,6 +1091,7 @@ interface RunBatchDeps {
   mode: ChatMode;
   backfillMarks: Map<string, BackfillMark>;
   ledger?: BackfillLedger;
+  journal?: TurnJournal;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1081,6 +1112,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     mode,
     backfillMarks,
     ledger,
+    journal,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1229,6 +1261,20 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     ...(threadId ? { threadId } : {}),
   };
   const capability = capabilityForProfile(controls.profileConfig);
+  const turnId = journal ? randomUUID() : undefined;
+  if (journal && turnId) {
+    journal.enqueue({
+      turnId,
+      scope,
+      chatId,
+      ...(threadId ? { threadId } : {}),
+      messageIds: batch.map((msg) => msg.messageId),
+      senderId: firstMsg.senderId,
+      initiatorId: lastMsg.senderId,
+      status: 'queued',
+    });
+  }
+
   const flow = await startRunFlow({
     scopeId: scope,
     scope: scopeContext,
@@ -1270,11 +1316,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       });
     }
     await channel.send(chatId, { markdown: flow.rejectReason.userVisible }, sendOpts);
+    if (journal && turnId) journal.update(turnId, { status: 'voided' });
     return;
   }
 
   const { execution, cwdRealpath: cwd } = flow;
   activePolicyFingerprints.set(scope, flow.policy.policyFingerprint);
+  if (journal && turnId) {
+    journal.update(turnId, {
+      ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}),
+      policyFingerprint: flow.policy.policyFingerprint,
+    });
+  }
   const handle = execution.handle;
   const eventStream = execution.subscribe();
   if (flow.resumeFrom) {
@@ -1398,7 +1451,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             reason: cotPublisher.degradedReason,
           });
         }
-        await sendFinalReply({
+        await deliverFinalReply({
           channel,
           chatId,
           scope,
@@ -1406,6 +1459,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           replyMode,
           sendOpts,
           cardRenderOptions,
+          journal,
+          turnId,
+          handle,
         });
         return;
       }
@@ -1474,7 +1530,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       if (finalAnswerOnly) {
-        await sendFinalReply({
+        await deliverFinalReply({
           channel,
           chatId,
           scope,
@@ -1483,6 +1539,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           replyMode,
           sendOpts,
           cardRenderOptions,
+          journal,
+          turnId,
+          handle,
         });
       }
     } else if (replyMode === 'markdown') {
@@ -1540,7 +1599,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       if (finalAnswerOnly) {
-        await sendFinalReply({
+        await deliverFinalReply({
           channel,
           chatId,
           scope,
@@ -1549,6 +1608,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           replyMode,
           sendOpts,
           cardRenderOptions,
+          journal,
+          turnId,
+          handle,
         });
       }
     } else {
@@ -1565,7 +1627,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         runContext,
         streamReliability(controls.profileConfig),
       );
-      await sendFinalReply({
+      await deliverFinalReply({
         channel,
         chatId,
         scope,
@@ -1575,6 +1637,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         replyMode,
         sendOpts,
         cardRenderOptions,
+        journal,
+        turnId,
+        handle,
       });
     }
   } catch (err) {
@@ -1734,6 +1799,55 @@ async function recallStreamedMessage(
       err: err instanceof Error ? err.message : String(err),
     });
   }
+}
+
+async function deliverFinalReply(input: {
+  channel: LarkChannel;
+  chatId: string;
+  scope: string;
+  state: RunState;
+  skipFrom?: RunState;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+  sendOpts: { replyTo: string; replyInThread?: boolean };
+  cardRenderOptions: { signCallback?: (action: string) => string };
+  journal?: TurnJournal;
+  turnId?: string;
+  handle: RunHandle;
+}): Promise<void> {
+  if (input.journal && input.turnId && input.handle.outcome) {
+    input.journal.markSettled(input.turnId, input.handle.outcome);
+  }
+  const body = renderText(input.state);
+  const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || !body.trim();
+  if (input.journal && input.turnId && !skip) {
+    input.journal.markCompletedUndelivered(input.turnId, {
+      markdown: body,
+      replyTo: input.sendOpts.replyTo,
+      replyMode: input.replyMode,
+      ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+    });
+  }
+  await sendFinalReply(input);
+  if (input.journal && input.turnId) input.journal.markReplyDelivered(input.turnId);
+}
+
+async function resendJournalReply(channel: LarkChannel, entry: TurnJournalEntry): Promise<boolean> {
+  if (!entry.reply?.markdown.trim()) return false;
+  const result = await channel.send(
+    entry.chatId,
+    { markdown: entry.reply.markdown },
+    {
+      replyTo: entry.reply.replyTo,
+      ...(entry.reply.replyInThread ? { replyInThread: true } : {}),
+    },
+  );
+  requireMessageReceipt(result, 'journal-resend');
+  log.info('outbound', 'journal-resend', {
+    scope: entry.scope,
+    turnId: entry.turnId,
+    chatId: entry.chatId,
+  });
+  return true;
 }
 
 async function sendFinalReply(input: {
@@ -2023,6 +2137,7 @@ async function processAgentStream(
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };
   }
+  handle.outcome = outcome;
   log.info('card', 'final', {
     scope,
     terminal: state.terminal,

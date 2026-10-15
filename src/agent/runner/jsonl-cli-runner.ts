@@ -3,6 +3,7 @@ import { StringDecoder } from 'node:string_decoder';
 import { log } from '../../core/logger';
 import { RunCleanupFailed } from '../../runtime/errors';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
+import { readProcessStartMs } from '../../platform/process-info';
 import type { AgentEvent, AgentRun } from '../types';
 import { BoundedStderr } from './bounded-stderr';
 
@@ -79,7 +80,9 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     cwd: input.cwd,
     env: input.env,
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
   }) as CliChild;
+  const startedAt = child.pid ? (readProcessStartMs(child.pid) ?? Date.now()) : undefined;
 
   log.info('agent', 'spawn', {
     pid: child.pid ?? null,
@@ -392,6 +395,8 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   });
   return {
     runId: input.runId,
+    ...(child.pid ? { pid: child.pid } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
     events: {
       [Symbol.asyncIterator]() {
         return {

@@ -40,7 +40,9 @@ const STDOUT_INFO_ALLOWLIST = new Set<string>([
   'cot.completed',
   'outbound.sent',
   'outbound.markdown-stream-fallback',
+  'outbound.journal-resend',
   'card.final',
+  'journal.recovered',
 ]);
 
 /**
