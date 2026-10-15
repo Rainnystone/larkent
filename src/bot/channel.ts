@@ -2609,9 +2609,11 @@ function journalResourcesToMessage(
   })) as NormalizedMessage['resources'];
 }
 
-function journalResourceSourceId(resource: { sourceMessageId?: string }): string | undefined {
-  return typeof resource.sourceMessageId === 'string' && resource.sourceMessageId
-    ? resource.sourceMessageId
+function journalResourceSourceId(resource: unknown): string | undefined {
+  if (!resource || typeof resource !== 'object') return undefined;
+  const sourceMessageId = (resource as { sourceMessageId?: unknown }).sourceMessageId;
+  return typeof sourceMessageId === 'string' && sourceMessageId
+    ? sourceMessageId
     : undefined;
 }
 

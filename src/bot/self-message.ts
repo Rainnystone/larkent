@@ -82,25 +82,23 @@ export function noteInboundSkipSelf(input: {
 }
 
 export function wrapChannelOutbound(
-  channel: {
-    send: (...args: Parameters<LarkChannelSend>) => ReturnType<LarkChannelSend>;
-    stream: (...args: Parameters<LarkChannelStream>) => ReturnType<LarkChannelStream>;
-  },
+  channel: { send: (...args: never[]) => Promise<unknown>; stream: (...args: never[]) => Promise<unknown> },
   outbound: OutboundMessageIds,
 ): void {
-  const origSend = channel.send.bind(channel);
-  const origStream = channel.stream.bind(channel);
-  channel.send = ((...args: Parameters<LarkChannelSend>) =>
-    origSend(...args).then((result: unknown) => {
+  const mutable = channel as unknown as {
+    send: (...args: unknown[]) => Promise<unknown>;
+    stream: (...args: unknown[]) => Promise<unknown>;
+  };
+  const origSend = mutable.send.bind(mutable);
+  const origStream = mutable.stream.bind(mutable);
+  mutable.send = (...args: unknown[]) =>
+    origSend(...args).then((result) => {
       outbound.add(outboundMessageId(result));
       return result;
-    })) as typeof channel.send;
-  channel.stream = ((...args: Parameters<LarkChannelStream>) =>
-    origStream(...args).then((result: unknown) => {
+    });
+  mutable.stream = (...args: unknown[]) =>
+    origStream(...args).then((result) => {
       outbound.add(outboundMessageId(result));
       return result;
-    })) as typeof channel.stream;
+    });
 }
-
-type LarkChannelSend = (chatId: string, content: unknown, options?: unknown) => Promise<unknown>;
-type LarkChannelStream = (chatId: string, input: unknown, options?: unknown) => Promise<unknown>;
