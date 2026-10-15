@@ -327,7 +327,6 @@ class ManagedProfile {
         throw error;
       }
       this.bridge = nextBridge;
-      await this.bridge.recoverMissed?.();
       await updateEntry(
         this.entry.id,
         {
@@ -350,6 +349,9 @@ class ManagedProfile {
       this.agent = nextAgent;
       this.controls = nextControls;
       if (oldAppLock) await this.releaseOwnedLock(oldAppLock);
+      // Recovery runs after the swap is published. A reject here must not
+      // unwind the live bridge or drop the app lock it now needs.
+      await this.bridge.recoverMissed?.();
     } catch (error) {
       if (nextAppLock) {
         try {
