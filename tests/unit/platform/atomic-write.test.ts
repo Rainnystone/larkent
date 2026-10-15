@@ -23,7 +23,7 @@ describe('atomic write retry', () => {
         attempts++;
         if (attempts < 3) {
           const err = new Error('busy') as NodeJS.ErrnoException;
-          err.code = attempts === 1 ? 'EPERM' : 'EBUSY';
+          err.code = attempts === 1 ? 'EACCES' : 'EBUSY';
           throw err;
         }
         await fallbackRename(from, to);

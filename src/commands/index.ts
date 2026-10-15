@@ -1388,6 +1388,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
       );
       await saveAccountConfig(ctx, newCfg, appSecret);
     } catch (err) {
+      log.fail('command', err, { step: 'account.save' });
       const msg = err instanceof Error ? err.message : String(err);
       await finishFailure(`保存凭据失败：${msg}`);
       return;

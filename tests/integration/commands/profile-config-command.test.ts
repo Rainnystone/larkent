@@ -19,12 +19,16 @@ import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createFakeChannel } from '../../helpers/fake-channel';
 
-vi.mock('../../../src/utils/feishu-auth', () => ({
+const authMocks = vi.hoisted(() => ({
   validateAppCredentials: vi.fn(async () => ({
     ok: true,
     botName: 'Updated Bot',
     botOpenId: 'ou-bot',
   })),
+}));
+
+vi.mock('../../../src/utils/feishu-auth', () => ({
+  validateAppCredentials: authMocks.validateAppCredentials,
 }));
 
 const identityPolicyMocks = vi.hoisted(() => ({
@@ -46,6 +50,12 @@ const roots: string[] = [];
 beforeEach(() => {
   identityPolicyMocks.applyLarkCliIdentityPolicy.mockReset();
   identityPolicyMocks.applyLarkCliIdentityPolicy.mockResolvedValue(true);
+  authMocks.validateAppCredentials.mockReset();
+  authMocks.validateAppCredentials.mockResolvedValue({
+    ok: true,
+    botName: 'Updated Bot',
+    botOpenId: 'ou-bot',
+  });
 });
 
 afterEach(async () => {
@@ -56,7 +66,6 @@ afterEach(async () => {
 
 describe('profile-aware account and config commands', () => {
   it('saves /config submit into the active v2 profile without flattening root config', async () => {
-    vi.useFakeTimers();
     const h = await createHarness();
 
     await h.command('/config submit', {
@@ -92,7 +101,6 @@ describe('profile-aware account and config commands', () => {
   });
 
   it('persists the picked model and clears it when "default" is chosen', async () => {
-    vi.useFakeTimers();
     const h = await createHarness();
 
     await h.command('/config submit', {
@@ -115,7 +123,6 @@ describe('profile-aware account and config commands', () => {
   });
 
   it('keeps the current message reply mode when the config submit payload omits it', async () => {
-    vi.useFakeTimers();
     const h = await createHarness({
       preferences: {
         messageReply: 'text',
@@ -206,7 +213,6 @@ describe('profile-aware account and config commands', () => {
   });
 
   it('saves /account submit into the active v2 profile and profile-local keystore', async () => {
-    vi.useFakeTimers();
     const h = await createHarness();
 
     await h.command('/account submit', {
@@ -240,7 +246,7 @@ describe('profile-aware account and config commands', () => {
     await expect(
       listSecretIds(codexPaths),
     ).resolves.not.toContain(secretKeyForApp('cli_new'));
-  });
+  }, 15_000);
 });
 
 async function createHarness(options: {
@@ -345,11 +351,15 @@ async function waitForRoot(
   rootDir: string,
   predicate: (root: RootConfig) => boolean,
 ): Promise<RootConfig> {
-  let lastRoot = await readRoot(rootDir);
+  let lastRoot: RootConfig | undefined;
   await vi.waitFor(async () => {
+    if (vi.isFakeTimers()) {
+      await vi.advanceTimersByTimeAsync(50);
+    }
     lastRoot = await readRoot(rootDir);
     expect(predicate(lastRoot)).toBe(true);
-  }, { timeout: 5000 });
+  }, { timeout: 8_000, interval: 25 });
+  if (!lastRoot) throw new Error('config.json was never readable');
   return lastRoot;
 }
 

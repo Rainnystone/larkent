@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { chmod, mkdir, open, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { setTimeout as nativeSetTimeout } from 'node:timers';
 import { promisify } from 'node:util';
 import gracefulFs from 'graceful-fs';
 
@@ -42,7 +43,11 @@ export async function writeFileAtomic(
     } finally {
       await handle.close();
     }
-    await chmod(tmp, opts.mode ?? 0o600);
+    try {
+      await chmod(tmp, opts.mode ?? 0o600);
+    } catch (err) {
+      if (!isIgnorableWindowsPermError(err)) throw err;
+    }
     await renameWithRetry(tmp, path, opts);
     await fsyncDir(dirname(path));
   } catch (err) {
@@ -75,11 +80,17 @@ async function renameWithRetry(
 
 export function isTransientRenameError(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
-  return code === 'EPERM' || code === 'EBUSY';
+  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+}
+
+function isIgnorableWindowsPermError(err: unknown): boolean {
+  if (process.platform !== 'win32') return false;
+  const code = (err as NodeJS.ErrnoException | undefined)?.code;
+  return code === 'EPERM' || code === 'EACCES';
 }
 
 function isIgnorableWindowsFsyncError(err: unknown): boolean {
-  return process.platform === 'win32' && (err as NodeJS.ErrnoException | undefined)?.code === 'EPERM';
+  return isIgnorableWindowsPermError(err);
 }
 
 async function fsyncDir(path: string): Promise<void> {
@@ -96,5 +107,7 @@ async function fsyncDir(path: string): Promise<void> {
 }
 
 function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+  // Use the timers module, not the global, so Vitest fake timers cannot
+  // freeze Windows rename retries (AV / in-use destination files).
+  return new Promise((resolve) => nativeSetTimeout(resolve, ms));
 }
