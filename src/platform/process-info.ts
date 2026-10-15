@@ -34,7 +34,7 @@ export function processMatchesIdentity(
   if (startedAt === undefined) return true;
   const readStart = opts.processStartMs ?? readProcessStartMs;
   const actual = readStart(pid);
-  if (actual === undefined) return true;
+  if (actual === undefined) return false;
   return Math.abs(actual - startedAt) <= (opts.skewMs ?? START_TIME_SKEW_MS);
 }
 
