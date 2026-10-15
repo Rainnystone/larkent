@@ -110,6 +110,36 @@ describe('runBackfill', () => {
     expect(h.intake).toHaveLength(0);
   });
 
+  it('logs backfill.forced and scans when incompleteFrom is set on a short gap', async () => {
+    const h = await harness({
+      lastLiveAt: NOW - 25_000,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_late', CHAT_A, 'continue', NOW - 10_000)] },
+    });
+    h.ledger.markScanIncomplete(NOW - 20_000);
+    const info = spyInfo();
+    await runBackfill(await deps(h));
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'forced', gapMs: 25_000, reason: 'incomplete' }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'skip-short-gap')).toEqual([]);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_late']);
+  });
+
+  it('scans a short gap when forceShortGapScan is on and logs backfill.forced', async () => {
+    const h = await harness({
+      lastLiveAt: NOW - 25_000,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_gap', CHAT_A, 'during gap', NOW - 10_000)] },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps({ ...h, forceShortGapScan: true }));
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'forced', gapMs: 25_000, reason: 'short-gap-scan' }),
+    );
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_gap']);
+  });
+
   it('B5: enabled false skips without listing chats', async () => {
     const h = await harness();
     const info = spyInfo();
@@ -191,8 +221,9 @@ describe('runBackfill', () => {
       Array.from({ length: 20 }, (_, i) => `om_mention_${i + 10}`),
     );
     for (let i = 0; i < 10; i++) {
-      expect(h.ledger.has(`om_mention_${i}`)).toBe(true);
+      expect(h.ledger.has(`om_mention_${i}`)).toBe(false);
     }
+    expect(h.ledger.getIncompleteFrom()).toBe(NOW - 20_000);
     expect(h.requests).toHaveLength(4);
     expect(h.requests.every((params) => params.sort_type === 'ByCreateTimeDesc')).toBe(true);
   });
@@ -642,6 +673,69 @@ describe('runBackfill', () => {
     );
   });
 
+  it('enqueues unmentioned group messages when requireMentionForChat is false', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          chatterItem('om_quiet', CHAT_A, NOW - 20_000),
+          mentionItem('om_mention', CHAT_A, 'please answer', NOW - 10_000),
+        ],
+      },
+    });
+    await runBackfill(await deps({
+      ...h,
+      requireMentionForChat: () => false,
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_quiet', 'om_mention']);
+  });
+
+  it('recovers previously truncated mentions on a later scan when the cap is higher', async () => {
+    const mentions = Array.from({ length: 3 }, (_, i) =>
+      mentionItem(`om_cap_${i}`, CHAT_A, `ask ${i}`, NOW - 30_000 + i * 100),
+    );
+    const h = await harness({
+      lastLiveAt: NOW - 5 * 60_000,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: mentions },
+    });
+    await runBackfill(await deps({
+      ...h,
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxMentionsPerChat: 1 },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_cap_2']);
+    expect(h.ledger.has('om_cap_0')).toBe(false);
+    expect(h.ledger.getIncompleteFrom()).toBeDefined();
+
+    h.intake.length = 0;
+    h.ledger.touchLive(NOW - 5 * 60_000);
+    await runBackfill(await deps({
+      ...h,
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxMentionsPerChat: 3 },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_cap_0', 'om_cap_1']);
+  });
+
+  it('records truncated mentions when lostMessage is off', async () => {
+    const humans = Array.from({ length: 4 }, (_, i) =>
+      humanItem(`om_legacy_${i}`, CHAT_P2P, `ask ${i}`, NOW - 40_000 + i * 100),
+    );
+    const h = await harness({
+      chats: [],
+      messages: { [CHAT_P2P]: humans },
+    });
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModes: { [CHAT_P2P]: 'p2p' },
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxMentionsPerChat: 2 },
+      lostMessage: false,
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_legacy_2', 'om_legacy_3']);
+    expect(h.ledger.has('om_legacy_0')).toBe(true);
+    expect(h.ledger.has('om_legacy_1')).toBe(true);
+  });
+
   it('keeps group @mention enqueue and still drops group messages without mentionedBot', async () => {
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
@@ -715,8 +809,9 @@ describe('runBackfill', () => {
     );
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_p2p_2', 'om_p2p_3']);
     expect(h.intake.every((msg) => msg.chatType === 'p2p' && msg.mentionedBot === false)).toBe(true);
-    expect(h.ledger.has('om_p2p_0')).toBe(true);
-    expect(h.ledger.has('om_p2p_1')).toBe(true);
+    expect(h.ledger.has('om_p2p_0')).toBe(false);
+    expect(h.ledger.has('om_p2p_1')).toBe(false);
+    expect(h.ledger.getIncompleteFrom()).toBe(NOW - 40_000);
   });
 
   it('preserves session-known p2p chats when maxChats truncates a long group list', async () => {
@@ -1459,6 +1554,9 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   chatModeErrors?: Record<string, Error>;
   modeLookups?: string[];
   onGetChatMode?: (chatId: string) => Promise<void>;
+  forceShortGapScan?: boolean;
+  requireMentionForChat?: (chatId: string) => boolean;
+  lostMessage?: boolean;
 }): Promise<RunBackfillDeps> {
   const channel = fakeChannel({
     identity: input.botOpenId === null ? undefined : { openId: input.botOpenId ?? BOT, name: 'Bot' },
@@ -1488,6 +1586,9 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     refreshKnownChats: input.refreshKnownChats,
     sessionChatIds: input.sessionChatIds,
     ...(input.botAppId !== undefined ? { botAppId: input.botAppId } : {}),
+    ...(input.forceShortGapScan !== undefined ? { forceShortGapScan: input.forceShortGapScan } : {}),
+    ...(input.requireMentionForChat ? { requireMentionForChat: input.requireMentionForChat } : {}),
+    ...(input.lostMessage !== undefined ? { lostMessage: input.lostMessage } : {}),
     intake: async (msg) => {
       input.intake.push(msg);
       input.onIntake?.(msg);

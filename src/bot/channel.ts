@@ -31,7 +31,8 @@ import {
   type RunState,
 } from '../card/run-state';
 import { renderText } from '../card/text-renderer';
-import { tryHandleCommand, type Controls } from '../commands';
+import { commandClearsPending, tryHandleCommand, type Controls } from '../commands';
+import { getReliabilityConfig } from '../config/profile-schema';
 import type { AppConfig } from '../config/schema';
 import {
   getAgentStopGraceMs,
@@ -188,6 +189,7 @@ function stringifyArgs(args: unknown[]): string {
 export interface BridgeChannel {
   channel: LarkChannel;
   disconnect(): Promise<void>;
+  recoverMissed(): void;
 }
 
 export interface StartChannelDeps {
@@ -313,8 +315,19 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     );
     return work;
   };
+  const reliability = () => getReliabilityConfig(controls.profileConfig);
   const pending = new PendingQueue(DEBOUNCE_MS, (scope, batch) => {
-    if (closing) return;
+    if (closing) {
+      if (reliability().lostMessage && ledger) {
+        unrecordAcceptedMessages(ledger, batch);
+        log.info('pending', 'handoff', {
+          count: batch.length,
+          reason: 'closing-flush',
+          incompleteFrom: ledger.getIncompleteFrom(),
+        });
+      }
+      return;
+    }
     const firstMsg = batch[0];
     if (!firstMsg) return;
     pending.block(scope);
@@ -359,6 +372,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           scope,
           mode,
           backfillMarks,
+          ledger,
         });
       } finally {
         sessionWriter.release();
@@ -414,12 +428,22 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ...(sessionCatalog?.entries().map((entry) => entry.scopeId) ?? []),
       ],
       intake: (msg) => handOffIntake(msg, 'backfill'),
+      forceShortGapScan: reliability().shortGapScan,
+      lostMessage: reliability().lostMessage,
+      requireMentionForChat: (chatId) => (
+        reliability().lostMessage
+          ? requireMentionForChat(controls.profileConfig, controls.cfg, chatId)
+          : true
+      ),
     }), 'backfill');
   };
 
   channel.on({
     message: async (msg) => {
-      if (closing) return;
+      if (closing) {
+        markClosingArrival(ledger, msg, reliability().lostMessage);
+        return;
+      }
       await handOffIntake(msg, 'ws');
     },
     reject: (evt) => {
@@ -601,6 +625,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   return {
     channel,
+    recoverMissed: () => launchBackfill('handoff'),
     disconnect: async () => {
       closing = true;
       resumeCandidates.clear();
@@ -615,7 +640,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       // A reconnect keeps meeting membership while stopping local timers.
       meetingManager?.dispose();
       controls.meeting = undefined;
-      pending.cancelAll();
+      abandonUnstartedPending(
+        pending,
+        ledger,
+        reliability().lostMessage,
+      );
       const first = await Promise.allSettled([
         channel.disconnect(), activeRuns.stopAll(), ...consumers,
       ]);
@@ -902,8 +931,25 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     controls,
   });
   if (handled) {
-    const dropped = pending.cancel(scope);
-    log.info('intake', 'command', { scope, droppedPending: dropped.length });
+    const flags = getReliabilityConfig(controls.profileConfig);
+    if (!flags.lostMessage || commandClearsPending(emsg.content)) {
+      const dropped = pending.cancel(scope);
+      log.info('intake', 'command', { scope, droppedPending: dropped.length });
+      if (flags.lostMessage && dropped.length > 0) {
+        try {
+          await channel.send(
+            emsg.chatId,
+            { markdown: `已取消 ${dropped.length} 条尚未开始的排队消息。` },
+            { replyTo: emsg.messageId },
+          );
+        } catch (err) {
+          if (ledger) unrecordAcceptedMessages(ledger, dropped);
+          log.warn('intake', 'pending-cancel-confirm-failed', { err: String(err) });
+        }
+      }
+    } else {
+      log.info('intake', 'command', { scope, droppedPending: 0 });
+    }
     recordAccepted(ledger, emsg);
     return;
   }
@@ -915,10 +961,55 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
 
 function recordAccepted(ledger: BackfillLedger | undefined, msg: NormalizedMessage): void {
   if (!ledger) return;
-  const createTime = typeof msg.createTime === 'number' && Number.isFinite(msg.createTime)
-    ? msg.createTime
-    : Date.now();
+  const createTime = messageCreateTime(msg) ?? Date.now();
   ledger.record(msg.messageId, createTime);
+}
+
+function messageCreateTime(msg: NormalizedMessage): number | undefined {
+  return typeof msg.createTime === 'number' && Number.isFinite(msg.createTime)
+    ? msg.createTime
+    : undefined;
+}
+
+function unrecordAcceptedMessages(ledger: BackfillLedger, messages: NormalizedMessage[]): void {
+  let earliest: number | undefined;
+  for (const msg of messages) {
+    ledger.unrecord(msg.messageId);
+    const createTime = messageCreateTime(msg);
+    if (createTime === undefined) continue;
+    earliest = earliest === undefined ? createTime : Math.min(earliest, createTime);
+  }
+  if (earliest !== undefined) ledger.markScanIncomplete(earliest);
+}
+
+function abandonUnstartedPending(
+  pending: PendingQueue,
+  ledger: BackfillLedger | undefined,
+  enabled: boolean,
+): NormalizedMessage[] {
+  const dropped = pending.cancelAll();
+  if (!enabled || !ledger || dropped.length === 0) return dropped;
+  unrecordAcceptedMessages(ledger, dropped);
+  log.info('pending', 'handoff', {
+    count: dropped.length,
+    incompleteFrom: ledger.getIncompleteFrom(),
+  });
+  return dropped;
+}
+
+function markClosingArrival(
+  ledger: BackfillLedger | undefined,
+  msg: NormalizedMessage,
+  enabled: boolean,
+): void {
+  if (!enabled || !ledger) return;
+  const createTime = messageCreateTime(msg) ?? Date.now();
+  ledger.markScanIncomplete(createTime);
+  log.info('pending', 'handoff', {
+    count: 1,
+    reason: 'closing',
+    incompleteFrom: ledger.getIncompleteFrom(),
+  });
 }
 
 interface RunBatchDeps {
@@ -938,6 +1029,7 @@ interface RunBatchDeps {
   scope: string;
   mode: ChatMode;
   backfillMarks: Map<string, BackfillMark>;
+  ledger?: BackfillLedger;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -957,6 +1049,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     scope,
     mode,
     backfillMarks,
+    ledger,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1133,6 +1226,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       source: 'im',
       code: flow.rejectReason.code,
     });
+    if (
+      flow.rejectReason.code === 'reconnect-in-progress'
+      && getReliabilityConfig(controls.profileConfig).lostMessage
+      && ledger
+    ) {
+      unrecordAcceptedMessages(ledger, batch);
+      log.info('pending', 'handoff', {
+        count: batch.length,
+        reason: 'reconnect-in-progress',
+        incompleteFrom: ledger.getIncompleteFrom(),
+      });
+    }
     await channel.send(chatId, { markdown: flow.rejectReason.userVisible }, sendOpts);
     return;
   }

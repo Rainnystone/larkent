@@ -100,6 +100,54 @@ describe('IM run flow', () => {
     expect(h.agent.runOptions[0]?.cwd).toBe(workspaceRealpath);
   });
 
+  it('promises recovery instead of a later retry when reconnect is in progress', async () => {
+    const tmp = await createTmpProfile('bridge-im-reconnect-');
+    const activeRuns = new ActiveRuns();
+    activeRuns.pauseNewRuns('reconnect-in-progress');
+    const agent = new FakeAgentAdapter();
+    const executor = new RunExecutor({
+      agent,
+      pool: new ProcessPool(() => 1),
+      activeRuns,
+      createRunId: () => 'run-1',
+      now: () => 1000,
+    });
+    const profileConfig = createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
+    });
+    profileConfig.workspaces.default = tmp.workspace;
+    const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+    const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
+    cleanups.push(async () => {
+      await Promise.all([sessions.flush(), workspaces.flush()]);
+      await tmp.cleanup();
+    });
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: 'continue',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(profileConfig),
+      profileConfig,
+      sessions,
+      workspaces,
+      executor,
+      now: 1000,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      rejectReason: {
+        code: 'reconnect-in-progress',
+        userVisible: '当前 bot 正在重连。这条消息会在重连完成后补处理，请稍候。',
+      },
+    });
+    expect(agent.runOptions).toEqual([]);
+  });
+
 });
 
 async function createHarness(options: { defaultWorkspace?: boolean } = {}): Promise<{

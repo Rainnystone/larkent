@@ -10,7 +10,7 @@ import { createMergeForwardFetch } from './quote';
 
 export const WATERMARK_MARGIN_MS = 120_000;
 
-export type BackfillTrigger = 'connect' | 'reconnected' | 'wake-up';
+export type BackfillTrigger = 'connect' | 'reconnected' | 'wake-up' | 'handoff';
 
 export interface BackfillMark {
   detectedAt: number;
@@ -44,6 +44,9 @@ export interface RunBackfillDeps {
   refreshKnownChats?: (chats: KnownChat[]) => void;
   sessionChatIds?: string[];
   botAppId?: string;
+  forceShortGapScan?: boolean;
+  requireMentionForChat?: (chatId: string) => boolean;
+  lostMessage?: boolean;
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -125,9 +128,15 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     incompleteFrom,
     lookbackMs: deps.prefs.lookbackMs,
   });
-  if (window.gapMs < deps.prefs.minGapMs && incompleteFrom === undefined) {
+  if (window.gapMs < deps.prefs.minGapMs && incompleteFrom === undefined && !deps.forceShortGapScan) {
     log.info('backfill', 'skip-short-gap', { gapMs: window.gapMs });
     return;
+  }
+  if (window.gapMs < deps.prefs.minGapMs) {
+    log.info('backfill', 'forced', {
+      gapMs: window.gapMs,
+      reason: incompleteFrom !== undefined ? 'incomplete' : 'short-gap-scan',
+    });
   }
 
   log.info('backfill', 'trigger', {
@@ -180,6 +189,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   let enqueuedTotal = 0;
   let fetchFailures = 0;
   let aborted = false;
+  let truncatedFrom: number | undefined;
   for (const chat of inScope.chats) {
     if (deps.isClosing?.()) {
       aborted = true;
@@ -199,7 +209,14 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
       break;
     }
     if (result === 'fetch-failed') fetchFailures += 1;
-    else enqueuedTotal += result.enqueued;
+    else {
+      enqueuedTotal += result.enqueued;
+      if (result.truncatedFrom !== undefined) {
+        truncatedFrom = truncatedFrom === undefined
+          ? result.truncatedFrom
+          : Math.min(truncatedFrom, result.truncatedFrom);
+      }
+    }
   }
 
   if (aborted) {
@@ -224,6 +241,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   }
 
   deps.ledger.markScanComplete(window.windowEnd, now);
+  if (truncatedFrom !== undefined) deps.ledger.markScanIncomplete(truncatedFrom);
   log.info('backfill', 'done', {
     chats: inScope.chats.length,
     enqueuedTotal,
@@ -290,7 +308,7 @@ async function scanChat(input: {
   botOpenId: string;
   sessionP2pIds: Set<string>;
   resolveMode: (chatId: string) => Promise<ChatMode>;
-}): Promise<{ enqueued: number } | 'fetch-failed' | 'aborted'> {
+}): Promise<{ enqueued: number; truncatedFrom?: number } | 'fetch-failed' | 'aborted'> {
   const { chatId, window, now, deps, botOpenId, sessionP2pIds, resolveMode } = input;
   let rawItems: HistoryItem[];
   try {
@@ -330,11 +348,14 @@ async function scanChat(input: {
     .sort((a, b) => a.createTime - b.createTime || (a.messageId < b.messageId ? -1 : a.messageId > b.messageId ? 1 : 0));
   if (truncated.length > 0) {
     log.info('backfill', 'mentions-truncated', { chatId, count: truncated.length });
-    if (!deps.prefs.dryRun) {
+    if (!deps.prefs.dryRun && deps.lostMessage === false) {
       for (const msg of truncated) deps.ledger.record(msg.messageId, msg.createTime);
     }
   }
 
+  const truncatedFrom = truncated.length > 0 && deps.lostMessage !== false
+    ? Math.min(...truncated.map((msg) => msg.createTime))
+    : undefined;
   let enqueued = 0;
   for (const msg of survivors) {
     if (deps.isClosing?.()) return 'aborted';
@@ -365,7 +386,7 @@ async function scanChat(input: {
     skippedCommand,
     truncated: truncated.length,
   });
-  return { enqueued };
+  return { enqueued, ...(truncatedFrom !== undefined ? { truncatedFrom } : {}) };
 }
 
 async function filterHistoryItem(
@@ -410,7 +431,9 @@ async function filterHistoryItem(
       break;
     case 'group':
     case 'topic':
-      if (!msg.mentionedBot) return { kind: 'drop' };
+      if ((deps.requireMentionForChat?.(chatId) ?? true) && !msg.mentionedBot) {
+        return { kind: 'drop' };
+      }
       break;
     default: {
       const _exhaustive: never = chatType;

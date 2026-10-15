@@ -205,6 +205,25 @@ export function isRegisteredSlashCommand(content: string): boolean {
   return Object.hasOwn(handlers, cmd);
 }
 
+/** Session-switching or stop commands that drop unstarted pending work. */
+export function commandClearsPending(content: string): boolean {
+  const trimmed = content.trim();
+  const [cmd, sub] = trimmed.split(/\s+/);
+  switch (cmd) {
+    case '/stop':
+    case '/new':
+    case '/reset':
+    case '/cd':
+    case '/exit':
+      return true;
+    case '/resume':
+    case '/ws':
+      return sub === 'use';
+    default:
+      return false;
+  }
+}
+
 export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {
   const trimmed = ctx.msg.content.trim();
   if (!trimmed.startsWith('/')) return false;

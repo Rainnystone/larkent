@@ -29,6 +29,29 @@ export interface AccessFenceConfig {
   enabled: boolean;
 }
 
+export interface ReliabilityConfig {
+  /**
+   * Lost-message recovery. Default on (bugfix). Off matches master:
+   * accepted pending stays recorded if it is dropped.
+   */
+  lostMessage?: boolean;
+  /**
+   * Force a history scan even when the WS gap is below `minGapMs`.
+   * Default off (master skip-short-gap) until a live redelivery result
+   * says Feishu will not replay the gap.
+   */
+  shortGapScan?: boolean;
+}
+
+export function getReliabilityConfig(
+  profile: Pick<ProfileConfig, 'reliability'>,
+): { lostMessage: boolean; shortGapScan: boolean } {
+  return {
+    lostMessage: profile.reliability?.lostMessage !== false,
+    shortGapScan: profile.reliability?.shortGapScan === true,
+  };
+}
+
 export interface ProfileAccess {
   allowedUsers: string[];
   allowedChats: string[];
@@ -193,6 +216,8 @@ export interface ProfileConfig {
   /** In-meeting agent settings. See {@link MeetingConfig}. */
   meeting: MeetingConfig;
   larkCli: LarkCliConfig;
+  /** Run-reliability switches. Omitted keys use the defaults in {@link getReliabilityConfig}. */
+  reliability?: ReliabilityConfig;
 }
 
 /**
@@ -236,6 +261,7 @@ export interface CreateDefaultProfileConfigInput {
   secrets?: SecretsConfig;
   larkCli?: LarkCliConfig;
   options?: unknown;
+  reliability?: ReliabilityConfig;
 }
 
 export function createDefaultProfileConfig(
@@ -287,6 +313,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     meeting?: unknown;
     larkCli?: unknown;
     instance?: unknown;
+    reliability?: unknown;
   };
 
   if (raw.schemaVersion !== PROFILE_SCHEMA_VERSION) {
@@ -319,6 +346,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const comments = normalizeComments(raw.comments);
   const meeting = normalizeMeeting(raw.meeting);
   const larkCli = normalizeLarkCli(raw.larkCli);
+  const reliability = normalizeReliability(raw.reliability);
 
   const binaryPath =
     typeof raw.agent?.binaryPath === 'string' && raw.agent.binaryPath.trim()
@@ -370,6 +398,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     comments,
     meeting,
     larkCli,
+    ...(reliability ? { reliability } : {}),
   };
 }
 
@@ -433,6 +462,18 @@ function logBackfillWarning(warning: BackfillNormalizeWarning): void {
       return _exhaustive;
     }
   }
+}
+
+function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const raw = input as Record<string, unknown>;
+  const lostMessage = raw.lostMessage === false ? false : undefined;
+  const shortGapScan = raw.shortGapScan === true ? true : undefined;
+  if (lostMessage === undefined && shortGapScan === undefined) return undefined;
+  return {
+    ...(lostMessage === false ? { lostMessage: false } : {}),
+    ...(shortGapScan === true ? { shortGapScan: true } : {}),
+  };
 }
 
 function normalizeAccess(

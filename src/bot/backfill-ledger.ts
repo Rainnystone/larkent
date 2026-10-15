@@ -84,6 +84,14 @@ export class BackfillLedger {
     this.schedulePersist();
   }
 
+  unrecord(messageId: string): boolean {
+    this.claimed.delete(messageId);
+    if (!this.processed.has(messageId)) return false;
+    this.processed.delete(messageId);
+    this.schedulePersist();
+    return true;
+  }
+
   touchLive(now: number): void {
     if (!Number.isFinite(now)) return;
     const previous = this.lastLiveAt;

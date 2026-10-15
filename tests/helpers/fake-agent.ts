@@ -19,15 +19,23 @@ class FakeRun implements FakeAgentRun {
   readonly waitForExitResult: boolean;
   #stopped = false;
   #waitForExitCalls = 0;
+  #hold: Promise<void> | undefined;
+  #stoppedAt: Promise<void>;
+  #markStopped: () => void = () => {};
 
   constructor(
     opts: AgentRunOptions,
     events: readonly AgentEvent[],
     waitForExitResult: boolean,
+    hold?: Promise<void>,
   ) {
     this.runId = opts.runId;
     this.opts = opts;
     this.waitForExitResult = waitForExitResult;
+    this.#hold = hold;
+    this.#stoppedAt = new Promise<void>((resolve) => {
+      this.#markStopped = resolve;
+    });
     this.events = this.iterate(events);
   }
 
@@ -41,10 +49,12 @@ class FakeRun implements FakeAgentRun {
 
   async stop(): Promise<void> {
     this.#stopped = true;
+    this.#markStopped();
   }
 
   async waitForExit(): Promise<boolean> {
     this.#waitForExitCalls++;
+    if (this.#hold) await Promise.race([this.#hold, this.#stoppedAt]);
     return this.#stopped || this.waitForExitResult;
   }
 
@@ -53,6 +63,7 @@ class FakeRun implements FakeAgentRun {
       if (this.#stopped) return;
       yield event;
     }
+    if (this.#hold && !this.#stopped) await Promise.race([this.#hold, this.#stoppedAt]);
   }
 }
 
@@ -69,6 +80,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   #available: boolean;
   #eventRuns: AgentEvent[][];
   #waitForExitResults: boolean[];
+  #hold: Promise<void> | undefined;
 
   constructor(options: {
     id?: string;
@@ -76,12 +88,15 @@ export class FakeAgentAdapter implements AgentAdapter {
     available?: boolean;
     events?: FakeAgentEvents;
     waitForExit?: boolean | readonly boolean[];
+    /** Keep the event stream open until this settles so pending can accumulate. */
+    hold?: Promise<void>;
   } = {}) {
     this.id = options.id ?? 'fake-agent';
     this.displayName = options.displayName ?? 'Fake Agent';
     this.#available = options.available ?? true;
     this.#eventRuns = normalizeEventRuns(options.events ?? []);
     this.#waitForExitResults = normalizeWaitForExitResults(options.waitForExit);
+    this.#hold = options.hold;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -96,7 +111,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     this.runOptions.push(opts);
     const events = this.#eventRuns.shift() ?? [];
     const waitForExitResult = this.#waitForExitResults.shift() ?? true;
-    const run = new FakeRun(opts, events, waitForExitResult);
+    const run = new FakeRun(opts, events, waitForExitResult, this.#hold);
     this.runs.push(run);
     return run;
   }

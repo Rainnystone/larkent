@@ -54,12 +54,15 @@ export class PendingQueue {
     return entry.messages;
   }
 
-  cancelAll(): void {
+  cancelAll(): NormalizedMessage[] {
+    const dropped: NormalizedMessage[] = [];
     for (const entry of this.map.values()) {
       if (entry.timer) clearTimeout(entry.timer);
+      dropped.push(...entry.messages);
     }
     this.map.clear();
     this.blocked.clear();
+    return dropped;
   }
 
   /** Pause the debounce timer; pushed messages keep accumulating. */

@@ -415,7 +415,7 @@ async function supervisorHarness(beforeReturn?: (bridge: BridgeChannel, index: n
   const sup = new Supervisor({ configPath: paths.configFile, runPreflight: false, startChannelFn: async deps => {
     const channel = createRecordingLarkChannel();
     const item = { profile: deps.controls.profile, bridge: undefined as unknown as BridgeChannel, fail: undefined as Error | undefined, attempts: 0, connected: true };
-    item.bridge = { channel: channel as unknown as BridgeChannel['channel'], disconnect: async () => { item.attempts++; if (item.fail) throw item.fail; item.connected = false; } };
+    item.bridge = { channel: channel as unknown as BridgeChannel['channel'], disconnect: async () => { item.attempts++; if (item.fail) throw item.fail; item.connected = false; }, recoverMissed() {} };
     bridges.push(item);
     await beforeReturn?.(item.bridge, bridges.length - 1);
     return item.bridge;
