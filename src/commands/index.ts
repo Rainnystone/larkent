@@ -2035,7 +2035,10 @@ async function handleMeeting(args: string, ctx: CommandContext): Promise<void> {
         return;
       }
       try {
-        const session = await manager.join(meetingNo, { originChatId: ctx.msg.chatId });
+        const session = await manager.join(meetingNo, {
+          originChatId: ctx.msg.chatId,
+          joinedWithAccessCheck: true,
+        });
         await reply(
           ctx,
           `✅ 已入会 **${session.topic ?? meetingNo}**\n` +

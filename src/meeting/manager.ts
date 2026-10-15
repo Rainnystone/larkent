@@ -188,7 +188,10 @@ export class MeetingManager {
         log.info('meeting', 'skip-not-allowed-user', { meetingNo });
         return;
       }
-      void this.join(meetingNo).catch((err) =>
+      void this.join(meetingNo, {
+        ...(chatId ? { originChatId: chatId } : {}),
+        joinedWithAccessCheck: true,
+      }).catch((err) =>
         log.warn('meeting', 'auto-join-failed', { meetingNo, err: String(err) }),
       );
     }
@@ -226,7 +229,11 @@ export class MeetingManager {
    * regardless of push: it is the primary source until a push arrives, and the
    * gap-fill path afterwards.
    */
-  async join(meetingNo: string, opts: { originChatId?: string; password?: string } = {}): Promise<MeetingSession> {
+  async join(meetingNo: string, opts: {
+    originChatId?: string;
+    password?: string;
+    joinedWithAccessCheck?: boolean;
+  } = {}): Promise<MeetingSession> {
     const existing = this.byMeetingNo(meetingNo);
     if (existing && !existing.ended) return existing;
 
@@ -244,6 +251,7 @@ export class MeetingManager {
       config,
       ...(botOpenId ? { botOpenId } : {}),
       ...(opts.originChatId ? { originChatId: opts.originChatId } : {}),
+      ...(opts.joinedWithAccessCheck === true ? { joinedWithAccessCheck: true } : {}),
     });
     this.sessions.set(session.meetingId, session);
     this.deps.onSession?.(session);
