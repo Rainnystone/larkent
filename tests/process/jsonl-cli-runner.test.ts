@@ -253,6 +253,20 @@ describe('runner settlement boundaries', () => {
     expect(Buffer.byteLength(snapshot)).toBeLessThan(96 * 1024);
   });
 
+  it('classifies a SIGKILL with no JSONL terminal as a failed event, not success', async () => {
+    const f = fixture();
+    const run = f.start();
+    const events = collect(run.events);
+    f.child.stdout.end();
+    f.exit('SIGKILL');
+    const got = await events;
+    expect(got).toEqual([
+      { type: 'error', message: 'fake killed by SIGKILL', terminationReason: 'failed' },
+    ]);
+    expect(run.exit).toBeNull();
+    expect(run.signal).toBe('SIGKILL');
+  });
+
   it('keeps a signature in the bounded snapshot after a 500-character error slice drops it', async () => {
     const f = fixture();
     const run = f.start();

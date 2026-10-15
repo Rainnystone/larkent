@@ -224,6 +224,12 @@ export class RunExecutor {
       get stderrSnapshot() {
         return rawRun.stderrSnapshot;
       },
+      get exit() {
+        return rawRun.exit;
+      },
+      get signal() {
+        return rawRun.signal;
+      },
       pid: rawRun.pid,
       startedAt: rawRun.startedAt,
       waitForExit: timeoutMs => rawRun.waitForExit(timeoutMs),
@@ -311,6 +317,8 @@ function observeRunEvents(
             terminalEvent: event,
             stderrTail,
             signatures,
+            exit: opts.handle().run.exit,
+            signal: opts.handle().run.signal,
           });
           log.warn('run', 'failed', {
             ...opts.dimensions,

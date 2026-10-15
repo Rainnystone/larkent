@@ -82,6 +82,10 @@ export interface AgentRun {
   readonly pid?: number;
   /** Wall-clock start time of that child, for journal orphan matching. */
   readonly startedAt?: number;
+  /** Child exit code once the process has exited. */
+  readonly exit?: number | null;
+  /** Child termination signal once the process has exited. */
+  readonly signal?: NodeJS.Signals | string | null;
   /** Resolves only after process exit and adapter cleanup; rejects if settlement fails. */
   stop(): Promise<void>;
   /**
