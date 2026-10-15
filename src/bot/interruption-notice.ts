@@ -232,6 +232,7 @@ export async function deliverInterruptionNotice(input: {
   requireBotMention: boolean;
   ownerId?: string;
   authNotified: boolean;
+  stageOnly?: boolean;
 }): Promise<{ delivered: boolean; pending: boolean }> {
   const entry = input.journal.get(input.turnId);
   if (!entry) return { delivered: false, pending: false };
@@ -270,27 +271,31 @@ async function sendContinueNotice(
     noticeAuth?: NoticeActionAuth;
     consecutive: number;
     requireBotMention: boolean;
+    stageOnly?: boolean;
   },
   entry: TurnJournalEntry,
 ): Promise<{ delivered: boolean; pending: boolean }> {
+  const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
   const buttons = noticeUsesButtons(input.consecutive) && Boolean(input.noticeAuth);
-  const markdown = buildNoticeMarkdown({
-    initiatorId: entry.initiatorId || entry.senderId,
-    requireBotMention: input.requireBotMention,
-    outcome: input.outcome,
-    includeButtons: buttons,
-  });
-  const notice: TurnNotice = {
+  const notice: TurnNotice = existing ?? {
     kind: buttons ? 'continue' : 'plain',
     recipientChatId: entry.chatId,
-    markdown,
+    markdown: buildNoticeMarkdown({
+      initiatorId: entry.initiatorId || entry.senderId,
+      requireBotMention: input.requireBotMention,
+      outcome: input.outcome,
+      includeButtons: buttons,
+    }),
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     includeButtons: buttons,
     continueHint: continueExtraInstruction(input.outcome),
   };
-  input.journal.markInterrupted(input.turnId, input.outcome, input.consecutive);
-  input.journal.markNoticePending(input.turnId, notice);
+  if (!existing) {
+    input.journal.markInterrupted(input.turnId, input.outcome, input.consecutive);
+    input.journal.markNoticePending(input.turnId, notice);
+  }
+  if (input.stageOnly) return { delivered: false, pending: true };
   try {
     await postNotice(input.send, { ...entry, notice }, notice, input.noticeAuth);
     input.journal.markNoticeDelivered(input.turnId);
@@ -311,10 +316,12 @@ async function sendAuthNotice(
     journal: TurnJournal;
     turnId: string;
     ownerId?: string;
+    stageOnly?: boolean;
   },
   entry: TurnJournalEntry,
 ): Promise<{ delivered: boolean; pending: boolean }> {
-  const notice: TurnNotice = {
+  const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
+  const notice: TurnNotice = existing ?? {
     kind: 'auth',
     recipientChatId: entry.chatId,
     markdown: buildAuthInitiatorMarkdown(entry.initiatorId || entry.senderId),
@@ -322,7 +329,8 @@ async function sendAuthNotice(
     ...(entry.threadId ? { replyInThread: true } : {}),
     ...(input.ownerId ? { ownerChatId: input.ownerId } : {}),
   };
-  input.journal.markNoticePending(input.turnId, notice);
+  if (!existing) input.journal.markNoticePending(input.turnId, notice);
+  if (input.stageOnly) return { delivered: false, pending: true };
   try {
     const ok = await sendAuthPayload(input.send, { ...entry, notice }, notice, input.journal);
     if (ok) {

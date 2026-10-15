@@ -101,7 +101,7 @@ import {
   type BackfillTrigger,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import type { TurnJournal, TurnJournalEntry } from './turn-journal';
+import type { TurnJournal, TurnJournalEntry, TurnJournalResource } from './turn-journal';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
@@ -295,7 +295,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const noticeAuth = callbackNonceStore
     ? new NoticeActionAuth({ secret: appSecret, nonceStore: callbackNonceStore })
     : undefined;
-  const continueByScope = new Map<string, { resumeHandle?: string; userInput?: string; turnId: string }>();
+  const continueByScope = new Map<string, ContinueRequest>();
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model
   // switch can inject a one-time "model changed" note into the next (resumed)
@@ -523,6 +523,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         })
         : undefined,
       noticeGapMs: NOTICE_RESTART_GAP_MS,
+      isActive: (scope) => activeRuns.get(scope) !== undefined,
     }).then(() => {}), 'journal');
   };
 
@@ -559,16 +560,18 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
           journal,
           noticeAuth,
-          onNoticeAction: ({ action, entry, operatorId, scope, threadId, mode }) => {
+          onNoticeAction: ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
             if (action !== 'notice.continue') return;
             journal?.update(entry.turnId, { noticeInvalidated: true });
             continueByScope.set(scope, {
               turnId: entry.turnId,
               ...(entry.resumeHandle ? { resumeHandle: entry.resumeHandle } : {}),
               ...(entry.userInput ? { userInput: entry.userInput } : {}),
+              ...(entry.policyFingerprint ? { policyFingerprint: entry.policyFingerprint } : {}),
+              ...(entry.resources ? { resources: entry.resources } : {}),
             });
             pending.push(scope, {
-              messageId: `notice-continue-${entry.turnId}`,
+              messageId: messageId || entry.messageIds.at(-1) || `notice-continue-${entry.turnId}`,
               chatId: entry.chatId,
               chatType: mode === 'p2p' ? 'p2p' : 'group',
               threadId,
@@ -576,7 +579,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
               senderName: '',
               content: entry.resumeHandle ? '继续' : (entry.userInput ?? '继续'),
               rawContentType: 'text',
-              resources: [],
+              resources: (entry.resources ?? []) as NormalizedMessage['resources'],
               mentions: [],
               mentionAll: false,
               mentionedBot: true,
@@ -1156,7 +1159,7 @@ interface RunBatchDeps {
   noticeAuth?: NoticeActionAuth;
   consecutiveByScope: Map<string, number>;
   pendingHintByScope: Map<string, string>;
-  continueByScope: Map<string, { resumeHandle?: string; userInput?: string; turnId: string }>;
+  continueByScope: Map<string, ContinueRequest>;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1364,6 +1367,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       initiatorId: lastMsg.senderId,
       status: 'queued',
       ...(noticeEnabled ? { userInput: promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n') } : {}),
+      ...(noticeEnabled ? journalResources(batch) : {}),
     });
   }
 
@@ -1382,7 +1386,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     now: Date.now(),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
     ...(continueReq
-      ? { forceResumeHandle: continueReq.resumeHandle ?? null }
+      ? continueReq.resumeHandle
+        ? {
+          forceResumeHandle: continueReq.resumeHandle,
+          ...(continueReq.policyFingerprint
+            ? { forceResumeFingerprint: continueReq.policyFingerprint }
+            : {}),
+        }
+        : { forceResumeHandle: null }
       : {}),
     observability: {
       profile: controls.profile,
@@ -1622,14 +1633,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           progress,
           renderDone,
           producerStarted: () => producerStarted,
-          fallback: async (state) => {
-            if (finalAnswerOnly) return;
-            if (renderText(filterForPrefs(state)).trim() === '') return;
-            await channel.send(
-              chatId,
-              { card: renderCard(filterForPrefs(state), cardRenderOptions) },
-              sendOpts,
-            );
+          fallback: async () => {
+            // Stream-deltas finalize through deliverFinalReply after the stream
+            // settles, including the no-progress-stream and abandoned paths.
           },
         });
       } catch (err) {
@@ -1637,22 +1643,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
-      if (finalAnswerOnly) {
-        await deliverFinalReply({
-          channel,
-          chatId,
-          scope,
-          state: finalReplyState(progress, filterForPrefs(latestState)),
-          skipFrom: latestState,
-          replyMode,
-          sendOpts,
-          cardRenderOptions,
-          journal,
-          turnId,
-          handle,
-          notice: noticeCtx,
-        });
-      }
+      await deliverFinalReply({
+        channel,
+        chatId,
+        scope,
+        state: finalAnswerOnly
+          ? finalReplyState(progress, filterForPrefs(latestState))
+          : filterForPrefs(latestState),
+        skipFrom: latestState,
+        alreadyStreamed: !finalAnswerOnly && progress.opened() && !progress.abandoned(),
+        replyMode,
+        sendOpts,
+        cardRenderOptions,
+        journal,
+        turnId,
+        handle,
+        notice: noticeCtx,
+      });
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
@@ -1694,12 +1701,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           progress,
           renderDone,
           producerStarted: () => producerStarted,
-          fallback: async (state) => {
-            if (finalAnswerOnly) return;
-            const body = renderText(filterForPrefs(state));
-            if (body.trim()) {
-              await channel.send(chatId, { markdown: body }, sendOpts);
-            }
+          fallback: async () => {
+            // Stream-deltas finalize through deliverFinalReply after the stream
+            // settles, including the no-progress-stream and abandoned paths.
           },
         });
       } catch (err) {
@@ -1707,22 +1711,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
-      if (finalAnswerOnly) {
-        await deliverFinalReply({
-          channel,
-          chatId,
-          scope,
-          state: finalReplyState(progress, filterForPrefs(latestState)),
-          skipFrom: latestState,
-          replyMode,
-          sendOpts,
-          cardRenderOptions,
-          journal,
-          turnId,
-          handle,
-          notice: noticeCtx,
-        });
-      }
+      await deliverFinalReply({
+        channel,
+        chatId,
+        scope,
+        state: finalAnswerOnly
+          ? finalReplyState(progress, filterForPrefs(latestState))
+          : filterForPrefs(latestState),
+        skipFrom: latestState,
+        alreadyStreamed: !finalAnswerOnly && progress.opened() && !progress.abandoned(),
+        replyMode,
+        sendOpts,
+        cardRenderOptions,
+        journal,
+        turnId,
+        handle,
+        notice: noticeCtx,
+      });
     } else {
       // text mode: drain the agent stream without sending anything during
       // the run, then post the final rendered text once as a plain markdown
@@ -1918,6 +1923,7 @@ async function deliverFinalReply(input: {
   scope: string;
   state: RunState;
   skipFrom?: RunState;
+  alreadyStreamed?: boolean;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
@@ -1937,7 +1943,9 @@ async function deliverFinalReply(input: {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
   const body = renderText(input.state);
-  const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || !body.trim();
+  const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
+    || !body.trim()
+    || input.alreadyStreamed === true;
   const outcome = input.handle.outcome;
   const willNotice = Boolean(
     input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
@@ -1950,7 +1958,19 @@ async function deliverFinalReply(input: {
       ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
     });
   }
-  await sendFinalReply(input);
+  if (willNotice && input.notice && input.journal && input.turnId && outcome) {
+    await sendTurnNotice({
+      channel: input.channel,
+      journal: input.journal,
+      turnId: input.turnId,
+      scope: input.scope,
+      outcome,
+      notice: input.notice,
+      stageOnly: true,
+    });
+  }
+  if (input.journal) await input.journal.flush();
+  if (!input.alreadyStreamed) await sendFinalReply(input);
   if (input.journal && input.turnId && !willNotice) input.journal.markReplyDelivered(input.turnId);
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
@@ -2208,6 +2228,8 @@ async function processAgentStream(
           terminalEvent: evt,
           stderrTail,
           signatures,
+          exit: handle.run.exit,
+          signal: handle.run.signal,
         });
         const msg = cardUserMessage(early, matched, true);
         if (msg) state = { ...state, errorMsg: msg };
@@ -2240,6 +2262,8 @@ async function processAgentStream(
     terminalEvent: lastTerminal,
     stderrTail,
     signatures,
+    exit: handle.run.exit,
+    signal: handle.run.signal,
   });
   if (cliSignaturesEnabled) {
     noteUnclassifiedStderr({
@@ -2307,8 +2331,14 @@ function applyOutcomeToState(
         footer: null,
         ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
       };
-    case 'done':
-      return finalizeIfRunning(state);
+    case 'done': {
+      const next = finalizeIfRunning(state);
+      if (!userMessage) return next;
+      return {
+        ...next,
+        blocks: [...next.blocks, { kind: 'text' as const, content: userMessage, streaming: false }],
+      };
+    }
     case 'running':
       return state;
     default: {
@@ -2465,13 +2495,21 @@ function scheduleWorkingReactionCleanup(
   })();
 }
 
+interface ContinueRequest {
+  turnId: string;
+  resumeHandle?: string;
+  userInput?: string;
+  policyFingerprint?: string;
+  resources?: TurnJournalResource[];
+}
+
 function takeContinueRequest(input: {
   scope: string;
   batch: NormalizedMessage[];
   journal?: TurnJournal;
   noticeEnabled: boolean;
-  continueByScope: Map<string, { resumeHandle?: string; userInput?: string; turnId: string }>;
-}): { resumeHandle?: string; userInput?: string; turnId: string } | undefined {
+  continueByScope: Map<string, ContinueRequest>;
+}): ContinueRequest | undefined {
   if (!input.noticeEnabled) return undefined;
   const queued = input.continueByScope.get(input.scope);
   if (queued) {
@@ -2486,7 +2524,21 @@ function takeContinueRequest(input: {
     turnId: entry.turnId,
     ...(entry.resumeHandle ? { resumeHandle: entry.resumeHandle } : {}),
     ...(entry.userInput ? { userInput: entry.userInput } : {}),
+    ...(entry.policyFingerprint ? { policyFingerprint: entry.policyFingerprint } : {}),
+    ...(entry.resources ? { resources: entry.resources } : {}),
   };
+}
+
+function journalResources(batch: NormalizedMessage[]): { resources: TurnJournalResource[] } | Record<string, never> {
+  const resources: TurnJournalResource[] = [];
+  for (const msg of batch) {
+    for (const item of msg.resources) {
+      if (typeof item.type === 'string' && typeof item.fileKey === 'string') {
+        resources.push({ type: item.type, fileKey: item.fileKey });
+      }
+    }
+  }
+  return resources.length > 0 ? { resources } : {};
 }
 
 function rebuildPendingHints(journal?: TurnJournal): Map<string, string> {
@@ -2527,11 +2579,13 @@ async function sendTurnNotice(input: {
     ownerId?: string;
     requireBotMention: boolean;
   };
+  stageOnly?: boolean;
 }): Promise<void> {
   const plan = planInterruptionNotice(input.outcome);
   if (plan.kind === 'none') return;
+  const alreadyPending = input.journal.get(input.turnId)?.status === 'notice-pending';
   let consecutive = input.notice.consecutiveByScope.get(input.scope) ?? 0;
-  if (plan.kind === 'continue') {
+  if (plan.kind === 'continue' && !alreadyPending) {
     consecutive += 1;
     input.notice.consecutiveByScope.set(input.scope, consecutive);
   }
@@ -2545,6 +2599,7 @@ async function sendTurnNotice(input: {
     requireBotMention: input.notice.requireBotMention,
     ownerId: input.notice.ownerId,
     authNotified: authNoticeAlreadyDelivered(input.journal),
+    stageOnly: input.stageOnly === true,
   });
   if (plan.kind === 'continue' && (result.delivered || result.pending)) {
     input.notice.pendingHintByScope.set(input.scope, continueExtraInstruction(input.outcome));

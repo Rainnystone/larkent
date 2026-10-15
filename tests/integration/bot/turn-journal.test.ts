@@ -94,6 +94,39 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     },
   );
 
+  it('settles a streamed card turn instead of leaving it running', async () => {
+    const h = await harness({ fakeTimers: false, replyMode: 'card' });
+    await h.channel.handlers.message?.(mention('om_run', 'please answer'));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
+    )));
+  });
+
+  it('does not mark an in-flight run interrupted on WebSocket reconnected', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness({ hold, complete: false });
+    await h.channel.handlers.message?.(mention('om_run', 'start the run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 1);
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run')
+      && (entry.status === 'queued' || entry.status === 'running')
+    )));
+    h.channel.emit('reconnected');
+    await yieldIO();
+    await h.journal.flush();
+    expect(h.journal.list()).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        messageIds: expect.arrayContaining(['om_run']),
+        status: expect.stringMatching(/queued|running/),
+      }),
+    ]));
+    release();
+  });
+
   it('does not write or recover when journal write is off', async () => {
     const h = await harness({ journal: false });
     const orig = h.channel.send.bind(h.channel);
@@ -122,12 +155,13 @@ async function harness(opts: {
   journal?: boolean;
   complete?: boolean;
   fakeTimers?: boolean;
+  replyMode?: 'text' | 'card';
 } = {}) {
   const tmp = await createTmpProfile('turn-journal-');
   const file = join(tmp.profile, 'turn-journal.json');
   const journal = new TurnJournal(file);
   await journal.load();
-  const cfg = profile(tmp.workspace, opts.journal);
+  const cfg = profile(tmp.workspace, opts.journal, opts.replyMode);
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const complete = opts.complete !== false;
@@ -188,13 +222,13 @@ async function harness(opts: {
   };
 }
 
-function profile(workspace: string, journal?: boolean) {
+function profile(workspace: string, journal?: boolean, replyMode: 'text' | 'card' = 'text') {
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: [USER], admins: [USER] },
     preferences: {
-      messageReply: 'text',
+      messageReply: replyMode,
       messageReplyMigrated: true,
       cotMessages: 'off',
       requireMentionInGroup: true,

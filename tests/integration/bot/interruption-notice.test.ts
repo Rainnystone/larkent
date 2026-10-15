@@ -57,6 +57,9 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions[1]?.resumeHandle).toBe('sess-1');
     expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
     expect(h.agent.runOptions[1]?.prompt).not.toContain(SECRET);
+    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('CONTINUED')));
+    const continued = h.channel.sent.find((item) => JSON.stringify(item.content).includes('CONTINUED'));
+    expect(continued?.options).toMatchObject({ replyTo: 'om_notice' });
 
     const sentBefore = h.channel.sent.length;
     await h.channel.handlers.cardAction?.(cardClick(USER, token));
@@ -252,6 +255,40 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(noticeSends(h.channel)).toEqual([]);
   });
 
+  it('stages a notice before a failed final reply so recover can resend it', async () => {
+    const h = await harness({
+      fakeTimers: false,
+      events: [[{ type: 'text', delta: 'PARTIAL' }, { type: 'done', terminationReason: 'interrupted' }]],
+    });
+    h.channel.send = async () => {
+      throw new Error('sdk timeout');
+    };
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending'));
+  });
+
+  it('replays original attachments when Continue has no resume handle', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'done', terminationReason: 'interrupted' }],
+        [{ type: 'text', delta: 'SAW FILE' }, { type: 'final_text', content: 'SAW FILE' }, { type: 'done', terminationReason: 'normal' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', 'see the file', {
+      resources: [{ type: 'file', fileKey: 'file_v2_secret' }],
+    }));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    expect(h.journal.list()[0]?.resources).toEqual([{ type: 'file', fileKey: 'file_v2_secret' }]);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.channel.handlers.cardAction?.(cardClick(USER, token));
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+    expect(h.agent.runOptions[1]?.prompt).toContain('see the file');
+    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('SAW FILE')));
+    expect(h.channel.sent.find((item) => JSON.stringify(item.content).includes('SAW FILE'))?.options)
+      .toMatchObject({ replyTo: 'om_notice' });
+  });
+
   it('starts the same continue request from @bot 继续 text', async () => {
     const h = await harness({
       events: [
@@ -354,7 +391,11 @@ function profile(workspace: string, opts: { notice?: boolean; fence?: boolean; a
 function mention(
   messageId: string,
   content: string,
-  extra: { threadId?: string; senderId?: string } = {},
+  extra: {
+    threadId?: string;
+    senderId?: string;
+    resources?: Array<{ type: string; fileKey: string }>;
+  } = {},
 ): NormalizedMessage {
   return {
     messageId,
@@ -363,8 +404,8 @@ function mention(
     chatType: 'group',
     senderId: extra.senderId ?? USER,
     senderName: 'User',
-    rawContentType: 'text',
-    resources: [],
+    rawContentType: extra.resources?.length ? 'file' : 'text',
+    resources: extra.resources ?? [],
     mentionedBot: true,
     createTime: Date.now(),
     ...(extra.threadId ? { threadId: extra.threadId } : {}),

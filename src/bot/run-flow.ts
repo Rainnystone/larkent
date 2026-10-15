@@ -38,6 +38,8 @@ export interface StartRunFlowInput {
   stopGraceMs?: number;
   /** `null` starts a fresh run; a string forces that resume handle. */
   forceResumeHandle?: string | null;
+  /** When set, `forceResumeHandle` is ignored unless it matches the current policy. */
+  forceResumeFingerprint?: string;
   observability?: {
     profile: string;
     agent: string;
@@ -112,10 +114,17 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   }
 
   let resumeFrom: string | undefined;
+  const forceHandle = (
+    typeof input.forceResumeHandle === 'string'
+    && (
+      input.forceResumeFingerprint === undefined
+      || input.forceResumeFingerprint === policy.policyFingerprint
+    )
+  ) ? input.forceResumeHandle : undefined;
   if (input.forceResumeHandle === null) {
     resumeFrom = undefined;
-  } else if (typeof input.forceResumeHandle === 'string') {
-    resumeFrom = input.forceResumeHandle;
+  } else if (typeof forceHandle === 'string') {
+    resumeFrom = forceHandle;
   } else {
     if (input.sessionCatalog) {
       const catalogEntry = input.sessionCatalog.activeFor({

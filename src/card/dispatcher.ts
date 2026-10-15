@@ -58,6 +58,7 @@ export interface CardDispatchDeps {
     scope: string;
     threadId: string | undefined;
     mode: 'p2p' | 'group' | 'topic';
+    messageId: string;
   }) => Promise<void> | void;
 }
 
@@ -325,6 +326,7 @@ async function dispatchNoticeAction(
     scope,
     threadId,
     mode,
+    messageId: deps.evt.messageId,
   });
 }
 
