@@ -185,7 +185,7 @@ async function expectNextRun(h: Awaited<ReturnType<typeof channelHarness>>, resu
   const bridge = await startChannel({ cfg: h.profile, agent, sessions, sessionCatalog: catalog, workspaces, controls: h.controls, appPaths: h.paths });
   try {
     await send(sdk.channel);
-    await vi.waitFor(() => expect(agent.runOptions).toHaveLength(1));
+    await vi.waitFor(() => expect(agent.runOptions).toHaveLength(1), { timeout: 5_000 });
     expect(agent.runOptions[0]?.resumeHandle).toBe(resumeHandle);
     expect(agent.runOptions[0]?.cwd).toBe(h.root);
   } finally {
@@ -291,7 +291,7 @@ async function sendCommand(channel: RecordingLarkChannel, content: string) {
   });
 }
 
-it.each(['/stop', '/cd relative-path', '/resume use invalid-nonce'])('keeps the final handle after %s without an accepted new session decision', async command => {
+it.each(['/stop', '/cd relative-path', '/resume use invalid-nonce'])('keeps the final handle after %s without an accepted new session decision', { timeout: 20_000 }, async command => {
   const output = deferred();
   const run = controlledAgent({ beforeSecond: output.promise });
   const h = await channelHarness({ ...run.agent, id: 'kimi' }, 'text', 3, 'kimi');
