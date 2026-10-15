@@ -1656,7 +1656,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           latestState = state;
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
           if (cardCtrl) {
-            await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+            try {
+              await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+            } catch (err) {
+              log.fail('stream', err, { mode: replyMode, step: 'render' });
+            }
           }
         },
         runContext,
@@ -1728,7 +1732,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           latestState = state;
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
           if (markdownCtrl) {
-            await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+            try {
+              await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+            } catch (err) {
+              log.fail('stream', err, { mode: replyMode, step: 'render' });
+            }
           }
         },
         runContext,
