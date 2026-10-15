@@ -1,11 +1,19 @@
+import { mkdir, mkdtemp, rm, symlink } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   assertLiveRootAllowed,
   defaultLiveRootDir,
   LiveRootGuardError,
 } from '../../../src/runtime/live-root';
+
+const dirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe('live root guard', () => {
   const liveRoot = defaultLiveRootDir();
@@ -35,4 +43,22 @@ describe('live root guard', () => {
       }),
     ).not.toThrow();
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a missing data root whose ancestor symlink points into the live root',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'live-root-symlink-'));
+      dirs.push(dir);
+      const live = join(dir, 'live');
+      await mkdir(live, { recursive: true });
+      const link = join(dir, 'link-to-live');
+      await symlink(live, link);
+      expect(() =>
+        assertLiveRootAllowed(join(link, 'missing', 'root'), {
+          env: { LARKENT_INSTANCE: 'test' },
+          liveRoot: live,
+        }),
+      ).toThrow(LiveRootGuardError);
+    },
+  );
 });

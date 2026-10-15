@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -92,4 +92,37 @@ describe('test-bridge config loader', () => {
     expect(loaded.testerConfigDir).toBe(testerDir);
     expect(loaded.fenceEnabled).toBe(true);
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'rejects a missing data root whose ancestor symlink points into the live root',
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'e2e-config-symlink-'));
+      const home = join(dir, 'home');
+      const live = join(home, '.lark-channel');
+      await mkdir(live, { recursive: true });
+      const link = join(dir, 'link-to-live');
+      await symlink(live, link);
+      const testerDir = join(dir, 'tester');
+      await mkdir(testerDir, { recursive: true });
+      const path = join(dir, 'test-bridge.json');
+      await writeFile(
+        path,
+        JSON.stringify({
+          instance: 't1',
+          appId: 'app-placeholder-replaced',
+          chatId: 'chat-placeholder-replaced',
+          testerOpenId: 'user-placeholder-replaced',
+          appSecret: 'secret-placeholder-replaced',
+          testerConfigDir: testerDir,
+          dataRoot: join(link, 'missing', 'root'),
+        }),
+      );
+
+      await expect(loadTestBridgeConfig(path, { home })).rejects.toSatisfy((err: unknown) => {
+        expect(err).toBeInstanceOf(TestBridgeConfigError);
+        expect(String(err)).toMatch(/live data root/i);
+        return true;
+      });
+    },
+  );
 });

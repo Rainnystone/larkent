@@ -1,6 +1,6 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { isAbsolute, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 
 export class LiveRootGuardError extends Error {
   constructor(readonly rootDir: string) {
@@ -34,21 +34,36 @@ export function assertLiveRootAllowed(
   } = {},
 ): void {
   if (!isTestInstance(input)) return;
-  const live = resolvedPath(input.liveRoot ?? defaultLiveRootDir());
-  const root = resolvedPath(rootDir);
+  const live = resolvePossiblyMissingPath(input.liveRoot ?? defaultLiveRootDir());
+  const root = resolvePossiblyMissingPath(rootDir);
   if (root === live || isPathInside(root, live)) {
     throw new LiveRootGuardError(rootDir);
   }
 }
 
-function resolvedPath(path: string): string {
+/**
+ * Canonicalize `path`, including when some trailing segments do not exist yet:
+ * realpath the nearest existing ancestor and append the missing suffix so a
+ * symlink ancestor cannot hide containment of the live data root.
+ */
+export function resolvePossiblyMissingPath(path: string): string {
   const absolute = resolve(path);
-  try {
-    if (existsSync(absolute)) return realpathSync(absolute);
-  } catch {
-    /* fall through */
+  const missing: string[] = [];
+  let current = absolute;
+  for (;;) {
+    try {
+      if (existsSync(current)) {
+        const real = realpathSync(current);
+        return missing.length === 0 ? real : join(real, ...missing);
+      }
+    } catch {
+      /* keep walking toward the filesystem root */
+    }
+    const parent = dirname(current);
+    if (parent === current) return absolute;
+    missing.unshift(current.slice(parent.length).replace(/^[\\/]+/, ''));
+    current = parent;
   }
-  return absolute;
 }
 
 function isPathInside(inner: string, outer: string): boolean {

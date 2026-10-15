@@ -1,7 +1,7 @@
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { isAbsolute, relative, resolve } from 'node:path';
 import { isAgentKind, type AgentKind } from '../../src/agent/registry';
-import { defaultLiveRootDir } from '../../src/runtime/live-root';
+import { defaultLiveRootDir, resolvePossiblyMissingPath } from '../../src/runtime/live-root';
 import { findPlaceholders } from './placeholders';
 import { defaultDataRoot, resolveExistingPath } from './paths';
 
@@ -143,13 +143,7 @@ async function assertTesterOutsideDataRoot(testerDir: string, dataRoot: string):
 }
 
 async function resolvedIfExists(path: string): Promise<string> {
-  const absolute = resolve(path);
-  try {
-    await stat(absolute);
-    return await realpath(absolute);
-  } catch {
-    return absolute;
-  }
+  return resolvePossiblyMissingPath(path);
 }
 
 function isInside(inner: string, outer: string): boolean {
