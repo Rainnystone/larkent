@@ -114,7 +114,8 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
       controls: h.makeControls(),
     });
     cleanups.push(async () => { await next.disconnect().catch(() => {}); });
-    next.recoverMissed();
+    await next.recoverMissed();
+    await vi.advanceTimersByTimeAsync(600);
     await waitFor(() => {
       const prompts = h.agent.runOptions.map((opts) => opts.prompt).join('\n');
       return prompts.includes('queued during run') && prompts.includes('arrived while closing');
@@ -284,7 +285,7 @@ async function harness(opts: {
         ledger,
         controls: makeControls(),
       });
-      state.bridge.recoverMissed?.();
+      await state.bridge.recoverMissed();
     },
     async exit() {},
     configPath: join(tmp.root, 'config.json'),
@@ -369,7 +370,7 @@ async function waitFor(predicate: () => boolean) {
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
     if (predicate()) return;
-    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(50);
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(600);
     await yieldIO();
   }
   throw new Error('expected lost-message transition was not observed');

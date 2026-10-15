@@ -189,7 +189,7 @@ function stringifyArgs(args: unknown[]): string {
 export interface BridgeChannel {
   channel: LarkChannel;
   disconnect(): Promise<void>;
-  recoverMissed(): void;
+  recoverMissed(): Promise<void>;
 }
 
 export interface StartChannelDeps {
@@ -409,9 +409,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       log.fail('intake', err);
     });
 
-  const launchBackfill = (trigger: BackfillTrigger): void => {
-    if (!ledger) return;
-    void trackConsumer(runScheduledBackfill({
+  const launchBackfill = (trigger: BackfillTrigger): Promise<void> => {
+    if (!ledger) return Promise.resolve();
+    return trackConsumer(runScheduledBackfill({
       trigger,
       channel: channel as unknown as BackfillChannel,
       ledger,
