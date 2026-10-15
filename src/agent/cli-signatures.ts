@@ -39,6 +39,7 @@ export function cardUserMessage(
   enabled: boolean,
 ): string | undefined {
   if (!enabled) return undefined;
+  if (outcome.kind === 'partial') return signature?.userMessage;
   if (outcome.kind !== 'failed') return undefined;
   return signature?.userMessage ?? UNCLASSIFIED_USER_MESSAGE;
 }

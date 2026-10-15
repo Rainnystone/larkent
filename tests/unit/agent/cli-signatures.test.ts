@@ -8,7 +8,7 @@ import {
   type CliSignature,
 } from '../../../src/bot/run-outcome';
 import * as logger from '../../../src/core/logger';
-import { noteUnclassifiedStderr } from '../../../src/agent/cli-signatures';
+import { cardUserMessage, noteUnclassifiedStderr } from '../../../src/agent/cli-signatures';
 
 const GOLDENS = join(process.cwd(), 'tests/fixtures/goldens/stderr');
 
@@ -89,6 +89,15 @@ describe('CLI stderr signature table', () => {
       stderrTail: kimiStderr,
       signatures: descriptorFor('kimi').stderrSignatures,
     })).toMatchObject({ kind: 'failed', cause: 'quota', needsHuman: true });
+  });
+
+  it('uses the signature userMessage for partial outcomes', () => {
+    const signature = descriptorFor('antigravity').stderrSignatures.find((item) => (
+      item.classify.kind === 'partial'
+    ));
+    expect(signature).toBeDefined();
+    expect(cardUserMessage({ kind: 'partial' }, signature, true)).toBe(signature?.userMessage);
+    expect(cardUserMessage({ kind: 'completed' }, signature, true)).toBeUndefined();
   });
 
   it('does not let an interrupted signature override an existing stop request', () => {
