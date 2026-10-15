@@ -32,7 +32,8 @@ describe('turn journal orphan reaper', () => {
     const dir = await mkdtemp(join(tmpdir(), 'journal-orphan-'));
     dirs.push(dir);
     const file = join(dir, 'turn-journal.json');
-    const startedAt = readProcessStartMs(child.pid) ?? Date.now();
+    const verifiedStart = readProcessStartMs(child.pid);
+    const startedAt = verifiedStart ?? Date.now();
     const first = new TurnJournal(file);
     await first.load();
     first.enqueue({
@@ -56,8 +57,17 @@ describe('turn journal orphan reaper', () => {
     await recovered.recover({ enabled: true, orphanGraceMs: 200 });
     await recovered.recover({ enabled: true, orphanGraceMs: 200 });
 
-    expect(isProcessAlive(child.pid)).toBe(false);
     expect(recovered.get('turn-orphan')?.status).toBe('interrupted');
+    if (verifiedStart === undefined) {
+      // Windows (and any OS that cannot read start time) must fail closed:
+      // do not signal a PID we cannot identify, but still settle the journal.
+      expect(isProcessAlive(child.pid)).toBe(true);
+      expect(info.mock.calls.filter(([phase, event]) => (
+        phase === 'journal' && event === 'recovered'
+      ))).toHaveLength(0);
+      return;
+    }
+    expect(isProcessAlive(child.pid)).toBe(false);
     expect(info.mock.calls.filter(([phase, event]) => (
       phase === 'journal' && event === 'recovered'
     ))).toHaveLength(1);
