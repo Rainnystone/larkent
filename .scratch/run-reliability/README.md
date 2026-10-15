@@ -40,7 +40,7 @@ Baseline the live working tree's uncommitted `src/bot/channel.ts` / `src/bot/kee
                                                   3-interruption-notice
 ```
 
-Parallel start set: none (ticket 4 delivered; ticket 3 is next). Do not start ticket 3 until claimed. The live `redelivery-short-gap` experiment is still pending isolated tester credentials.
+Parallel start set: none (all implementation tickets delivered). The live `redelivery-short-gap` / `journal-kill-group` / `cursor-stall-notice` experiments are still pending isolated tester credentials.
 
 ## How an implementer claims a ticket
 
@@ -60,7 +60,7 @@ Parallel start set: none (ticket 4 delivered; ticket 3 is next). Do not start ti
 | 4 | 2 | [issues/2-run-outcome.md](issues/2-run-outcome.md) | RunOutcome model + stop reason | 1 | delivered (`a084906`) |
 | 5 | 5 | [issues/5-cli-signatures.md](issues/5-cli-signatures.md) | CLI signature table, golden stderr, redaction, bounded stderr | 2 | delivered (`151aa1f`) |
 | 6 | 4 | [issues/4-turn-journal.md](issues/4-turn-journal.md) | Turn journal | 2, 5 | delivered (`13ad3dd`; live journal-kill-group still pending credentials) |
-| 7 | 3 | [issues/3-interruption-notice.md](issues/3-interruption-notice.md) | Interruption notice card | 4 | ready |
+| 7 | 3 | [issues/3-interruption-notice.md](issues/3-interruption-notice.md) | Interruption notice card | 4 | delivered (`087ef80`; live cursor-stall-notice still pending credentials) |
 
 ## Evidence rules
 
