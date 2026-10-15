@@ -94,7 +94,7 @@ export function shouldDeliverAgentEvent(
 
 export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
   const signed = matchCliSignature(input.stderrTail, input.signatures);
-  if (signed && !(signed.classify.kind === 'interrupted' && input.stopRequest)) {
+  if (signed && !input.stopRequest) {
     return signed.classify;
   }
 

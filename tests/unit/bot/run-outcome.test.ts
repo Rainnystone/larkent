@@ -117,6 +117,29 @@ describe('deriveRunOutcome', () => {
       formatted: 'failed:quota',
     },
     {
+      name: 'user-stop beats a failed signature match',
+      input: {
+        stopRequest: { type: 'user-stop' } as const,
+        stderrTail: 'RetriableError: Connection stalled repeatedly',
+        signatures: [
+          {
+            pattern: /Connection stalled repeatedly/,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+            userMessage: 'stall',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: {
+        kind: 'interrupted',
+        reason: { type: 'user-stop' },
+        retriable: false,
+        needsHuman: false,
+      },
+      terminal: 'interrupted',
+      formatted: 'interrupted:user-stop',
+    },
+    {
       name: 'failed(killed-externally) on SIGKILL without a stop request',
       input: { signal: 'SIGKILL', exit: null },
       expected: { kind: 'failed', cause: 'killed-externally', retriable: true, needsHuman: false },
