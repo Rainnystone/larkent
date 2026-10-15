@@ -30,6 +30,6 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "tsup.config.ts"],
+  "include": ["src/**/*.ts", "tests/**/*.ts", "e2e/test-bridge/**/*.ts", "tsup.config.ts"],
   "exclude": ["node_modules", "dist"]
 }

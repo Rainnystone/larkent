@@ -45,3 +45,6 @@ tests-smoke/
 
 # planning-with-files local state
 .planning/
+
+# Isolated test-bridge secrets and tester tokens (never commit)
+e2e/.local/

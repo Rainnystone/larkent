@@ -1,0 +1,16 @@
+{
+  "instance": "e2e-1",
+  "profile": "e2e",
+  "agentKind": "cursor",
+  "tenant": "feishu",
+  "appId": "<APP_ID>",
+  "appSecret": "<APP_SECRET>",
+  "chatId": "<CHAT_ID>",
+  "testerOpenId": "<OPEN_ID>",
+  "botOpenId": "<BOT_OPEN_ID>",
+  "allowedUsers": ["<OPEN_ID>"],
+  "allowedChats": ["<CHAT_ID>"],
+  "testerConfigDir": "<TESTER_CONFIG_DIR>",
+  "testerTokenFile": "<TESTER_TOKEN_FILE>",
+  "dataRoot": null
+}
