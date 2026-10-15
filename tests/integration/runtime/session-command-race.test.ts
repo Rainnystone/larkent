@@ -193,9 +193,8 @@ async function expectNextRun(h: Awaited<ReturnType<typeof channelHarness>>, resu
   }
 }
 
-// Pause a card write after the executor has already drained raw events.
-// A later command must still win: releasing that write must not resurrect the
-// old resume handle.
+// Pause the actual card consumer while the executor completes all raw events.
+// Commands must invalidate that consumer even though no active process remains.
 it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished while the old renderer is paused', { timeout: 20_000 }, async command => {
   const output = deferred();
   const firstUpdate = deferred();
@@ -266,6 +265,7 @@ it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished w
     releaseExit.resolve();
     await execution!.finished;
     expect(activeRuns!.get('oc_test')).toBeUndefined();
+    expect(h.sessions.resumeFor('oc_test', h.root)).toBe('chosen-history-handle');
     const text = command === '/resume use' ? `/resume use ${selection!.nonce}` : command === '/cd' ? `/cd ${h.root}` : command;
     await sendCommand(h.channel, text);
   } finally {
