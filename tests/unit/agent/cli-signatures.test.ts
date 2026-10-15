@@ -111,6 +111,27 @@ describe('CLI stderr signature table', () => {
     expect(outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'user-stop' } });
   });
 
+  it('maps agy stop-exit (error: interrupted, exit 1, failed terminal) to user-stop', () => {
+    const outcome = deriveRunOutcome({
+      stopRequest: { type: 'user-stop' },
+      exit: 1,
+      stderrTail: readGolden('antigravity', 'error-interrupted.txt'),
+      signatures: descriptorFor('antigravity').stderrSignatures,
+      terminalEvent: { type: 'error', message: 'error: interrupted', terminationReason: 'failed' },
+    });
+    expect(outcome).toEqual({
+      kind: 'interrupted',
+      reason: { type: 'user-stop' },
+      retriable: false,
+      needsHuman: false,
+    });
+    expect(formatRunOutcome(outcome)).toBe('interrupted:user-stop');
+    expect(cardUserMessage(outcome, matchingSignature(
+      descriptorFor('antigravity').stderrSignatures,
+      readGolden('antigravity', 'error-interrupted.txt'),
+    ), true)).toBeUndefined();
+  });
+
   it('classifies unknown stderr as unclassified and records a count log', () => {
     const stderrTail = readGolden('cursor', 'unclassified-with-paths.txt');
     const signatures = descriptorFor('cursor').stderrSignatures;

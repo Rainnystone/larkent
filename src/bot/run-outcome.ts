@@ -97,6 +97,12 @@ export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
   if (signed && signatureApplies(signed.classify, input)) {
     return signed.classify;
   }
+  // agy prints `error: interrupted` and exits 1 on SIGTERM, which the runner
+  // surfaces as a failed terminal. Keep an earlier user-stop (or other stop)
+  // instead of letting that failed exit become unclassified.
+  if (signed?.classify.kind === 'interrupted' && input.stopRequest) {
+    return interrupted(input.stopRequest);
+  }
 
   const terminal = input.terminalEvent;
   if (terminal?.type === 'done' && terminal.terminationReason === 'normal') {
