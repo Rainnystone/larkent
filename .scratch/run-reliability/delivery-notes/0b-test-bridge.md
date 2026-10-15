@@ -3,7 +3,7 @@
 **Status:** delivered (harness + deterministic layer)
 
 - Code PR: [#39](https://github.com/Rainnystone/larkent/pull/39)
-- SHA: `d1975e7919845ffc3b7608a52a1524f177772932` (`feat/run-reliability`)
+- SHA: `670cc672fc348a1adf8ba24c52cc423945822541` (`feat/run-reliability`)
 - Evidence:
   - TDD red: missing `e2e/test-bridge/{config,shim,proxy}` modules; `git check-ignore e2e/.local/test-bridge.json` failed.
   - TDD green: `tests/integration/e2e-harness` 15 tests (config rejects placeholders + live root; gitignore + no committed id shapes; shim `--version`/`--help` passthrough, SIGTERM without `stdout did not quiesce`, one-shot runId filter; proxy disconnect / timeout / EPROTO-family / EAI_AGAIN / slow / host select).
