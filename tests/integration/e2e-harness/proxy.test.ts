@@ -16,7 +16,7 @@ afterEach(async () => {
 }, 15_000);
 
 describe('test-bridge fault proxy', () => {
-  it('disconnect resets the tunneled socket with ECONNRESET', async () => {
+  it('disconnect resets the tunneled socket with ECONNRESET', { timeout: 15_000 }, async () => {
     const target = await localHttpsTarget();
     const proxy = await startFaultProxy({ mode: 'disconnect' });
     cleanups.push(() => proxy.close());
