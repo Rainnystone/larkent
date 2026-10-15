@@ -41,14 +41,22 @@ export interface ReliabilityConfig {
    * says Feishu will not replay the gap.
    */
   shortGapScan?: boolean;
+  /**
+   * RunOutcome model: keep real terminal events after stop, and distinguish
+   * runner timeout from the idle watchdog on the card. Default on. Off
+   * matches master (drop non-system events after interrupt; timeout renders
+   * as idle_timeout).
+   */
+  runOutcome?: boolean;
 }
 
 export function getReliabilityConfig(
   profile: Pick<ProfileConfig, 'reliability'>,
-): { lostMessage: boolean; shortGapScan: boolean } {
+): { lostMessage: boolean; shortGapScan: boolean; runOutcome: boolean } {
   return {
     lostMessage: profile.reliability?.lostMessage !== false,
     shortGapScan: profile.reliability?.shortGapScan === true,
+    runOutcome: profile.reliability?.runOutcome !== false,
   };
 }
 
@@ -469,10 +477,14 @@ function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
   const raw = input as Record<string, unknown>;
   const lostMessage = raw.lostMessage === false ? false : undefined;
   const shortGapScan = raw.shortGapScan === true ? true : undefined;
-  if (lostMessage === undefined && shortGapScan === undefined) return undefined;
+  const runOutcome = raw.runOutcome === false ? false : undefined;
+  if (lostMessage === undefined && shortGapScan === undefined && runOutcome === undefined) {
+    return undefined;
+  }
   return {
     ...(lostMessage === false ? { lostMessage: false } : {}),
     ...(shortGapScan === true ? { shortGapScan: true } : {}),
+    ...(runOutcome === false ? { runOutcome: false } : {}),
   };
 }
 

@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { descriptorFor, isAgentKind } from '../agent/registry';
 import { mergeAgentOptions, type AgentAdapter, type AgentEvent, type AgentRun } from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
+import {
+  deriveRunOutcome,
+  formatRunOutcome,
+  formatStopRequest,
+  requestStop,
+  stopRequestFromTerminal,
+} from '../bot/run-outcome';
 import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
 import { log } from '../core/logger';
@@ -163,24 +170,27 @@ export class RunExecutor {
     });
 
     const rawRun = run;
-    let handle: RunHandle;
+    let handle!: RunHandle;
     let finishing: Promise<void> | undefined;
     let stopping: Promise<void> | undefined;
     let settled = false;
-    const requestStop = (): Promise<void> => {
+    const stopChild = (): Promise<void> => {
       stopping ??= (async () => { await rawRun.stop(); })();
       // A forced stop can reject while the graceful wait is still pending.
       void stopping.catch(() => {});
       return stopping;
     };
     const finish = (forceStop: boolean): Promise<void> => {
-      if (forceStop && !settled) requestStop();
+      if (forceStop && !settled) {
+        requestStop(handle, { type: 'subscriber-abandoned' });
+        stopChild();
+      }
       finishing ??= (async () => {
         if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
           log.warn('run', 'post-done-exit-timeout', {
             ...dimensions, graceMs: this.postDoneExitGraceMs,
           });
-          requestStop();
+          stopChild();
         }
         if (stopping) {
           await stopping;
@@ -197,7 +207,7 @@ export class RunExecutor {
       events: rawRun.events,
       waitForExit: timeoutMs => rawRun.waitForExit(timeoutMs),
       stop: () => {
-        handle.interrupted = true;
+        requestStop(handle, { type: 'subscriber-abandoned' });
         return fanout.stop();
       },
     };
@@ -220,6 +230,7 @@ export class RunExecutor {
       dimensions,
       startedAt,
       now: this.now,
+      handle: () => handle,
     }), finish, () => {
       // Raw exit/cleanup can finish before buffered source events. Release
       // ownership only once the pump has drained them (or observed failure).
@@ -246,6 +257,7 @@ function observeRunEvents(
     dimensions: Record<string, unknown>;
     startedAt: number;
     now: () => number;
+    handle: () => RunHandle;
   },
 ): AsyncIterable<AgentEvent> {
   return {
@@ -261,11 +273,19 @@ function observeRunEvents(
           return;
         }
         if (event.type === 'error') {
+          const stopRequest = opts.handle().stopRequest ?? stopRequestFromTerminal(event);
+          const outcome = deriveRunOutcome({
+            stopRequest: opts.handle().stopRequest,
+            terminalEvent: event,
+            stderrTail: event.message,
+          });
           log.warn('run', 'failed', {
             ...opts.dimensions,
             result: event.terminationReason,
             durationMs: opts.now() - opts.startedAt,
             error: event.message,
+            ...(stopRequest ? { stopReason: formatStopRequest(stopRequest) } : {}),
+            outcome: formatRunOutcome(outcome),
           });
           yield event;
           return;

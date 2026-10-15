@@ -10,7 +10,7 @@ describe('run state terminal event schema', () => {
       reduce(initialState, { type: 'done', terminationReason: 'interrupted' }).terminal,
     ).toBe('interrupted');
     expect(reduce(initialState, { type: 'done', terminationReason: 'timeout' }).terminal).toBe(
-      'idle_timeout',
+      'runner_timeout',
     );
   });
 
@@ -35,6 +35,6 @@ describe('run state terminal event schema', () => {
         message: 'timeout',
         terminationReason: 'timeout',
       }).terminal,
-    ).toBe('idle_timeout');
+    ).toBe('runner_timeout');
   });
 });

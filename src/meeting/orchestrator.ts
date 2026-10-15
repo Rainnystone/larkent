@@ -119,7 +119,7 @@ export function attachMeetingAgent(deps: MeetingAgentDeps): void {
         });
         return;
       }
-      const stopped = deps.activeRuns.interrupt(meetingScopeId(session.meetingId));
+      const stopped = deps.activeRuns.interrupt(meetingScopeId(session.meetingId), { type: 'meeting' });
       void session
         .sendMessage(stopped ? '已中断当前任务。' : '当前没有正在执行的任务。')
         .catch((err) => log.warn('meeting', 'stop-reply-failed', { err: String(err) }));

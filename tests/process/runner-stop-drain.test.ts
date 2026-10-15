@@ -77,7 +77,7 @@ it.each(['return', 'stop', 'stopAll', 'already exited'] as const)('bounds execut
     child.emit('exit', 0, null);
   }
   let completed = false;
-  const stopping = (mode === 'return' ? iterator.return!() : mode === 'stopAll' ? activeRuns.stopAll() : execution.stop())
+  const stopping = (mode === 'return' ? iterator.return!() : mode === 'stopAll' ? activeRuns.stopAll({ type: 'user-stop' }) : execution.stop())
     .then(() => { completed = true; });
   try {
     await vi.advanceTimersByTimeAsync(10);
@@ -120,7 +120,7 @@ it('rejects a continuously writing inherited stdout at a fixed deadline and reta
     expect(finishResult).toBe(stopResult);
     expect(pool.snapshot().active).toBe(1);
     expect(activeRuns.get('s')?.run).toBe(execution.run);
-    await expect(activeRuns.stopAll()).rejects.toMatchObject({ name: 'AggregateError' });
+    await expect(activeRuns.stopAll({ type: 'user-stop' })).rejects.toMatchObject({ name: 'AggregateError' });
     await expect(collect(execution.subscribe())).rejects.toBe(stopResult);
     expect(child.stdout.destroyed).toBe(true);
     expect(vi.getTimerCount()).toBe(1); // Only the fixture's descendant writer remains.
@@ -266,7 +266,7 @@ setInterval(() => {
       }
       let completed = false;
       stopping = (mode.endsWith('return') ? iterator.return!()
-        : mode === 'stopAll' ? h!.activeRuns.stopAll() : h ? h.execution.stop() : raw.stop())
+        : mode === 'stopAll' ? h!.activeRuns.stopAll({ type: 'user-stop' }) : h ? h.execution.stop() : raw.stop())
         .then(() => { completed = true; });
       expect(await raw.waitForExit(5000)).toBe(true);
       if (pausedStdout) {

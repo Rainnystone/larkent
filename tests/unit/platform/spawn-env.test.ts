@@ -23,6 +23,16 @@ describe('platform spawn env', () => {
     ]);
   });
 
+  it('keeps agent CLIs in the bridge process group', async () => {
+    const [spawnSource, runnerSource] = await Promise.all([
+      readFile(new URL('../../../src/platform/spawn.ts', import.meta.url), 'utf8'),
+      readFile(new URL('../../../src/agent/runner/jsonl-cli-runner.ts', import.meta.url), 'utf8'),
+    ]);
+    expect(spawnSource).toContain('Agent CLIs stay in the bridge process group');
+    expect(runnerSource).toContain('stdio: [\'pipe\', \'pipe\', \'pipe\']');
+    expect(runnerSource).not.toMatch(/detached:\s*true/);
+  });
+
   it('adapters use cross-spawn without shell invocation', async () => {
     const [claudeSource, codexSource] = await Promise.all([
       readFile(new URL('../../../src/agent/claude/adapter.ts', import.meta.url), 'utf8'),

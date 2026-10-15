@@ -25,11 +25,22 @@ import {
   initialState,
   markIdleTimeout,
   markInterrupted,
+  markRunnerTimeout,
   reduce,
   seedRunState,
   shouldSkipFinalReply,
   type RunState,
 } from '../card/run-state';
+import {
+  cardTerminalFromOutcome,
+  deriveRunOutcome,
+  formatRunOutcome,
+  formatStopRequest,
+  noteTerminalStop,
+  requestStop,
+  shouldDeliverAgentEvent,
+  type StopRequest,
+} from './run-outcome';
 import { renderText } from '../card/text-renderer';
 import { commandClearsPending, tryHandleCommand, type Controls } from '../commands';
 import { getReliabilityConfig } from '../config/profile-schema';
@@ -188,7 +199,7 @@ function stringifyArgs(args: unknown[]): string {
 
 export interface BridgeChannel {
   channel: LarkChannel;
-  disconnect(): Promise<void>;
+  disconnect(opts?: { stopReason?: StopRequest }): Promise<void>;
   recoverMissed(): Promise<void>;
 }
 
@@ -611,7 +622,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const keepalive = startKeepalive({
     channel,
     domain: probeDomain,
-    forceReconnect: () => controls.restart(),
+    forceReconnect: () => controls.restart({ stopReason: { type: 'keepalive-restart' } }),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
     ...(ledger
       ? {
@@ -626,7 +637,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   return {
     channel,
     recoverMissed: () => launchBackfill('handoff'),
-    disconnect: async () => {
+    disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
       resumeCandidates.clear();
       // Commands can themselves call disconnect, so track run consumers only,
@@ -646,7 +657,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         reliability().lostMessage,
       );
       const first = await Promise.allSettled([
-        channel.disconnect(), activeRuns.stopAll(), ...consumers,
+        channel.disconnect(),
+        activeRuns.stopAll(opts?.stopReason ?? { type: 'shutdown-signal' }),
+        ...consumers,
       ]);
       // Run cleanup and bot event consumption are distinct completion points.
       // Both must settle before flush observes the last queued session write.
@@ -1355,6 +1368,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           recordSession,
           async () => {},
           runContext,
+          getReliabilityConfig(controls.profileConfig).runOutcome,
         );
         await cotDone;
         if (cotPublisher.degradedReason) {
@@ -1418,6 +1432,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
+        getReliabilityConfig(controls.profileConfig).runOutcome,
       );
       try {
         await awaitRenderAwareStream({
@@ -1485,6 +1500,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
+        getReliabilityConfig(controls.profileConfig).runOutcome,
       );
       try {
         await awaitRenderAwareStream({
@@ -1529,6 +1545,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         recordSession,
         async () => {},
         runContext,
+        getReliabilityConfig(controls.profileConfig).runOutcome,
       );
       await sendFinalReply({
         channel,
@@ -1827,9 +1844,11 @@ async function processAgentStream(
   recordSession: (event: AgentEvent) => void,
   flush: (state: RunState) => Promise<void>,
   runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
+  runOutcomeEnabled = true,
 ): Promise<RunState> {
   const runStart = Date.now();
   let state: RunState = seedRunState(runContext ?? {});
+  let lastTerminal: AgentEvent | undefined;
 
   // Idle watchdog: claude going silent for `idleTimeoutMs` is treated as
   // "presumed hung", we stop() and surface a timeout marker on the card.
@@ -1855,7 +1874,7 @@ async function processAgentStream(
     if (inFlightTools.size > 0) return;
     timer = setTimeout(() => {
       idleFired = true;
-      handle.interrupted = true;
+      requestStop(handle, { type: 'bridge-idle-watchdog' });
       log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs });
       void handle.run.stop().catch(() => {
         /* stop errors are non-fatal */
@@ -1873,7 +1892,7 @@ async function processAgentStream(
         recordSession(evt);
         continue;
       }
-      if (handle.interrupted) continue;
+      if (!shouldDeliverAgentEvent(handle, evt, runOutcomeEnabled)) continue;
 
       // Track tool flight before re-arming the idle timer so the arm step
       // sees the correct set size. tool_use opens a window; tool_result
@@ -1905,9 +1924,17 @@ async function processAgentStream(
         continue;
       }
 
+      if (evt.type === 'done' || evt.type === 'error') {
+        lastTerminal = evt;
+        noteTerminalStop(handle, evt);
+      }
+
       const prevTerminal = state.terminal;
       const prevFooter = state.footer;
       state = reduce(state, evt);
+      if (!runOutcomeEnabled && state.terminal === 'runner_timeout') {
+        state = { ...state, terminal: 'idle_timeout' };
+      }
       if (state.footer !== prevFooter || state.terminal !== prevTerminal) {
         log.info('card', 'transition', { footer: state.footer, terminal: state.terminal });
       }
@@ -1925,7 +1952,15 @@ async function processAgentStream(
   // watchdog or interrupt could land, don't clobber it — that real terminal
   // wins. This avoids "claude finished but flush was slow → timer fired
   // mid-flush → user sees 'idle_timeout' on a successful run".
-  if (state.terminal === 'running') {
+  const outcome = deriveRunOutcome({
+    stopRequest: handle.stopRequest,
+    terminalEvent: lastTerminal,
+  });
+  if (runOutcomeEnabled) {
+    if (state.terminal === 'running' || cardTerminalFromOutcome(outcome) !== state.terminal) {
+      state = applyOutcomeToState(state, outcome, idleTimeoutMs);
+    }
+  } else if (state.terminal === 'running') {
     if (idleFired) {
       state = markIdleTimeout(state, Math.round(idleTimeoutMs! / 60_000));
     } else if (handle.interrupted) {
@@ -1934,13 +1969,45 @@ async function processAgentStream(
       state = finalizeIfRunning(state);
     }
   }
-  log.info('card', 'final', { scope, terminal: state.terminal, interrupted: handle.interrupted });
+  log.info('card', 'final', {
+    scope,
+    terminal: state.terminal,
+    stopReason: handle.stopRequest ? formatStopRequest(handle.stopRequest) : undefined,
+    outcome: formatRunOutcome(outcome),
+    interrupted: handle.interrupted,
+  });
   reportMetric('run_e2e_ms', Date.now() - runStart, { terminal: state.terminal });
   await flush(state);
   if (handle.interrupted) {
     await handle.run.stop();
   }
   return state;
+}
+
+function applyOutcomeToState(
+  state: RunState,
+  outcome: ReturnType<typeof deriveRunOutcome>,
+  idleTimeoutMs: number | undefined,
+): RunState {
+  const terminal = cardTerminalFromOutcome(outcome);
+  switch (terminal) {
+    case 'idle_timeout':
+      return markIdleTimeout(state, Math.round((idleTimeoutMs ?? 0) / 60_000));
+    case 'runner_timeout':
+      return markRunnerTimeout(state);
+    case 'interrupted':
+      return markInterrupted(state);
+    case 'error':
+      return state.terminal === 'error' ? { ...state, footer: null } : { ...state, terminal: 'error', footer: null };
+    case 'done':
+      return finalizeIfRunning(state);
+    case 'running':
+      return state;
+    default: {
+      const _exhaustive: never = terminal;
+      return _exhaustive;
+    }
+  }
 }
 
 async function awaitRenderAwareStream(input: {

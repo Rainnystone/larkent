@@ -2,6 +2,7 @@ import pkg from '../../package.json';
 import { BackfillLedger } from '../bot/backfill-ledger';
 import { startChannel as realStartChannel, type BridgeChannel } from '../bot/channel';
 import type { Controls } from '../commands';
+import type { StopRequest } from '../bot/run-outcome';
 import type { AppPaths } from '../config/app-paths';
 import { getBackfillPruneHorizonMs, isComplete, type AppConfig } from '../config/schema';
 import type { AgentKind, ProfileConfig } from '../config/profile-schema';
@@ -240,26 +241,26 @@ class ManagedProfile {
         // `/exit` from chat stops THIS profile's channel; the supervisor lives on.
         await self.onExitCommand(self.profile);
       },
-      async restart() {
-        await self.restart();
+      async restart(opts?: { wait?: boolean; stopReason?: StopRequest }) {
+        await self.restart(opts);
       },
     };
     return currentControls;
   }
 
   /** Connect-before-disconnect reconnect for this profile (e.g. after /account). */
-  private restart(): Promise<void> {
+  private restart(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void> {
     if (this.stopOperation) return Promise.reject(new Error(`profile ${this.profile} is stopping`));
     if (this.stopped) return Promise.reject(new Error(`profile ${this.profile} is stopped`));
     if (this.shutdownFailure) return Promise.reject(this.shutdownFailure.error);
     if (this.restartOperation) return this.restartOperation;
-    this.restartOperation = Promise.resolve().then(() => this.reconnect()).finally(() => {
+    this.restartOperation = Promise.resolve().then(() => this.reconnect(opts)).finally(() => {
       this.restartOperation = undefined;
     });
     return this.restartOperation;
   }
 
-  private async reconnect(): Promise<void> {
+  private async reconnect(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void> {
     let nextAppLock: AcquiredRuntimeLock | undefined;
     try {
       const nextRuntime = await resolveProfileRuntime({
@@ -298,7 +299,9 @@ class ManagedProfile {
         appPaths: nextRuntime.appPaths,
       });
       try {
-        await this.bridge.disconnect();
+        await this.bridge.disconnect(
+          opts?.stopReason ? { stopReason: opts.stopReason } : undefined,
+        );
       } catch (err) {
         log.warn('supervisor', 'old-disconnect-failed', { profile: this.profile, err: String(err) });
         const failures = [err];

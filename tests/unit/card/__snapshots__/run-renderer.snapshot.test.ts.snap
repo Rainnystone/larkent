@@ -270,7 +270,7 @@ exports[`run card renderer snapshots > renders active and completed thinking 2`]
 }
 `;
 
-exports[`run card renderer snapshots > renders done, error, interrupted, and idle-timeout terminal states 1`] = `
+exports[`run card renderer snapshots > renders done, error, interrupted, idle-timeout, and runner-timeout terminal states 1`] = `
 {
   "body": {
     "elements": [
@@ -291,7 +291,7 @@ exports[`run card renderer snapshots > renders done, error, interrupted, and idl
 }
 `;
 
-exports[`run card renderer snapshots > renders done, error, interrupted, and idle-timeout terminal states 2`] = `
+exports[`run card renderer snapshots > renders done, error, interrupted, idle-timeout, and runner-timeout terminal states 2`] = `
 {
   "body": {
     "elements": [
@@ -312,7 +312,7 @@ exports[`run card renderer snapshots > renders done, error, interrupted, and idl
 }
 `;
 
-exports[`run card renderer snapshots > renders done, error, interrupted, and idle-timeout terminal states 3`] = `
+exports[`run card renderer snapshots > renders done, error, interrupted, idle-timeout, and runner-timeout terminal states 3`] = `
 {
   "body": {
     "elements": [
@@ -337,7 +337,7 @@ exports[`run card renderer snapshots > renders done, error, interrupted, and idl
 }
 `;
 
-exports[`run card renderer snapshots > renders done, error, interrupted, and idle-timeout terminal states 4`] = `
+exports[`run card renderer snapshots > renders done, error, interrupted, idle-timeout, and runner-timeout terminal states 4`] = `
 {
   "body": {
     "elements": [
@@ -356,6 +356,31 @@ exports[`run card renderer snapshots > renders done, error, interrupted, and idl
     "streaming_mode": false,
     "summary": {
       "content": "已超时",
+    },
+  },
+  "schema": "2.0",
+}
+`;
+
+exports[`run card renderer snapshots > renders done, error, interrupted, idle-timeout, and runner-timeout terminal states 5`] = `
+{
+  "body": {
+    "elements": [
+      {
+        "content": "partial",
+        "tag": "markdown",
+      },
+      {
+        "content": "_⏱ 运行超时,已自动终止_",
+        "tag": "markdown",
+        "text_size": "notation",
+      },
+    ],
+  },
+  "config": {
+    "streaming_mode": false,
+    "summary": {
+      "content": "运行超时",
     },
   },
   "schema": "2.0",

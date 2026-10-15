@@ -6,6 +6,7 @@ import { capabilityForProfile } from '../agent/capability';
 import { DEFAULT_MODEL, normalizeModelSelection, supportedModels } from '../agent/models';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
+import { requestStop, type StopRequest } from '../bot/run-outcome';
 import { formatSelfHealLine, type BackfillLedger } from '../bot/backfill-ledger';
 import {
   accountCurrentCard,
@@ -94,7 +95,7 @@ export interface Controls {
   refreshOwner(channel?: LarkChannel): Promise<void>;
   /** Restart the bridge in-process: disconnect WS, kill claude runs, reload
    * config, reconnect with the new credentials. */
-  restart(opts?: { wait?: boolean }): Promise<void>;
+  restart(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void>;
   /** Stop this whole process gracefully (disconnect + exit). Used by /exit
    * when the user targets the receiving process itself. */
   exit(): Promise<void>;
@@ -343,7 +344,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
     return handleNewChat(rawName, ctx);
   }
 
-  const wasRunning = ctx.activeRuns.supersedeSession(ctx.scope);
+  const wasRunning = ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'new' });
   if (ctx.sessionCatalog && ctx.sessionCatalogIdentity) {
     ctx.sessionCatalog.archiveActive({
       ...ctx.sessionCatalogIdentity,
@@ -409,7 +410,7 @@ async function handleCd(args: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, workspace.userVisible);
     return;
   }
-  ctx.activeRuns.supersedeSession(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'cd' });
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换 cwd 到 \`${workspace.cwdRealpath}\`\n（session 已重置）`);
@@ -474,7 +475,7 @@ async function handleWsUse(name: string, ctx: CommandContext): Promise<void> {
     await reply(ctx, workspace.userVisible);
     return;
   }
-  ctx.activeRuns.supersedeSession(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'ws' });
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
   ctx.sessions.clear(ctx.scope);
   await reply(ctx, `✓ 已切换到 \`${name}\` (${workspace.cwdRealpath})\n（session 已重置）`);
@@ -621,7 +622,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     const entry = ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity);
     const resolved = ctx.resumeCandidates.consume(sessionId, ctx.sessionCatalogIdentity);
     if (resolved) {
-      ctx.activeRuns.supersedeSession(ctx.scope);
+      ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'resume' });
       ctx.sessionCatalog.upsertActive({
         scopeId: ctx.sessionCatalogIdentity.scopeId,
         agentId: ctx.sessionCatalogIdentity.agentId,
@@ -644,7 +645,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
       await reply(ctx, '当前上下文不可恢复这个会话，请重新选择当前工作区和权限策略下的会话。');
       return;
     }
-    ctx.activeRuns.supersedeSession(ctx.scope);
+    ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'resume' });
     if (descriptorFor(ctx.sessionCatalogIdentity.agentId).resume.label === 'session') {
       ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
     }
@@ -662,7 +663,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     await reply(ctx, '请先使用 /cd <path> 选择工作目录，再查看或恢复会话。');
     return;
   }
-  ctx.activeRuns.supersedeSession(ctx.scope);
+  ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'resume' });
   ctx.sessions.set(ctx.scope, sessionId, cwd);
   await reply(ctx, RESUME_APPLIED_REPLY);
 }
@@ -763,7 +764,7 @@ async function handleStop(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
   const scope = targetScope || ctx.scope;
-  const ok = ctx.activeRuns.interrupt(scope);
+  const ok = ctx.activeRuns.interrupt(scope, { type: 'user-stop' });
   log.info('command', 'stop', {
     scope,
     targeted: Boolean(targetScope),
@@ -912,6 +913,9 @@ async function handleExit(args: string, ctx: CommandContext): Promise<void> {
   if (entry.id === ctx.controls.processId) {
     log.info('command', 'exit-self', { id: entry.id });
     await reply(ctx, `👋 即将关闭当前 bot \`${entry.id}\`,再见。`);
+    for (const handle of ctx.activeRuns.snapshot()) {
+      requestStop(handle, { type: 'exit-command' });
+    }
     // Detach to give the reply send a chance to complete before we tear
     // down. controls.exit() awaits disconnect then process.exit().
     void (async () => {
@@ -961,7 +965,7 @@ async function handleReconnect(args: string, ctx: CommandContext): Promise<void>
     if (wait) {
       await ctx.activeRuns.waitForAll();
     } else {
-      await ctx.activeRuns.stopAll();
+      await ctx.activeRuns.stopAll({ type: 'reconnect-command' });
     }
     await ctx.controls.restart({ wait });
     log.info('command', 'reconnect-ok');
@@ -1394,7 +1398,7 @@ async function submitAccount(ctx: CommandContext): Promise<void> {
     // Give the user 1.5s to read the success state before we tear down the
     // WS and reconnect with new credentials.
     setTimeout(() => {
-      void restart().catch((err) => {
+      void restart({ stopReason: { type: 'account-restart' } }).catch((err) => {
         console.error('[account] restart failed:', err);
         process.exit(1);
       });
@@ -2088,7 +2092,7 @@ async function handleMeeting(args: string, ctx: CommandContext): Promise<void> {
         await reply(ctx, picked.message);
         return;
       }
-      const stopped = ctx.activeRuns.interrupt(meetingScopeId(picked.session.meetingId));
+      const stopped = ctx.activeRuns.interrupt(meetingScopeId(picked.session.meetingId), { type: 'meeting' });
       await reply(ctx, stopped ? '✅ 已中断该会议的当前任务。' : '该会议当前没有正在执行的任务。');
       return;
     }

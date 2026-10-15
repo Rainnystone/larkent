@@ -20,7 +20,7 @@ export type Block =
   | { kind: 'tool'; tool: ToolEntry };
 
 export type FooterStatus = 'thinking' | 'tool_running' | 'streaming' | null;
-export type Terminal = 'running' | 'done' | 'interrupted' | 'error' | 'idle_timeout';
+export type Terminal = 'running' | 'done' | 'interrupted' | 'error' | 'idle_timeout' | 'runner_timeout';
 
 export interface RunState {
   blocks: Block[];
@@ -141,12 +141,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
     }
 
     case 'error': {
-      const terminal =
-        evt.terminationReason === 'interrupted'
-          ? 'interrupted'
-          : evt.terminationReason === 'timeout'
-            ? 'idle_timeout'
-            : 'error';
+      const terminal = terminalFromReason(evt.terminationReason, 'error');
       return {
         ...state,
         terminal,
@@ -156,12 +151,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
     }
 
     case 'done': {
-      const terminal =
-        evt.terminationReason === 'interrupted'
-          ? 'interrupted'
-          : evt.terminationReason === 'timeout'
-            ? 'idle_timeout'
-            : 'done';
+      const terminal = terminalFromReason(evt.terminationReason, 'done');
       return {
         ...state,
         blocks: closeStreamingText(state.blocks),
@@ -195,6 +185,79 @@ export function markIdleTimeout(state: RunState, minutes: number): RunState {
     footer: null,
     idleTimeoutMinutes: minutes,
   };
+}
+
+export function markRunnerTimeout(state: RunState): RunState {
+  return {
+    ...state,
+    blocks: closeStreamingText(state.blocks),
+    reasoning: { ...state.reasoning, active: false },
+    terminal: 'runner_timeout',
+    footer: null,
+  };
+}
+
+function terminalFromReason(
+  reason: 'normal' | 'interrupted' | 'timeout' | 'failed',
+  fallback: 'done' | 'error',
+): Terminal {
+  switch (reason) {
+    case 'interrupted':
+      return 'interrupted';
+    case 'timeout':
+      return 'runner_timeout';
+    case 'normal':
+    case 'failed':
+      return fallback;
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+/** User-visible note for a terminal card / markdown footer. */
+export function terminalNote(state: RunState): string | undefined {
+  switch (state.terminal) {
+    case 'interrupted':
+      return '_⏹ 已被中断_';
+    case 'idle_timeout':
+      return `_⏱ ${state.idleTimeoutMinutes ?? 0} 分钟无响应,已自动终止_`;
+    case 'runner_timeout':
+      return '_⏱ 运行超时,已自动终止_';
+    case 'error':
+      return state.errorMsg ? `⚠️ agent 失败：${state.errorMsg}` : undefined;
+    case 'done':
+    case 'running':
+      return undefined;
+    default: {
+      const _exhaustive: never = state.terminal;
+      return _exhaustive;
+    }
+  }
+}
+
+export function terminalSummary(state: RunState): string {
+  switch (state.terminal) {
+    case 'interrupted':
+      return '已中断';
+    case 'idle_timeout':
+      return '已超时';
+    case 'runner_timeout':
+      return '运行超时';
+    case 'error':
+      return '出错';
+    case 'done':
+      return '已完成';
+    case 'running':
+      if (state.footer === 'tool_running') return '正在调用工具';
+      if (state.footer === 'streaming') return '正在输出';
+      return '思考中';
+    default: {
+      const _exhaustive: never = state.terminal;
+      return _exhaustive;
+    }
+  }
 }
 
 export function finalizeIfRunning(state: RunState): RunState {

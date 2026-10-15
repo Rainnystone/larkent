@@ -7,6 +7,15 @@ import type {
 import type { Readable, Writable } from 'node:stream';
 import crossSpawn from 'cross-spawn';
 
+/**
+ * Agent CLIs stay in the bridge process group. `spawnProcess` callers must
+ * not pass `detached: true` for those children.
+ *
+ * A detached group would keep a supervise.sh / Ctrl-C group signal from
+ * stopping an in-flight CLI, but a SIGKILL of the bridge would then leave
+ * orphans. Ticket 4's turn journal is the orphan reaper; until that exists,
+ * children share the bridge group so a group SIGTERM still stops the run.
+ */
 export function spawnProcess(
   command: string,
   args: readonly string[] = [],
