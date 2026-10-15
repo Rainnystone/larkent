@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { loadTestBridgeConfig } from '../config';
 import { DEFAULT_LOCAL_CONFIG } from '../paths';
 import { freezeBridge } from '../driver';
-import { readTesterMessages, sendTesterMessage } from '../tester';
+import { readTesterMessages, sendTesterMessage, type ReadMessage } from '../tester';
 
 export interface HostSleepCliSelfSendResult {
   skipCliAlreadySent: boolean;
@@ -27,7 +27,8 @@ export async function runHostSleepCliSelfSend(opts: {
   const config = await loadTestBridgeConfig(opts.configPath ?? DEFAULT_LOCAL_CONFIG);
   const freezeMs = clampFreeze(opts.freezeMs ?? 8_000);
   const token = `e2e-sleep-${Date.now().toString(36)}`;
-  await sendTesterMessage(config, `please answer ${token}`);
+  const sentAtMs = Date.now();
+  const sent = await sendTesterMessage(config, `please answer ${token}`);
   await sleep(1_500);
   await freezeBridge(config.dataRoot, true);
   await sleep(freezeMs);
@@ -35,7 +36,11 @@ export async function runHostSleepCliSelfSend(opts: {
   await sleep(10_000);
 
   const messages = await readTesterMessages(config, { pageSize: 12 }).catch(() => []);
-  const finals = messages.filter((item) => (item.text ?? '').includes(token) || /e2e-fake-ok/.test(item.text ?? ''));
+  const finals = filterHostSleepFinals(messages, {
+    token,
+    triggerMessageId: sent.messageId,
+    sentAtMs,
+  });
   const logText = await readBridgeLogs(config.dataRoot);
   const skipCliAlreadySent = /skip-cli-already-sent|cli-self-send/.test(logText);
   const streamReconnectSeen = /stream-reconnect/.test(logText);
@@ -48,6 +53,26 @@ export async function runHostSleepCliSelfSend(opts: {
       ? `skip-cli-already-sent or intake skip-self seen; tester finals=${finals.length}; stream-reconnect=${streamReconnectSeen}`
       : `no skip-cli-already-sent in logs; tester finals=${finals.length}; inspect WS redelivery vs CLI self-send (no ids).`,
   };
+}
+
+export function filterHostSleepFinals(
+  messages: readonly Pick<ReadMessage, 'messageId' | 'text' | 'createTime'>[],
+  opts: { token: string; triggerMessageId?: string; sentAtMs: number },
+): Array<Pick<ReadMessage, 'messageId' | 'text' | 'createTime'>> {
+  return messages.filter((item) => {
+    if (opts.triggerMessageId && item.messageId === opts.triggerMessageId) return false;
+    const createdMs = messageTimeMs(item.createTime);
+    if (createdMs !== undefined && createdMs < opts.sentAtMs) return false;
+    const text = item.text ?? '';
+    return text.includes(opts.token) || /e2e-fake-ok/.test(text);
+  });
+}
+
+function messageTimeMs(createTime: string | undefined): number | undefined {
+  if (createTime === undefined) return undefined;
+  const n = Number(createTime);
+  if (!Number.isFinite(n)) return undefined;
+  return n < 1e12 ? n * 1000 : n;
 }
 
 function clampFreeze(ms: number): number {
