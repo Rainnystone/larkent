@@ -40,7 +40,7 @@ Baseline the live working tree's uncommitted `src/bot/channel.ts` / `src/bot/kee
                                                   3-interruption-notice
 ```
 
-Parallel start set: **0a** only.
+Parallel start set: **0b** (0a delivered).
 
 ## How an implementer claims a ticket
 
@@ -52,15 +52,15 @@ Parallel start set: **0a** only.
 
 ## Tickets
 
-| Order | # | Path | Title | Blocked by |
-| --- | --- | --- | --- | --- |
-| 1 | 0a | [issues/0a-hard-access-fence.md](issues/0a-hard-access-fence.md) | Hard access fence, machine-level app lock, live-root guard | None |
-| 2 | 0b | [issues/0b-test-bridge.md](issues/0b-test-bridge.md) | Isolated test bridge + deterministic vitest layer | 0a |
-| 3 | 1 | [issues/1-lost-message.md](issues/1-lost-message.md) | Lost-message fix (all paths) | 0b |
-| 4 | 2 | [issues/2-run-outcome.md](issues/2-run-outcome.md) | RunOutcome model + stop reason | 1 |
-| 5 | 5 | [issues/5-cli-signatures.md](issues/5-cli-signatures.md) | CLI signature table, golden stderr, redaction, bounded stderr | 2 |
-| 6 | 4 | [issues/4-turn-journal.md](issues/4-turn-journal.md) | Turn journal | 2, 5 |
-| 7 | 3 | [issues/3-interruption-notice.md](issues/3-interruption-notice.md) | Interruption notice card | 4 |
+| Order | # | Path | Title | Blocked by | Status |
+| --- | --- | --- | --- | --- | --- |
+| 1 | 0a | [issues/0a-hard-access-fence.md](issues/0a-hard-access-fence.md) | Hard access fence, machine-level app lock, live-root guard | None | delivered (`a5613bc`) |
+| 2 | 0b | [issues/0b-test-bridge.md](issues/0b-test-bridge.md) | Isolated test bridge + deterministic vitest layer | 0a | ready-for-agent |
+| 3 | 1 | [issues/1-lost-message.md](issues/1-lost-message.md) | Lost-message fix (all paths) | 0b | blocked |
+| 4 | 2 | [issues/2-run-outcome.md](issues/2-run-outcome.md) | RunOutcome model + stop reason | 1 | blocked |
+| 5 | 5 | [issues/5-cli-signatures.md](issues/5-cli-signatures.md) | CLI signature table, golden stderr, redaction, bounded stderr | 2 | blocked |
+| 6 | 4 | [issues/4-turn-journal.md](issues/4-turn-journal.md) | Turn journal | 2, 5 | blocked |
+| 7 | 3 | [issues/3-interruption-notice.md](issues/3-interruption-notice.md) | Interruption notice card | 4 | blocked |
 
 ## Evidence rules
 
