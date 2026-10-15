@@ -2,7 +2,7 @@
 
 **Blocked by:** 0a
 
-**Status:** ready-for-agent
+**Status:** delivered
 
 ## Parent
 
@@ -32,10 +32,10 @@
 
 ## Acceptance criteria
 
-- [ ] 测试计划中的自动化测试先红后绿。
-- [ ] 改变行为的部分有 profile 开关，关闭时与 master 一致。
-- [ ] 无真实 app id / chat id / open id / secret 入库。
-- [ ] `pnpm ci:local` 绿；delivery note 填写（含 test bridge 证据，脱敏）。
+- [x] 测试计划中的自动化测试先红后绿。
+- [x] 改变行为的部分有 profile 开关，关闭时与 master 一致。
+- [x] 无真实 app id / chat id / open id / secret 入库。
+- [x] `pnpm ci:local` 绿；delivery note 填写（含 test bridge 证据，脱敏）。
 
 ## Out of scope
 

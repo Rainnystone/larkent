@@ -40,7 +40,7 @@ Baseline the live working tree's uncommitted `src/bot/channel.ts` / `src/bot/kee
                                                   3-interruption-notice
 ```
 
-Parallel start set: **0b** (0a delivered).
+Parallel start set: none (0b delivered; ticket 1 still waits on the live redelivery experiment).
 
 ## How an implementer claims a ticket
 
@@ -55,7 +55,7 @@ Parallel start set: **0b** (0a delivered).
 | Order | # | Path | Title | Blocked by | Status |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 0a | [issues/0a-hard-access-fence.md](issues/0a-hard-access-fence.md) | Hard access fence, machine-level app lock, live-root guard | None | delivered (`a5613bc`) |
-| 2 | 0b | [issues/0b-test-bridge.md](issues/0b-test-bridge.md) | Isolated test bridge + deterministic vitest layer | 0a | ready-for-agent |
+| 2 | 0b | [issues/0b-test-bridge.md](issues/0b-test-bridge.md) | Isolated test bridge + deterministic vitest layer | 0a | delivered (`d1975e7`; live redelivery experiment still pending credentials) |
 | 3 | 1 | [issues/1-lost-message.md](issues/1-lost-message.md) | Lost-message fix (all paths) | 0b | blocked |
 | 4 | 2 | [issues/2-run-outcome.md](issues/2-run-outcome.md) | RunOutcome model + stop reason | 1 | blocked |
 | 5 | 5 | [issues/5-cli-signatures.md](issues/5-cli-signatures.md) | CLI signature table, golden stderr, redaction, bounded stderr | 2 | blocked |
