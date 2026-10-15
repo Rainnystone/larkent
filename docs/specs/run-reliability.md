@@ -74,7 +74,8 @@ Ticket 文件在 `.scratch/run-reliability/issues/`，每个都带测试计划�
 | 3 | interruption notice 卡片 | 4 | `notice.enabled` per profile，默认关 |
 
 ### 5.1 Ticket 0a：硬 access 围栏与锁
-- profile 级 `access.fence`（名字由实现者定）：启用时，DM、群、文档评论、会议、卡片点击五个入口统一检查：chat 在 `allowedChats` **且** 发送者在 `allowedUsers`；owner、admin 不豁免；未启用时行为不变。
+- profile 级 `access.fence`（名字由实现者定）：启用时，DM、群、会议、卡片点击检查 chat 在 `allowedChats` **且** 发送者在 `allowedUsers`；owner、admin 不豁免；未启用时行为不变。
+- **评论入口例外（已实现、与上条不完全相同）**：文档评论只检查发送者 ∈ `allowedUsers`，不要求 chat ∈ `allowedChats`。评论事件没有与 IM 会话同构的 chat id；用 `fileToken` 冒充 chat 会误伤或误放。单位测试见 `tests/unit/comments/comment-access-fence.test.ts`。
 - 机器级 app 锁：放在与数据根无关的位置（如 `$XDG_RUNTIME_DIR` 或 `~/.cache/larkent/locks/app/<hash(appId)>`，不在路径里写明文 app id），两个数据根用同一 app id 时第二个拒绝启动并给出清晰错误。
 - live 根防护：实例声明为 test（配置或环境变量）时，若解析出的数据根等于默认 live 根或已被 live 实例持有，拒绝启动。
 
@@ -89,6 +90,7 @@ Ticket 文件在 `.scratch/run-reliability/issues/`，每个都带测试计划�
 - 确定性层：用 `tests/helpers/recording-lark-channel.ts`、`scripted-jsonl-cli.ts`、`fake-executable.ts` 写 vitest，CI 可跑。真飞书层只回答真实环境才能回答的问题。
 - 断言基于结构化日志（`card.final`、`run.failed`、`backfill.*`），飞书读回作补充。核心不变量：每条被接收的 tester 消息恰好一个终态。
 - **首个实验**：断开 20–30 秒期间发出的 @ 消息，飞书是否经 WS 重投？结论写进 delivery note，决定 ticket 1 的 short-gap 策略。
+- **追加实验**：`host-sleep-cli-self-send` — 主机睡眠/重连中途 CLI 自发送达。恢复后同一 turn 不得出现第二条终态回复。
 
 ### 5.3 Ticket 1：丢消息
 - 新增 `ledger.unrecord(messageId)`；`disconnect()` / `cancelAll` 时把未开始的 pending 撤销记录，并 `ledger.markScanIncomplete(最早 createTime)`。现有逻辑在 `incompleteFrom` 有值时绕过 short-gap 跳过，下一次恢复信号必然补扫。

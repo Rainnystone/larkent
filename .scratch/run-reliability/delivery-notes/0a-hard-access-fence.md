@@ -11,6 +11,6 @@
   - test bridge: n/a — 0b not started; 0a covered by vitest only (no live Feishu, no IDs).
 - Residual risk:
   - Keystore still derivable by the same OS user (out of scope; 0b fake CLI mitigates).
-  - Comment fence uses the event `fileToken` as the "chat" id for `allowedChats`.
+  - Comment fence is user-only (`sender ∈ allowedUsers`). It does not require `chat ∈ allowedChats`; comment events are not IM-chat-scoped. Documented in spec 5.1.
   - Live-root guard compares the default `~/.lark-channel` (and paths inside it), not a custom live `LARK_CHANNEL_HOME`.
   - Meeting summary with the fence on and no asker id fails closed (no owner fallback).

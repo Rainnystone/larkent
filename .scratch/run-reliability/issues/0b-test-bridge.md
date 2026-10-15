@@ -20,6 +20,7 @@
 - 信号：`fault kill-cli --child-only` 与 `--process-group`；`ws-freeze` 仅作为 wake-up 场景。
 - `down` 只按 pid 文件停，并核对 cmdline 属于 test 实例。
 - 首个实验场景 `redelivery-short-gap`：代理断开 20–30s 期间 tester 发 @ 消息，恢复后看飞书是否 WS 重投、backfill 是否补到。结论写进 delivery note。
+- 追加场景 `host-sleep-cli-self-send`：run 中途 `ws-freeze`（主机睡眠/重连替身），CLI 自行发群消息；恢复后断言 bridge 不再发第二条终态（`skip-cli-already-sent` / intake `skip-self`，且 Cursor `connection`/`retry` 记为 `stream-reconnect`）。`--real-cli` 才有真实自发送达。结论写进 delivery note，不含 ID。
 
 ## Test plan
 
@@ -28,6 +29,7 @@
 - vitest：配置加载拒绝 example 占位符、拒绝 live 根；`e2e/.local` 在 `.gitignore`（`git check-ignore` 断言）。
 - 静态检查：仓库内 `e2e/` 不含 `cli_`、`oc_`、`ou_` 形态的真实 ID（加一个 grep 测试）。
 - 手动（test bridge）：`e2e:up` → `e2e:send` → `e2e:read` 往返；每种故障一次；首个重投实验结果。
+- 手动：`e2e:scenario -- host-sleep-cli-self-send`（可加 `--real-cli`）。看 tester 历史是否只有一条终态，日志是否有 `skip-cli-already-sent` / `stream-reconnect`。
 - `pnpm ci:local` 绿。
 
 ## Acceptance criteria
