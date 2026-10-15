@@ -157,6 +157,45 @@ describe('deriveRunOutcome', () => {
       formatted: 'failed:unclassified',
     },
     {
+      name: 'stop plus a real failed terminal keeps a matching signature',
+      input: {
+        stopRequest: { type: 'user-stop' } as const,
+        terminalEvent: { type: 'error' as const, message: 'auth', terminationReason: 'failed' as const },
+        exit: 1,
+        stderrTail: "Your stored authentication is invalid. Please run 'agent login'.",
+        signatures: [
+          {
+            pattern: /stored authentication is invalid/i,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+            userMessage: 'auth',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+      terminal: 'error',
+      formatted: 'failed:auth-required',
+    },
+    {
+      name: 'stop plus a real done terminal keeps a matching partial signature',
+      input: {
+        stopRequest: { type: 'user-stop' } as const,
+        terminalEvent: { type: 'done' as const, terminationReason: 'normal' as const },
+        stderrTail: '[agy] print timeout after 5m0s with turn in progress; returning partial output',
+        signatures: [
+          {
+            pattern: /print timeout after .* returning partial output/,
+            cliVersion: 'test',
+            classify: { kind: 'partial', retriable: true, needsHuman: false },
+            userMessage: 'partial',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'partial', retriable: true, needsHuman: false },
+      terminal: 'done',
+      formatted: 'partial',
+    },
+    {
       name: 'real error terminal beats a stop request',
       input: {
         stopRequest: { type: 'user-stop' } as const,

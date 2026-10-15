@@ -94,7 +94,7 @@ export function shouldDeliverAgentEvent(
 
 export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
   const signed = matchCliSignature(input.stderrTail, input.signatures);
-  if (signed && !input.stopRequest) {
+  if (signed && signatureApplies(signed.classify, input)) {
     return signed.classify;
   }
 
@@ -125,6 +125,32 @@ export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
     return failed('unclassified');
   }
   return completed();
+}
+
+function signatureApplies(
+  classify: RunOutcome,
+  input: DeriveRunOutcomeInput,
+): boolean {
+  if (!input.stopRequest) return true;
+  switch (classify.kind) {
+    case 'failed':
+      return (
+        input.terminalEvent?.type === 'error'
+        && input.terminalEvent.terminationReason === 'failed'
+      );
+    case 'partial':
+      return (
+        input.terminalEvent?.type === 'done'
+        && input.terminalEvent.terminationReason === 'normal'
+      );
+    case 'completed':
+    case 'interrupted':
+      return false;
+    default: {
+      const _exhaustive: never = classify;
+      return _exhaustive;
+    }
+  }
 }
 
 function completed(): RunOutcome {
