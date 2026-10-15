@@ -62,6 +62,11 @@ export interface ReliabilityConfig {
    * writes are on. Off skips those actions while still allowing writes.
    */
   journalRecover?: boolean;
+  /**
+   * Interruption notice card. Default off (matches ticket 4). On sends a
+   * new @-initiator continue/dismiss notice after a qualifying outcome.
+   */
+  notice?: boolean;
 }
 
 export function getReliabilityConfig(
@@ -73,6 +78,7 @@ export function getReliabilityConfig(
   cliSignatures: boolean;
   journal: boolean;
   journalRecover: boolean;
+  notice: boolean;
 } {
   const journal = profile.reliability?.journal !== false;
   return {
@@ -82,6 +88,7 @@ export function getReliabilityConfig(
     cliSignatures: profile.reliability?.cliSignatures !== false,
     journal,
     journalRecover: journal && profile.reliability?.journalRecover !== false,
+    notice: profile.reliability?.notice === true,
   };
 }
 
@@ -506,6 +513,7 @@ function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
   const cliSignatures = raw.cliSignatures === false ? false : undefined;
   const journal = raw.journal === false ? false : undefined;
   const journalRecover = raw.journalRecover === false ? false : undefined;
+  const notice = raw.notice === true ? true : undefined;
   if (
     lostMessage === undefined
     && shortGapScan === undefined
@@ -513,6 +521,7 @@ function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
     && cliSignatures === undefined
     && journal === undefined
     && journalRecover === undefined
+    && notice === undefined
   ) {
     return undefined;
   }
@@ -523,6 +532,7 @@ function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
     ...(cliSignatures === false ? { cliSignatures: false } : {}),
     ...(journal === false ? { journal: false } : {}),
     ...(journalRecover === false ? { journalRecover: false } : {}),
+    ...(notice === true ? { notice: true } : {}),
   };
 }
 

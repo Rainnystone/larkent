@@ -6,6 +6,11 @@ import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
 import type { CallbackAuth } from './callback-auth';
+import {
+  type NoticeAction,
+  type NoticeActionAuth,
+} from '../bot/interruption-notice';
+import type { TurnJournal, TurnJournalEntry } from '../bot/turn-journal';
 import { runCommandHandler, type CommandContext, type Controls } from '../commands';
 import { log } from '../core/logger';
 import { evaluateAccess } from '../policy/access';
@@ -44,6 +49,16 @@ export interface CardDispatchDeps {
   callbackAuth?: CallbackAuth;
   callbackPolicyFingerprint?: string;
   callbackPolicyFingerprintForScope?: (scope: string) => string | undefined;
+  journal?: TurnJournal;
+  noticeAuth?: NoticeActionAuth;
+  onNoticeAction?: (input: {
+    action: NoticeAction;
+    entry: TurnJournalEntry;
+    operatorId: string;
+    scope: string;
+    threadId: string | undefined;
+    mode: 'p2p' | 'group' | 'topic';
+  }) => Promise<void> | void;
 }
 
 export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
@@ -91,6 +106,10 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   }
 
   const cmd = typeof payload.cmd === 'string' ? payload.cmd : '';
+  if (cmd === 'notice.continue' || cmd === 'notice.dismiss') {
+    await dispatchNoticeAction(deps, payload, cmd, scope, threadId, mode, accessDecision);
+    return;
+  }
   if (cmd) {
     if (isSignedBridgeCallback(payload) && !verifyBridgeToken(deps, payload, scope, cmd)) {
       return;
@@ -241,6 +260,82 @@ function verifyBridgeToken(
     return false;
   }
   return true;
+}
+
+async function dispatchNoticeAction(
+  deps: CardDispatchDeps,
+  payload: Record<string, unknown>,
+  cmd: NoticeAction,
+  scope: string,
+  threadId: string | undefined,
+  mode: 'p2p' | 'group' | 'topic',
+  access: ReturnType<typeof evaluateAccess>,
+): Promise<void> {
+  if (!access.ok) return;
+  const token = typeof payload.notice_token === 'string' ? payload.notice_token : '';
+  if (!deps.noticeAuth || !token) {
+    log.info('cardAction', 'skip-notice-auth-missing', { scope, cmd });
+    await sendNoticeInvalid(deps);
+    return;
+  }
+  const verified = deps.noticeAuth.verify(token);
+  if (!verified.ok || verified.payload.action !== cmd) {
+    log.info('cardAction', 'skip-notice-auth-failed', {
+      scope,
+      cmd,
+      reason: verified.ok ? 'action-mismatch' : verified.reason,
+    });
+    await sendNoticeInvalid(deps);
+    return;
+  }
+  if (verified.payload.scope !== scope || verified.payload.chatId !== deps.evt.chatId) {
+    await sendNoticeInvalid(deps);
+    return;
+  }
+  const entry = deps.journal?.get(verified.payload.turnId);
+  if (!entry || entry.noticeInvalidated || entry.status === 'voided') {
+    await sendNoticeInvalid(deps);
+    return;
+  }
+  if (entry.policyFingerprint && entry.policyFingerprint !== verified.payload.policyFingerprint) {
+    await sendNoticeInvalid(deps);
+    return;
+  }
+  const identity = await commandSessionCatalogIdentity({
+    msg: makeFakeMsg(deps.evt, threadId),
+    scope,
+    mode,
+    workspaces: deps.workspaces,
+    controls: deps.controls,
+    access,
+  });
+  if (identity && identity.policyFingerprint !== verified.payload.policyFingerprint) {
+    await sendNoticeInvalid(deps);
+    return;
+  }
+  if (cmd === 'notice.dismiss') {
+    deps.journal?.update(entry.turnId, { noticeInvalidated: true });
+    log.info('notice', 'dismissed', { turnId: entry.turnId, scope });
+    return;
+  }
+  await deps.onNoticeAction?.({
+    action: cmd,
+    entry,
+    operatorId: deps.evt.operator.openId,
+    scope,
+    threadId,
+    mode,
+  });
+}
+
+async function sendNoticeInvalid(deps: CardDispatchDeps): Promise<void> {
+  try {
+    await deps.channel.send(deps.evt.chatId, { markdown: '此继续已失效。' }, { replyTo: deps.evt.messageId });
+  } catch (error) {
+    log.warn('notice', 'invalid-hint-failed', {
+      err: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 function isSignedBridgeCallback(payload: Record<string, unknown>): boolean {

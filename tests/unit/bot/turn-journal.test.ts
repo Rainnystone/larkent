@@ -223,6 +223,55 @@ describe('TurnJournal', () => {
     expect(journal.get('turn-1')?.status).toBe('interrupted');
   });
 
+  it('resends notice-pending entries on recover and rate-limits them', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'n1', messageIds: ['om_a'] }));
+    journal.enqueue(queued({ turnId: 'n2', messageIds: ['om_b'] }));
+    journal.markNoticePending('n1', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice-one',
+    });
+    journal.markNoticePending('n2', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice-two',
+    });
+    const sent: string[] = [];
+    const sleeps: number[] = [];
+    await journal.recover({
+      enabled: true,
+      resendNotice: async (entry) => {
+        sent.push(entry.turnId);
+        return true;
+      },
+      noticeGapMs: 500,
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      },
+    });
+    expect(sent).toEqual(['n1', 'n2']);
+    expect(sleeps).toEqual([500]);
+    expect(journal.get('n1')?.status).toBe('notice-delivered');
+    expect(journal.get('n2')?.status).toBe('notice-delivered');
+  });
+
+  it('invalidates delivered notice actions on session switch without un-delivering them', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'done-notice' }));
+    journal.markNoticePending('done-notice', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice',
+    });
+    journal.markNoticeDelivered('done-notice');
+    journal.voidScope('oc_group');
+    expect(journal.get('done-notice')?.status).toBe('notice-delivered');
+    expect(journal.get('done-notice')?.noticeInvalidated).toBe(true);
+  });
+
   it('voids incomplete records for a scope on session switch', async () => {
     const { journal } = await fixture();
     await journal.load();

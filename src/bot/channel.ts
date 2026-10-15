@@ -26,6 +26,17 @@ import type { AgentAdapter, AgentEvent } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
 import { CallbackNonceStore } from '../card/callback-store';
+import {
+  NOTICE_RESTART_GAP_MS,
+  NoticeActionAuth,
+  authNoticeAlreadyDelivered,
+  continueExtraInstruction,
+  deliverInterruptionNotice,
+  isContinuePrompt,
+  latestContinueNotice,
+  planInterruptionNotice,
+  resendPendingNotice,
+} from './interruption-notice';
 import { renderCard } from '../card/run-renderer';
 import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
 import {
@@ -47,6 +58,7 @@ import {
   noteTerminalStop,
   requestStop,
   shouldDeliverAgentEvent,
+  type RunOutcome,
   type StopRequest,
 } from './run-outcome';
 import { renderText } from '../card/text-renderer';
@@ -226,9 +238,13 @@ export interface StartChannelDeps {
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, journal, controls } = deps;
   const reliability = () => getReliabilityConfig(controls.profileConfig);
+  const consecutiveByScope = rebuildConsecutive(journal);
+  const pendingHintByScope = rebuildPendingHints(journal);
   const activeRuns = new ActiveRuns({
     onSupersede: (scope) => {
       if (reliability().journal) journal?.voidScope(scope);
+      consecutiveByScope.set(scope, 0);
+      pendingHintByScope.delete(scope);
     },
   });
   const resumeCandidates = new ResumeCandidates();
@@ -276,6 +292,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         nonceStore: callbackNonceStore,
       })
     : undefined;
+  const noticeAuth = callbackNonceStore
+    ? new NoticeActionAuth({ secret: appSecret, nonceStore: callbackNonceStore })
+    : undefined;
+  const continueByScope = new Map<string, { resumeHandle?: string; userInput?: string; turnId: string }>();
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model
   // switch can inject a one-time "model changed" note into the next (resumed)
@@ -411,6 +431,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           controls,
           cotClient,
           callbackAuth,
+          noticeAuth,
           activePolicyFingerprints,
           lastRunModelByScope,
           canRecordSession: sessionWriter.isCurrent,
@@ -419,6 +440,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           backfillMarks,
           ledger,
           journal: reliability().journal ? journal : undefined,
+          noticeEnabled: reliability().notice,
+          consecutiveByScope,
+          pendingHintByScope,
+          continueByScope,
         });
       } finally {
         sessionWriter.release();
@@ -489,6 +514,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     return trackConsumer(journal.recover({
       enabled: true,
       resend: (entry) => resendJournalReply(channel, entry),
+      resendNotice: reliability().notice
+        ? (entry) => resendPendingNotice({
+          send: (chatId, content, options) => channel.send(chatId, content, options),
+          entry,
+          journal,
+          noticeAuth,
+        })
+        : undefined,
+      noticeGapMs: NOTICE_RESTART_GAP_MS,
     }).then(() => {}), 'journal');
   };
 
@@ -523,6 +557,32 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           chatModeCache,
           callbackAuth,
           callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
+          journal,
+          noticeAuth,
+          onNoticeAction: ({ action, entry, operatorId, scope, threadId, mode }) => {
+            if (action !== 'notice.continue') return;
+            journal?.update(entry.turnId, { noticeInvalidated: true });
+            continueByScope.set(scope, {
+              turnId: entry.turnId,
+              ...(entry.resumeHandle ? { resumeHandle: entry.resumeHandle } : {}),
+              ...(entry.userInput ? { userInput: entry.userInput } : {}),
+            });
+            pending.push(scope, {
+              messageId: `notice-continue-${entry.turnId}`,
+              chatId: entry.chatId,
+              chatType: mode === 'p2p' ? 'p2p' : 'group',
+              threadId,
+              senderId: operatorId,
+              senderName: '',
+              content: entry.resumeHandle ? '继续' : (entry.userInput ?? '继续'),
+              rawContentType: 'text',
+              resources: [],
+              mentions: [],
+              mentionAll: false,
+              mentionedBot: true,
+              createTime: Date.now(),
+            });
+          },
         });
       }).catch((err) => log.fail('cardAction', err));
     },
@@ -1092,6 +1152,11 @@ interface RunBatchDeps {
   backfillMarks: Map<string, BackfillMark>;
   ledger?: BackfillLedger;
   journal?: TurnJournal;
+  noticeEnabled?: boolean;
+  noticeAuth?: NoticeActionAuth;
+  consecutiveByScope: Map<string, number>;
+  pendingHintByScope: Map<string, string>;
+  continueByScope: Map<string, { resumeHandle?: string; userInput?: string; turnId: string }>;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1113,6 +1178,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     backfillMarks,
     ledger,
     journal,
+    noticeEnabled,
+    noticeAuth,
+    consecutiveByScope,
+    pendingHintByScope,
+    continueByScope,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1201,6 +1271,24 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
   lastRunModelByScope.set(scope, modelSelection);
   const extraInstructions: string[] = [];
+  const continueReq = takeContinueRequest({
+    scope,
+    batch,
+    journal,
+    noticeEnabled: noticeEnabled === true,
+    continueByScope,
+  });
+  if (!continueReq) {
+    consecutiveByScope.set(scope, 0);
+    journal?.list()
+      .filter((entry) => entry.scope === scope && (entry.notice?.kind === 'continue' || entry.notice?.kind === 'plain'))
+      .forEach((entry) => journal.update(entry.turnId, { noticeInvalidated: true }));
+  } else if (journal) journal.update(continueReq.turnId, { noticeInvalidated: true });
+  const pendingHint = pendingHintByScope.get(scope);
+  if (pendingHint) {
+    extraInstructions.push(pendingHint);
+    pendingHintByScope.delete(scope);
+  }
   if (modelSwitched) {
     extraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
@@ -1218,8 +1306,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }));
   }
 
+  const promptBatch = continueReq && !continueReq.resumeHandle && continueReq.userInput
+    ? [{ ...lastMsg, content: continueReq.userInput }]
+    : batch;
   const prompt = buildPrompt(
-    batch,
+    promptBatch,
     attachments,
     quotes,
     topicContext,
@@ -1272,6 +1363,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       senderId: firstMsg.senderId,
       initiatorId: lastMsg.senderId,
       status: 'queued',
+      ...(noticeEnabled ? { userInput: promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n') } : {}),
     });
   }
 
@@ -1289,6 +1381,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     executor,
     now: Date.now(),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
+    ...(continueReq
+      ? { forceResumeHandle: continueReq.resumeHandle ?? null }
+      : {}),
     observability: {
       profile: controls.profile,
       agent: capability.agentId,
@@ -1330,6 +1425,17 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   }
   const handle = execution.handle;
   const eventStream = execution.subscribe();
+  const noticeCtx = noticeEnabled && journal
+    ? {
+        enabled: true as const,
+        auth: noticeAuth,
+        consecutiveByScope,
+        pendingHintByScope,
+        ownerId: controls.botOwnerId,
+        requireBotMention: lastMsg.chatType !== 'p2p'
+          && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
+      }
+    : undefined;
   if (flow.resumeFrom) {
     log.info('session', 'resume', { resumeHandle: flow.resumeFrom, cwd });
   } else {
@@ -1347,6 +1453,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     });
     if (evt.type === 'system' && evt.resumeHandle) {
       log.info('session', 'set', { resumeHandle: evt.resumeHandle });
+      if (journal && turnId) journal.update(turnId, { resumeHandle: evt.resumeHandle });
     }
     // Ground truth for "which model is actually running": claude reports the
     // model it loaded in its init event. Logging requested-vs-actual reveals
@@ -1462,6 +1569,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           journal,
           turnId,
           handle,
+          notice: noticeCtx,
         });
         return;
       }
@@ -1542,6 +1650,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           journal,
           turnId,
           handle,
+          notice: noticeCtx,
         });
       }
     } else if (replyMode === 'markdown') {
@@ -1611,6 +1720,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           journal,
           turnId,
           handle,
+          notice: noticeCtx,
         });
       }
     } else {
@@ -1640,6 +1750,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         journal,
         turnId,
         handle,
+        notice: noticeCtx,
       });
     }
   } catch (err) {
@@ -1813,13 +1924,25 @@ async function deliverFinalReply(input: {
   journal?: TurnJournal;
   turnId?: string;
   handle: RunHandle;
+  notice?: {
+    enabled: true;
+    auth?: NoticeActionAuth;
+    consecutiveByScope: Map<string, number>;
+    pendingHintByScope: Map<string, string>;
+    ownerId?: string;
+    requireBotMention: boolean;
+  };
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
   const body = renderText(input.state);
   const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || !body.trim();
-  if (input.journal && input.turnId && !skip) {
+  const outcome = input.handle.outcome;
+  const willNotice = Boolean(
+    input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
+  );
+  if (input.journal && input.turnId && !skip && !willNotice) {
     input.journal.markCompletedUndelivered(input.turnId, {
       markdown: body,
       replyTo: input.sendOpts.replyTo,
@@ -1828,7 +1951,17 @@ async function deliverFinalReply(input: {
     });
   }
   await sendFinalReply(input);
-  if (input.journal && input.turnId) input.journal.markReplyDelivered(input.turnId);
+  if (input.journal && input.turnId && !willNotice) input.journal.markReplyDelivered(input.turnId);
+  if (willNotice && input.notice && input.journal && input.turnId && outcome) {
+    await sendTurnNotice({
+      channel: input.channel,
+      journal: input.journal,
+      turnId: input.turnId,
+      scope: input.scope,
+      outcome,
+      notice: input.notice,
+    });
+  }
 }
 
 async function resendJournalReply(channel: LarkChannel, entry: TurnJournalEntry): Promise<boolean> {
@@ -2330,6 +2463,92 @@ function scheduleWorkingReactionCleanup(
     if (!settled.ok || !settled.reactionId) return;
     await removeReaction(channel, messageId, settled.reactionId);
   })();
+}
+
+function takeContinueRequest(input: {
+  scope: string;
+  batch: NormalizedMessage[];
+  journal?: TurnJournal;
+  noticeEnabled: boolean;
+  continueByScope: Map<string, { resumeHandle?: string; userInput?: string; turnId: string }>;
+}): { resumeHandle?: string; userInput?: string; turnId: string } | undefined {
+  if (!input.noticeEnabled) return undefined;
+  const queued = input.continueByScope.get(input.scope);
+  if (queued) {
+    input.continueByScope.delete(input.scope);
+    return queued;
+  }
+  const last = input.batch[input.batch.length - 1];
+  if (!last || !isContinuePrompt(last.content) || !input.journal) return undefined;
+  const entry = latestContinueNotice(input.journal, input.scope);
+  if (!entry) return undefined;
+  return {
+    turnId: entry.turnId,
+    ...(entry.resumeHandle ? { resumeHandle: entry.resumeHandle } : {}),
+    ...(entry.userInput ? { userInput: entry.userInput } : {}),
+  };
+}
+
+function rebuildPendingHints(journal?: TurnJournal): Map<string, string> {
+  const map = new Map<string, string>();
+  if (!journal) return map;
+  for (const entry of journal.list()) {
+    if (entry.noticeInvalidated) continue;
+    if (entry.notice?.kind !== 'continue' && entry.notice?.kind !== 'plain') continue;
+    if (entry.notice.continueHint) map.set(entry.scope, entry.notice.continueHint);
+  }
+  return map;
+}
+
+function rebuildConsecutive(journal?: TurnJournal): Map<string, number> {
+  const map = new Map<string, number>();
+  if (!journal) return map;
+  for (const entry of journal.list()) {
+    if (typeof entry.consecutiveInterrupts === 'number' && !entry.noticeInvalidated) {
+      map.set(entry.scope, entry.consecutiveInterrupts);
+    }
+    if (entry.status === 'reply-delivered' && entry.outcome?.kind === 'completed') {
+      map.set(entry.scope, 0);
+    }
+  }
+  return map;
+}
+
+async function sendTurnNotice(input: {
+  channel: LarkChannel;
+  journal: TurnJournal;
+  turnId: string;
+  scope: string;
+  outcome: RunOutcome;
+  notice: {
+    auth?: NoticeActionAuth;
+    consecutiveByScope: Map<string, number>;
+    pendingHintByScope: Map<string, string>;
+    ownerId?: string;
+    requireBotMention: boolean;
+  };
+}): Promise<void> {
+  const plan = planInterruptionNotice(input.outcome);
+  if (plan.kind === 'none') return;
+  let consecutive = input.notice.consecutiveByScope.get(input.scope) ?? 0;
+  if (plan.kind === 'continue') {
+    consecutive += 1;
+    input.notice.consecutiveByScope.set(input.scope, consecutive);
+  }
+  const result = await deliverInterruptionNotice({
+    send: (chatId, content, options) => input.channel.send(chatId, content, options),
+    journal: input.journal,
+    turnId: input.turnId,
+    outcome: input.outcome,
+    noticeAuth: input.notice.auth,
+    consecutive,
+    requireBotMention: input.notice.requireBotMention,
+    ownerId: input.notice.ownerId,
+    authNotified: authNoticeAlreadyDelivered(input.journal),
+  });
+  if (plan.kind === 'continue' && (result.delivered || result.pending)) {
+    input.notice.pendingHintByScope.set(input.scope, continueExtraInstruction(input.outcome));
+  }
 }
 
 function delay(ms: number): Promise<void> {

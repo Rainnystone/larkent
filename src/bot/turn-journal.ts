@@ -32,6 +32,19 @@ export interface TurnReply {
   replyMode: string;
 }
 
+export interface TurnNotice {
+  kind: 'continue' | 'plain' | 'auth';
+  recipientChatId: string;
+  markdown: string;
+  replyTo?: string;
+  replyInThread?: boolean;
+  includeButtons?: boolean;
+  ownerChatId?: string;
+  initiatorDelivered?: boolean;
+  ownerDelivered?: boolean;
+  continueHint?: string;
+}
+
 export interface TurnJournalEntry {
   turnId: string;
   scope: string;
@@ -48,7 +61,10 @@ export interface TurnJournalEntry {
   status: TurnJournalStatus;
   outcome?: RunOutcome;
   noticeStatus?: 'none' | 'pending' | 'delivered';
+  noticeInvalidated?: boolean;
+  notice?: TurnNotice;
   consecutiveInterrupts?: number;
+  userInput?: string;
   reply?: TurnReply;
   createdAt: number;
   updatedAt: number;
@@ -63,6 +79,9 @@ export interface TurnJournalOptions {
 export interface JournalRecoverOptions {
   enabled: boolean;
   resend?: (entry: TurnJournalEntry) => Promise<boolean>;
+  resendNotice?: (entry: TurnJournalEntry) => Promise<boolean>;
+  noticeGapMs?: number;
+  sleep?: (ms: number) => Promise<void>;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
   isAlive?: (pid: number) => boolean;
   processStartMs?: (pid: number) => number | undefined;
@@ -190,19 +209,38 @@ export class TurnJournal {
     this.patch(turnId, { status: 'completed-undelivered', reply });
   }
 
-  markInterrupted(turnId: string, outcome: RunOutcome): void {
+  markInterrupted(turnId: string, outcome: RunOutcome, consecutiveInterrupts?: number): void {
     const current = this.entries.find((entry) => entry.turnId === turnId);
     this.patch(turnId, {
       status: 'interrupted',
       outcome,
-      consecutiveInterrupts: (current?.consecutiveInterrupts ?? 0) + 1,
+      consecutiveInterrupts: consecutiveInterrupts ?? (current?.consecutiveInterrupts ?? 0) + 1,
     });
+  }
+
+  markNoticePending(turnId: string, notice: TurnNotice): void {
+    this.patch(turnId, {
+      status: 'notice-pending',
+      noticeStatus: 'pending',
+      notice,
+    });
+  }
+
+  markNoticeDelivered(turnId: string): void {
+    this.patch(turnId, { status: 'notice-delivered', noticeStatus: 'delivered' });
   }
 
   voidScope(scope: string): void {
     let changed = false;
     for (const entry of this.entries) {
       if (entry.scope !== scope) continue;
+      if (entry.noticeStatus === 'pending' || entry.noticeStatus === 'delivered' || entry.status === 'notice-pending' || entry.status === 'notice-delivered') {
+        if (!entry.noticeInvalidated) {
+          entry.noticeInvalidated = true;
+          entry.updatedAt = this.now();
+          changed = true;
+        }
+      }
       if (!isIncomplete(entry.status)) continue;
       entry.status = 'voided';
       entry.updatedAt = this.now();
@@ -231,6 +269,8 @@ export class TurnJournal {
 
     let orphans = 0;
     let resent = 0;
+    let notices = 0;
+    const pendingNoticeCount = snapshot.filter((item) => item.status === 'notice-pending').length;
     const interrupted: RunOutcome = {
       kind: 'interrupted',
       reason: { type: 'external-signal' },
@@ -241,6 +281,26 @@ export class TurnJournal {
     for (const entry of snapshot) {
       const current = this.entries.find((item) => item.turnId === entry.turnId);
       if (!current || !isRecoverable(current.status)) continue;
+
+      if (current.status === 'notice-pending') {
+        if (!opts.resendNotice || current.noticeInvalidated) continue;
+        try {
+          const ok = await opts.resendNotice({ ...current });
+          if (ok) {
+            this.markNoticeDelivered(current.turnId);
+            notices += 1;
+            if (opts.noticeGapMs && notices < pendingNoticeCount) {
+              await (opts.sleep ?? defaultSleep)(opts.noticeGapMs);
+            }
+          }
+        } catch (error) {
+          log.warn('journal', 'notice-resend-failed', {
+            turnId: current.turnId,
+            err: error instanceof Error ? error.message : String(error),
+          });
+        }
+        continue;
+      }
 
       if (current.status === 'completed-undelivered' || (current.status === 'settled' && current.reply)) {
         if (!opts.resend || !current.reply) continue;
@@ -269,8 +329,8 @@ export class TurnJournal {
       this.markInterrupted(current.turnId, interrupted);
     }
 
-    if (orphans > 0 || resent > 0) {
-      log.info('journal', 'recovered', { orphans, resent });
+    if (orphans > 0 || resent > 0 || notices > 0) {
+      log.info('journal', 'recovered', { orphans, resent, notices });
     }
     await this.flush();
     return { orphans, resent };
@@ -428,12 +488,33 @@ function parseEntry(raw: unknown): TurnJournalEntry | undefined {
     ...(raw.noticeStatus === 'none' || raw.noticeStatus === 'pending' || raw.noticeStatus === 'delivered'
       ? { noticeStatus: raw.noticeStatus }
       : {}),
+    ...(raw.noticeInvalidated === true ? { noticeInvalidated: true } : {}),
+    ...(parseNotice(raw.notice) ? { notice: parseNotice(raw.notice) } : {}),
     ...(typeof raw.consecutiveInterrupts === 'number' && Number.isFinite(raw.consecutiveInterrupts)
       ? { consecutiveInterrupts: raw.consecutiveInterrupts }
       : {}),
+    ...(typeof raw.userInput === 'string' ? { userInput: raw.userInput } : {}),
     ...(parseReply(raw.reply) ? { reply: parseReply(raw.reply) } : {}),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
+  };
+}
+
+function parseNotice(raw: unknown): TurnNotice | undefined {
+  if (!isObject(raw)) return undefined;
+  if (raw.kind !== 'continue' && raw.kind !== 'plain' && raw.kind !== 'auth') return undefined;
+  if (typeof raw.recipientChatId !== 'string' || typeof raw.markdown !== 'string') return undefined;
+  return {
+    kind: raw.kind,
+    recipientChatId: raw.recipientChatId,
+    markdown: raw.markdown,
+    ...(typeof raw.replyTo === 'string' ? { replyTo: raw.replyTo } : {}),
+    ...(raw.replyInThread === true ? { replyInThread: true } : {}),
+    ...(raw.includeButtons === true ? { includeButtons: true } : {}),
+    ...(typeof raw.ownerChatId === 'string' ? { ownerChatId: raw.ownerChatId } : {}),
+    ...(raw.initiatorDelivered === true ? { initiatorDelivered: true } : {}),
+    ...(raw.ownerDelivered === true ? { ownerDelivered: true } : {}),
+    ...(typeof raw.continueHint === 'string' ? { continueHint: raw.continueHint } : {}),
   };
 }
 
@@ -494,11 +575,12 @@ function isRecoverable(status: TurnJournalStatus): boolean {
     case 'completed-undelivered':
       return true;
     case 'interrupted':
-    case 'notice-pending':
     case 'reply-delivered':
     case 'notice-delivered':
     case 'voided':
       return false;
+    case 'notice-pending':
+      return true;
     default: {
       const _exhaustive: never = status;
       return _exhaustive;
@@ -540,6 +622,10 @@ function defaultKill(pid: number, signal: NodeJS.Signals): void {
 }
 
 function sleep(ms: number): Promise<void> {
+  return defaultSleep(ms);
+}
+
+function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });

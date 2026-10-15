@@ -177,6 +177,31 @@ export function resumeCard(cwd: string, entries: ResumeEntry[]): object {
   return shell('🔁 恢复历史会话', elements);
 }
 
+export function interruptionNoticeCard(input: {
+  body: string;
+  continueToken?: string;
+  dismissToken?: string;
+}): object {
+  const elements: object[] = [divMd(input.body)];
+  if (input.continueToken && input.dismissToken) {
+    elements.push(HR);
+    elements.push(
+      actions([
+        {
+          text: '继续',
+          value: { cmd: 'notice.continue', notice_token: input.continueToken },
+          style: 'primary',
+        },
+        {
+          text: '暂不',
+          value: { cmd: 'notice.dismiss', notice_token: input.dismissToken },
+        },
+      ]),
+    );
+  }
+  return shell('中断通知', elements);
+}
+
 export function helpCard(agentName = 'Agent'): object {
   const escapedAgentName = escapeMd(agentName);
   return shell('💡 使用帮助', [

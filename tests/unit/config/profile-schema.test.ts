@@ -690,4 +690,17 @@ describe('profile schema', () => {
     });
     expect(getReliabilityConfig(writeOnly)).toMatchObject({ journal: true, journalRecover: false });
   });
+
+  it('defaults reliability.notice off and stores an explicit on flag', () => {
+    const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
+    expect(getReliabilityConfig(fresh).notice).toBe(false);
+    const on = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      reliability: { notice: true },
+    });
+    expect(on.reliability).toEqual({ notice: true });
+    expect(getReliabilityConfig(on).notice).toBe(true);
+  });
 });

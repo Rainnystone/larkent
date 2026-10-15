@@ -36,6 +36,7 @@ pnpm e2e:send -- --text "continue"
 pnpm e2e:read
 pnpm e2e:scenario -- redelivery-short-gap [--gap-sec 25]
 pnpm e2e:scenario -- journal-kill-group [--up]
+pnpm e2e:scenario -- cursor-stall-notice
 ```
 
 `down` reads the pid file and refuses to signal a process whose cmdline is

@@ -100,6 +100,60 @@ describe('IM run flow', () => {
     expect(h.agent.runOptions[0]?.cwd).toBe(workspaceRealpath);
   });
 
+  it('forceResumeHandle null starts a fresh run despite a stored session', async () => {
+    const h = await createHarness();
+    const workspaceRealpath = await realpath(h.tmp.workspace);
+    h.workspaces.setCwd('chat-1', h.tmp.workspace);
+    h.sessions.set('chat-1', 'sess-stale', workspaceRealpath);
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: 'replay',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(h.profileConfig),
+      profileConfig: h.profileConfig,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+      forceResumeHandle: null,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected run flow to start');
+    expect(result.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+  });
+
+  it('forceResumeHandle uses the journal handle instead of the stored session', async () => {
+    const h = await createHarness();
+    const workspaceRealpath = await realpath(h.tmp.workspace);
+    h.workspaces.setCwd('chat-1', h.tmp.workspace);
+    h.sessions.set('chat-1', 'sess-live', workspaceRealpath);
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: '继续',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(h.profileConfig),
+      profileConfig: h.profileConfig,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+      forceResumeHandle: 'sess-journal',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected run flow to start');
+    expect(result.resumeFrom).toBe('sess-journal');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBe('sess-journal');
+  });
+
   it('promises recovery instead of a later retry when reconnect is in progress', async () => {
     const tmp = await createTmpProfile('bridge-im-reconnect-');
     const activeRuns = new ActiveRuns();

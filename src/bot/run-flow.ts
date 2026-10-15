@@ -36,6 +36,8 @@ export interface StartRunFlowInput {
   executor: RunExecutor;
   now: number;
   stopGraceMs?: number;
+  /** `null` starts a fresh run; a string forces that resume handle. */
+  forceResumeHandle?: string | null;
   observability?: {
     profile: string;
     agent: string;
@@ -110,20 +112,26 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   }
 
   let resumeFrom: string | undefined;
-  if (input.sessionCatalog) {
-    const catalogEntry = input.sessionCatalog.activeFor({
-      scopeId: input.scopeId,
-      agentId: input.capability.agentId,
-      cwdRealpath: workspace.cwdRealpath,
-      policyFingerprint: policy.policyFingerprint,
-    });
-    resumeFrom = catalogEntry?.resumeHandle;
-  }
-  if (!resumeFrom && descriptorFor(input.capability.agentId).resume.label === 'session') {
-    resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
-    const stale = input.sessions.getRaw(input.scopeId);
-    if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
-      input.sessions.clear(input.scopeId);
+  if (input.forceResumeHandle === null) {
+    resumeFrom = undefined;
+  } else if (typeof input.forceResumeHandle === 'string') {
+    resumeFrom = input.forceResumeHandle;
+  } else {
+    if (input.sessionCatalog) {
+      const catalogEntry = input.sessionCatalog.activeFor({
+        scopeId: input.scopeId,
+        agentId: input.capability.agentId,
+        cwdRealpath: workspace.cwdRealpath,
+        policyFingerprint: policy.policyFingerprint,
+      });
+      resumeFrom = catalogEntry?.resumeHandle;
+    }
+    if (!resumeFrom && descriptorFor(input.capability.agentId).resume.label === 'session') {
+      resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
+      const stale = input.sessions.getRaw(input.scopeId);
+      if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
+        input.sessions.clear(input.scopeId);
+      }
     }
   }
 
