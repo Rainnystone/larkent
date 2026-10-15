@@ -46,44 +46,6 @@
         {
           "schema": "2.0",
           "config": {
-            "streaming_mode": true,
-            "summary": {
-              "content": "正在输出"
-            }
-          },
-          "body": {
-            "elements": [
-              {
-                "tag": "markdown",
-                "content": "PINNED_ANSWER"
-              },
-              {
-                "tag": "markdown",
-                "content": "✍️ 正在输出",
-                "text_size": "notation"
-              },
-              {
-                "tag": "button",
-                "text": {
-                  "tag": "plain_text",
-                  "content": "⏹ 终止"
-                },
-                "type": "danger",
-                "behaviors": [
-                  {
-                    "type": "callback",
-                    "value": {
-                      "cmd": "stop"
-                    }
-                  }
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "schema": "2.0",
-          "config": {
             "streaming_mode": false,
             "summary": {
               "content": "已完成"

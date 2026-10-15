@@ -1624,6 +1624,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     if (replyMode === 'card') {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
+      let producerRendered = false;
       let cardCtrl:
         | { update(next: object | ((current: object) => object)): Promise<void> }
         | undefined;
@@ -1636,8 +1637,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               producer: async (ctrl) => {
                 producerStarted = true;
                 if (progress.abandoned()) return;
-                cardCtrl = ctrl;
                 await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
+                producerRendered = true;
+                cardCtrl = ctrl;
                 await renderDone;
               },
             },
@@ -1667,6 +1669,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           progress,
           renderDone,
           producerStarted: () => producerStarted,
+          producerRendered: () => producerRendered,
           fallback: async () => {
             // Stream-deltas finalize through deliverFinalReply after the stream
             // settles, including the no-progress-stream and abandoned paths.
@@ -1698,6 +1701,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
+      let producerRendered = false;
       let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
         channel.stream(
@@ -1706,8 +1710,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             markdown: async (ctrl) => {
               producerStarted = true;
               if (progress.abandoned()) return;
-              markdownCtrl = ctrl;
               await ctrl.setContent(renderText(filterForPrefs(latestState)));
+              producerRendered = true;
+              markdownCtrl = ctrl;
               await renderDone;
             },
           },
@@ -1736,6 +1741,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           progress,
           renderDone,
           producerStarted: () => producerStarted,
+          producerRendered: () => producerRendered,
           fallback: async () => {
             // Stream-deltas finalize through deliverFinalReply after the stream
             // settles, including the no-progress-stream and abandoned paths.
@@ -2421,6 +2427,7 @@ async function awaitRenderAwareStream(input: {
   progress: LazyProgressStream;
   renderDone: Promise<RunState>;
   producerStarted: () => boolean;
+  producerRendered: () => boolean;
   fallback: (state: RunState) => Promise<void>;
 }): Promise<void> {
   const streamResult = input.progress.settled.then(
@@ -2437,7 +2444,7 @@ async function awaitRenderAwareStream(input: {
       log.fail('stream', first.err, { mode: input.mode, step: 'stream' });
       const rendered = await renderResult;
       if (!rendered.ok) throw rendered.err;
-      if (!input.producerStarted()) input.progress.abandon();
+      if (!input.producerRendered()) input.progress.abandon();
       await runFallbackReply(input.mode, rendered.state, input.fallback);
       return;
     }
@@ -2494,7 +2501,7 @@ async function awaitRenderAwareStream(input: {
     // A stream that failed before producing anything delivered nothing, so the
     // reply still has to go out; one that failed later already showed its
     // content and the error is the caller's to handle.
-    if (input.producerStarted()) throw terminal.err;
+    if (input.producerRendered()) throw terminal.err;
     input.progress.abandon();
     log.fail('stream', terminal.err, { mode: input.mode, step: 'stream' });
     await runFallbackReply(input.mode, first.state, input.fallback);
