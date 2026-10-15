@@ -76,6 +76,8 @@ export function omitEmptyAgentOptions(options: unknown): unknown | undefined {
 export interface AgentRun {
   readonly runId: string;
   readonly events: AsyncIterable<AgentEvent>;
+  /** Head+tail snapshot of CLI stderr. Used for signature matching. */
+  readonly stderrSnapshot?: string;
   /** Resolves only after process exit and adapter cleanup; rejects if settlement fails. */
   stop(): Promise<void>;
   /**

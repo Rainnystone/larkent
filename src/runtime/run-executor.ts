@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { CliSignature } from '../agent/cli-signatures';
 import { descriptorFor, isAgentKind } from '../agent/registry';
 import { mergeAgentOptions, type AgentAdapter, type AgentEvent, type AgentRun } from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
@@ -21,6 +22,11 @@ export interface RunExecutorDeps {
   createRunId?: () => string;
   now?: () => number;
   postDoneExitGraceMs?: number;
+  cliSignatures?: () => {
+    enabled: boolean;
+    signatures: readonly CliSignature[];
+    agent: string;
+  };
 }
 
 export interface SubmitRunInput {
@@ -59,6 +65,7 @@ export class RunExecutor {
   private readonly createRunId: () => string;
   private readonly now: () => number;
   private readonly postDoneExitGraceMs: number;
+  private readonly cliSignatures?: RunExecutorDeps['cliSignatures'];
 
   constructor(deps: RunExecutorDeps) {
     this.agent = deps.agent;
@@ -67,6 +74,7 @@ export class RunExecutor {
     this.createRunId = deps.createRunId ?? randomUUID;
     this.now = deps.now ?? Date.now;
     this.postDoneExitGraceMs = deps.postDoneExitGraceMs ?? DEFAULT_POST_DONE_EXIT_GRACE_MS;
+    this.cliSignatures = deps.cliSignatures;
   }
 
   async submit(input: SubmitRunInput): Promise<RunExecution> {
@@ -205,6 +213,9 @@ export class RunExecutor {
     const ownedRun: AgentRun = {
       runId: rawRun.runId,
       events: rawRun.events,
+      get stderrSnapshot() {
+        return rawRun.stderrSnapshot;
+      },
       waitForExit: timeoutMs => rawRun.waitForExit(timeoutMs),
       stop: () => {
         requestStop(handle, { type: 'subscriber-abandoned' });
@@ -231,6 +242,7 @@ export class RunExecutor {
       startedAt,
       now: this.now,
       handle: () => handle,
+      cliSignatures: this.cliSignatures,
     }), finish, () => {
       // Raw exit/cleanup can finish before buffered source events. Release
       // ownership only once the pump has drained them (or observed failure).
@@ -258,6 +270,7 @@ function observeRunEvents(
     startedAt: number;
     now: () => number;
     handle: () => RunHandle;
+    cliSignatures?: RunExecutorDeps['cliSignatures'];
   },
 ): AsyncIterable<AgentEvent> {
   return {
@@ -274,10 +287,14 @@ function observeRunEvents(
         }
         if (event.type === 'error') {
           const stopRequest = opts.handle().stopRequest ?? stopRequestFromTerminal(event);
+          const cli = opts.cliSignatures?.();
+          const stderrTail = opts.handle().run.stderrSnapshot ?? event.message;
+          const signatures = cli?.enabled === false ? undefined : cli?.signatures;
           const outcome = deriveRunOutcome({
             stopRequest: opts.handle().stopRequest,
             terminalEvent: event,
-            stderrTail: event.message,
+            stderrTail,
+            signatures,
           });
           log.warn('run', 'failed', {
             ...opts.dimensions,

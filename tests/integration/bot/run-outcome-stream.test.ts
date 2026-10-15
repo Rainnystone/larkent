@@ -63,6 +63,84 @@ describe('run outcome stream', () => {
     await waitFor(() => rendered(h.channel).includes('已被中断'));
   });
 
+  it('shows redacted signature copy on the card instead of raw stderr paths', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'cursor' });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    const raw = [
+      'failed to read /Users/someone/.cursor/projects/secret-repo/config.json',
+      'RetriableError: Connection stalled repeatedly',
+      'account: user@example.com',
+    ].join('\n');
+    run.stderrSnapshot = raw;
+    run.push({ type: 'error', message: `cursor exited with code 1: ${raw}`, terminationReason: 'failed' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => String(entry.outcome).includes('transient-upstream')));
+    const card = rendered(h.channel);
+    expect(card).toContain('上游连接反复中断');
+    expect(card).not.toContain('/Users/someone/.cursor');
+    expect(card).not.toContain('user@example.com');
+    expect(card).not.toContain('secret-repo');
+  });
+
+  it('hides unclassified stderr paths behind generic card copy', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'cursor' });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    const raw = 'failed to read /Users/someone/.cursor/projects/secret-repo/config.json for user@example.com';
+    run.stderrSnapshot = raw;
+    run.push({ type: 'error', message: `cursor exited with code 1: ${raw}`, terminationReason: 'failed' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'failed:unclassified'));
+    const card = rendered(h.channel);
+    expect(card).toContain('agent 运行失败');
+    expect(card).not.toContain('/Users/someone/.cursor');
+    expect(card).not.toContain('user@example.com');
+    expect(info.mock.calls.some((call) => call[0] === 'run' && call[1] === 'stderr-unclassified')).toBe(true);
+  });
+
+  it('keeps raw truncated stderr on the card when cliSignatures is off', async () => {
+    const h = await harness({ agentKind: 'cursor', cliSignatures: false });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    const raw = 'failed to read /Users/someone/.cursor/projects/secret-repo/config.json';
+    run.stderrSnapshot = raw;
+    run.push({ type: 'error', message: `cursor exited with code 1: ${raw}`, terminationReason: 'failed' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => rendered(h.channel).includes('secret-repo'));
+    expect(rendered(h.channel)).not.toContain('上游连接反复中断');
+  });
+
+  it('classifies agy print-timeout on exit 0 as partial', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity' });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.stderrSnapshot = '[agy] print timeout after 5m0s with turn in progress; returning partial output';
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'partial'));
+    expect(cardFinal(info).at(-1)).toMatchObject({ terminal: 'done', outcome: 'partial' });
+  });
+
   it('renders runner timeout copy distinct from the idle watchdog', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const warn = vi.spyOn(logger.log, 'warn').mockImplementation(() => {});
@@ -93,24 +171,33 @@ describe('run outcome stream', () => {
   });
 });
 
-async function harness(reliability?: { runOutcome?: boolean }) {
+async function harness(options?: {
+  runOutcome?: boolean;
+  cliSignatures?: boolean;
+  agentKind?: 'claude' | 'cursor' | 'antigravity';
+}) {
   const tmp = await createTmpProfile('run-outcome-stream-');
+  const agentKind = options?.agentKind ?? 'claude';
+  const reliability = {
+    ...(options?.runOutcome === false ? { runOutcome: false } : {}),
+    ...(options?.cliSignatures === false ? { cliSignatures: false } : {}),
+  };
   const cfg = createDefaultProfileConfig({
-    agentKind: 'claude',
+    agentKind,
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: ['ou_user'] },
     preferences: { messageReply: 'card', showToolCalls: true, runIdleTimeoutMinutes: 1, cotMessages: 'off' },
-    ...(reliability ? { reliability } : {}),
+    ...(Object.keys(reliability).length > 0 ? { reliability } : {}),
   });
   cfg.workspaces.default = tmp.workspace;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
-  const agent = new StreamingFakeAgent();
+  const agent = new StreamingFakeAgent(agentKind);
   const channel = createRecordingLarkChannel();
   sdk.channel = channel;
   const bridge = await startChannel({
     cfg, agent, sessions, workspaces,
-    controls: { profile: 'claude', profileConfig: cfg, cfg, ownerRefreshState: 'unknown',
+    controls: { profile: agentKind, profileConfig: cfg, cfg, ownerRefreshState: 'unknown',
       async refreshOwner() {}, async restart() {}, async exit() {},
       configPath: join(tmp.root, 'config.json'), processId: 'test-outcome',
     },
@@ -128,7 +215,7 @@ async function harness(reliability?: { runOutcome?: boolean }) {
 
 class StreamingFakeAgent extends FakeAgentAdapter {
   readonly manual: ReturnType<typeof manualRun>[] = [];
-  constructor() { super({ id: 'claude' }); }
+  constructor(id: string) { super({ id }); }
   override run(opts: AgentRunOptions): AgentRun {
     const recorded = super.run(opts);
     const manual = manualRun(recorded);
@@ -145,7 +232,7 @@ function manualRun(recorded: AgentRun) {
   let release!: () => void;
   const cleanup = new Promise<void>(resolve => { release = () => { cleaned = true; resolve(); }; });
   const close = () => { closed = true; notify?.(); };
-  const run: AgentRun = {
+  const run: AgentRun & { stderrSnapshot?: string } = {
     runId: recorded.runId,
     events: (async function* () {
       for (;;) {
@@ -170,7 +257,13 @@ function manualRun(recorded: AgentRun) {
       } finally { if (timer) clearTimeout(timer); }
     },
   };
-  return { run, close, releaseCleanup: release, push: (event: AgentEvent) => { queue.push(event); notify?.(); } };
+  return {
+    run,
+    close,
+    releaseCleanup: release,
+    push: (event: AgentEvent) => { queue.push(event); notify?.(); },
+    set stderrSnapshot(value: string) { run.stderrSnapshot = value; },
+  };
 }
 
 function rendered(channel: ReturnType<typeof createRecordingLarkChannel>) {

@@ -1,0 +1,3 @@
+failed to read /Users/someone/.cursor/projects/secret-repo/config.json
+account: user@example.com
+token=sk-this-is-not-a-real-secret

@@ -98,7 +98,8 @@ describe('markdown stream startup failures', () => {
       }),
     );
     expect(lastMarkdown(h.channel)).toContain('agent 失败');
-    expect(lastMarkdown(h.channel)).toContain('codex exited with code 1');
+    expect(lastMarkdown(h.channel)).toContain('agent 运行失败');
+    expect(lastMarkdown(h.channel)).not.toContain('codex exited with code 1');
   });
 
   it('does not wait for the working reaction before draining a failed agent run', async () => {

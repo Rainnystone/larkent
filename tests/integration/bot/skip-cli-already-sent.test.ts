@@ -127,7 +127,8 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
 
     await h.channel.handlers.message?.(message(MSG, 'please answer'));
     await waitFor(() => h.channel.sent.length > 0);
-    expect(JSON.stringify(h.channel.sent)).toContain('boom');
+    expect(JSON.stringify(h.channel.sent)).toContain('agent 运行失败');
+    expect(JSON.stringify(h.channel.sent)).not.toContain('boom');
   }, 15_000);
 });
 

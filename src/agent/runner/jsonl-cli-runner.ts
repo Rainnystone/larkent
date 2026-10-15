@@ -4,6 +4,7 @@ import { log } from '../../core/logger';
 import { RunCleanupFailed } from '../../runtime/errors';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import type { AgentEvent, AgentRun } from '../types';
+import { BoundedStderr } from './bounded-stderr';
 
 export type JsonlFinishReason = 'normal' | 'interrupted' | 'timeout';
 
@@ -99,12 +100,15 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   let stdoutBuffer = '';
   let sawStdout = false;
 
-  const stderrChunks: Buffer[] = [];
+  const stderr = new BoundedStderr();
   let runtimeError: Error | null = null;
   let stderrBuffer = '';
   child.stderr.on('data', (chunk: Buffer) => {
-    stderrChunks.push(chunk);
+    stderr.push(chunk);
     stderrBuffer += chunk.toString('utf8');
+    if (stderrBuffer.length > 64 * 1024) {
+      stderrBuffer = stderrBuffer.slice(-1024);
+    }
     let nl = stderrBuffer.indexOf('\n');
     while (nl !== -1) {
       const line = stderrBuffer.slice(0, nl);
@@ -371,7 +375,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const events = iterateEvents({
     child,
     stdout,
-    stderrChunks,
+    stderr,
     translator: input.translator,
     spawnName: input.spawnName,
     getError: () => runtimeError,
@@ -403,6 +407,9 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
         };
       },
     },
+    get stderrSnapshot() {
+      return stderr.snapshot();
+    },
     stop: () => stop('interrupted'),
     async waitForExit(timeoutMs: number): Promise<boolean> {
       return await within(settlement.then(() => true), timeoutMs) !== false;
@@ -417,7 +424,7 @@ async function* iterateEvents(input: {
     closed(): boolean;
     wait(): Promise<void>;
   };
-  stderrChunks: Buffer[];
+  stderr: BoundedStderr;
   translator: JsonlTranslator;
   spawnName: string;
   getError: () => Error | null;
@@ -491,8 +498,8 @@ async function* iterateEvents(input: {
     const terminal = input.translator.terminalEmitted?.() === true;
     if (exitCode !== 0 && exitCode !== null) {
       if (!terminal || input.failNonzeroAfterTerminal) {
-        const stderr = Buffer.concat(input.stderrChunks).toString('utf8').trim();
-        const detail = stderr ? `: ${stderr.slice(0, 500)}` : '';
+        const stderrText = input.stderr.snapshot().trim();
+        const detail = stderrText ? `: ${stderrText.slice(0, 500)}` : '';
         yield* emit(input.translator.fail(`${input.spawnName} exited with code ${exitCode}${detail}`));
       }
       return;

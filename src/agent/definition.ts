@@ -1,4 +1,5 @@
 import type { ProfileConfig } from '../config/profile-schema';
+import type { CliSignature } from './cli-signatures';
 import type { LarkChannelEnvContext } from './lark-channel-env';
 import type { AgentAdapter, AgentOptionsSchema, EffectiveAccess } from './types';
 
@@ -92,6 +93,7 @@ export interface AgentDescriptorShape<K extends string = string, S extends strin
   resolveProfileBinary(profile: ProfileConfig): string | undefined;
   detectBinary(envCommand?: string): Promise<string>;
   readonly detectionOrder: number;
+  readonly stderrSignatures: readonly CliSignature[];
 }
 
 export function defineDescriptor<K extends string, S extends string>(

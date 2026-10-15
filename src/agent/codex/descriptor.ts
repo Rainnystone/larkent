@@ -4,13 +4,13 @@ import { CodexAdapter } from './adapter';
 import { codexMetadata } from './metadata';
 import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platform/executable';
 import { codexAdapterAgentOptions } from './options';
-
 export const codexDescriptor = defineDescriptor({
   ...codexMetadata,
   acceptsImagePaths: true,
   acceptsRawResumeHandle: false,
   listResumeHistory: listCodexResumeHistory,
   detectionOrder: 2,
+  stderrSignatures: Object.freeze([]),
   resolveProfileBinary: (profile) => profile.agent.binaryPath ?? profile.codex?.binaryPath,
   detectBinary: (command) => command
     ? resolveExecutablePath(command)

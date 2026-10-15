@@ -182,7 +182,7 @@ function p2pMessage(messageId: string, content: string): NormalizedMessage {
 }
 
 function snapshotHasError(calls: RecordingCall[]): boolean {
-  return JSON.stringify(calls).includes('PINNED_ERROR');
+  return JSON.stringify(calls).includes('agent 运行失败');
 }
 
 function snapshotHasAnswer(calls: RecordingCall[]): boolean {

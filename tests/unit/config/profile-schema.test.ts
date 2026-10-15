@@ -6,6 +6,7 @@ import {
 import {
   createDefaultProfileConfig,
   effectiveLarkCliIdentity,
+  getReliabilityConfig,
   normalizeProfileConfig,
 } from '../../../src/config/profile-schema';
 import { getShowToolCalls } from '../../../src/config/schema';
@@ -653,5 +654,18 @@ describe('profile schema', () => {
       defaultAccess: 'workspace',
       maxAccess: 'workspace',
     });
+  });
+
+  it('defaults reliability.cliSignatures on and stores an explicit off flag', () => {
+    const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
+    expect(getReliabilityConfig(fresh).cliSignatures).toBe(true);
+    const off = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      reliability: { cliSignatures: false },
+    });
+    expect(off.reliability).toEqual({ cliSignatures: false });
+    expect(getReliabilityConfig(off).cliSignatures).toBe(false);
   });
 });

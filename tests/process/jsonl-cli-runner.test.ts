@@ -229,6 +229,52 @@ describe('runner settlement boundaries', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it('keeps stderr snapshot bounded and available after exit 0', async () => {
+    const f = fixture({
+      translator: wrapParsedTranslator({
+        translate: () => [],
+        finish: () => [{ type: 'done', terminationReason: 'normal' }],
+      }, 'fake'),
+    });
+    const run = f.start();
+    const events = collect(run.events);
+    const chunk = Buffer.alloc(64 * 1024, 0x61);
+    chunk.write('HEAD-MARKER');
+    f.child.stderr.write(chunk);
+    for (let i = 0; i < 16; i++) f.child.stderr.write(Buffer.alloc(64 * 1024, 0x62));
+    const tail = Buffer.alloc(64 * 1024, 0x63);
+    Buffer.from('TAIL-MARKER').copy(tail, tail.length - 'TAIL-MARKER'.length);
+    f.child.stderr.write(tail);
+    f.exit();
+    expect(await events).toEqual([{ type: 'done', terminationReason: 'normal' }]);
+    const snapshot = run.stderrSnapshot ?? '';
+    expect(snapshot.startsWith('HEAD-MARKER')).toBe(true);
+    expect(snapshot.endsWith('TAIL-MARKER')).toBe(true);
+    expect(Buffer.byteLength(snapshot)).toBeLessThan(96 * 1024);
+  });
+
+  it('keeps a signature in the bounded snapshot after a 500-character error slice drops it', async () => {
+    const f = fixture();
+    const run = f.start();
+    const events = collect(run.events);
+    f.child.stdout.write('{}\n');
+    f.child.stdout.end();
+    const prefix = 'x'.repeat(800);
+    f.child.stderr.write(`${prefix}RetriableError: Connection stalled repeatedly\n`);
+    f.child.exitCode = 1;
+    f.child.signalCode = null;
+    f.child.stderr.end();
+    f.child.emit('exit', 1, null);
+    const got = await events;
+    const error = got.find((event) => event.type === 'error');
+    expect(error?.type).toBe('error');
+    if (error?.type !== 'error') throw new Error('expected error event');
+    expect(error.message).toContain('exited with code 1');
+    expect(error.message).not.toContain('Connection stalled');
+    expect(run.stderrSnapshot).toContain('Connection stalled repeatedly');
+    expect(run.stderrSnapshot?.includes('x'.repeat(800))).toBe(true);
+  });
+
   it.each(['translator throw', 'consumer return'] as const)('stops and cleans on %s before terminal', async mode => {
     vi.useFakeTimers();
     const failure = new Error('translator failed');

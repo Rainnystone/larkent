@@ -51,7 +51,9 @@ describe('deriveRunOutcome', () => {
         signatures: [
           {
             pattern: /print timeout after .* returning partial output/,
+            cliVersion: 'test',
             classify: { kind: 'partial', retriable: true, needsHuman: false },
+            userMessage: 'partial',
           },
         ] satisfies CliSignature[],
       },
@@ -68,7 +70,9 @@ describe('deriveRunOutcome', () => {
         signatures: [
           {
             pattern: /stored authentication is invalid/i,
+            cliVersion: 'test',
             classify: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+            userMessage: 'auth',
           },
         ] satisfies CliSignature[],
       },
@@ -84,7 +88,9 @@ describe('deriveRunOutcome', () => {
         signatures: [
           {
             pattern: /Connection stalled repeatedly/,
+            cliVersion: 'test',
             classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+            userMessage: 'stall',
           },
         ] satisfies CliSignature[],
       },
@@ -100,7 +106,9 @@ describe('deriveRunOutcome', () => {
         signatures: [
           {
             pattern: /rate limit exceeded/i,
+            cliVersion: 'test',
             classify: { kind: 'failed', cause: 'quota', retriable: false, needsHuman: true },
+            userMessage: 'quota',
           },
         ] satisfies CliSignature[],
       },

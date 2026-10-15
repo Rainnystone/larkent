@@ -1,5 +1,8 @@
+import { matchCliSignature, type CliSignature } from '../agent/cli-signatures';
 import type { AgentEvent } from '../agent/types';
 import type { Terminal } from '../card/run-state';
+
+export type { CliSignature };
 
 export type SupersedeBy = 'new' | 'cd' | 'ws' | 'resume';
 
@@ -29,11 +32,6 @@ export type RunOutcome =
   | { kind: 'partial'; retriable: boolean; needsHuman: boolean }
   | { kind: 'interrupted'; reason: StopRequest; retriable: boolean; needsHuman: boolean }
   | { kind: 'failed'; cause: FailedCause; retriable: boolean; needsHuman: boolean };
-
-export interface CliSignature {
-  pattern: RegExp;
-  classify: Extract<RunOutcome, { kind: 'partial' | 'failed' }>;
-}
 
 export interface DeriveRunOutcomeInput {
   stopRequest?: StopRequest;
@@ -95,8 +93,10 @@ export function shouldDeliverAgentEvent(
 }
 
 export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
-  const signed = matchSignature(input.stderrTail, input.signatures);
-  if (signed) return signed;
+  const signed = matchCliSignature(input.stderrTail, input.signatures);
+  if (signed && !(signed.classify.kind === 'interrupted' && input.stopRequest)) {
+    return signed.classify;
+  }
 
   const terminal = input.terminalEvent;
   if (terminal?.type === 'done' && terminal.terminationReason === 'normal') {
@@ -125,17 +125,6 @@ export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
     return failed('unclassified');
   }
   return completed();
-}
-
-function matchSignature(
-  stderrTail: string | undefined,
-  signatures: readonly CliSignature[] | undefined,
-): RunOutcome | undefined {
-  if (!stderrTail || !signatures?.length) return undefined;
-  for (const signature of signatures) {
-    if (signature.pattern.test(stderrTail)) return signature.classify;
-  }
-  return undefined;
 }
 
 function completed(): RunOutcome {

@@ -48,15 +48,21 @@ export interface ReliabilityConfig {
    * as idle_timeout).
    */
   runOutcome?: boolean;
+  /**
+   * CLI stderr signature matching and redacted card copy. Default on. Off
+   * matches master (no signature table; cards show truncated raw stderr).
+   */
+  cliSignatures?: boolean;
 }
 
 export function getReliabilityConfig(
   profile: Pick<ProfileConfig, 'reliability'>,
-): { lostMessage: boolean; shortGapScan: boolean; runOutcome: boolean } {
+): { lostMessage: boolean; shortGapScan: boolean; runOutcome: boolean; cliSignatures: boolean } {
   return {
     lostMessage: profile.reliability?.lostMessage !== false,
     shortGapScan: profile.reliability?.shortGapScan === true,
     runOutcome: profile.reliability?.runOutcome !== false,
+    cliSignatures: profile.reliability?.cliSignatures !== false,
   };
 }
 
@@ -478,13 +484,20 @@ function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
   const lostMessage = raw.lostMessage === false ? false : undefined;
   const shortGapScan = raw.shortGapScan === true ? true : undefined;
   const runOutcome = raw.runOutcome === false ? false : undefined;
-  if (lostMessage === undefined && shortGapScan === undefined && runOutcome === undefined) {
+  const cliSignatures = raw.cliSignatures === false ? false : undefined;
+  if (
+    lostMessage === undefined
+    && shortGapScan === undefined
+    && runOutcome === undefined
+    && cliSignatures === undefined
+  ) {
     return undefined;
   }
   return {
     ...(lostMessage === false ? { lostMessage: false } : {}),
     ...(shortGapScan === true ? { shortGapScan: true } : {}),
     ...(runOutcome === false ? { runOutcome: false } : {}),
+    ...(cliSignatures === false ? { cliSignatures: false } : {}),
   };
 }
 

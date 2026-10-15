@@ -136,7 +136,7 @@
             "elements": [
               {
                 "tag": "markdown",
-                "content": "⚠️ agent 失败：claude exited with code 1: PINNED_ERROR",
+                "content": "⚠️ agent 失败：agent 运行失败",
                 "text_size": "notation"
               }
             ]

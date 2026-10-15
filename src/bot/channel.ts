@@ -14,6 +14,13 @@ import {
   type BridgePromptQuotedMessage,
   type BridgePromptTopicMessage,
 } from '../agent/prompt';
+import {
+  cardUserMessage,
+  matchCliSignature,
+  noteUnclassifiedStderr,
+  type CliSignature,
+} from '../agent/cli-signatures';
+import { descriptorFor, isAgentKind } from '../agent/registry';
 import type { AgentAdapter, AgentEvent } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
@@ -93,7 +100,6 @@ import { lookupMessageThreadId } from './thread-id';
 import { addWorkingReaction, removeReaction } from './reaction';
 import { fetchKnownChats } from './lark-info';
 import type { AppPaths } from '../config/app-paths';
-import { descriptorFor, type AgentKind } from '../agent/registry';
 import {
   consumeCotEvents,
   CotClient,
@@ -224,7 +230,19 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // Concurrency cap — reads `preferences.maxConcurrentRuns` on each acquire,
   // so /config bumps take effect for the next run.
   const pool = new ProcessPool(() => getMaxConcurrentRuns(controls.cfg));
-  const executor = new RunExecutor({ agent, pool, activeRuns });
+  const executor = new RunExecutor({
+    agent,
+    pool,
+    activeRuns,
+    cliSignatures: () => {
+      const rel = streamReliability(controls.profileConfig);
+      return {
+        enabled: rel.cliSignatures !== false,
+        signatures: rel.signatures ?? [],
+        agent: rel.agent ?? 'unknown',
+      };
+    },
+  });
 
   // Resolve the App Secret to plaintext. The config field can be a literal
   // string, a "${VAR}" template, or a {source, id} SecretRef referencing
@@ -1368,7 +1386,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           recordSession,
           async () => {},
           runContext,
-          getReliabilityConfig(controls.profileConfig).runOutcome,
+          streamReliability(controls.profileConfig),
         );
         await cotDone;
         if (cotPublisher.degradedReason) {
@@ -1432,7 +1450,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        getReliabilityConfig(controls.profileConfig).runOutcome,
+        streamReliability(controls.profileConfig),
       );
       try {
         await awaitRenderAwareStream({
@@ -1500,7 +1518,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        getReliabilityConfig(controls.profileConfig).runOutcome,
+        streamReliability(controls.profileConfig),
       );
       try {
         await awaitRenderAwareStream({
@@ -1545,7 +1563,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         recordSession,
         async () => {},
         runContext,
-        getReliabilityConfig(controls.profileConfig).runOutcome,
+        streamReliability(controls.profileConfig),
       );
       await sendFinalReply({
         channel,
@@ -1844,8 +1862,11 @@ async function processAgentStream(
   recordSession: (event: AgentEvent) => void,
   flush: (state: RunState) => Promise<void>,
   runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
-  runOutcomeEnabled = true,
+  reliability: StreamReliability = {},
 ): Promise<RunState> {
+  const runOutcomeEnabled = reliability.runOutcome !== false;
+  const cliSignaturesEnabled = reliability.cliSignatures !== false;
+  const signatures = cliSignaturesEnabled ? reliability.signatures : undefined;
   const runStart = Date.now();
   let state: RunState = seedRunState(runContext ?? {});
   let lastTerminal: AgentEvent | undefined;
@@ -1932,6 +1953,18 @@ async function processAgentStream(
       const prevTerminal = state.terminal;
       const prevFooter = state.footer;
       state = reduce(state, evt);
+      if (cliSignaturesEnabled && evt.type === 'error' && state.terminal === 'error') {
+        const stderrTail = handle.run.stderrSnapshot ?? evt.message;
+        const matched = matchCliSignature(stderrTail, signatures);
+        const early = deriveRunOutcome({
+          stopRequest: handle.stopRequest,
+          terminalEvent: evt,
+          stderrTail,
+          signatures,
+        });
+        const msg = cardUserMessage(early, matched, true);
+        if (msg) state = { ...state, errorMsg: msg };
+      }
       if (!runOutcomeEnabled && state.terminal === 'runner_timeout') {
         state = { ...state, terminal: 'idle_timeout' };
       }
@@ -1952,13 +1985,31 @@ async function processAgentStream(
   // watchdog or interrupt could land, don't clobber it — that real terminal
   // wins. This avoids "claude finished but flush was slow → timer fired
   // mid-flush → user sees 'idle_timeout' on a successful run".
+  const stderrTail = handle.run.stderrSnapshot
+    ?? (lastTerminal?.type === 'error' ? lastTerminal.message : undefined);
+  const matched = matchCliSignature(stderrTail, signatures);
   const outcome = deriveRunOutcome({
     stopRequest: handle.stopRequest,
     terminalEvent: lastTerminal,
+    stderrTail,
+    signatures,
   });
+  if (cliSignaturesEnabled) {
+    noteUnclassifiedStderr({
+      outcome,
+      stderrTail,
+      signature: matched,
+      agent: reliability.agent,
+    });
+  }
+  const userMessage = cardUserMessage(outcome, matched, cliSignaturesEnabled);
   if (runOutcomeEnabled) {
-    if (state.terminal === 'running' || cardTerminalFromOutcome(outcome) !== state.terminal) {
-      state = applyOutcomeToState(state, outcome, idleTimeoutMs);
+    if (
+      state.terminal === 'running'
+      || cardTerminalFromOutcome(outcome) !== state.terminal
+      || userMessage !== undefined
+    ) {
+      state = applyOutcomeToState(state, outcome, idleTimeoutMs, userMessage);
     }
   } else if (state.terminal === 'running') {
     if (idleFired) {
@@ -1968,6 +2019,9 @@ async function processAgentStream(
     } else {
       state = finalizeIfRunning(state);
     }
+  }
+  if (userMessage !== undefined && state.terminal === 'error') {
+    state = { ...state, errorMsg: userMessage };
   }
   log.info('card', 'final', {
     scope,
@@ -1988,6 +2042,7 @@ function applyOutcomeToState(
   state: RunState,
   outcome: ReturnType<typeof deriveRunOutcome>,
   idleTimeoutMs: number | undefined,
+  userMessage?: string,
 ): RunState {
   const terminal = cardTerminalFromOutcome(outcome);
   switch (terminal) {
@@ -1998,7 +2053,12 @@ function applyOutcomeToState(
     case 'interrupted':
       return markInterrupted(state);
     case 'error':
-      return state.terminal === 'error' ? { ...state, footer: null } : { ...state, terminal: 'error', footer: null };
+      return {
+        ...state,
+        terminal: 'error',
+        footer: null,
+        ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
+      };
     case 'done':
       return finalizeIfRunning(state);
     case 'running':
@@ -2008,6 +2068,24 @@ function applyOutcomeToState(
       return _exhaustive;
     }
   }
+}
+
+interface StreamReliability {
+  runOutcome?: boolean;
+  cliSignatures?: boolean;
+  signatures?: readonly CliSignature[];
+  agent?: string;
+}
+
+function streamReliability(profile: { reliability?: { cliSignatures?: boolean; runOutcome?: boolean }; agentKind: string }): StreamReliability {
+  const flags = getReliabilityConfig(profile);
+  const kind = profile.agentKind;
+  return {
+    runOutcome: flags.runOutcome,
+    cliSignatures: flags.cliSignatures,
+    signatures: isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : [],
+    agent: kind,
+  };
 }
 
 async function awaitRenderAwareStream(input: {
