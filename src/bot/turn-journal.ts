@@ -65,9 +65,15 @@ export interface TurnJournalEntry {
   notice?: TurnNotice;
   consecutiveInterrupts?: number;
   userInput?: string;
+  resources?: TurnJournalResource[];
   reply?: TurnReply;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface TurnJournalResource {
+  type: string;
+  fileKey: string;
 }
 
 export interface TurnJournalOptions {
@@ -86,6 +92,8 @@ export interface JournalRecoverOptions {
   isAlive?: (pid: number) => boolean;
   processStartMs?: (pid: number) => number | undefined;
   orphanGraceMs?: number;
+  /** Live scopes owned by this process; skip orphan reaping for those entries. */
+  isActive?: (scope: string) => boolean;
 }
 
 interface JournalDocument {
@@ -178,18 +186,6 @@ export class TurnJournal {
       });
       return existing.turnId;
     }
-    this.enqueue({
-      turnId: input.runId,
-      scope: input.scope,
-      chatId: input.scope.split(':')[0] ?? input.scope,
-      messageIds: [],
-      senderId: '',
-      initiatorId: '',
-      status: 'running',
-      runId: input.runId,
-      childPid: input.pid,
-      childStartedAt: input.startedAt,
-    });
     return input.runId;
   }
 
@@ -299,6 +295,12 @@ export class TurnJournal {
             err: error instanceof Error ? error.message : String(error),
           });
         }
+        continue;
+      }
+
+      if (opts.isActive?.(current.scope) && (
+        current.status === 'queued' || current.status === 'running' || current.status === 'settled'
+      )) {
         continue;
       }
 
@@ -494,6 +496,7 @@ function parseEntry(raw: unknown): TurnJournalEntry | undefined {
       ? { consecutiveInterrupts: raw.consecutiveInterrupts }
       : {}),
     ...(typeof raw.userInput === 'string' ? { userInput: raw.userInput } : {}),
+    ...(parseResources(raw.resources) ? { resources: parseResources(raw.resources) } : {}),
     ...(parseReply(raw.reply) ? { reply: parseReply(raw.reply) } : {}),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
@@ -516,6 +519,17 @@ function parseNotice(raw: unknown): TurnNotice | undefined {
     ...(raw.ownerDelivered === true ? { ownerDelivered: true } : {}),
     ...(typeof raw.continueHint === 'string' ? { continueHint: raw.continueHint } : {}),
   };
+}
+
+function parseResources(raw: unknown): TurnJournalResource[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const resources: TurnJournalResource[] = [];
+  for (const item of raw) {
+    if (!isObject(item)) continue;
+    if (typeof item.type !== 'string' || typeof item.fileKey !== 'string') continue;
+    resources.push({ type: item.type, fileKey: item.fileKey });
+  }
+  return resources.length > 0 ? resources : undefined;
 }
 
 function parseReply(raw: unknown): TurnReply | undefined {
@@ -590,11 +604,10 @@ function isRecoverable(status: TurnJournalStatus): boolean {
 
 async function reapOrphan(pid: number, opts: JournalRecoverOptions): Promise<void> {
   const kill = opts.kill ?? defaultKill;
-  const alive = opts.isAlive ?? isProcessAlive;
   const graceMs = opts.orphanGraceMs ?? TURN_JOURNAL_ORPHAN_GRACE_MS;
   signalPid(kill, pid, 'SIGTERM');
   if (graceMs > 0) await sleep(graceMs);
-  if (alive(pid)) signalPid(kill, pid, 'SIGKILL');
+  signalPid(kill, pid, 'SIGKILL');
 }
 
 function signalPid(

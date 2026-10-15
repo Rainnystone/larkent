@@ -89,6 +89,18 @@ describe('TurnJournal', () => {
     expect(reloaded.get('turn-1')?.status).toBe('queued');
   });
 
+  it('persists message resources for resumeless continue replay', async () => {
+    const { file, journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({
+      resources: [{ type: 'image', fileKey: 'img_1' }],
+    }));
+    await journal.flush();
+    const reloaded = new TurnJournal(file);
+    await reloaded.load();
+    expect(reloaded.get('turn-1')?.resources).toEqual([{ type: 'image', fileKey: 'img_1' }]);
+  });
+
   it('walks queued → running → settled → reply-delivered', async () => {
     const { journal } = await fixture();
     await journal.load();
@@ -199,6 +211,85 @@ describe('TurnJournal', () => {
       reason: { type: 'external-signal' },
     });
     expect(info.mock.calls.filter(([phase, event]) => phase === 'journal' && event === 'recovered')).toHaveLength(1);
+  });
+
+  it('does not kill a live pid when its start time cannot be read', async () => {
+    const kill = vi.fn();
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued());
+    journal.noteSpawn({
+      scope: 'oc_group',
+      runId: 'run-unverified',
+      pid: 777,
+      startedAt: 1_760_000_000_050,
+    });
+    await journal.recover({
+      enabled: true,
+      kill,
+      isAlive: () => true,
+      processStartMs: () => undefined,
+      orphanGraceMs: 0,
+    });
+    expect(kill).not.toHaveBeenCalled();
+    expect(journal.get('turn-1')?.status).toBe('interrupted');
+  });
+
+  it('does not synthesize a running entry when noteSpawn has no queued IM turn', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    expect(journal.noteSpawn({
+      scope: 'comment:doc',
+      runId: 'run-comment',
+      pid: 99,
+      startedAt: 1,
+    })).toBe('run-comment');
+    expect(journal.list()).toEqual([]);
+  });
+
+  it('does not reap a still-running scope that this process still owns', async () => {
+    const kill = vi.fn();
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued());
+    journal.noteSpawn({
+      scope: 'oc_group',
+      runId: 'run-live',
+      pid: 777,
+      startedAt: 1_760_000_000_050,
+    });
+    await journal.recover({
+      enabled: true,
+      kill,
+      isAlive: () => true,
+      processStartMs: () => 1_760_000_000_050,
+      orphanGraceMs: 0,
+      isActive: (scope) => scope === 'oc_group',
+    });
+    expect(kill).not.toHaveBeenCalled();
+    expect(journal.get('turn-1')?.status).toBe('running');
+  });
+
+  it('sends SIGKILL to the process group even after the leader exits on SIGTERM', async () => {
+    const kill = vi.fn();
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued());
+    journal.noteSpawn({
+      scope: 'oc_group',
+      runId: 'run-group',
+      pid: 777,
+      startedAt: 1_760_000_000_050,
+    });
+    await journal.recover({
+      enabled: true,
+      kill,
+      isAlive: () => true,
+      processStartMs: () => 1_760_000_000_050,
+      orphanGraceMs: 0,
+    });
+    expect(kill.mock.calls.map((call) => call[1])).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(journal.get('turn-1')?.status).toBe('interrupted');
   });
 
   it('does not kill a recycled pid whose start time does not match', async () => {
