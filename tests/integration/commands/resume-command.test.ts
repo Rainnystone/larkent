@@ -66,8 +66,8 @@ describe('agent-aware resume commands', () => {
     const a = await createHarness('kimi');
     const b = await createHarness('kimi', { sharedWorkspace: a.tmp.workspace });
     expect(b.identity).toEqual(a.identity);
-    a.sessions.set('chat-1', 'handle-a', a.identity.cwdRealpath);
-    b.sessions.set('chat-1', 'handle-b', b.identity.cwdRealpath);
+    a.sessions.set('chat-1', 'handle-a', a.identity.cwdRealpath, 'kimi');
+    b.sessions.set('chat-1', 'handle-b', b.identity.cwdRealpath, 'kimi');
     b.catalog.upsertActive({ ...b.identity, resumeHandle: 'handle-b', now: 1000 });
     const beforeSession = { ...b.sessions.getRaw('chat-1') };
     const beforeCatalog = { ...b.catalog.activeFor(b.identity) };
@@ -162,7 +162,7 @@ describe('agent-aware resume commands', () => {
 
   it('uses the catalog current handle before the SessionStore handle', async () => {
     const h = await createHarness('claude');
-    h.sessions.set('chat-1', 'stale-session', h.identity.cwdRealpath);
+    h.sessions.set('chat-1', 'stale-session', h.identity.cwdRealpath, 'claude');
     h.catalog.upsertActive({ ...h.identity, resumeHandle: 'catalog-session', now: 1000 });
     await h.run('/resume');
     await h.run(`/resume use ${resumeNonce(lastMarkdown(h.channel))}`);
@@ -171,7 +171,7 @@ describe('agent-aware resume commands', () => {
 
   it('offers the SessionStore current handle when the catalog has no entry', async () => {
     const h = await createHarness('claude');
-    h.sessions.set('chat-1', 'stored-session', h.identity.cwdRealpath);
+    h.sessions.set('chat-1', 'stored-session', h.identity.cwdRealpath, 'claude');
     await h.run('/resume');
     await h.run(`/resume use ${resumeNonce(lastMarkdown(h.channel))}`);
     expect(h.catalog.activeFor(h.identity)?.resumeHandle).toBe('stored-session');
@@ -180,7 +180,7 @@ describe('agent-aware resume commands', () => {
   it.each(['claude', 'kimi', 'grok', 'cursor'] as const)('does not issue a %s candidate from a different stored cwd', async kind => {
     const h = await createHarness(kind);
     const oldCwd = join(h.tmp.profile, 'old-workspace');
-    h.sessions.set('chat-1', 'old-session', oldCwd);
+    h.sessions.set('chat-1', 'old-session', oldCwd, kind);
     const original = { ...h.sessions.getRaw('chat-1') };
     await h.run('/resume');
     const rendered = lastContentString(h.channel);
@@ -193,7 +193,7 @@ describe('agent-aware resume commands', () => {
 
   it('does not upgrade a legacy SessionStore handle to a Codex thread candidate', async () => {
     const h = await createHarness('codex');
-    h.sessions.set('chat-1', 'legacy-session', h.identity.cwdRealpath);
+    h.sessions.set('chat-1', 'legacy-session', h.identity.cwdRealpath, 'claude');
     const original = { ...h.sessions.getRaw('chat-1') };
     await h.run('/resume');
     expect(lastContentString(h.channel)).toContain('此 cwd 下没有历史会话');
@@ -203,7 +203,7 @@ describe('agent-aware resume commands', () => {
 
   it('compares a stored cwd with the canonical current workspace', async () => {
     const h = await createHarness('claude');
-    h.sessions.set('chat-1', 'stored-session', h.identity.cwdRealpath);
+    h.sessions.set('chat-1', 'stored-session', h.identity.cwdRealpath, 'claude');
     h.workspaces.setCwd('chat-1', `${h.tmp.workspace}/../workspace`);
     await h.run('/resume');
     await h.run(`/resume use ${resumeNonce(lastMarkdown(h.channel))}`);

@@ -53,7 +53,7 @@ describe('agent-aware run-flow resume', () => {
   it('falls back to legacy Claude sessions when the agent-aware catalog has no match', async () => {
     const h = await createHarness('claude');
     const cwdRealpath = await realpath(h.tmp.workspace);
-    h.sessions.set('chat-1', 'legacy-session', cwdRealpath);
+    h.sessions.set('chat-1', 'legacy-session', cwdRealpath, 'claude');
 
     const run = await start(h);
 

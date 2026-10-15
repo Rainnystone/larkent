@@ -140,10 +140,14 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       && input.forceResumeFingerprint === undefined
       && descriptorFor(input.capability.agentId).resume.label === 'session'
     ) {
-      resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
-      const stale = input.sessions.getRaw(input.scopeId);
+      resumeFrom = input.sessions.resumeFor(
+        input.scopeId,
+        workspace.cwdRealpath,
+        input.profileConfig.agentKind,
+      );
+      const stale = input.sessions.getRaw(input.scopeId, input.profileConfig.agentKind);
       if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
-        input.sessions.clear(input.scopeId);
+        input.sessions.clear(input.scopeId, input.profileConfig.agentKind);
       }
     }
   }
@@ -200,7 +204,7 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
   if (input.event.type !== 'system' || !input.event.resumeHandle) return;
   const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
   if (descriptorFor(input.capability.agentId).resume.label === 'session') {
-    input.sessions.set(input.scopeId, input.event.resumeHandle, cwdRealpath);
+    input.sessions.set(input.scopeId, input.event.resumeHandle, cwdRealpath, input.capability.agentId);
   }
   input.sessionCatalog?.upsertActive({
     scopeId: input.scopeId,

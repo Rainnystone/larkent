@@ -209,6 +209,37 @@ it('persists enqueue-time snapshots in order and supports arbitrary scope keys',
   });
 });
 
+it('scopes resume handles per CLI and does not reuse another agentKind', async () => {
+  await fixture(async (store, file) => {
+    await store.load();
+    store.set('oc_group', 'cursor-sess', '/work', 'cursor');
+    expect(store.resumeFor('oc_group', '/work', 'cursor')).toBe('cursor-sess');
+    expect(store.resumeFor('oc_group', '/work', 'grok')).toBeUndefined();
+    expect(store.resumeFor('oc_group', '/work', 'kimi')).toBeUndefined();
+    store.set('oc_group', 'grok-sess', '/work', 'grok');
+    expect(store.resumeFor('oc_group', '/work', 'cursor')).toBe('cursor-sess');
+    expect(store.resumeFor('oc_group', '/work', 'grok')).toBe('grok-sess');
+    store.clear('oc_group', 'grok');
+    expect(store.resumeFor('oc_group', '/work', 'grok')).toBeUndefined();
+    expect(store.resumeFor('oc_group', '/work', 'cursor')).toBe('cursor-sess');
+    await store.flush();
+    await store.load();
+    expect(store.resumeFor('oc_group', '/work', 'cursor')).toBe('cursor-sess');
+    expect(JSON.parse(await readFile(file, 'utf8')).entries.oc_group.byAgent).toEqual({
+      cursor: { resumeHandle: 'cursor-sess', cwd: '/work' },
+    });
+  });
+});
+
+it('does not resume an untagged legacy handle for a requested agentKind', async () => {
+  await fixture(async (store) => {
+    await store.load();
+    store.set('oc_group', 'legacy-sess', '/work');
+    expect(store.resumeFor('oc_group', '/work')).toBe('legacy-sess');
+    expect(store.resumeFor('oc_group', '/work', 'cursor')).toBeUndefined();
+  });
+});
+
 it('removes a timeout without losing a resumable session and clears sessions without preferences', async () => {
   await fixture(async store => {
     store.set('a', 'h', '/a');

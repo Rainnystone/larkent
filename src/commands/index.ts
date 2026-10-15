@@ -351,7 +351,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
       now: Date.now(),
     });
   }
-  ctx.sessions.clear(ctx.scope);
+  ctx.sessions.clear(ctx.scope, ctx.controls.profileConfig.agentKind);
   await reply(ctx, wasRunning ? '已中断当前任务并开始新会话。' : '已开始新会话。');
 }
 
@@ -418,7 +418,7 @@ async function handleCd(args: string, ctx: CommandContext): Promise<void> {
     });
   }
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
-  ctx.sessions.clear(ctx.scope);
+  ctx.sessions.clear(ctx.scope, ctx.controls.profileConfig.agentKind);
   await reply(ctx, `✓ 已切换 cwd 到 \`${workspace.cwdRealpath}\`\n（session 已重置）`);
 }
 
@@ -483,7 +483,7 @@ async function handleWsUse(name: string, ctx: CommandContext): Promise<void> {
   }
   ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'ws' });
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
-  ctx.sessions.clear(ctx.scope);
+  ctx.sessions.clear(ctx.scope, ctx.controls.profileConfig.agentKind);
   await reply(ctx, `✓ 已切换到 \`${name}\` (${workspace.cwdRealpath})\n（session 已重置）`);
 }
 
@@ -584,10 +584,20 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   let currentHandle = catalogEntry?.resumeHandle;
   if (!currentHandle && resumeDescriptor.resume.label === 'session') {
     if (identity) {
-      currentHandle = ctx.sessions.resumeFor(ctx.scope, identity.cwdRealpath);
+      currentHandle = ctx.sessions.resumeFor(
+        ctx.scope,
+        identity.cwdRealpath,
+        ctx.controls.profileConfig.agentKind,
+      );
     } else {
       const workspace = await resolveWorkingDirectory(cwd);
-      if (workspace.ok) currentHandle = ctx.sessions.resumeFor(ctx.scope, workspace.cwdRealpath);
+      if (workspace.ok) {
+        currentHandle = ctx.sessions.resumeFor(
+          ctx.scope,
+          workspace.cwdRealpath,
+          ctx.controls.profileConfig.agentKind,
+        );
+      }
     }
   }
   const provider = ctx.resumeHistoryProvider ?? resumeDescriptor.listResumeHistory;
@@ -637,7 +647,12 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
         resumeHandle: resolved.resumeHandle,
       });
       if (descriptorFor(ctx.sessionCatalogIdentity.agentId).resume.label === 'session') {
-        ctx.sessions.set(ctx.scope, resolved.resumeHandle, ctx.sessionCatalogIdentity.cwdRealpath);
+        ctx.sessions.set(
+          ctx.scope,
+          resolved.resumeHandle,
+          ctx.sessionCatalogIdentity.cwdRealpath,
+          ctx.sessionCatalogIdentity.agentId,
+        );
       }
       await reply(ctx, RESUME_APPLIED_REPLY);
       return;
@@ -653,7 +668,12 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     }
     ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'resume' });
     if (descriptorFor(ctx.sessionCatalogIdentity.agentId).resume.label === 'session') {
-      ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
+      ctx.sessions.set(
+        ctx.scope,
+        sessionId,
+        ctx.sessionCatalogIdentity.cwdRealpath,
+        ctx.sessionCatalogIdentity.agentId,
+      );
     }
     await reply(ctx, RESUME_APPLIED_REPLY);
     return;
@@ -670,7 +690,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     return;
   }
   ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'resume' });
-  ctx.sessions.set(ctx.scope, sessionId, cwd);
+  ctx.sessions.set(ctx.scope, sessionId, cwd, ctx.controls.profileConfig.agentKind);
   await reply(ctx, RESUME_APPLIED_REPLY);
 }
 
@@ -728,7 +748,7 @@ async function larkCliStatus(ctx: CommandContext): Promise<'app' | 'user-ready' 
 
 async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const cwd = effectiveWorkspaceCwd(ctx);
-  const sess = ctx.sessions.getRaw(ctx.scope);
+  const sess = ctx.sessions.getRaw(ctx.scope, ctx.controls.profileConfig.agentKind);
   const isThreadResume = descriptorFor(ctx.controls.profileConfig.agentKind).resume.label === 'thread';
   const catalogEntry =
     isThreadResume && ctx.sessionCatalog && ctx.sessionCatalogIdentity
