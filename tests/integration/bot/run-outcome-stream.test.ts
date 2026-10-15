@@ -79,6 +79,26 @@ describe('run outcome stream', () => {
     expect(rendered(h.channel)).toContain('输出不完整（打印超时），可稍后继续');
   });
 
+  it('does not repeat a partial warning already rendered on the progress stream', async () => {
+    const h = await harness({ agentKind: 'antigravity' });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'progress update' });
+    await waitFor(() => rendered(h.channel).includes('progress update'));
+    run.stderrSnapshot = '[agy] print timeout after 5m0s with turn in progress; returning partial output';
+    run.push({ type: 'final_text', content: 'PARTIAL_ANSWER' });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => rendered(h.channel).includes('PARTIAL_ANSWER'));
+    const text = rendered(h.channel);
+    expect(text).toContain('输出不完整（打印超时），可稍后继续');
+    expect(text.split('输出不完整（打印超时），可稍后继续').length - 1).toBe(1);
+  });
+
   it('shows redacted signature copy on the card instead of raw stderr paths', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const h = await harness({ agentKind: 'cursor' });

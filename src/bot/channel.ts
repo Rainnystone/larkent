@@ -132,7 +132,6 @@ import {
   CotClient,
   CotPublisher,
   finalAnswerOnlyState,
-  outcomeNoticeBlocks,
 } from './cot';
 
 const DEBOUNCE_MS = 600;
@@ -1905,10 +1904,7 @@ function finalReplyState(progress: LazyProgressStream, state: RunState): RunStat
   return {
     ...state,
     blocks: state.finalText
-      ? [
-          { kind: 'text', content: state.finalText, streaming: false },
-          ...outcomeNoticeBlocks(state),
-        ]
+      ? [{ kind: 'text', content: state.finalText, streaming: false }]
       : [],
     reasoning: { content: '', active: false },
     footer: null,
