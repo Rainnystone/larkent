@@ -498,7 +498,8 @@ async function* iterateEvents(input: {
 
     const exitCode = await input.waitForExitCode();
     const stopReason = input.getStopReason();
-    const killed = input.getSignal() === 'SIGKILL';
+    const exitSignal = input.getSignal();
+    const killed = exitSignal === 'SIGKILL';
     if (stopReason === 'interrupted' || stopReason === 'timeout') {
       if (stopReason === 'timeout' && !input.translator.terminalEmitted?.()) {
         terminalSeen = true;
@@ -518,6 +519,10 @@ async function* iterateEvents(input: {
     const terminal = input.translator.terminalEmitted?.() === true;
     if (killed && !terminal) {
       yield* emit(input.translator.fail(`${input.spawnName} killed by SIGKILL`));
+      return;
+    }
+    if (isExternalInterruptSignal(exitSignal) && !terminal) {
+      yield* emit(input.translator.finish('interrupted'));
       return;
     }
     if (exitCode !== 0 && exitCode !== null) {
@@ -555,6 +560,10 @@ async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T | false
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function isExternalInterruptSignal(signal: NodeJS.Signals | string | null | undefined): boolean {
+  return signal === 'SIGTERM' || signal === 'SIGINT';
 }
 
 function failMessage(spawnName: string, error: unknown): string {

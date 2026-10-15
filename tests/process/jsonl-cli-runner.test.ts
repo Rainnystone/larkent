@@ -13,6 +13,7 @@ import { buildCodexArgs } from '../../src/agent/codex/argv.js';
 import { CursorAdapter } from '../../src/agent/cursor/adapter.js';
 import { GrokAdapter } from '../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../src/agent/kimi/adapter.js';
+import { KimiJsonlTranslator } from '../../src/agent/kimi/jsonl.js';
 import { runJsonlCli, wrapParsedTranslator } from '../../src/agent/runner/jsonl-cli-runner.js';
 import type { AgentEvent } from '../../src/agent/types.js';
 
@@ -251,6 +252,22 @@ describe('runner settlement boundaries', () => {
     expect(snapshot.startsWith('HEAD-MARKER')).toBe(true);
     expect(snapshot.endsWith('TAIL-MARKER')).toBe(true);
     expect(Buffer.byteLength(snapshot)).toBeLessThan(96 * 1024);
+  });
+
+  it('classifies an unexpected SIGTERM with no JSONL terminal as interrupted, not Kimi success', async () => {
+    const f = fixture({
+      successFinish: 'normal',
+      translator: wrapParsedTranslator(new KimiJsonlTranslator(), 'kimi'),
+    });
+    const run = f.start();
+    const events = collect(run.events);
+    f.child.stdout.end();
+    f.exit('SIGTERM');
+    expect(await events).toEqual([
+      { type: 'done', terminationReason: 'interrupted' },
+    ]);
+    expect(run.exit).toBeNull();
+    expect(run.signal).toBe('SIGTERM');
   });
 
   it('classifies a SIGKILL with no JSONL terminal as a failed event, not success', async () => {
