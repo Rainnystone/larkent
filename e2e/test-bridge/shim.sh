@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
+# POSIX/bash-3.2 compatible (macOS ships bash 3.2). No mapfile or ${arr[@]:n}.
 set -euo pipefail
 
-if [[ "${OS:-}" == "Windows_NT" ]]; then
+if [ "${OS:-}" = "Windows_NT" ]; then
   echo "test-bridge shim is POSIX-only" >&2
   exit 2
 fi
@@ -24,38 +25,58 @@ trap cleanup_decision EXIT
   "$TSX" "$DIR/decide.ts" --decision-file "$DECISION_FILE" -- "$@"
 ) < /dev/null
 
-if [[ ! -s "$DECISION_FILE" ]]; then
+if [ ! -s "$DECISION_FILE" ]; then
   echo "shim decision file was empty" >&2
   exit 2
 fi
 
-mapfile -t LINES < "$DECISION_FILE"
-ACTION="${LINES[0]:-}"
+ACTION=""
+MODE=""
+TARGET=""
+set --
+line_no=0
+while IFS= read -r line || [ -n "$line" ]; do
+  line_no=$((line_no + 1))
+  if [ "$line_no" -eq 1 ]; then
+    ACTION=$line
+  elif [ "$line_no" -eq 2 ]; then
+    if [ "$ACTION" = "EXEC" ]; then
+      TARGET=$line
+    else
+      MODE=$line
+    fi
+  elif [ "$line_no" -eq 3 ] && [ "$ACTION" = "FAULT" ]; then
+    TARGET=$line
+  else
+    set -- "$@" "$line"
+  fi
+done < "$DECISION_FILE"
 
 case "$ACTION" in
   EXEC)
-    TARGET="${LINES[1]:-}"
-    if [[ -z "$TARGET" ]]; then
+    if [ -z "$TARGET" ]; then
       echo "shim exec is missing a target" >&2
       exit 2
     fi
-    exec "$TARGET" "${LINES[@]:2}"
+    exec "$TARGET" "$@"
     ;;
   FAULT)
-    MODE="${LINES[1]:-}"
-    TARGET="${LINES[2]:-}"
     trap 'exit 143' TERM
     trap 'exit 130' INT
     trap 'exit 129' HUP
-    if [[ "$MODE" == delay:* ]]; then
-      SECONDS_STR="${MODE#delay:}"
-      sleep "$SECONDS_STR"
-      exec "$TARGET" "${LINES[@]:3}"
-    fi
-    if [[ "$MODE" == hang ]]; then
-      while true; do sleep 3600; done
-    fi
-    exec "$TSX" "$DIR/run-fault.ts" --mode "$MODE" -- "$TARGET" "${LINES[@]:3}"
+    case "$MODE" in
+      delay:*)
+        SECONDS_STR="${MODE#delay:}"
+        sleep "$SECONDS_STR"
+        exec "$TARGET" "$@"
+        ;;
+      hang)
+        while true; do sleep 3600; done
+        ;;
+      *)
+        exec "$TSX" "$DIR/run-fault.ts" --mode "$MODE" -- "$TARGET" "$@"
+        ;;
+    esac
     ;;
   *)
     echo "unknown shim action: $ACTION" >&2

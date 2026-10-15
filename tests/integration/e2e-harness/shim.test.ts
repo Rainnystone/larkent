@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runJsonlCli, wrapParsedTranslator } from '../../../src/agent/runner/jsonl-cli-runner';
 import { RunCleanupFailed } from '../../../src/runtime/errors';
@@ -114,12 +115,15 @@ async function tmp(prefix: string): Promise<string> {
   return dir;
 }
 
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
 function shimEnv(faultDir: string, target: string): NodeJS.ProcessEnv {
   return {
     ...process.env,
     LARKENT_E2E_FAULT_DIR: faultDir,
     LARKENT_E2E_SHIM_TARGET: target,
-    LARKENT_E2E_REPO_ROOT: join(import.meta.dirname, '..', '..', '..'),
+    LARKENT_E2E_REPO_ROOT: repoRoot,
+    LARKENT_E2E_TSX: join(repoRoot, 'node_modules', '.bin', 'tsx'),
   };
 }
 

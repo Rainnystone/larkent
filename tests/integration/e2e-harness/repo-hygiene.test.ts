@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { readdir, readFile, stat } from 'node:fs/promises';
-import { join, relative, sep } from 'node:path';
+import { dirname, join, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const repoRoot = join(import.meta.dirname, '..', '..', '..');
+const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const e2eRoot = join(repoRoot, 'e2e');
 
 /** Feishu-shaped ids that must never be committed under e2e/. */
