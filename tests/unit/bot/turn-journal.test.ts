@@ -350,6 +350,43 @@ describe('TurnJournal', () => {
     expect(journal.get('n2')?.status).toBe('notice-delivered');
   });
 
+  it('does not resend a notice-pending turn whose scope is still live', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'live-notice' }));
+    journal.markNoticePending('live-notice', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice-live',
+    });
+    const resendNotice = vi.fn(async () => true);
+    await journal.recover({
+      enabled: true,
+      resendNotice,
+      isActive: (scope) => scope === 'oc_group',
+    });
+    expect(resendNotice).not.toHaveBeenCalled();
+    expect(journal.get('live-notice')?.status).toBe('notice-pending');
+  });
+
+  it('does not mark a queued in-flight start interrupted before a pid is journaled', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'starting' }));
+    await journal.recover({ enabled: true });
+    expect(journal.get('starting')?.status).toBe('queued');
+    expect(journal.noteSpawn({
+      scope: 'oc_group',
+      runId: 'run-starting',
+      pid: 4242,
+      startedAt: 1_760_000_000_050,
+    })).toBe('starting');
+    expect(journal.get('starting')).toMatchObject({
+      status: 'running',
+      childPid: 4242,
+    });
+  });
+
   it('invalidates delivered notice actions on session switch without un-delivering them', async () => {
     const { journal } = await fixture();
     await journal.load();

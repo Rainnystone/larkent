@@ -283,6 +283,7 @@ export class TurnJournal {
       if (!current || !isRecoverable(current.status)) continue;
 
       if (current.status === 'notice-pending') {
+        if (opts.isActive?.(current.scope)) continue;
         if (!opts.resendNotice || current.noticeInvalidated) continue;
         try {
           const ok = await opts.resendNotice({ ...current });
@@ -305,6 +306,10 @@ export class TurnJournal {
       if (opts.isActive?.(current.scope) && (
         current.status === 'queued' || current.status === 'running' || current.status === 'settled'
       )) {
+        continue;
+      }
+
+      if (current.status === 'queued' && current.childPid === undefined) {
         continue;
       }
 
