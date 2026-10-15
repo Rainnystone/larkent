@@ -51,32 +51,48 @@ export function outboundMessageId(result: unknown): string | undefined {
 }
 
 export class CliSelfSendTracker {
-  private readonly chatIds = new Set<string>();
+  private readonly active = new Set<string>();
+  private readonly sent = new Set<string>();
 
-  note(chatId: string): void {
-    this.chatIds.add(chatId);
+  begin(scope: string): void {
+    this.active.add(scope);
   }
 
-  has(chatId: string): boolean {
-    return this.chatIds.has(chatId);
+  has(scope: string): boolean {
+    return this.sent.has(scope);
   }
 
-  sentChatIds(): ReadonlySet<string> {
-    return this.chatIds;
+  consume(scope: string): boolean {
+    const had = this.sent.delete(scope);
+    this.active.delete(scope);
+    return had;
+  }
+
+  noteInbound(chatId: string, threadId?: string): boolean {
+    const topicScope = threadId ? `${chatId}:${threadId}` : undefined;
+    if (topicScope !== undefined && this.active.has(topicScope)) {
+      this.sent.add(topicScope);
+      return true;
+    }
+    if (this.active.has(chatId)) {
+      this.sent.add(chatId);
+      return true;
+    }
+    return false;
   }
 }
 
 export function noteInboundSkipSelf(input: {
   messageId: string;
   chatId: string;
+  threadId?: string;
   isSelf: boolean;
   outbound: Pick<OutboundMessageIds, 'has'>;
-  runActive: boolean;
   tracker: CliSelfSendTracker;
 }): boolean {
   if (!input.isSelf) return false;
-  if (input.runActive && !input.outbound.has(input.messageId)) {
-    input.tracker.note(input.chatId);
+  if (!input.outbound.has(input.messageId)) {
+    input.tracker.noteInbound(input.chatId, input.threadId);
   }
   return true;
 }

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent } from '../../../src/agent/types.js';
+import type { FakeAgentEvents } from '../../helpers/fake-agent.js';
 import { AGENT_KINDS, type AgentKind } from '../../../src/agent/registry.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { log } from '../../../src/core/logger.js';
@@ -143,6 +144,47 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
     ]);
   }, 15_000);
 
+  it('sends a later turn final after a previous CLI self-send in the same chat', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const h = await harness(
+      'cursor',
+      [
+        [
+          { type: 'text', delta: ANSWER },
+          { type: 'final_text', content: ANSWER },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+        [
+          { type: 'text', delta: 'SECOND_ANSWER' },
+          { type: 'final_text', content: 'SECOND_ANSWER' },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+      ],
+      'text',
+      hold,
+    );
+
+    await h.channel.handlers.message?.(message(MSG, 'please answer'));
+    await waitFor(() => h.agent.runs.length === 1);
+    await h.channel.handlers.message?.(selfMessage('om_cli_self', ANSWER));
+    release();
+    await waitFor(() =>
+      info.mock.calls.some((call) => call[0] === 'outbound' && call[1] === 'skip-cli-already-sent'),
+    );
+
+    await h.channel.handlers.message?.(message('om_batch_2', 'please answer again'));
+    await waitFor(() =>
+      h.channel.sent.some((row) => JSON.stringify(row.content).includes('SECOND_ANSWER')),
+    );
+    expect(
+      info.mock.calls.filter((call) => call[0] === 'outbound' && call[1] === 'skip-cli-already-sent'),
+    ).toHaveLength(1);
+  }, 15_000);
+
   it('still posts the notice when the run ends in error after a successful CLI send', async () => {
     const h = await harness(
       'claude',
@@ -188,7 +230,7 @@ function scriptedSend(success: boolean, command = SEND_CMD): AgentEvent[] {
 
 async function harness(
   kind: AgentKind,
-  events: AgentEvent[],
+  events: FakeAgentEvents,
   messageReply: 'card' | 'markdown' | 'text',
   hold?: Promise<void>,
 ) {

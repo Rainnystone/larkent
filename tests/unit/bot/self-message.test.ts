@@ -55,8 +55,9 @@ describe('isSelfSender (backfill skip-self)', () => {
 });
 
 describe('inbound skip-self during a run', () => {
-  it('marks the chat only when skip-self matches, the run is live, and the id is not outbound', () => {
+  it('marks the active scope only when skip-self matches and the id is not outbound', () => {
     const tracker = new CliSelfSendTracker();
+    tracker.begin(CHAT);
     const outbound = new OutboundMessageIds();
     outbound.add('om_bridge');
 
@@ -65,7 +66,6 @@ describe('inbound skip-self during a run', () => {
       chatId: CHAT,
       isSelf: true,
       outbound,
-      runActive: true,
       tracker,
     })).toBe(true);
     expect(tracker.has(CHAT)).toBe(false);
@@ -75,7 +75,6 @@ describe('inbound skip-self during a run', () => {
       chatId: CHAT,
       isSelf: true,
       outbound,
-      runActive: true,
       tracker,
     })).toBe(true);
     expect(tracker.has(CHAT)).toBe(true);
@@ -85,9 +84,53 @@ describe('inbound skip-self during a run', () => {
       chatId: CHAT,
       isSelf: false,
       outbound,
-      runActive: true,
       tracker,
     })).toBe(false);
+  });
+
+  it('consumes evidence so a later run in the same chat is not skipped', () => {
+    const tracker = new CliSelfSendTracker();
+    tracker.begin(CHAT);
+    const outbound = new OutboundMessageIds();
+    expect(noteInboundSkipSelf({
+      messageId: 'om_cli',
+      chatId: CHAT,
+      isSelf: true,
+      outbound,
+      tracker,
+    })).toBe(true);
+    expect(tracker.has(CHAT)).toBe(true);
+    expect(shouldSkipFinalReply(
+      reduce(seedRunState({ currentChatId: CHAT }), { type: 'done', terminationReason: 'normal' }),
+      CHAT,
+    ) || tracker.has(CHAT)).toBe(true);
+
+    tracker.consume(CHAT);
+    tracker.begin(CHAT);
+    expect(tracker.has(CHAT)).toBe(false);
+    expect(shouldSkipFinalReply(
+      reduce(seedRunState({ currentChatId: CHAT }), { type: 'done', terminationReason: 'normal' }),
+      CHAT,
+    )).toBe(false);
+  });
+
+  it('does not suppress a sibling topic thread', () => {
+    const tracker = new CliSelfSendTracker();
+    const threadA = `${CHAT}:omt_a`;
+    const threadB = `${CHAT}:omt_b`;
+    tracker.begin(threadA);
+    tracker.begin(threadB);
+    const outbound = new OutboundMessageIds();
+    expect(noteInboundSkipSelf({
+      messageId: 'om_cli_a',
+      chatId: CHAT,
+      threadId: 'omt_a',
+      isSelf: true,
+      outbound,
+      tracker,
+    })).toBe(true);
+    expect(tracker.has(threadA)).toBe(true);
+    expect(tracker.has(threadB)).toBe(false);
   });
 
   it('does not invent a skip when tool events were lost but no self-sent inbound arrived', () => {

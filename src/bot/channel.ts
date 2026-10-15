@@ -553,7 +553,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         botAppId: controls.cfg.accounts.app.id,
         outbound: outboundIds,
         tracker: cliSelfSent,
-        runActive: hasActiveRunForChat(activeRuns, msg.chatId, msg.threadId),
       })) {
         return;
       }
@@ -1563,6 +1562,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const reactionPromise =
     cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
 
+  cliSelfSent?.begin(scope);
   try {
     if (cotEnabled) {
       const cotPublisher = new CotPublisher({
@@ -1798,6 +1798,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   } catch (err) {
     log.fail('stream', err);
   } finally {
+    cliSelfSent?.consume(scope);
     activePolicyFingerprints.delete(scope);
     scheduleWorkingReactionCleanup(channel, lastMsg.messageId, reactionPromise);
   }
@@ -1986,11 +1987,8 @@ async function deliverFinalReply(input: {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
   const body = renderText(input.state);
-  const skip = shouldSkipFinalReply(
-    input.skipFrom ?? input.state,
-    input.chatId,
-    input.cliSelfSent?.sentChatIds(),
-  )
+  const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
+    || input.cliSelfSent?.has(input.scope) === true
     || !body.trim()
     || input.alreadyStreamed === true;
   const outcome = input.handle.outcome;
@@ -2018,6 +2016,7 @@ async function deliverFinalReply(input: {
   }
   if (input.journal) await input.journal.flush();
   if (!input.alreadyStreamed) await sendFinalReply(input);
+  input.cliSelfSent?.consume(input.scope);
   if (input.journal && input.turnId && !willNotice) input.journal.markReplyDelivered(input.turnId);
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
@@ -2062,11 +2061,10 @@ async function sendFinalReply(input: {
   cardRenderOptions: { signCallback?: (action: string) => string };
   cliSelfSent?: CliSelfSendTracker;
 }): Promise<void> {
-  if (shouldSkipFinalReply(
-    input.skipFrom ?? input.state,
-    input.chatId,
-    input.cliSelfSent?.sentChatIds(),
-  )) {
+  if (
+    shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
+    || input.cliSelfSent?.has(input.scope) === true
+  ) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
       chatId: input.chatId,
@@ -2769,11 +2767,11 @@ function dropInboundSelfMessage(input: {
   botAppId?: string;
   outbound: OutboundMessageIds;
   tracker: CliSelfSendTracker;
-  runActive: boolean;
 }): boolean {
   const dropped = noteInboundSkipSelf({
     messageId: input.msg.messageId,
     chatId: input.msg.chatId,
+    threadId: input.msg.threadId,
     isSelf: isSelfSender({
       senderId: input.msg.senderId,
       senderType: senderTypeFromRaw((input.msg as { raw?: unknown }).raw),
@@ -2782,22 +2780,20 @@ function dropInboundSelfMessage(input: {
       botAppId: input.botAppId,
     }),
     outbound: input.outbound,
-    runActive: input.runActive,
     tracker: input.tracker,
   });
   if (!dropped) return false;
+  const scope = input.msg.threadId
+    ? `${input.msg.chatId}:${input.msg.threadId}`
+    : input.msg.chatId;
   log.info('intake', 'skip-self', {
     msgId: input.msg.messageId,
     chatId: input.msg.chatId,
-    ...(input.tracker.has(input.msg.chatId) ? { reason: 'cli-self-send' } : {}),
+    ...(input.tracker.has(scope) || input.tracker.has(input.msg.chatId)
+      ? { reason: 'cli-self-send' }
+      : {}),
   });
   return true;
-}
-
-function hasActiveRunForChat(activeRuns: ActiveRuns, chatId: string, threadId?: string): boolean {
-  if (activeRuns.get(chatId)) return true;
-  if (threadId && activeRuns.get(`${chatId}:${threadId}`)) return true;
-  return activeRuns.scopes().some((scope) => scope === chatId || scope.startsWith(`${chatId}:`));
 }
 
 function senderTypeOf(msg: NormalizedMessage): 'user' | 'bot' | undefined {
