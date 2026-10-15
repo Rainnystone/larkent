@@ -418,6 +418,35 @@ describe('markdown stream startup failures', () => {
     expect(setContent).not.toHaveBeenCalled();
   }, 15_000);
 
+  it('still sends a Claude streamed reply when the progress stream fails before producing', async () => {
+    const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
+    const h = await createHarness({
+      agentKind: 'claude',
+      messageReply: 'markdown',
+      events: [
+        { type: 'text', delta: 'STREAMED_AFTER_THROW' },
+        { type: 'done', terminationReason: 'normal' },
+      ],
+      stream: async () => {
+        throw new Error('progress stream failed');
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_stream_throw', 'run'));
+    await waitFor(() => h.channel.sent.length === 1);
+
+    expect(lastMarkdown(h.channel)).toContain('STREAMED_AFTER_THROW');
+    expect(
+      fail.mock.calls.some(
+        (call) =>
+          call[0] === 'stream' &&
+          call[1] instanceof Error &&
+          call[1].message === 'progress stream failed',
+      ),
+    ).toBe(true);
+  });
+
   it('still sends the final reply when the progress stream fails at completion', async () => {
     const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
     const h = await createHarness({

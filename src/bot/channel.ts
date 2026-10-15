@@ -2387,6 +2387,7 @@ async function awaitRenderAwareStream(input: {
       log.fail('stream', first.err, { mode: input.mode, step: 'stream' });
       const rendered = await renderResult;
       if (!rendered.ok) throw rendered.err;
+      if (!input.producerStarted()) input.progress.abandon();
       await runFallbackReply(input.mode, rendered.state, input.fallback);
       return;
     }
@@ -2444,6 +2445,7 @@ async function awaitRenderAwareStream(input: {
     // reply still has to go out; one that failed later already showed its
     // content and the error is the caller's to handle.
     if (input.producerStarted()) throw terminal.err;
+    input.progress.abandon();
     log.fail('stream', terminal.err, { mode: input.mode, step: 'stream' });
     await runFallbackReply(input.mode, first.state, input.fallback);
   }
