@@ -198,7 +198,7 @@ export interface StartChannelDeps {
   workspaces: WorkspaceStore;
   ledger?: BackfillLedger;
   controls: Controls;
-  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>;
+  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
@@ -580,7 +580,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     channel,
     domain: probeDomain,
     forceReconnect: () => controls.restart(),
-    heartbeatPath: deps.appPaths ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
+    heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
     ...(ledger
       ? {
           onConnectedTick: (now) => ledger.touchLive(now),
