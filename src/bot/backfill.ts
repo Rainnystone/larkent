@@ -146,6 +146,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     return;
   }
   const incompleteFrom = deps.ledger.getIncompleteFrom();
+  const incompleteEpoch = deps.ledger.getIncompleteEpoch();
   const window = resolveBackfillWindow({
     now,
     lastLiveAt,
@@ -265,7 +266,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     return;
   }
 
-  deps.ledger.markScanComplete(window.windowEnd, now, incompleteFrom);
+  deps.ledger.markScanComplete(window.windowEnd, now, incompleteFrom, incompleteEpoch);
   if (truncatedFrom !== undefined) deps.ledger.markScanIncomplete(truncatedFrom);
   log.info('backfill', 'done', {
     chats: inScope.chats.length,

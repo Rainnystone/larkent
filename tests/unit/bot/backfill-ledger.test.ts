@@ -315,9 +315,28 @@ describe('BackfillLedger', () => {
     const { ledger } = await fixture(() => now);
     await ledger.load();
     ledger.touchLive(now - 60_000);
+    const epoch = ledger.getIncompleteEpoch();
     ledger.markScanIncomplete(now - 5_000);
-    ledger.markScanComplete(now, now, undefined);
+    ledger.markScanComplete(now, now, undefined, epoch);
     expect(ledger.getIncompleteFrom()).toBe(now - 5_000);
+  });
+
+  it('keeps incompleteFrom when a mid-scan mark does not change the numeric min', async () => {
+    const now = 1_760_000_000_000;
+    const { ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.markScanIncomplete(100);
+    const epoch = ledger.getIncompleteEpoch();
+    expect(ledger.getIncompleteFrom()).toBe(100);
+
+    ledger.markScanIncomplete(200);
+    ledger.markScanComplete(now, now, 100, epoch);
+    expect(ledger.getIncompleteFrom()).toBe(100);
+
+    const again = ledger.getIncompleteEpoch();
+    ledger.markScanIncomplete(100);
+    ledger.markScanComplete(now, now, 100, again);
+    expect(ledger.getIncompleteFrom()).toBe(100);
   });
 
   it('touchLive writes lastLiveAt, exposes getters, and persists at most once per 30s', async () => {

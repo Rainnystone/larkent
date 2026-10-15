@@ -1469,6 +1469,50 @@ describe('createBackfillRun coalescing mutex', () => {
     expect(h.intake.map((msg) => msg.messageId)).toContain('om_connect');
   });
 
+  it('does not skip-short-gap after a same-valued mid-scan incomplete mark', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    let releaseB: () => void = () => {};
+    const holdB = new Promise<void>((resolve) => {
+      releaseB = resolve;
+    });
+    const h = await harness({
+      lastLiveAt: NOW - 11_000,
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'from b', NOW - 15_000)],
+      },
+    });
+    h.ledger.markScanIncomplete(incompleteFrom);
+    const run = createBackfillRun();
+    let handoffQueued: Promise<void> | undefined;
+    const info = spyInfo();
+    const first = run(await deps({
+      ...h,
+      trigger: 'connect',
+      now: () => NOW,
+      onListMessages: async (chatId) => {
+        if (chatId !== CHAT_B || handoffQueued) return;
+        h.messages[CHAT_A] = [
+          mentionItem('om_group', CHAT_A, 'from group', NOW - 20_000),
+          mentionItem('om_handoff', CHAT_A, 'late', NOW - 5_000),
+        ];
+        h.ledger.markScanIncomplete(NOW - 5_000);
+        handoffQueued = run(await deps({ ...h, trigger: 'handoff', now: () => NOW }));
+        await holdB;
+      },
+    }));
+    await waitUntil(() => handoffQueued !== undefined);
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    releaseB();
+    await first;
+    expect(h.intake.map((msg) => msg.messageId)).toContain('om_handoff');
+    expect(events(info, 'backfill').filter((row) => row.event === 'skip-short-gap')).toEqual([]);
+  });
+
   it('starts a fresh scan after the in-flight one completes', async () => {
     let now = NOW;
     const h = await harness({

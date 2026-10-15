@@ -33,6 +33,7 @@ export class BackfillLedger {
   private lastLiveAt: number | undefined;
   private lastBackfillEnd: number | undefined;
   private incompleteFrom: number | undefined;
+  private incompleteEpoch = 0;
   private lastLivePersistAt: number | undefined;
   private clockSkewWarned = false;
   private queue = new PersistenceQueue();
@@ -129,24 +130,37 @@ export class BackfillLedger {
     return this.incompleteFrom;
   }
 
+  getIncompleteEpoch(): number {
+    return this.incompleteEpoch;
+  }
+
   markScanIncomplete(anchor: number): void {
     if (!Number.isFinite(anchor)) return;
     this.incompleteFrom = this.incompleteFrom === undefined
       ? anchor
       : Math.min(this.incompleteFrom, anchor);
+    this.incompleteEpoch += 1;
     this.schedulePersist();
   }
 
-  markScanComplete(windowEnd: number, now: number, incompleteFromAtStart?: number): void {
+  markScanComplete(
+    windowEnd: number,
+    now: number,
+    incompleteFromAtStart?: number,
+    incompleteEpochAtStart?: number,
+  ): void {
     if (!Number.isFinite(windowEnd) || !Number.isFinite(now)) return;
     this.lastBackfillEnd = windowEnd;
     this.lastLiveAt = now;
     this.lastLivePersistAt = now;
-    // A mid-scan unrecord (old-bridge handoff) can lower incompleteFrom after
-    // this scan started. Clearing that would make the follow-up skip-short-gap.
-    if (this.incompleteFrom === incompleteFromAtStart) {
-      this.incompleteFrom = undefined;
-    }
+    // A mid-scan unrecord (old-bridge handoff) can mark incompleteFrom after
+    // this scan started without changing the numeric min. Clearing that would
+    // make the follow-up skip-short-gap. Epoch is the source of truth when
+    // the caller snapshotted it; otherwise fall back to value equality.
+    const epochUnchanged = incompleteEpochAtStart === undefined
+      ? this.incompleteFrom === incompleteFromAtStart
+      : this.incompleteEpoch === incompleteEpochAtStart;
+    if (epochUnchanged) this.incompleteFrom = undefined;
     this.prune();
     this.schedulePersist();
   }
@@ -189,6 +203,7 @@ export class BackfillLedger {
     this.lastLiveAt = document.lastLiveAt;
     this.lastBackfillEnd = document.lastBackfillEnd;
     this.incompleteFrom = document.incompleteFrom;
+    this.incompleteEpoch = 0;
     this.lastLivePersistAt = document.lastLiveAt;
     this.clockSkewWarned = false;
     this.persistenceDisabled = persistenceDisabled;
