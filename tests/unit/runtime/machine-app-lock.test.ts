@@ -1,11 +1,12 @@
 import { createHash } from 'node:crypto';
-import { mkdir, mkdtemp, rm, utimes } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   acquireMachineAppLock,
   machineAppLockFile,
+  runtimeLockMetaFile,
   RuntimeLockConflictError,
 } from '../../../src/runtime/locks';
 
@@ -67,6 +68,28 @@ describe('machine-level app lock', () => {
       env,
     });
     await recovered.release();
+  });
+
+  it('takes over a lock whose recorded holder pid is dead without waiting for mtime stale', async () => {
+    const lockDir = await tempDir('larkent-machine-lock-dead-');
+    const env = { XDG_RUNTIME_DIR: lockDir };
+    const appId = 'cli_fake_app_id_0a';
+    const first = await acquireMachineAppLock({ appId, profile: 'a', agentKind: 'claude', env });
+    const metaFile = runtimeLockMetaFile(machineAppLockFile(appId, env));
+    const meta = JSON.parse(await readFile(metaFile, 'utf8')) as { pid: number };
+    meta.pid = 2_147_483_647;
+    await writeFile(metaFile, `${JSON.stringify(meta, null, 2)}\n`);
+
+    const started = Date.now();
+    const recovered = await acquireMachineAppLock({
+      appId,
+      profile: 'b',
+      agentKind: 'claude',
+      env,
+    });
+    expect(Date.now() - started).toBeLessThan(8_000);
+    await recovered.release();
+    await first.release().catch(() => {});
   });
 });
 

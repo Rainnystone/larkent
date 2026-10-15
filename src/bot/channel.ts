@@ -531,14 +531,45 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     return trackConsumer(journal.recover({
       enabled: true,
       resend: (entry) => resendJournalReply(channel, entry),
-      resendNotice: reliability().notice
-        ? (entry) => resendPendingNotice({
+      resendNotice: (entry) => resendPendingNotice({
+        send: (chatId, content, options) => channel.send(chatId, content, options),
+        entry,
+        journal,
+        noticeAuth: reliability().notice ? noticeAuth : undefined,
+      }),
+      onInterrupted: async (entry) => {
+        const outcome = entry.outcome ?? {
+          kind: 'interrupted' as const,
+          reason: { type: 'external-signal' as const },
+          retriable: true,
+          needsHuman: false,
+        };
+        const alreadyPending = journal.get(entry.turnId)?.status === 'notice-pending';
+        let consecutive = consecutiveByScope.get(entry.scope) ?? 0;
+        if (!alreadyPending) {
+          consecutive += 1;
+          consecutiveByScope.set(entry.scope, consecutive);
+        }
+        const result = await deliverInterruptionNotice({
           send: (chatId, content, options) => channel.send(chatId, content, options),
-          entry,
           journal,
-          noticeAuth,
-        })
-        : undefined,
+          turnId: entry.turnId,
+          outcome,
+          noticeAuth: reliability().notice ? noticeAuth : undefined,
+          consecutive,
+          requireBotMention: requireMentionForChat(
+            controls.profileConfig,
+            controls.cfg,
+            entry.chatId,
+          ),
+          ownerId: controls.botOwnerId,
+          authNotified: authNoticeAlreadyDelivered(journal),
+        });
+        if (result.delivered || result.pending) {
+          pendingHintByScope.set(entry.scope, continueExtraInstruction(outcome));
+        }
+        return result.delivered;
+      },
       noticeGapMs: NOTICE_RESTART_GAP_MS,
       isActive: (scope) => activeRuns.get(scope) !== undefined,
     }).then(() => {}), 'journal');

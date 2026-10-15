@@ -400,6 +400,46 @@ describe('TurnJournal', () => {
     expect(restarted.get('stale-queued')?.status).toBe('interrupted');
   });
 
+  it('notifies once and logs recovered when restarting over a running turn', async () => {
+    const { file, journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'crash-run' }));
+    journal.noteSpawn({
+      scope: 'oc_group',
+      runId: 'run-crash',
+      pid: 4242,
+      startedAt: 1_760_000_000_050,
+    });
+    await journal.flush();
+
+    const onInterrupted = vi.fn(async () => true);
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const restarted = new TurnJournal(file, { now: () => 1_760_000_000_000 });
+    await restarted.load();
+    await restarted.recover({
+      enabled: true,
+      onInterrupted,
+      isAlive: () => false,
+    });
+    await restarted.recover({
+      enabled: true,
+      onInterrupted,
+      isAlive: () => false,
+    });
+    expect(onInterrupted).toHaveBeenCalledTimes(1);
+    expect(onInterrupted.mock.calls[0]?.[0]).toMatchObject({
+      turnId: 'crash-run',
+      status: 'interrupted',
+      outcome: { kind: 'interrupted', reason: { type: 'external-signal' } },
+    });
+    expect(restarted.get('crash-run')?.status).toBe('interrupted');
+    const recovered = info.mock.calls.filter(([phase, event]) => (
+      phase === 'journal' && event === 'recovered'
+    ));
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.[2]).toMatchObject({ interrupted: 1, notices: 1, orphans: 0 });
+  });
+
   it('invalidates delivered notice actions on session switch without un-delivering them', async () => {
     const { journal } = await fixture();
     await journal.load();

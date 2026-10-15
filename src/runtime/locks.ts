@@ -7,6 +7,7 @@ import type { AppPaths } from '../config/app-paths';
 import { RUNTIME_LOCK_SCHEMA_VERSION } from '../config/migrations';
 import type { AgentKind } from '../config/profile-schema';
 import { isAgentKind } from '../agent/registry';
+import { isProcessAlive } from '../platform/process-info';
 
 export type RuntimeLockKind = 'profile' | 'app';
 
@@ -185,11 +186,7 @@ async function acquireRuntimeLock(
 
   let release: () => Promise<void>;
   try {
-    release = await lockfile.lock(meta.target, {
-      realpath: false,
-      stale: 30_000,
-      update: 10_000,
-    });
+    release = await lockWithDeadHolderTakeover(meta);
   } catch (err) {
     throw new RuntimeLockConflictError(meta.kind, meta.target, await readRuntimeLockMeta(meta.target), err);
   }
@@ -214,6 +211,38 @@ async function acquireRuntimeLock(
       await release();
     },
   };
+}
+
+async function lockWithDeadHolderTakeover(
+  meta: Omit<RuntimeLockMeta, 'schemaVersion' | 'pid' | 'startedAt'>,
+): Promise<() => Promise<void>> {
+  try {
+    return await lockfile.lock(meta.target, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+    });
+  } catch (err) {
+    const holder = await readRuntimeLockMeta(meta.target);
+    if (!holder || holder.pid === process.pid || isProcessAlive(holder.pid)) {
+      throw err;
+    }
+    await stealDeadHolderLock(meta.target);
+    return await lockfile.lock(meta.target, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+    });
+  }
+}
+
+async function stealDeadHolderLock(target: string): Promise<void> {
+  try {
+    await lockfile.unlock(target, { realpath: false });
+  } catch {
+    // Lock file may already be gone; still drop the stale pid sidecar.
+  }
+  await unlink(runtimeLockMetaFile(target)).catch(() => {});
 }
 
 function isRuntimeLockMeta(value: unknown): value is RuntimeLockMeta {

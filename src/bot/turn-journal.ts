@@ -90,6 +90,8 @@ export interface JournalRecoverOptions {
   enabled: boolean;
   resend?: (entry: TurnJournalEntry) => Promise<boolean>;
   resendNotice?: (entry: TurnJournalEntry) => Promise<boolean>;
+  /** Crash recovery: notify the user that a running/queued turn was interrupted. */
+  onInterrupted?: (entry: TurnJournalEntry) => Promise<boolean>;
   noticeGapMs?: number;
   sleep?: (ms: number) => Promise<void>;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
@@ -272,6 +274,7 @@ export class TurnJournal {
     let orphans = 0;
     let resent = 0;
     let notices = 0;
+    let interruptedCount = 0;
     const pendingNoticeCount = snapshot.filter((item) => item.status === 'notice-pending').length;
     const interrupted: RunOutcome = {
       kind: 'interrupted',
@@ -344,10 +347,25 @@ export class TurnJournal {
         orphans += 1;
       }
       this.markInterrupted(current.turnId, interrupted);
+      interruptedCount += 1;
+      if (opts.onInterrupted) {
+        const updated = this.get(current.turnId);
+        if (updated) {
+          try {
+            const ok = await opts.onInterrupted(updated);
+            if (ok) notices += 1;
+          } catch (error) {
+            log.warn('journal', 'notice-resend-failed', {
+              turnId: current.turnId,
+              err: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
     }
 
-    if (orphans > 0 || resent > 0 || notices > 0) {
-      log.info('journal', 'recovered', { orphans, resent, notices });
+    if (orphans > 0 || resent > 0 || notices > 0 || interruptedCount > 0) {
+      log.info('journal', 'recovered', { orphans, resent, notices, interrupted: interruptedCount });
     }
     await this.flush();
     return { orphans, resent };

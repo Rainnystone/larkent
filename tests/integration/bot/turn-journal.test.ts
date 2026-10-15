@@ -35,6 +35,29 @@ afterEach(async () => {
 });
 
 describe('turn journal in the live channel', { timeout: 20_000 }, () => {
+  it('posts a 上一轮未完成 notice once when recovering a running turn after restart', async () => {
+    const h = await harness({ fakeTimers: false });
+    h.journal.enqueue({
+      turnId: 'turn-crash',
+      scope: CHAT,
+      chatId: CHAT,
+      messageIds: ['om_crash'],
+      senderId: USER,
+      initiatorId: USER,
+      status: 'running',
+      runId: 'run-crash',
+    });
+    await h.journal.flush();
+
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('上一轮未完成')));
+    expect(h.journal.get('turn-crash')?.status).toBe('notice-delivered');
+
+    const before = h.channel.sent.length;
+    await h.bridge.recoverMissed();
+    expect(h.channel.sent).toHaveLength(before);
+  });
+
   it('marks a failed final send completed-undelivered and resends once on recoverMissed', async () => {
     const h = await harness({ fakeTimers: false });
     let fails = 1;

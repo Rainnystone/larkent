@@ -60,11 +60,12 @@ describe('turn journal orphan reaper', () => {
     expect(recovered.get('turn-orphan')?.status).toBe('interrupted');
     if (verifiedStart === undefined) {
       // Windows (and any OS that cannot read start time) must fail closed:
-      // do not signal a PID we cannot identify, but still settle the journal.
+      // do not signal a PID we cannot identify, but still settle the journal
+      // and log the interrupted recovery so the user is not left silent.
       expect(isProcessAlive(child.pid)).toBe(true);
       expect(info.mock.calls.filter(([phase, event]) => (
         phase === 'journal' && event === 'recovered'
-      ))).toHaveLength(0);
+      ))).toHaveLength(1);
       return;
     }
     expect(isProcessAlive(child.pid)).toBe(false);
