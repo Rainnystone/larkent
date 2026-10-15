@@ -185,6 +185,51 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
     ).toHaveLength(1);
   }, 15_000);
 
+  it.each([
+    {
+      name: 'error',
+      events: [
+        { type: 'text' as const, delta: ANSWER },
+        { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
+      ],
+      expectText: 'agent 失败',
+    },
+    {
+      name: 'interrupted',
+      events: [
+        { type: 'text' as const, delta: ANSWER },
+        { type: 'done' as const, terminationReason: 'interrupted' as const },
+      ],
+      expectText: '已被中断',
+    },
+    {
+      name: 'idle_timeout',
+      events: [{ type: 'text' as const, delta: ANSWER }],
+      expectText: '无响应',
+      idleTimeoutMinutes: 0.01,
+    },
+  ])('sends the error reply after a CLI self-send when terminal is $name', async (row) => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    if (row.idleTimeoutMinutes !== undefined) {
+      vi.spyOn(SessionStore.prototype, 'getIdleTimeoutMinutes').mockReturnValue(row.idleTimeoutMinutes);
+    }
+    const h = await harness('cursor', row.events, 'text', hold);
+
+    await h.channel.handlers.message?.(message(MSG, 'please answer'));
+    await waitFor(() => h.agent.runs.length === 1);
+    await h.channel.handlers.message?.(selfMessage('om_cli_self', ANSWER));
+    if (row.idleTimeoutMinutes === undefined) release();
+
+    await waitFor(() => h.channel.sent.some((rowSent) => JSON.stringify(rowSent.content).includes(row.expectText)));
+    expect(
+      info.mock.calls.some((call) => call[0] === 'outbound' && call[1] === 'skip-cli-already-sent'),
+    ).toBe(false);
+  }, 15_000);
+
   it('still posts the notice when the run ends in error after a successful CLI send', async () => {
     const h = await harness(
       'claude',

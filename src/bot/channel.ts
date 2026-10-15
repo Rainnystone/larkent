@@ -1990,7 +1990,7 @@ async function deliverFinalReply(input: {
   }
   const body = renderText(input.state);
   const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
-    || input.cliSelfSent?.has(input.scope) === true
+    || (input.cliSelfSent?.has(input.scope) === true && (input.skipFrom ?? input.state).terminal === 'done')
     || !body.trim()
     || input.alreadyStreamed === true;
   const outcome = input.handle.outcome;
@@ -2065,7 +2065,7 @@ async function sendFinalReply(input: {
 }): Promise<void> {
   if (
     shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
-    || input.cliSelfSent?.has(input.scope) === true
+    || (input.cliSelfSent?.has(input.scope) === true && (input.skipFrom ?? input.state).terminal === 'done')
   ) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
