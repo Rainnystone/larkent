@@ -132,6 +132,7 @@ import {
   CotClient,
   CotPublisher,
   finalAnswerOnlyState,
+  outcomeNoticeBlocks,
 } from './cot';
 
 const DEBOUNCE_MS = 600;
@@ -1622,8 +1623,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
     if (replyMode === 'card') {
       let latestState: RunState = seedRunState(runContext);
-      let producerStarted = false;
-      let producerRendered = false;
+      const delivered: StreamDelivery = {};
       let cardCtrl:
         | { update(next: object | ((current: object) => object)): Promise<void> }
         | undefined;
@@ -1634,11 +1634,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             card: {
               initial: renderCard(initialState, cardRenderOptions),
               producer: async (ctrl) => {
-                producerStarted = true;
                 if (progress.abandoned()) return;
-                await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
-                producerRendered = true;
                 cardCtrl = ctrl;
+                await render();
                 await renderDone;
               },
             },
@@ -1646,6 +1644,17 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           sendOpts,
         ),
       );
+      const { render, drain } = createSerializedRender({
+        delivery: delivered,
+        abandoned: () => progress.abandoned(),
+        ready: () => cardCtrl !== undefined,
+        latest: () => latestState,
+        write: async (state) => {
+          const ctrl = cardCtrl;
+          if (!ctrl) return;
+          await ctrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+        },
+      });
       const renderDone = processAgentStream(
         handle,
         eventStream,
@@ -1655,9 +1664,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         async (state) => {
           latestState = state;
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
-          if (cardCtrl) {
-            await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
-          }
+          void render();
         },
         runContext,
         streamReliability(controls.profileConfig),
@@ -1667,27 +1674,22 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           mode: replyMode,
           progress,
           renderDone,
-          producerStarted: () => producerStarted,
-          producerRendered: () => producerRendered,
-          fallback: async () => {
-            // Stream-deltas finalize through deliverFinalReply after the stream
-            // settles, including the no-progress-stream and abandoned paths.
-          },
         });
       } catch (err) {
         if (!finalAnswerOnly) throw err;
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
+      await drain();
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       await deliverFinalReply({
         channel,
         chatId,
         scope,
-        state: finalAnswerOnly
-          ? finalReplyState(progress, filterForPrefs(latestState))
-          : filterForPrefs(latestState),
+        state: remainingAfterRender(
+          filterForPrefs(latestState),
+          delivered.rendered ? filterForPrefs(delivered.rendered) : undefined,
+        ),
         skipFrom: latestState,
-        alreadyStreamed: !finalAnswerOnly && progress.opened() && !progress.abandoned(),
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1699,25 +1701,33 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       });
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
-      let producerStarted = false;
-      let producerRendered = false;
+      const delivered: StreamDelivery = {};
       let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
         channel.stream(
           chatId,
           {
             markdown: async (ctrl) => {
-              producerStarted = true;
               if (progress.abandoned()) return;
-              await ctrl.setContent(renderText(filterForPrefs(latestState)));
-              producerRendered = true;
               markdownCtrl = ctrl;
+              await render();
               await renderDone;
             },
           },
           sendOpts,
         ),
       );
+      const { render, drain } = createSerializedRender({
+        delivery: delivered,
+        abandoned: () => progress.abandoned(),
+        ready: () => markdownCtrl !== undefined,
+        latest: () => latestState,
+        write: async (state) => {
+          const ctrl = markdownCtrl;
+          if (!ctrl) return;
+          await ctrl.setContent(renderText(filterForPrefs(state)));
+        },
+      });
       const renderDone = processAgentStream(
         handle,
         eventStream,
@@ -1727,9 +1737,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         async (state) => {
           latestState = state;
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
-          if (markdownCtrl) {
-            await markdownCtrl.setContent(renderText(filterForPrefs(state)));
-          }
+          void render();
         },
         runContext,
         streamReliability(controls.profileConfig),
@@ -1739,27 +1747,22 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           mode: replyMode,
           progress,
           renderDone,
-          producerStarted: () => producerStarted,
-          producerRendered: () => producerRendered,
-          fallback: async () => {
-            // Stream-deltas finalize through deliverFinalReply after the stream
-            // settles, including the no-progress-stream and abandoned paths.
-          },
         });
       } catch (err) {
         if (!finalAnswerOnly) throw err;
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
+      await drain();
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       await deliverFinalReply({
         channel,
         chatId,
         scope,
-        state: finalAnswerOnly
-          ? finalReplyState(progress, filterForPrefs(latestState))
-          : filterForPrefs(latestState),
+        state: remainingAfterRender(
+          filterForPrefs(latestState),
+          delivered.rendered ? filterForPrefs(delivered.rendered) : undefined,
+        ),
         skipFrom: latestState,
-        alreadyStreamed: !finalAnswerOnly && progress.opened() && !progress.abandoned(),
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1885,32 +1888,114 @@ function shouldOpenProgressStream(state: RunState): boolean {
   return renderText({ ...state, footer: null }).trim() !== '';
 }
 
+interface StreamDelivery {
+  rendered?: RunState;
+}
+
 /**
- * What Codex's dedicated final reply may carry, given what the progress stream
- * already put on screen.
- *
- * `finalAnswerOnlyState` falls back to the run's text blocks when Codex held
- * nothing back for the end — correct where nothing was streamed (CoT, text
- * mode, a stream we gave up on), but those blocks are already visible once a
- * stream rendered them, and repeating them posts the same words a second time.
- * Codex leaves the answer in `blocks` more often than it looks: any abnormal
- * turn end (`turn.failed`, or the process exiting before `turn.completed`)
- * flushes the pending message as text instead of `final_text`.
- *
- * Terminal notices are dropped for the same reason — the stream rendered them.
+ * One serialized writer for the progress stream. `delivery.rendered` is the
+ * last state whose update/setContent resolved — never a failed or abandoned
+ * attempt's input. After each write, a later `render()` retries `latest()` if
+ * a caller marked it dirty while the write was in flight.
  */
-function finalReplyState(progress: LazyProgressStream, state: RunState): RunState {
-  if (!progress.opened() || progress.abandoned()) return finalAnswerOnlyState(state);
+function createSerializedRender(input: {
+  delivery: StreamDelivery;
+  abandoned: () => boolean;
+  ready: () => boolean;
+  latest: () => RunState;
+  write: (state: RunState) => Promise<void>;
+}): { render: () => Promise<void>; drain: () => Promise<void> } {
+  let pending = false;
+  let busy = false;
+  let closed = false;
+  let tail = Promise.resolve();
+
+  async function pump(): Promise<void> {
+    try {
+      for (;;) {
+        if (!pending || closed || input.abandoned() || !input.ready()) return;
+        pending = false;
+        const next = input.latest();
+        try {
+          await input.write(next);
+          input.delivery.rendered = next;
+        } catch (err) {
+          log.fail('stream', err, { step: 'render' });
+          closed = true;
+          pending = false;
+          return;
+        }
+        if (input.abandoned()) {
+          pending = false;
+          return;
+        }
+      }
+    } finally {
+      busy = false;
+    }
+  }
+
+  function render(): Promise<void> {
+    if (closed || input.abandoned()) return tail;
+    pending = true;
+    if (busy) return tail;
+    busy = true;
+    const run = pump();
+    tail = run.then(() => undefined, () => undefined);
+    return run;
+  }
+
+  return { render, drain: () => tail };
+}
+
+/** Dedicated final: full answer-only payload minus what the stream already showed. */
+function remainingAfterRender(latest: RunState, shown: RunState | undefined): RunState {
+  const full = finalAnswerOnlyState(latest);
+  if (!shown) return full;
+  const shownBody = renderText(shown);
+  const dropNotices = shown.terminal !== 'running' && (
+    outcomeNoticeBlocks(shown).length > 0
+    || shown.blocks.some((block) => block.kind === 'text' && block.notice === true)
+    || full.blocks.some((block) => block.kind === 'text' && block.notice === true && shownBody.includes(block.content.trim()))
+    || terminalVisible(full, shownBody)
+  );
+  if (shown.terminal !== 'running' && shownHasAnswer(shown, full)) {
+    if (dropNotices) return { ...full, blocks: [], errorMsg: undefined };
+    return {
+      ...full,
+      blocks: full.blocks.filter((block) => block.kind === 'text' && block.notice === true),
+    };
+  }
   return {
-    ...state,
-    blocks: state.finalText
-      ? [{ kind: 'text', content: state.finalText, streaming: false }]
-      : [],
-    reasoning: { content: '', active: false },
-    footer: null,
-    terminal: 'done',
-    errorMsg: undefined,
+    ...full,
+    blocks: full.blocks.filter((block) => {
+      if (block.kind === 'text' && block.notice === true) return !dropNotices;
+      if (block.kind !== 'text') return true;
+      const text = block.content.trim();
+      return text.length > 0 && !shownBody.includes(text);
+    }),
+    ...(dropNotices ? { errorMsg: undefined } : {}),
   };
+}
+
+function answerText(state: RunState): string {
+  if (state.finalText?.trim()) return state.finalText.trim();
+  return state.blocks
+    .flatMap((block) => (block.kind === 'text' && !block.notice ? [block.content.trim()] : []))
+    .filter((text) => text.length > 0)
+    .join('\n\n');
+}
+
+function shownHasAnswer(shown: RunState, latest: RunState): boolean {
+  const answer = answerText(latest);
+  if (!answer) return shown.terminal !== 'running';
+  return renderText(shown).includes(answer);
+}
+
+function terminalVisible(state: RunState, shownBody: string): boolean {
+  if (state.terminal === 'error' && state.errorMsg && shownBody.includes(state.errorMsg)) return true;
+  const note = renderText({ ...state, blocks: [], finalText: undefined });
+  return note.trim().length > 0 && shownBody.includes(note.trim());
 }
 
 /**
@@ -1968,7 +2053,6 @@ async function deliverFinalReply(input: {
   scope: string;
   state: RunState;
   skipFrom?: RunState;
-  alreadyStreamed?: boolean;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
@@ -1991,8 +2075,7 @@ async function deliverFinalReply(input: {
   const body = renderText(input.state);
   const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
     || (input.cliSelfSent?.has(input.scope) === true && (input.skipFrom ?? input.state).terminal === 'done')
-    || !body.trim()
-    || input.alreadyStreamed === true;
+    || !body.trim();
   const outcome = input.handle.outcome;
   const willNotice = Boolean(
     input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
@@ -2017,7 +2100,7 @@ async function deliverFinalReply(input: {
     });
   }
   if (input.journal) await input.journal.flush();
-  if (!input.alreadyStreamed) await sendFinalReply(input);
+  await sendFinalReply(input);
   input.cliSelfSent?.consume(input.scope);
   if (input.journal && input.turnId && !willNotice) input.journal.markReplyDelivered(input.turnId);
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
@@ -2422,9 +2505,6 @@ async function awaitRenderAwareStream(input: {
   mode: 'card' | 'markdown';
   progress: LazyProgressStream;
   renderDone: Promise<RunState>;
-  producerStarted: () => boolean;
-  producerRendered: () => boolean;
-  fallback: (state: RunState) => Promise<void>;
 }): Promise<void> {
   const streamResult = input.progress.settled.then(
     () => ({ kind: 'stream' as const, ok: true as const }),
@@ -2440,8 +2520,7 @@ async function awaitRenderAwareStream(input: {
       log.fail('stream', first.err, { mode: input.mode, step: 'stream' });
       const rendered = await renderResult;
       if (!rendered.ok) throw rendered.err;
-      if (!input.producerRendered()) input.progress.abandon();
-      await runFallbackReply(input.mode, rendered.state, input.fallback);
+      input.progress.abandon();
       return;
     }
     throw first.err;
@@ -2453,66 +2532,33 @@ async function awaitRenderAwareStream(input: {
     return;
   }
 
-  // Nothing durable ever showed up, so no progress message was opened at all
-  // (the common Codex final-only round). Whatever the run ended with still has
-  // to reach the user as a standalone reply.
   if (!input.progress.opened()) {
     log.info('outbound', 'progress-stream-skipped', { mode: input.mode });
-    await runFallbackReply(input.mode, first.state, input.fallback);
     return;
   }
 
-  // The run ended before the stream did. A producer that hasn't started yet is
-  // usually just a card still being created (two API round trips), so give the
-  // stream its grace window rather than replying immediately — an immediate
-  // fallback would post the same answer twice once the stream catches up.
   const terminal = await Promise.race([
     streamResult,
     delay(STREAM_TERMINAL_GRACE_MS).then(() => undefined),
   ]);
 
   if (!terminal) {
-    if (input.producerStarted()) {
-      log.warn('stream', 'terminal-grace-expired', {
-        mode: input.mode,
-        graceMs: STREAM_TERMINAL_GRACE_MS,
-      });
-      void streamResult.then((result) => {
-        if (!result.ok) {
-          log.fail('stream', result.err, { mode: input.mode, step: 'stream-terminal-late' });
-        }
-      });
-      return;
-    }
-    // Still nothing on screen after the grace window: give up on the stream and
-    // reply without it. `abandon()` keeps a late producer from rendering the
-    // same answer again; the empty message it leaves is recalled in cleanup.
+    log.warn('stream', 'terminal-grace-expired', {
+      mode: input.mode,
+      graceMs: STREAM_TERMINAL_GRACE_MS,
+    });
     input.progress.abandon();
-    log.warn('stream', 'producer-not-started-before-agent-terminal', { mode: input.mode });
-    await runFallbackReply(input.mode, first.state, input.fallback);
+    void streamResult.then((result) => {
+      if (!result.ok) {
+        log.fail('stream', result.err, { mode: input.mode, step: 'stream-terminal-late' });
+      }
+    });
     return;
   }
 
   if (!terminal.ok) {
-    // A stream that failed before producing anything delivered nothing, so the
-    // reply still has to go out; one that failed later already showed its
-    // content and the error is the caller's to handle.
-    if (input.producerRendered()) throw terminal.err;
     input.progress.abandon();
-    log.fail('stream', terminal.err, { mode: input.mode, step: 'stream' });
-    await runFallbackReply(input.mode, first.state, input.fallback);
-  }
-}
-
-async function runFallbackReply(
-  mode: 'card' | 'markdown',
-  state: RunState,
-  fallback: (state: RunState) => Promise<void>,
-): Promise<void> {
-  try {
-    await fallback(state);
-  } catch (err) {
-    log.fail('stream', err, { mode, step: 'fallback' });
+    throw terminal.err;
   }
 }
 
