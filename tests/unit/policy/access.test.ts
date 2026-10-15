@@ -4,8 +4,10 @@ import {
   canRunAdminCommand,
   canUseDm,
   canUseGroup,
+  evaluateAccess,
   isCreator,
   requireMentionForChat,
+  type AccessEntry,
   type RuntimeControls,
 } from '../../../src/policy/access';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema';
@@ -160,6 +162,98 @@ describe('requireMentionForChat', () => {
     expect(requireMentionForChat(profile, globalOn, 'oc_other')).toBe(true);
   });
 });
+
+describe('access fence', () => {
+  const entries: AccessEntry[] = ['dm', 'group', 'comment', 'meeting', 'card'];
+  const chatId = 'oc_allowed';
+  const senderId = 'ou_allowed';
+
+  it.each(entries)('lets %s through only when chat and sender are both allowlisted', (entry) => {
+    const profile = fencedProfile({
+      allowedChats: [chatId],
+      allowedUsers: [senderId],
+    });
+
+    expect(
+      evaluateAccess({ entry, profile, controls: ownerControls, chatId, senderId }).ok,
+    ).toBe(true);
+    expect(
+      evaluateAccess({
+        entry,
+        profile,
+        controls: ownerControls,
+        chatId: 'oc_other',
+        senderId,
+      }).ok,
+    ).toBe(false);
+    expect(
+      evaluateAccess({
+        entry,
+        profile,
+        controls: ownerControls,
+        chatId,
+        senderId: 'ou_other',
+      }).ok,
+    ).toBe(false);
+  });
+
+  it.each(entries)('does not exempt the owner from the %s fence', (entry) => {
+    const profile = fencedProfile({
+      allowedChats: [chatId],
+      allowedUsers: [senderId],
+    });
+
+    expect(
+      evaluateAccess({
+        entry,
+        profile,
+        controls: ownerControls,
+        chatId,
+        senderId: 'ou_owner',
+      }),
+    ).toEqual({ ok: false, reason: 'denied-user' });
+  });
+
+  it.each(entries)('does not exempt an admin from the %s fence', (entry) => {
+    const profile = fencedProfile({
+      allowedChats: [chatId],
+      allowedUsers: [senderId],
+      admins: ['ou_admin'],
+    });
+
+    expect(
+      evaluateAccess({
+        entry,
+        profile,
+        controls: ownerControls,
+        chatId,
+        senderId: 'ou_admin',
+      }),
+    ).toEqual({ ok: false, reason: 'denied-user' });
+  });
+
+  it('leaves existing DM and group decisions unchanged when the fence is off', () => {
+    const closed = profileWithAccess();
+    expect(canUseDm(closed, ownerControls, 'ou_owner').ok).toBe(true);
+    expect(canUseDm(closed, ownerControls, 'ou_other').ok).toBe(false);
+    expect(canUseGroup(closed, ownerControls, 'chat_any', 'ou_owner').ok).toBe(true);
+    expect(canUseGroup(closed, ownerControls, 'chat_allowed', 'ou_other').ok).toBe(false);
+
+    const team = profileWithAccess({}, 'team');
+    expect(canUseDm(team, ownerControls, 'ou_stranger')).toEqual({
+      ok: true,
+      reason: 'allowed-team',
+    });
+  });
+
+  it('defaults the fence to off', () => {
+    expect(profileWithAccess().access.fence?.enabled).not.toBe(true);
+  });
+});
+
+function fencedProfile(access: Partial<ProfileConfig['access']> = {}): ProfileConfig {
+  return profileWithAccess({ ...access, fence: { enabled: true } });
+}
 
 function profileWithAccess(
   access: Partial<ProfileConfig['access']> = {},

@@ -55,6 +55,8 @@ export interface MeetingManagerDeps {
   onSession?: (session: MeetingSession) => void;
   /** Bot was invited to a meeting (push only). */
   onInvited?: (meetingNo: string, inviterId?: string) => void;
+  /** When set, auto-join is skipped unless this returns true. */
+  authorizeInvite?: (inviterId: string | undefined, chatId: string | undefined) => boolean;
   /** Meeting ended (push, or observed by the poller). */
   onEnded?: (session: MeetingSession) => void;
 }
@@ -175,9 +177,17 @@ export class MeetingManager {
     }
     const inviter = asRecord(d.operator ?? d.inviter);
     const inviterId = typeof inviter.open_id === 'string' ? inviter.open_id : undefined;
+    const chatId =
+      (typeof meeting.chat_id === 'string' && meeting.chat_id) ||
+      (typeof d.chat_id === 'string' && d.chat_id) ||
+      undefined;
     log.info('meeting', 'invited', { meetingNo });
     this.deps.onInvited?.(meetingNo, inviterId);
     if (this.deps.config().autoJoinOnInvite) {
+      if (this.deps.authorizeInvite && !this.deps.authorizeInvite(inviterId, chatId)) {
+        log.info('meeting', 'skip-not-allowed-user', { meetingNo });
+        return;
+      }
       void this.join(meetingNo).catch((err) =>
         log.warn('meeting', 'auto-join-failed', { meetingNo, err: String(err) }),
       );

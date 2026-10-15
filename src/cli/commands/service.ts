@@ -13,7 +13,7 @@ import {
   resolveProfileRuntime,
 } from '../../runtime/profile-runtime';
 import { readAndPrune, type ProcessEntry } from '../../runtime/registry';
-import { checkRuntimeLock, type RuntimeLockMeta } from '../../runtime/locks';
+import { checkRuntimeLock, machineAppLockFile, type RuntimeLockMeta } from '../../runtime/locks';
 import { descriptorFor } from '../../agent/registry';
 import { preFlightChecks } from '../preflight';
 import { promptAndStopActiveBridgeMigrationConflict } from './migrate';
@@ -194,9 +194,8 @@ async function assertLockNotHeldByAnotherRuntime(
       console.error('  请先停止正在运行的占用进程，再执行 start。');
       process.exit(1);
     }
-    const app = lock.meta.appId ? ` app=${lock.meta.appId}` : '';
     console.error(
-      `  holder: profile=${lock.meta.profile}${app} agent=${lock.meta.agentKind} pid=${lock.meta.pid} startedAt=${lock.meta.startedAt}`,
+      `  holder: profile=${lock.meta.profile} agent=${lock.meta.agentKind} pid=${lock.meta.pid} startedAt=${lock.meta.startedAt}`,
     );
 
     if (!opts.confirmStopRuntimeLockProcess && (!process.stdin.isTTY || !process.stdout.isTTY)) {
@@ -329,6 +328,7 @@ export async function runServiceStart(opts: ServiceStartOptions = {}): Promise<v
   const adapter = requireAdapter('start', profile, classicRunArgs(profile));
   await assertLockNotHeldByAnotherRuntime('profile', appPaths.profileLockFile, adapter, opts);
   await assertLockNotHeldByAnotherRuntime('app', appPaths.appLockFile(cfg.accounts.app.id), adapter, opts);
+  await assertLockNotHeldByAnotherRuntime('app', machineAppLockFile(cfg.accounts.app.id), adapter, opts);
   const materializedEnvSecret = await materializeEnvSecretForService({ profile });
   const bridgeConfig = materializedEnvSecret
     ? (await resolveProfileRuntime({ profile, allowBootstrap: false })).cfg

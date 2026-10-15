@@ -84,6 +84,7 @@ type StoredProfileConfig = Pick<
   | 'agent'
   | 'agentKind'
   | 'mode'
+  | 'instance'
   | 'accounts'
   | 'secrets'
   | 'preferences'
@@ -124,6 +125,7 @@ function serializeProfileConfig(profile: ProfileConfig): StoredProfileConfig {
     agent: profile.agent,
     agentKind: profile.agentKind,
     mode: profile.mode,
+    ...(profile.instance ? { instance: profile.instance } : {}),
     accounts: profile.accounts,
     ...(profile.secrets ? { secrets: profile.secrets } : {}),
     preferences: profile.preferences,

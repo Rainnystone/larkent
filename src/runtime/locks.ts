@@ -1,5 +1,7 @@
+import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { dirname, join } from 'node:path';
 import * as lockfile from 'proper-lockfile';
 import type { AppPaths } from '../config/app-paths';
 import { RUNTIME_LOCK_SCHEMA_VERSION } from '../config/migrations';
@@ -54,15 +56,7 @@ export async function withProfileAndAppLocks<T>(
         agentKind,
       }),
     );
-    acquired.push(
-      await acquireRuntimeLock({
-        kind: 'app',
-        target: paths.appLockFile(appId),
-        profile: paths.profile,
-        agentKind,
-        appId,
-      }),
-    );
+    acquired.push(await acquireAppRuntimeLock(paths, appId, agentKind));
     return await fn([...acquired]);
   } finally {
     for (const lock of acquired.reverse()) {
@@ -75,13 +69,60 @@ export async function acquireAppRuntimeLock(
   paths: Pick<AppPaths, 'profile' | 'appLockFile'>,
   appId: string,
   agentKind: AgentKind,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<AcquiredRuntimeLock> {
-  return acquireRuntimeLock({
+  const perRoot = await acquireRuntimeLock({
     kind: 'app',
     target: paths.appLockFile(appId),
     profile: paths.profile,
     agentKind,
     appId,
+  });
+  try {
+    const machine = await acquireMachineAppLock({
+      appId,
+      profile: paths.profile,
+      agentKind,
+      env,
+    });
+    return {
+      kind: 'app',
+      target: perRoot.target,
+      async release() {
+        await machine.release().catch(() => {});
+        await perRoot.release();
+      },
+    };
+  } catch (err) {
+    await perRoot.release().catch(() => {});
+    throw err;
+  }
+}
+
+/**
+ * Machine-wide app lock path. Independent of `LARK_CHANNEL_HOME` so two data
+ * roots cannot silently split the same Feishu app. The file name is a hash;
+ * the path never contains the plaintext app id.
+ */
+export function machineAppLockFile(appId: string, env: NodeJS.ProcessEnv = process.env): string {
+  const digest = createHash('sha256').update(appId).digest('hex');
+  const root = env.XDG_RUNTIME_DIR
+    ? join(env.XDG_RUNTIME_DIR, 'larkent', 'locks', 'app')
+    : join(homedir(), '.cache', 'larkent', 'locks', 'app');
+  return join(root, `${digest}.lock`);
+}
+
+export async function acquireMachineAppLock(input: {
+  appId: string;
+  profile: string;
+  agentKind: AgentKind;
+  env?: NodeJS.ProcessEnv;
+}): Promise<AcquiredRuntimeLock> {
+  return acquireRuntimeLock({
+    kind: 'app',
+    target: machineAppLockFile(input.appId, input.env),
+    profile: input.profile,
+    agentKind: input.agentKind,
   });
 }
 

@@ -48,8 +48,7 @@ import { resolveAppPaths } from '../config/app-paths';
 import { descriptorFor } from '../agent/registry';
 import {
   canRunAdminCommand,
-  canUseDm,
-  canUseGroup,
+  evaluateAccess,
   type OwnerRefreshState,
 } from '../policy/access';
 import { buildEncryptedAccountConfig } from '../config/store';
@@ -1179,15 +1178,13 @@ function buildDoctorReport(
     : 'unknown';
   const cwd = effectiveWorkspaceCwd(ctx);
   const runtimeAccess = runtimeAccessStatus(ctx.controls.profileConfig);
-  const access =
-    ctx.msg.chatType === 'p2p'
-      ? canUseDm(ctx.controls.profileConfig, ctx.controls, ctx.msg.senderId)
-      : canUseGroup(
-          ctx.controls.profileConfig,
-          ctx.controls,
-          ctx.msg.chatId,
-          ctx.msg.senderId,
-        );
+  const access = evaluateAccess({
+    entry: ctx.msg.chatType === 'p2p' ? 'dm' : 'group',
+    profile: ctx.controls.profileConfig,
+    controls: ctx.controls,
+    chatId: ctx.msg.chatId,
+    senderId: ctx.msg.senderId,
+  });
   return [
     'self-check: ok',
     `profile: ${ctx.controls.profile}`,
@@ -2114,7 +2111,7 @@ async function handleMeeting(args: string, ctx: CommandContext): Promise<void> {
           question,
           // Typed privately -> answer only to the caller. Broadcasting a
           // summary somebody asked for in a DM would surprise the meeting.
-          { deliver: 'caller' },
+          { deliver: 'caller', actorId: ctx.msg.senderId },
         );
         await reply(ctx, answer || '（没有产生回答）');
       } catch (err) {

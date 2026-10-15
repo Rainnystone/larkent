@@ -25,6 +25,10 @@ export type { AgentKind } from '../agent/registry';
 export type SandboxMode = CodexSandboxMode;
 export type { AccessMode, PermissionConfig, PermissionSource };
 
+export interface AccessFenceConfig {
+  enabled: boolean;
+}
+
 export interface ProfileAccess {
   allowedUsers: string[];
   allowedChats: string[];
@@ -37,6 +41,12 @@ export interface ProfileAccess {
    * priority over `requireMentionInGroup` for the chats it lists.
    */
   chatRequireMention?: Record<string, boolean>;
+  /**
+   * Hard allowlist fence. Off by default. When enabled, DM, group, comment,
+   * meeting, and card-click entry points all require chat ∈ allowedChats and
+   * sender ∈ allowedUsers; owner and admin are not exempt.
+   */
+  fence?: AccessFenceConfig;
 }
 
 export interface SandboxConfig {
@@ -155,12 +165,16 @@ export interface ProfileAgentConfig {
   options?: unknown;
 }
 
+export type ProfileInstanceKind = 'live' | 'test';
+
 export interface ProfileConfig {
   schemaVersion: 3;
   agent: ProfileAgentConfig;
   agentKind: AgentKind;
   /** Deployment mode switch. Default 'team' in this fork. See {@link ProfileMode}. */
   mode: ProfileMode;
+  /** Marks a test instance so it cannot share the live data root. */
+  instance?: ProfileInstanceKind;
   accounts: {
     app: AppCredentials;
   };
@@ -272,6 +286,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     comments?: unknown;
     meeting?: unknown;
     larkCli?: unknown;
+    instance?: unknown;
   };
 
   if (raw.schemaVersion !== PROFILE_SCHEMA_VERSION) {
@@ -334,6 +349,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     // This fork defaults to 'team': the bot answers anyone without allowlist
     // gating. `personal` is still honored when stored explicitly.
     mode: raw.mode === 'personal' ? 'personal' : 'team',
+    ...(raw.instance === 'test' || raw.instance === 'live' ? { instance: raw.instance } : {}),
     accounts,
     ...(raw.secrets ? { secrets: raw.secrets } : {}),
     preferences,
@@ -431,6 +447,7 @@ function normalizeAccess(
     requireMentionInGroup: access?.requireMentionInGroup ?? legacyRequireMentionInGroup ?? true,
     // Omit when empty so configs without per-chat overrides stay clean.
     ...(Object.keys(chatRequireMention).length > 0 ? { chatRequireMention } : {}),
+    ...(access?.fence?.enabled === true ? { fence: { enabled: true } } : {}),
   };
 }
 

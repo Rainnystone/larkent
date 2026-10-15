@@ -22,6 +22,7 @@ import {
   acquireProfileRuntimeLock,
   type AcquiredRuntimeLock,
 } from './locks';
+import { assertLiveRootAllowed } from './live-root';
 import { resolveProfileRuntime } from './profile-runtime';
 import {
   register,
@@ -426,6 +427,7 @@ export class Supervisor {
     });
     const { cfg, appPaths, profileConfig, configPath } = runtime;
     if (!isComplete(cfg)) throw new Error(`profile 配置不完整：${profile}`);
+    assertLiveRootAllowed(appPaths.rootDir, { instance: profileConfig.instance });
 
     // Dedupe by app id — two channels for one app fight over event routing.
     for (const m of this.managed.values()) {

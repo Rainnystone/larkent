@@ -8,7 +8,7 @@ import type { ProcessPool } from '../bot/process-pool';
 import type { CallbackAuth } from './callback-auth';
 import { runCommandHandler, type CommandContext, type Controls } from '../commands';
 import { log } from '../core/logger';
-import { canUseDm, canUseGroup } from '../policy/access';
+import { evaluateAccess } from '../policy/access';
 import type { RunExecutor } from '../runtime/run-executor';
 import type { SessionCatalog } from '../session/catalog';
 import type { ResumeCandidates } from '../session/resume-candidates';
@@ -69,10 +69,14 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   // and can skip the chat allowlist for DMs.
   const { scope, threadId, mode } = await resolveScope(deps);
 
-  const accessDecision =
-    mode === 'p2p'
-      ? canUseDm(deps.controls.profileConfig, deps.controls, operatorId)
-      : canUseGroup(deps.controls.profileConfig, deps.controls, chatId, operatorId);
+  const accessDecision = evaluateAccess({
+    entry: 'card',
+    profile: deps.controls.profileConfig,
+    controls: deps.controls,
+    chatId,
+    senderId: operatorId,
+    chatMode: mode === 'p2p' ? 'p2p' : 'group',
+  });
   if (!accessDecision.ok) {
     log.info('cardAction', 'skip-not-allowed-user', {
       operator: operatorId.slice(-6),

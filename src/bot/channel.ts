@@ -49,7 +49,7 @@ import {
   toPolicyAttachment,
   toPromptAttachment,
 } from '../media/attachment';
-import { canUseDm, canUseGroup, requireMentionForChat } from '../policy/access';
+import { canUseDm, canUseGroup, evaluateAccess, requireMentionForChat } from '../policy/access';
 import { MeetingManager } from '../meeting/manager';
 import type { VcRequestClient } from '../meeting/api';
 import { attachMeetingAgent, summarizeEndedMeeting } from '../meeting/orchestrator';
@@ -512,6 +512,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       config: meetingConfig,
       botOpenId: () => channel.botIdentity?.openId,
       channel,
+      authorizeInvite: (inviterId, chatId) =>
+        evaluateAccess({
+          entry: 'meeting',
+          profile: controls.profileConfig,
+          controls,
+          chatId: chatId ?? '',
+          senderId: inviterId ?? '',
+        }).ok,
       // Meeting over: optionally summarize to IM (config-gated inside).
       onEnded: (session) =>
         void summarizeEndedMeeting({
@@ -815,7 +823,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
 
   const accessDecision =
     msg.chatType === 'p2p'
-      ? canUseDm(controls.profileConfig, controls, msg.senderId)
+      ? canUseDm(controls.profileConfig, controls, msg.senderId, msg.chatId)
       : canUseGroup(controls.profileConfig, controls, msg.chatId, msg.senderId);
   if (!accessDecision.ok) {
     log.info('intake', 'skip-not-allowed-user', {
@@ -1088,7 +1096,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
 
   const accessDecision =
     firstMsg.chatType === 'p2p'
-      ? canUseDm(controls.profileConfig, controls, firstMsg.senderId)
+      ? canUseDm(controls.profileConfig, controls, firstMsg.senderId, firstMsg.chatId)
       : canUseGroup(controls.profileConfig, controls, firstMsg.chatId, firstMsg.senderId);
   const scopeContext: ScopeContext = {
     source: 'im',

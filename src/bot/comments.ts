@@ -10,6 +10,7 @@ import type { Controls } from '../commands';
 import { resolveAppPaths } from '../config/app-paths';
 import { log } from '../core/logger';
 import { evaluateRunPolicy } from '../policy/run-policy';
+import { evaluateAccess } from '../policy/access';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { RunRejected } from '../runtime/errors';
 import type { ActiveRuns } from './active-runs';
@@ -117,6 +118,17 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
     });
     return;
   }
+  const accessDecision = evaluateAccess({
+    entry: 'comment',
+    profile: controls.profileConfig,
+    controls,
+    chatId: evt.fileToken,
+    senderId: evt.operator.openId,
+  });
+  if (!accessDecision.ok) {
+    log.info('comment', 'skip', { reason: accessDecision.reason });
+    return;
+  }
   const target = await resolveCommentTarget(channel, evt);
   if (!target) {
     log.info('comment', 'skip', { reason: 'unsupported-target', commentScopeId: eventCommentScopeId });
@@ -205,7 +217,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       prompt,
       requestedCwd,
       cwdRealpath,
-      access: { ok: true, reason: 'comment-mention' },
+      access: accessDecision,
       capability,
       profileConfig: controls.profileConfig,
       now: Date.now(),
