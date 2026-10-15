@@ -4,6 +4,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import {
   accessPolicyDigest,
   attachmentPolicyShapeDigest,
+  digestCanonical,
   policyFingerprint,
   policyFingerprintFromAgentOptions,
   resourceScopeDigest,
@@ -183,6 +184,17 @@ describe('policy fingerprint', () => {
     );
     expect(accessPolicyDigest({ ...profile.access, fence: { enabled: true } })).not.toBe(
       accessPolicyDigest(profile.access),
+    );
+    expect(accessPolicyDigest({ ...profile.access, fence: { enabled: false } })).toBe(
+      accessPolicyDigest({ ...profile.access, fence: undefined }),
+    );
+    expect(accessPolicyDigest({ ...profile.access, fence: { enabled: false } })).toBe(
+      digestCanonical({
+        admins: [...profile.access.admins].sort(),
+        allowedChats: [...profile.access.allowedChats].sort(),
+        allowedUsers: [...profile.access.allowedUsers].sort(),
+        requireMentionInGroup: profile.access.requireMentionInGroup,
+      }),
     );
     expect(
       resourceScopeDigest({
