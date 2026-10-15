@@ -387,6 +387,19 @@ describe('TurnJournal', () => {
     });
   });
 
+  it('marks a queued-without-pid entry interrupted after a process restart', async () => {
+    const { file, journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'stale-queued' }));
+    await journal.flush();
+
+    const restarted = new TurnJournal(file, { now: () => 1_760_000_000_000 });
+    await restarted.load();
+    expect(restarted.get('stale-queued')?.status).toBe('queued');
+    await restarted.recover({ enabled: true });
+    expect(restarted.get('stale-queued')?.status).toBe('interrupted');
+  });
+
   it('invalidates delivered notice actions on session switch without un-delivering them', async () => {
     const { journal } = await fixture();
     await journal.load();

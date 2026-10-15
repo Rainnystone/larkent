@@ -122,6 +122,7 @@ export class TurnJournal {
   private loading: Promise<void> | undefined;
   private persistenceDisabled = false;
   private recovering: Promise<{ orphans: number; resent: number }> | undefined;
+  private readonly enqueuedThisProcess = new Set<string>();
 
   constructor(path: string, opts: TurnJournalOptions = {}) {
     this.path = path;
@@ -166,6 +167,7 @@ export class TurnJournal {
       updatedAt: now,
     };
     this.entries.push(entry);
+    this.enqueuedThisProcess.add(entry.turnId);
     this.prune();
     this.schedulePersist();
     return { ...entry };
@@ -309,7 +311,11 @@ export class TurnJournal {
         continue;
       }
 
-      if (current.status === 'queued' && current.childPid === undefined) {
+      if (
+        current.status === 'queued'
+        && current.childPid === undefined
+        && this.enqueuedThisProcess.has(current.turnId)
+      ) {
         continue;
       }
 
@@ -380,6 +386,7 @@ export class TurnJournal {
 
   private publish(document: JournalDocument, persistenceDisabled: boolean): void {
     this.entries = document.entries;
+    this.enqueuedThisProcess.clear();
     this.persistenceDisabled = persistenceDisabled;
     this.persistScheduled = false;
     this.persistDirty = false;
