@@ -253,11 +253,24 @@ export function finalAnswerOnlyState(state: RunState): RunState {
   return {
     ...state,
     blocks: state.finalText
-      ? [{ kind: 'text', content: state.finalText, streaming: false }]
+      ? [
+          { kind: 'text', content: state.finalText, streaming: false },
+          ...outcomeNoticeBlocks(state),
+        ]
       : state.blocks.filter((b) => b.kind === 'text'),
     reasoning: { content: '', active: false },
     footer: null,
   };
+}
+
+/** Text the reducer appended after `finalText` (partial-outcome warnings). */
+export function outcomeNoticeBlocks(state: RunState): Array<{ kind: 'text'; content: string; streaming: false }> {
+  if (!state.finalText) return [];
+  return state.blocks.flatMap((block) => (
+    block.kind === 'text' && block.content !== state.finalText && !block.streaming
+      ? [{ kind: 'text' as const, content: block.content, streaming: false as const }]
+      : []
+  ));
 }
 
 export async function consumeCotEvents(

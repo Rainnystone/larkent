@@ -63,6 +63,22 @@ describe('run outcome stream', () => {
     await waitFor(() => rendered(h.channel).includes('已被中断'));
   });
 
+  it('keeps the agy partial-outcome warning on the final reply', async () => {
+    const h = await harness({ agentKind: 'antigravity' });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.stderrSnapshot = '[agy] print timeout after 5m0s with turn in progress; returning partial output';
+    run.push({ type: 'final_text', content: 'PARTIAL_ANSWER' });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => rendered(h.channel).includes('PARTIAL_ANSWER'));
+    expect(rendered(h.channel)).toContain('输出不完整（打印超时），可稍后继续');
+  });
+
   it('shows redacted signature copy on the card instead of raw stderr paths', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const h = await harness({ agentKind: 'cursor' });

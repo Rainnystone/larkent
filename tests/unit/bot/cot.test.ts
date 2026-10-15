@@ -84,6 +84,25 @@ describe('COT event mapping', () => {
     });
   });
 
+  it('keeps a partial-outcome warning appended after finalText', () => {
+    const state: RunState = {
+      ...initialState,
+      finalText: 'partial answer',
+      blocks: [
+        { kind: 'text', content: 'partial answer', streaming: false },
+        { kind: 'text', content: '输出不完整（打印超时），可稍后继续', streaming: false },
+      ],
+      reasoning: { content: '', active: false },
+      footer: null,
+      terminal: 'done',
+    };
+
+    expect(finalAnswerOnlyState(state).blocks).toEqual([
+      { kind: 'text', content: 'partial answer', streaming: false },
+      { kind: 'text', content: '输出不完整（打印超时），可稍后继续', streaming: false },
+    ]);
+  });
+
   it('uses the legacy tool header format for brief COT titles', () => {
     expect(cotBriefToolTitle('command_execution', { command: 'echo hello' }, 'done'))
       .toContain('✅ command_execution');

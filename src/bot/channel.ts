@@ -124,6 +124,7 @@ import {
   CotClient,
   CotPublisher,
   finalAnswerOnlyState,
+  outcomeNoticeBlocks,
 } from './cot';
 
 const DEBOUNCE_MS = 600;
@@ -1868,7 +1869,12 @@ function finalReplyState(progress: LazyProgressStream, state: RunState): RunStat
   if (!progress.opened() || progress.abandoned()) return finalAnswerOnlyState(state);
   return {
     ...state,
-    blocks: state.finalText ? [{ kind: 'text', content: state.finalText, streaming: false }] : [],
+    blocks: state.finalText
+      ? [
+          { kind: 'text', content: state.finalText, streaming: false },
+          ...outcomeNoticeBlocks(state),
+        ]
+      : [],
     reasoning: { content: '', active: false },
     footer: null,
     terminal: 'done',
