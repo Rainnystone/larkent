@@ -93,3 +93,40 @@ it('calls recoverMissed on the new bridge after the old disconnect finishes', as
   expect(recoveries[0]).not.toHaveBeenCalled();
   expect(recoveries[1]).toHaveBeenCalledTimes(1);
 });
+
+it('fails reconnect when recoverMissed rejects', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ledger-handoff-reject-'));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const paths = resolveAppPaths({ rootDir: root, profile: 'test' });
+  await mkdir(paths.profileDir, { recursive: true });
+  const binary = await writeVersionExecutable(root, 'fake-claude', '1.0.0');
+  const profile = createDefaultProfileConfig({
+    agentKind: 'claude',
+    accounts: { app: { id: 'cli_ledger', secret: 'secret', tenant: 'feishu' } },
+  });
+  profile.agent.binaryPath = binary;
+  await saveRootConfig(createRootConfig('test', profile), paths.configFile);
+
+  let started = 0;
+  const supervisor = new Supervisor({
+    configPath: paths.configFile,
+    rootDir: root,
+    runPreflight: false,
+    startChannelFn: async () => {
+      started += 1;
+      return {
+        channel: { botIdentity: { name: 'ledger-bot' } },
+        disconnect: async () => {},
+        recoverMissed: started === 2
+          ? async () => {
+            throw new Error('journal persist failed');
+          }
+          : async () => {},
+      } as never;
+    },
+  });
+  cleanups.push(() => supervisor.shutdown());
+
+  await supervisor.startProfile('test');
+  await expect(supervisor.restartProfile('test')).rejects.toThrow('journal persist failed');
+});

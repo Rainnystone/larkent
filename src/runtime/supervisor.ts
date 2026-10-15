@@ -327,7 +327,7 @@ class ManagedProfile {
         throw error;
       }
       this.bridge = nextBridge;
-      this.bridge.recoverMissed?.();
+      await this.bridge.recoverMissed?.();
       await updateEntry(
         this.entry.id,
         {
