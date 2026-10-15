@@ -10,6 +10,7 @@ import {
 import { DEFAULT_LOCAL_CONFIG, defaultDataRoot } from './paths';
 import { PROXY_MODES, type FaultProxyMode } from './proxy';
 import { runCursorStallNotice } from './scenarios/cursor-stall-notice';
+import { runHostSleepCliSelfSend } from './scenarios/host-sleep-cli-self-send';
 import { runJournalKillGroup } from './scenarios/journal-kill-group';
 import { runRedeliveryShortGap } from './scenarios/redelivery-short-gap';
 import { readTesterMessages, sendTesterMessage } from './tester';
@@ -182,8 +183,16 @@ async function cmdScenario(argv: string[]): Promise<void> {
       console.log(JSON.stringify(result));
       return;
     }
+    case 'host-sleep-cli-self-send': {
+      const result = await runHostSleepCliSelfSend({
+        configPath: stringFlag(flags, 'config') ?? DEFAULT_LOCAL_CONFIG,
+        ...(stringFlag(flags, 'freeze-ms') ? { freezeMs: Number(stringFlag(flags, 'freeze-ms')) } : {}),
+      });
+      console.log(JSON.stringify(result));
+      return;
+    }
     default:
-      throw new Error('usage: e2e:scenario redelivery-short-gap|journal-kill-group|cursor-stall-notice');
+      throw new Error('usage: e2e:scenario redelivery-short-gap|journal-kill-group|cursor-stall-notice|host-sleep-cli-self-send');
   }
 }
 
@@ -243,6 +252,7 @@ function printHelp(): void {
   pnpm e2e:scenario -- redelivery-short-gap
   pnpm e2e:scenario -- journal-kill-group [--up]
   pnpm e2e:scenario -- cursor-stall-notice
+  pnpm e2e:scenario -- host-sleep-cli-self-send
 `);
 }
 

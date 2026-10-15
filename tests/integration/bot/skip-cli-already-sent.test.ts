@@ -109,6 +109,40 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
     15_000,
   );
 
+  it('skips the extra final post when tool events were lost but a self-sent inbound arrived', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const h = await harness(
+      'cursor',
+      [
+        { type: 'text', delta: ANSWER },
+        { type: 'final_text', content: ANSWER },
+        { type: 'done', terminationReason: 'normal' },
+      ],
+      'text',
+      hold,
+    );
+
+    await h.channel.handlers.message?.(message(MSG, 'please answer'));
+    await waitFor(() => h.agent.runs.length === 1);
+
+    await h.channel.handlers.message?.(selfMessage('om_cli_self', ANSWER));
+    release();
+
+    await waitFor(() =>
+      info.mock.calls.some((call) => call[0] === 'outbound' && call[1] === 'skip-cli-already-sent'),
+    );
+    expect(h.channel.sent.filter((row) => JSON.stringify(row.content).includes(ANSWER))).toEqual([]);
+    expect(info.mock.calls).toContainEqual([
+      'intake',
+      'skip-self',
+      expect.objectContaining({ msgId: 'om_cli_self', chatId: CHAT, reason: 'cli-self-send' }),
+    ]);
+  }, 15_000);
+
   it('still posts the notice when the run ends in error after a successful CLI send', async () => {
     const h = await harness(
       'claude',
@@ -156,6 +190,7 @@ async function harness(
   kind: AgentKind,
   events: AgentEvent[],
   messageReply: 'card' | 'markdown' | 'text',
+  hold?: Promise<void>,
 ) {
   const tmp = await createTmpProfile(`skip-cli-sent-${kind}-`);
   const workspace = await realpath(tmp.workspace);
@@ -176,7 +211,12 @@ async function harness(
   profileConfig.workspaces.default = workspace;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
-  const agent = new FakeAgentAdapter({ id: kind, displayName: kind, events });
+  const agent = new FakeAgentAdapter({
+    id: kind,
+    displayName: kind,
+    events,
+    ...(hold ? { hold } : {}),
+  });
   const channel = createRecordingLarkChannel();
   sdk.channel = channel;
   const bridge = await startChannel({
@@ -202,6 +242,22 @@ async function harness(
     await tmp.cleanup();
   });
   return { channel, agent };
+}
+
+function selfMessage(messageId: string, content: string): NormalizedMessage {
+  return {
+    messageId,
+    chatId: CHAT,
+    chatType: 'p2p',
+    senderId: 'ou_bot',
+    senderName: 'Pin Bot',
+    content,
+    rawContentType: 'text',
+    resources: [],
+    mentionedBot: false,
+    createTime: 1760000002000,
+    raw: { sender: { sender_type: 'app', id: 'ou_bot' } },
+  } as unknown as NormalizedMessage;
 }
 
 function message(messageId: string, content: string): NormalizedMessage {

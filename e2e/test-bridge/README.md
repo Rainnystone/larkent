@@ -37,6 +37,7 @@ pnpm e2e:read
 pnpm e2e:scenario -- redelivery-short-gap [--gap-sec 25]
 pnpm e2e:scenario -- journal-kill-group [--up]
 pnpm e2e:scenario -- cursor-stall-notice
+pnpm e2e:scenario -- host-sleep-cli-self-send [--freeze-ms 8000]
 ```
 
 `down` reads the pid file and refuses to signal a process whose cmdline is
@@ -66,6 +67,12 @@ One-shot per matching run id unless `:sticky` / `--sticky`.
 `redelivery-short-gap` drops the proxy for 20–30 seconds while the tester
 sends an @ message, then restores. Put the redacted conclusion (WS redelivery
 vs backfill) in the docs-track delivery note. Do not commit ids or tokens.
+
+`host-sleep-cli-self-send` SIGSTOPs the test bridge mid-run (host-sleep
+stand-in), resumes, then records whether a CLI self-send skipped the extra
+final reply (`skip-cli-already-sent` / intake skip-self) and whether Cursor
+`connection`/`retry` logged as `stream-reconnect`. Use `--real-cli` when the
+CLI itself posts to the group.
 
 ## Safety
 

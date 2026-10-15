@@ -40,6 +40,14 @@ import {
 import { renderCard } from '../card/run-renderer';
 import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
 import {
+  CliSelfSendTracker,
+  OutboundMessageIds,
+  isSelfSender,
+  noteInboundSkipSelf,
+  senderTypeFromRaw,
+  wrapChannelOutbound,
+} from './self-message';
+import {
   finalizeIfRunning,
   initialState,
   markIdleTimeout,
@@ -367,6 +375,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const channel = createLarkChannel(opts);
+  const outboundIds = new OutboundMessageIds();
+  const cliSelfSent = new CliSelfSendTracker();
+  wrapChannelOutbound(channel, outboundIds);
   const media = new MediaCache(channel, deps.appPaths?.mediaDir);
 
   // Pending → run handoff: while a run is active on a chat, block its pending
@@ -450,6 +461,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           consecutiveByScope,
           pendingHintByScope,
           continueByScope,
+          cliSelfSent,
         });
       } finally {
         sessionWriter.release();
@@ -535,6 +547,16 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   channel.on({
     message: async (msg) => {
+      if (dropInboundSelfMessage({
+        msg,
+        botOpenId: channel.botIdentity?.openId,
+        botAppId: controls.cfg.accounts.app.id,
+        outbound: outboundIds,
+        tracker: cliSelfSent,
+        runActive: hasActiveRunForChat(activeRuns, msg.chatId, msg.threadId),
+      })) {
+        return;
+      }
       if (closing) {
         markClosingArrival(ledger, msg, reliability().lostMessage);
         return;
@@ -1166,6 +1188,7 @@ interface RunBatchDeps {
   consecutiveByScope: Map<string, number>;
   pendingHintByScope: Map<string, string>;
   continueByScope: Map<string, ContinueRequest>;
+  cliSelfSent?: CliSelfSendTracker;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1192,6 +1215,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     consecutiveByScope,
     pendingHintByScope,
     continueByScope,
+    cliSelfSent,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1590,6 +1614,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           turnId,
           handle,
           notice: noticeCtx,
+          cliSelfSent,
         });
         return;
       }
@@ -1668,6 +1693,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         turnId,
         handle,
         notice: noticeCtx,
+        cliSelfSent,
       });
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
@@ -1736,6 +1762,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         turnId,
         handle,
         notice: noticeCtx,
+        cliSelfSent,
       });
     } else {
       // text mode: drain the agent stream without sending anything during
@@ -1765,6 +1792,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         turnId,
         handle,
         notice: noticeCtx,
+        cliSelfSent,
       });
     }
   } catch (err) {
@@ -1952,12 +1980,17 @@ async function deliverFinalReply(input: {
     ownerId?: string;
     requireBotMention: boolean;
   };
+  cliSelfSent?: CliSelfSendTracker;
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
   const body = renderText(input.state);
-  const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
+  const skip = shouldSkipFinalReply(
+    input.skipFrom ?? input.state,
+    input.chatId,
+    input.cliSelfSent?.sentChatIds(),
+  )
     || !body.trim()
     || input.alreadyStreamed === true;
   const outcome = input.handle.outcome;
@@ -2027,8 +2060,13 @@ async function sendFinalReply(input: {
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
+  cliSelfSent?: CliSelfSendTracker;
 }): Promise<void> {
-  if (shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)) {
+  if (shouldSkipFinalReply(
+    input.skipFrom ?? input.state,
+    input.chatId,
+    input.cliSelfSent?.sentChatIds(),
+  )) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
       chatId: input.chatId,
@@ -2723,6 +2761,43 @@ function buildPrompt(
  * this field, so read it off `msg.raw` (`includeRawEvent: true` above).
  * Unknown / missing values return undefined — omit rather than guess.
  */
+function dropInboundSelfMessage(input: {
+  msg: NormalizedMessage;
+  botOpenId?: string;
+  botAppId?: string;
+  outbound: OutboundMessageIds;
+  tracker: CliSelfSendTracker;
+  runActive: boolean;
+}): boolean {
+  const dropped = noteInboundSkipSelf({
+    messageId: input.msg.messageId,
+    chatId: input.msg.chatId,
+    isSelf: isSelfSender({
+      senderId: input.msg.senderId,
+      senderType: senderTypeFromRaw((input.msg as { raw?: unknown }).raw),
+      chatType: input.msg.chatType,
+      botOpenId: input.botOpenId,
+      botAppId: input.botAppId,
+    }),
+    outbound: input.outbound,
+    runActive: input.runActive,
+    tracker: input.tracker,
+  });
+  if (!dropped) return false;
+  log.info('intake', 'skip-self', {
+    msgId: input.msg.messageId,
+    chatId: input.msg.chatId,
+    ...(input.tracker.has(input.msg.chatId) ? { reason: 'cli-self-send' } : {}),
+  });
+  return true;
+}
+
+function hasActiveRunForChat(activeRuns: ActiveRuns, chatId: string, threadId?: string): boolean {
+  if (activeRuns.get(chatId)) return true;
+  if (threadId && activeRuns.get(`${chatId}:${threadId}`)) return true;
+  return activeRuns.scopes().some((scope) => scope === chatId || scope.startsWith(`${chatId}:`));
+}
+
 function senderTypeOf(msg: NormalizedMessage): 'user' | 'bot' | undefined {
   const raw = msg.raw as { sender?: { sender_type?: unknown } } | undefined;
   const senderType = raw?.sender?.sender_type;

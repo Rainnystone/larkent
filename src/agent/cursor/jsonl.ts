@@ -59,6 +59,14 @@ export class CursorJsonlTranslator {
         return this.translateToolCall(raw);
       case 'result':
         return this.translateResult(raw);
+      case 'connection':
+      case 'retry':
+        log.info('jsonl', 'stream-reconnect', {
+          eventType: raw.type,
+          ...(typeof raw.attempt === 'number' ? { attempt: raw.attempt } : {}),
+          ...(typeof raw.subtype === 'string' ? { subtype: raw.subtype } : {}),
+        });
+        return [];
       default:
         this.drift.unknownEvents++;
         log.warn('jsonl', 'unknown_event', { eventType: raw.type });

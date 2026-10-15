@@ -7,6 +7,7 @@ import type { BackfillLedger } from './backfill-ledger';
 import type { ChatMode } from './chat-mode-cache';
 import type { KnownChat } from './lark-info';
 import { createMergeForwardFetch } from './quote';
+import { isSelfSender } from './self-message';
 
 export const WATERMARK_MARGIN_MS = 120_000;
 
@@ -430,12 +431,13 @@ async function filterHistoryItem(
     return { kind: 'drop' };
   }
   const senderId = item.sender?.id;
-  const botAppId = deps.botAppId;
-  if (
-    senderId === botOpenId
-    || (botAppId !== undefined && senderId === botAppId)
-    || (chatType === 'p2p' && item.sender?.sender_type === 'app')
-  ) {
+  if (isSelfSender({
+    senderId,
+    senderType: item.sender?.sender_type,
+    chatType,
+    botOpenId,
+    botAppId: deps.botAppId,
+  })) {
     log.info('backfill', 'skip-self', { msgId: item.message_id, chatId });
     return { kind: 'drop' };
   }
