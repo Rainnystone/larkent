@@ -1431,38 +1431,42 @@ describe('createBackfillRun coalescing mutex', () => {
   });
 
   it('queues a follow-up scan when a handoff coalesces onto an in-flight connect', async () => {
-    let release: () => void = () => {};
-    const hold = new Promise<void>((resolve) => {
-      release = resolve;
+    let releaseList: () => void = () => {};
+    const listHold = new Promise<void>((resolve) => {
+      releaseList = resolve;
     });
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
       messages: { [CHAT_A]: [mentionItem('om_connect', CHAT_A, 'first', NOW - 10_000)] },
     });
     const run = createBackfillRun();
+    let handoffQueued: Promise<void> | undefined;
     const first = run(await deps({
       ...h,
-      listChatsHold: hold,
       trigger: 'connect',
-      forceShortGapScan: true,
+      onListMessages: async () => {
+        if (handoffQueued) return;
+        h.messages[CHAT_A] = [
+          mentionItem('om_connect', CHAT_A, 'first', NOW - 10_000),
+          mentionItem('om_handoff', CHAT_A, 'late', NOW - 5_000),
+        ];
+        h.ledger.markScanIncomplete(NOW - 5_000);
+        const info = spyInfo();
+        handoffQueued = run(await deps({ ...h, trigger: 'handoff' }));
+        expect(handoffQueued).toBe(first);
+        expect(events(info, 'backfill')).toContainEqual(
+          expect.objectContaining({ event: 'coalesced' }),
+        );
+      },
+      listMessagesHold: listHold,
     }));
-    h.intake.length = 0;
-    h.messages[CHAT_A] = [mentionItem('om_handoff', CHAT_A, 'late', NOW - 5_000)];
-    const info = spyInfo();
-    const handoff = run(await deps({
-      ...h,
-      listChatsHold: hold,
-      trigger: 'handoff',
-      forceShortGapScan: true,
-    }));
-    expect(handoff).toBe(first);
-    expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'coalesced' }),
-    );
-    release();
+    await waitUntil(() => handoffQueued !== undefined);
+    expect(h.ledger.getIncompleteFrom()).toBe(NOW - 5_000);
+    releaseList();
     await first;
     expect(h.listed.length).toBeGreaterThanOrEqual(2);
     expect(h.intake.map((msg) => msg.messageId)).toContain('om_handoff');
+    expect(h.intake.map((msg) => msg.messageId)).toContain('om_connect');
   });
 
   it('starts a fresh scan after the in-flight one completes', async () => {
@@ -1592,6 +1596,8 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   forceShortGapScan?: boolean;
   requireMentionForChat?: (chatId: string) => boolean;
   lostMessage?: boolean;
+  listMessagesHold?: Promise<void>;
+  onListMessages?: (chatId: string) => Promise<void>;
 }): Promise<RunBackfillDeps> {
   const channel = fakeChannel({
     identity: input.botOpenId === null ? undefined : { openId: input.botOpenId ?? BOT, name: 'Bot' },
@@ -1607,6 +1613,8 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     chatModeErrors: input.chatModeErrors,
     modeLookups: input.modeLookups,
     onGetChatMode: input.onGetChatMode,
+    listMessagesHold: input.listMessagesHold,
+    onListMessages: input.onListMessages,
   });
   const marks = new Map<string, { detectedAt: number }>();
   return {
@@ -1646,6 +1654,8 @@ function fakeChannel(opts: {
   chatModeErrors?: Record<string, Error>;
   modeLookups?: string[];
   onGetChatMode?: (chatId: string) => Promise<void>;
+  listMessagesHold?: Promise<void>;
+  onListMessages?: (chatId: string) => Promise<void>;
 }): BackfillChannel {
   return {
     botIdentity: opts.identity,
@@ -1677,6 +1687,8 @@ function fakeChannel(opts: {
               const error = opts.listErrors[chatId];
               if (error) throw error;
               const items = [...(opts.messages[chatId] ?? [])];
+              await opts.onListMessages?.(chatId);
+              if (opts.listMessagesHold) await opts.listMessagesHold;
               if (params.sort_type === 'ByCreateTimeDesc') items.reverse();
               const chatPages = chunk(items, 50);
               const token = typeof params.page_token === 'string' ? Number(params.page_token) : 0;
@@ -1766,6 +1778,15 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out.length > 0 ? out : [[]];
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('timed out waiting for backfill condition');
 }
 
 function spyInfo() {

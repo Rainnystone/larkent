@@ -137,12 +137,16 @@ export class BackfillLedger {
     this.schedulePersist();
   }
 
-  markScanComplete(windowEnd: number, now: number): void {
+  markScanComplete(windowEnd: number, now: number, incompleteFromAtStart?: number): void {
     if (!Number.isFinite(windowEnd) || !Number.isFinite(now)) return;
     this.lastBackfillEnd = windowEnd;
     this.lastLiveAt = now;
     this.lastLivePersistAt = now;
-    this.incompleteFrom = undefined;
+    // A mid-scan unrecord (old-bridge handoff) can lower incompleteFrom after
+    // this scan started. Clearing that would make the follow-up skip-short-gap.
+    if (this.incompleteFrom === incompleteFromAtStart) {
+      this.incompleteFrom = undefined;
+    }
     this.prune();
     this.schedulePersist();
   }

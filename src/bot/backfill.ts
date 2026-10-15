@@ -101,13 +101,20 @@ export function createBackfillRun(): (deps: RunBackfillDeps) => Promise<void> {
           current = followUp;
           followUp = undefined;
         }
-      } finally {
-        inFlight = undefined;
-      }
-      if (followUp) {
+      } catch (error) {
         const extra = followUp;
         followUp = undefined;
-        await launch(extra);
+        inFlight = undefined;
+        if (extra) {
+          try {
+            await launch(extra);
+          } catch (followError) {
+            throw new AggregateError([error, followError], 'backfill follow-up failed after scan error');
+          }
+        }
+        throw error;
+      } finally {
+        inFlight = undefined;
       }
     })();
     return inFlight;
@@ -257,7 +264,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     return;
   }
 
-  deps.ledger.markScanComplete(window.windowEnd, now);
+  deps.ledger.markScanComplete(window.windowEnd, now, incompleteFrom);
   if (truncatedFrom !== undefined) deps.ledger.markScanIncomplete(truncatedFrom);
   log.info('backfill', 'done', {
     chats: inScope.chats.length,

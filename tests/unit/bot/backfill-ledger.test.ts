@@ -299,7 +299,7 @@ describe('BackfillLedger', () => {
     const reloaded = new BackfillLedger(file, { now: () => now });
     await reloaded.load();
     expect(reloaded.getIncompleteFrom()).toBe(now - 60_000);
-    reloaded.markScanComplete(now, now);
+    reloaded.markScanComplete(now, now, now - 60_000);
     await reloaded.flush();
     expect(reloaded.getIncompleteFrom()).toBeUndefined();
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
@@ -308,6 +308,16 @@ describe('BackfillLedger', () => {
       lastBackfillEnd: now,
       processed: {},
     });
+  });
+
+  it('keeps an incompleteFrom that was set after the completing scan started', async () => {
+    const now = 1_760_000_000_000;
+    const { ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.touchLive(now - 60_000);
+    ledger.markScanIncomplete(now - 5_000);
+    ledger.markScanComplete(now, now, undefined);
+    expect(ledger.getIncompleteFrom()).toBe(now - 5_000);
   });
 
   it('touchLive writes lastLiveAt, exposes getters, and persists at most once per 30s', async () => {
