@@ -93,12 +93,14 @@ describe('TurnJournal', () => {
     const { file, journal } = await fixture();
     await journal.load();
     journal.enqueue(queued({
-      resources: [{ type: 'image', fileKey: 'img_1' }],
+      resources: [{ type: 'image', fileKey: 'img_1', sourceMessageId: 'om_user' }],
     }));
     await journal.flush();
     const reloaded = new TurnJournal(file);
     await reloaded.load();
-    expect(reloaded.get('turn-1')?.resources).toEqual([{ type: 'image', fileKey: 'img_1' }]);
+    expect(reloaded.get('turn-1')?.resources).toEqual([
+      { type: 'image', fileKey: 'img_1', sourceMessageId: 'om_user' },
+    ]);
   });
 
   it('walks queued → running → settled → reply-delivered', async () => {

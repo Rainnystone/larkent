@@ -278,12 +278,18 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       resources: [{ type: 'file', fileKey: 'file_v2_secret' }],
     }));
     await waitFor(() => noticeCards(h.channel).length === 1);
-    expect(h.journal.list()[0]?.resources).toEqual([{ type: 'file', fileKey: 'file_v2_secret' }]);
+    expect(h.journal.list()[0]?.resources).toEqual([
+      { type: 'file', fileKey: 'file_v2_secret', sourceMessageId: 'om_run' },
+    ]);
     const token = continueToken(noticeCards(h.channel)[0]!);
     await h.channel.handlers.cardAction?.(cardClick(USER, token));
     await waitFor(() => h.agent.runOptions.length === 2);
     expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
     expect(h.agent.runOptions[1]?.prompt).toContain('see the file');
+    expect(h.channel.callLog.filter((call) => call.op === 'download')).toEqual([
+      expect.objectContaining({ op: 'download', messageId: 'om_run', fileKey: 'file_v2_secret' }),
+      expect.objectContaining({ op: 'download', messageId: 'om_run', fileKey: 'file_v2_secret' }),
+    ]);
     await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('SAW FILE')));
     expect(h.channel.sent.find((item) => JSON.stringify(item.content).includes('SAW FILE'))?.options)
       .toMatchObject({ replyTo: 'om_notice' });

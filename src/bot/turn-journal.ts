@@ -71,9 +71,13 @@ export interface TurnJournalEntry {
   updatedAt: number;
 }
 
+export const TURN_JOURNAL_RESOURCE_TYPES = ['image', 'file', 'audio', 'video'] as const;
+export type TurnJournalResourceType = (typeof TURN_JOURNAL_RESOURCE_TYPES)[number];
+
 export interface TurnJournalResource {
-  type: string;
+  type: TurnJournalResourceType;
   fileKey: string;
+  sourceMessageId: string;
 }
 
 export interface TurnJournalOptions {
@@ -526,10 +530,20 @@ function parseResources(raw: unknown): TurnJournalResource[] | undefined {
   const resources: TurnJournalResource[] = [];
   for (const item of raw) {
     if (!isObject(item)) continue;
-    if (typeof item.type !== 'string' || typeof item.fileKey !== 'string') continue;
-    resources.push({ type: item.type, fileKey: item.fileKey });
+    if (!isJournalResourceType(item.type) || typeof item.fileKey !== 'string') continue;
+    if (typeof item.sourceMessageId !== 'string' || !item.sourceMessageId) continue;
+    resources.push({
+      type: item.type,
+      fileKey: item.fileKey,
+      sourceMessageId: item.sourceMessageId,
+    });
   }
   return resources.length > 0 ? resources : undefined;
+}
+
+export function isJournalResourceType(value: unknown): value is TurnJournalResourceType {
+  return typeof value === 'string'
+    && (TURN_JOURNAL_RESOURCE_TYPES as readonly string[]).includes(value);
 }
 
 function parseReply(raw: unknown): TurnReply | undefined {

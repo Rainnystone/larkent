@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { createFakeChannel, type FakeChannel } from './fake-channel.js';
 
 export interface RecordingLarkChannel extends FakeChannel {
@@ -22,6 +23,12 @@ export interface RecordingLarkChannel extends FakeChannel {
   addReaction(messageId: string, emojiType: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
   recallMessage(messageId: string): Promise<void>;
+  downloadResourceToFile(
+    messageId: string,
+    fileKey: string,
+    type: string,
+    destPath: string,
+  ): Promise<{ contentType: string; bytesWritten: number }>;
   snapshotCalls(): RecordingCall[];
 }
 
@@ -31,6 +38,7 @@ export type RecordingCall =
   | { op: 'reaction.create'; messageId: string; emojiType: string }
   | { op: 'reaction.delete'; messageId: string; reactionId: string }
   | { op: 'recall'; messageId: string }
+  | { op: 'download'; messageId: string; fileKey: string; type: string }
   | { op: 'raw'; method: string };
 
 export function createRecordingLarkChannel(options: {
@@ -123,6 +131,16 @@ export function createRecordingLarkChannel(options: {
     },
     async recallMessage(messageId) {
       callLog.push({ op: 'recall', messageId });
+    },
+    async downloadResourceToFile(
+      messageId: string,
+      fileKey: string,
+      type: string,
+      destPath: string,
+    ) {
+      callLog.push({ op: 'download', messageId, fileKey, type });
+      await writeFile(destPath, 'replayed-file');
+      return { contentType: type === 'image' ? 'image/png' : 'application/octet-stream', bytesWritten: 13 };
     },
     snapshotCalls() {
       return structuredClone(callLog);

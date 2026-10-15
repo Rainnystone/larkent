@@ -101,7 +101,12 @@ import {
   type BackfillTrigger,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import type { TurnJournal, TurnJournalEntry, TurnJournalResource } from './turn-journal';
+import {
+  isJournalResourceType,
+  type TurnJournal,
+  type TurnJournalEntry,
+  type TurnJournalResource,
+} from './turn-journal';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, startRunFlow } from './run-flow';
@@ -579,7 +584,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
               senderName: '',
               content: entry.resumeHandle ? '继续' : (entry.userInput ?? '继续'),
               rawContentType: 'text',
-              resources: (entry.resources ?? []) as NormalizedMessage['resources'],
+              resources: journalResourcesToMessage(entry.resources),
               mentions: [],
               mentionAll: false,
               mentionedBot: true,
@@ -1196,7 +1201,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const threadId = firstMsg.threadId;
 
   const resourceItems = batch.flatMap((m) =>
-    m.resources.map((r) => ({ messageId: m.messageId, resource: r })),
+    m.resources.map((r) => ({
+      messageId: journalResourceSourceId(r) ?? m.messageId,
+      resource: r,
+    })),
   );
   const attachments = await media.resolve(resourceItems, controls.profileConfig.attachments);
   if (attachments.length > 0) {
@@ -2535,12 +2543,32 @@ function journalResources(batch: NormalizedMessage[]): { resources: TurnJournalR
   const resources: TurnJournalResource[] = [];
   for (const msg of batch) {
     for (const item of msg.resources) {
-      if (typeof item.type === 'string' && typeof item.fileKey === 'string') {
-        resources.push({ type: item.type, fileKey: item.fileKey });
-      }
+      if (!isJournalResourceType(item.type) || typeof item.fileKey !== 'string') continue;
+      resources.push({
+        type: item.type,
+        fileKey: item.fileKey,
+        sourceMessageId: msg.messageId,
+      });
     }
   }
   return resources.length > 0 ? { resources } : {};
+}
+
+function journalResourcesToMessage(
+  resources: TurnJournalResource[] | undefined,
+): NormalizedMessage['resources'] {
+  if (!resources?.length) return [];
+  return resources.map((item) => ({
+    type: item.type,
+    fileKey: item.fileKey,
+    sourceMessageId: item.sourceMessageId,
+  })) as NormalizedMessage['resources'];
+}
+
+function journalResourceSourceId(resource: { sourceMessageId?: string }): string | undefined {
+  return typeof resource.sourceMessageId === 'string' && resource.sourceMessageId
+    ? resource.sourceMessageId
+    : undefined;
 }
 
 function rebuildPendingHints(journal?: TurnJournal): Map<string, string> {
