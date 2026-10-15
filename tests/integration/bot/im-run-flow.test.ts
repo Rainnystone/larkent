@@ -158,7 +158,9 @@ describe('IM run flow', () => {
     const h = await createHarness();
     const workspaceRealpath = await realpath(h.tmp.workspace);
     h.workspaces.setCwd('chat-1', h.tmp.workspace);
-    h.sessions.set('chat-1', 'sess-live', workspaceRealpath);
+    // Same handle the journal would force — the hole is the fingerprint-blind
+    // SessionStore fallback, not a different live session.
+    h.sessions.set('chat-1', 'sess-journal', workspaceRealpath);
 
     const result = await startRunFlow({
       scopeId: 'chat-1',
@@ -178,7 +180,8 @@ describe('IM run flow', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected run flow to start');
-    expect(result.resumeFrom).not.toBe('sess-journal');
+    expect(result.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
   });
 
   it('promises recovery instead of a later retry when reconnect is in progress', async () => {

@@ -135,7 +135,11 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       });
       resumeFrom = catalogEntry?.resumeHandle;
     }
-    if (!resumeFrom && descriptorFor(input.capability.agentId).resume.label === 'session') {
+    if (
+      !resumeFrom
+      && input.forceResumeFingerprint === undefined
+      && descriptorFor(input.capability.agentId).resume.label === 'session'
+    ) {
       resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
       const stale = input.sessions.getRaw(input.scopeId);
       if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
