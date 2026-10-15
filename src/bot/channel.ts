@@ -580,6 +580,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     channel,
     domain: probeDomain,
     forceReconnect: () => controls.restart(),
+    heartbeatPath: deps.appPaths ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
     ...(ledger
       ? {
           onConnectedTick: (now) => ledger.touchLive(now),

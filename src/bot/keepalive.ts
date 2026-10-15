@@ -1,4 +1,6 @@
 import type { LarkChannel } from '@larksuite/channel';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { log, reportMetric } from '../core/logger';
 
 /**
@@ -49,6 +51,8 @@ export interface KeepaliveDeps {
    * here so a surviving WS cannot advance `lastLiveAt` before the scan.
    */
   onWakeUp?: () => void;
+  /** Host supervise: touch each tick so a frozen event loop is visible. */
+  heartbeatPath?: string;
 }
 
 export interface KeepaliveHandle {
@@ -57,8 +61,18 @@ export interface KeepaliveHandle {
 }
 
 export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
-  const { channel, domain, forceReconnect, onConnectedTick, onWakeUp } = deps;
+  const { channel, domain, forceReconnect, onConnectedTick, onWakeUp, heartbeatPath } = deps;
   const nowFn = deps.now ?? Date.now;
+
+  const touchHeartbeat = (): void => {
+    if (!heartbeatPath) return;
+    try {
+      mkdirSync(dirname(heartbeatPath), { recursive: true });
+      writeFileSync(heartbeatPath, `${Date.now()}\n`);
+    } catch (err) {
+      log.fail('keepalive', err, { step: 'heartbeat' });
+    }
+  };
 
   let lastTick = 0;
   let consecutiveDown = 0;
@@ -74,6 +88,7 @@ export function startKeepalive(deps: KeepaliveDeps): KeepaliveHandle {
     if (sinceLast > 0 && sinceLast < TIMER_STORM_GUARD_MS) {
       return;
     }
+    touchHeartbeat();
     // (2) Sleep detection — machine likely just woke from sleep.
     if (sinceLast > SLEEP_DETECT_MS) {
       log.info('keepalive', 'wake-up', { sleptMs: sinceLast });
