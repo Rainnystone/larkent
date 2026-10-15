@@ -63,6 +63,16 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **coalesce**: a second recovery signal while a scan is in-flight returns the same promise and logs `backfill.coalesced`.
 - **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`).
 
+## Run reliability
+
+See [docs/specs/run-reliability.md](docs/specs/run-reliability.md).
+
+- **stop reason** (`stopRequest`): why the bridge asked a run to stop, set at the call site, first writer wins (`user-stop`, `superseded(...)`, `reconnect-command`, `keepalive-restart`, `shutdown-signal`, `bridge-idle-watchdog`, `runner-timeout`, `external-signal`, …). Not the runner's internal `stopReason`, which says how the child was stopped.
+- **run outcome** (`RunOutcome`): the single end-of-run classification derived from stop reason, exit code/signal, terminal event, stderr tail and the adapter's signature table: `completed | partial | interrupted(reason) | failed(subtype)`, plus `retriable` and `needsHuman`. Card final state, notice decision and logs derive from it.
+- **turn journal**: per-profile file, separate from the processed ledger, recording one user turn from queued to reply-delivered (including `completed-undelivered`, notice state and `voided` after a session switch). Used for restart recovery and orphan child detection. Older code ignores it.
+- **interruption notice**: a new message from the bridge that @-mentions the initiator after a run ends interrupted or retriably failed, offering 继续 / 暂不. Never auto-continues. Off by default per profile.
+- **test bridge**: an isolated bridge instance driven by `e2e/test-bridge/`, with its own data root, its own Feishu app, the hard access fence on and a fake CLI by default. Never shares a data root or app id with a live bridge.
+
 ## Words we do not use
 
 - "default agent". There is none.

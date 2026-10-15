@@ -81,6 +81,10 @@ larkent_lark auth status --json --verify
 
 **完成条件：**记录 profile、CLI 版本、bot 往返、完整用户授权及两类实际读取的结果。token、secret、device code 和授权二维码留在私有环境；交付只提供脱敏证据。未验证的能力明确标记，不能仅凭注册成功或自动化测试通过宣称全部 setup 完成。
 
+## 例外：test bridge 的 test profile
+
+`e2e/test-bridge/` 使用的 test profile 只用 **bot 身份**（bot-only），**不做**第 3 步的完整用户身份授权，也不导入任何用户身份；不要为它补 `--domain all` 授权。驱动测试的 tester 用户 token 放在 test 数据根之外的独立配置目录，scope 只限测试群的发送与读取。test profile 使用独立数据根和独立飞书应用，不得复用 live 数据根或 live app。scope 以和 live profile 的差异对比为准，确认未订阅不需要的文档评论或会议事件。详见 [run-reliability spec](specs/run-reliability.md)。
+
 ## 按需继续
 
 - 常驻服务、supervisor、停止与日志：[运行指南](operations.md)。
