@@ -165,6 +165,27 @@ describe('summarizeEndedMeeting', () => {
     expect(sent).toHaveLength(0);
   });
 
+  it('summarizes a fenced, already-admitted meeting without an in-meeting actor', async () => {
+    const config = cfg({ summaryOnEnd: true });
+    const pc = profileConfig(config);
+    pc.access.fence = { enabled: true };
+    pc.access.allowedChats = ['oc_team'];
+    pc.access.allowedUsers = ['ou_inviter'];
+    const sent: unknown[] = [];
+    const session = makeSession(config, 'oc_team');
+    await summarizeEndedMeeting({
+      session,
+      channel: { send: vi.fn(async () => { sent.push(1); return {} as never; }) },
+      controls: { profile: 'claude', profileConfig: pc },
+      executor: {},
+      activeRuns: { interrupt: vi.fn() },
+      sessions: {},
+      workspaces: {},
+    } as never);
+    expect(mocks.startRunFlow).toHaveBeenCalledTimes(1);
+    expect(sent).toHaveLength(1);
+  });
+
   it('still works after the meeting ended (transcript survives markEnded)', async () => {
     const d = deps(cfg({ summaryOnEnd: true }), 'oc_team');
     d.session.markEnded(); // what the manager does before invoking onEnded

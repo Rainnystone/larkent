@@ -52,7 +52,7 @@ export function isAccessFenceEnabled(profile: ProfileConfig): boolean {
  */
 export function evaluateAccess(input: EvaluateAccessInput): AccessDecision {
   if (isAccessFenceEnabled(input.profile)) {
-    return evaluateAccessFence(input.profile, input.chatId, input.senderId);
+    return evaluateAccessFence(input.profile, input.chatId, input.senderId, input.entry);
   }
   switch (input.entry) {
     case 'dm':
@@ -120,7 +120,12 @@ function evaluateAccessFence(
   profile: ProfileConfig,
   chatId: string,
   senderId: string,
+  entry: AccessEntry,
 ): AccessDecision {
+  if (entry === 'comment') {
+    if (!profile.access.allowedUsers.includes(senderId)) return deny('denied-user');
+    return allow('allowed-user');
+  }
   if (!profile.access.allowedChats.includes(chatId)) return deny('denied-chat');
   if (!profile.access.allowedUsers.includes(senderId)) return deny('denied-user');
   return allow('allowed-user');

@@ -181,6 +181,9 @@ describe('policy fingerprint', () => {
         admins: ['ou_admin_a', 'ou_admin_b'],
       }),
     );
+    expect(accessPolicyDigest({ ...profile.access, fence: { enabled: true } })).not.toBe(
+      accessPolicyDigest(profile.access),
+    );
     expect(
       resourceScopeDigest({
         source: 'comment',

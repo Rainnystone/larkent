@@ -164,11 +164,11 @@ describe('requireMentionForChat', () => {
 });
 
 describe('access fence', () => {
-  const entries: AccessEntry[] = ['dm', 'group', 'comment', 'meeting', 'card'];
+  const imEntries: AccessEntry[] = ['dm', 'group', 'meeting', 'card'];
   const chatId = 'oc_allowed';
   const senderId = 'ou_allowed';
 
-  it.each(entries)('lets %s through only when chat and sender are both allowlisted', (entry) => {
+  it.each(imEntries)('lets %s through only when chat and sender are both allowlisted', (entry) => {
     const profile = fencedProfile({
       allowedChats: [chatId],
       allowedUsers: [senderId],
@@ -197,7 +197,33 @@ describe('access fence', () => {
     ).toBe(false);
   });
 
-  it.each(entries)('does not exempt the owner from the %s fence', (entry) => {
+  it('lets comments through for an allowlisted user even when chatId is a document token', () => {
+    const profile = fencedProfile({
+      allowedChats: [chatId],
+      allowedUsers: [senderId],
+    });
+
+    expect(
+      evaluateAccess({
+        entry: 'comment',
+        profile,
+        controls: ownerControls,
+        chatId: 'docx_not_a_chat',
+        senderId,
+      }),
+    ).toEqual({ ok: true, reason: 'allowed-user' });
+    expect(
+      evaluateAccess({
+        entry: 'comment',
+        profile,
+        controls: ownerControls,
+        chatId: 'docx_not_a_chat',
+        senderId: 'ou_other',
+      }),
+    ).toEqual({ ok: false, reason: 'denied-user' });
+  });
+
+  it.each([...imEntries, 'comment'] as const)('does not exempt the owner from the %s fence', (entry) => {
     const profile = fencedProfile({
       allowedChats: [chatId],
       allowedUsers: [senderId],
@@ -214,7 +240,7 @@ describe('access fence', () => {
     ).toEqual({ ok: false, reason: 'denied-user' });
   });
 
-  it.each(entries)('does not exempt an admin from the %s fence', (entry) => {
+  it.each([...imEntries, 'comment'] as const)('does not exempt an admin from the %s fence', (entry) => {
     const profile = fencedProfile({
       allowedChats: [chatId],
       allowedUsers: [senderId],

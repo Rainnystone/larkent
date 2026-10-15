@@ -154,6 +154,11 @@ export interface AnswerOptions {
   deliver: 'broadcast' | 'caller';
   /** Prefix the asker actually typed, so hints quote their wording back. */
   usedPrefix?: string;
+  /**
+   * System-triggered run for a meeting that already passed join authorization
+   * (ended-meeting summary). Skips a second actor/chat fence check.
+   */
+  admitted?: boolean;
 }
 
 /**
@@ -175,7 +180,7 @@ export async function answerInMeeting(
     ...(opts.askedBy ? { askedBy: opts.askedBy } : {}),
   });
 
-  const answer = await runMeetingAgent(deps, prompt, opts.usedPrefix, opts.actorId);
+  const answer = await runMeetingAgent(deps, prompt, opts.usedPrefix, opts.actorId, opts.admitted);
   if (!answer) return '';
   // The caller relays it themselves; never echo into the meeting.
   if (opts.deliver === 'caller') return answer;
@@ -259,7 +264,7 @@ export async function summarizeEndedMeeting(deps: MeetingAgentDeps): Promise<voi
   const answer = await answerInMeeting(
     deps,
     '会议已结束。请基于以上会议字幕输出一份纪要：讨论了什么、达成的结论、待办（含负责人，如字幕里有）。',
-    { deliver: 'caller' },
+    { deliver: 'caller', admitted: true },
   ).catch((err) => {
     log.warn('meeting', 'summary-run-failed', { meetingId: session.meetingId, err: String(err) });
     return '';
@@ -311,18 +316,24 @@ async function runMeetingAgent(
   prompt: string,
   usedPrefix?: string,
   actorId?: string,
+  admitted?: boolean,
 ): Promise<string> {
   const { session, controls } = deps;
   const scopeId = meetingScopeId(session.meetingId);
   const capability = capabilityForProfile(controls.profileConfig);
   const senderId = actorId ?? '';
-  const access = evaluateAccess({
+  const evaluated = evaluateAccess({
     entry: 'meeting',
     profile: controls.profileConfig,
     controls,
     chatId: session.originChatId ?? '',
     senderId,
   });
+  const access = evaluated.ok
+    ? evaluated
+    : admitted
+      ? { ok: true as const, reason: 'allowed-chat' as const }
+      : evaluated;
   if (!access.ok) {
     log.info('meeting', 'skip-not-allowed-user', {
       meetingId: session.meetingId,
