@@ -1636,9 +1636,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               producer: async (ctrl) => {
                 producerStarted = true;
                 if (progress.abandoned()) return;
+                cardCtrl = ctrl;
                 await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
                 producerRendered = true;
-                cardCtrl = ctrl;
                 await renderDone;
               },
             },
@@ -1709,9 +1709,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             markdown: async (ctrl) => {
               producerStarted = true;
               if (progress.abandoned()) return;
+              markdownCtrl = ctrl;
               await ctrl.setContent(renderText(filterForPrefs(latestState)));
               producerRendered = true;
-              markdownCtrl = ctrl;
               await renderDone;
             },
           },
