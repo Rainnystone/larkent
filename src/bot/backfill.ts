@@ -86,16 +86,33 @@ export function formatBackfillLatenessHint(input: {
 
 export function createBackfillRun(): (deps: RunBackfillDeps) => Promise<void> {
   let inFlight: Promise<void> | undefined;
-  return (deps) => {
+  let followUp: RunBackfillDeps | undefined;
+  const launch = (deps: RunBackfillDeps): Promise<void> => {
     if (inFlight) {
       log.info('backfill', 'coalesced');
+      if (deps.trigger === 'handoff') followUp = deps;
       return inFlight;
     }
-    inFlight = runBackfill(deps).finally(() => {
-      inFlight = undefined;
-    });
+    inFlight = (async () => {
+      let current: RunBackfillDeps | undefined = deps;
+      try {
+        while (current) {
+          await runBackfill(current);
+          current = followUp;
+          followUp = undefined;
+        }
+      } finally {
+        inFlight = undefined;
+      }
+      if (followUp) {
+        const extra = followUp;
+        followUp = undefined;
+        await launch(extra);
+      }
+    })();
     return inFlight;
   };
+  return launch;
 }
 
 export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
