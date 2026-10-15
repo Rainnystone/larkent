@@ -235,7 +235,12 @@ export class MeetingManager {
     joinedWithAccessCheck?: boolean;
   } = {}): Promise<MeetingSession> {
     const existing = this.byMeetingNo(meetingNo);
-    if (existing && !existing.ended) return existing;
+    if (existing && !existing.ended) {
+      if (opts.joinedWithAccessCheck === true) {
+        existing.admit({ originChatId: opts.originChatId });
+      }
+      return existing;
+    }
 
     const config = this.deps.config();
     const joined = await joinMeeting(this.deps.client, {

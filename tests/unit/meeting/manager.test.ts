@@ -164,6 +164,30 @@ describe('MeetingManager routing', () => {
     expect(m.list()).toHaveLength(1);
   });
 
+  it('admits an existing console session on a later access-checked join', async () => {
+    const client = fakeClient();
+    const m = manager({ client });
+    const consoleJoin = await m.join('123456789');
+    expect(consoleJoin.joinedWithAccessCheck).toBe(false);
+    expect(consoleJoin.originChatId).toBeUndefined();
+
+    const authorized = await m.join('123456789', {
+      originChatId: 'oc_team',
+      joinedWithAccessCheck: true,
+    });
+    expect(authorized).toBe(consoleJoin);
+    expect(authorized.joinedWithAccessCheck).toBe(true);
+    expect(authorized.originChatId).toBe('oc_team');
+    const joinCalls = (client.request as ReturnType<typeof vi.fn>).mock.calls.filter(
+      (call) => (call[0] as { url: string }).url.endsWith('/join'),
+    );
+    expect(joinCalls).toHaveLength(1);
+
+    const again = await m.join('123456789', { originChatId: 'oc_other', joinedWithAccessCheck: true });
+    expect(again.originChatId).toBe('oc_team');
+    expect(again.joinedWithAccessCheck).toBe(true);
+  });
+
   it('dispose() stops local work without leaving the meetings', async () => {
     const client = fakeClient();
     const m = manager({ client });

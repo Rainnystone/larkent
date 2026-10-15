@@ -61,8 +61,8 @@ export class MeetingSession {
   readonly meetingNo: string;
   readonly topic?: string;
   readonly startedAt: string;
-  readonly originChatId?: string;
-  readonly joinedWithAccessCheck: boolean;
+  originChatId?: string;
+  joinedWithAccessCheck: boolean;
 
   private readonly client: VcRequestClient;
   private readonly config: MeetingConfig;
@@ -101,6 +101,17 @@ export class MeetingSession {
     this.joinedWithAccessCheck = deps.joinedWithAccessCheck === true;
     this.now = deps.now ?? (() => Date.now());
     this.startedAt = new Date(this.now()).toISOString();
+  }
+
+  /**
+   * Promote a console-joined session after a later access-checked join.
+   * Never demotes; originChatId is set only when missing.
+   */
+  admit(opts: { originChatId?: string } = {}): void {
+    this.joinedWithAccessCheck = true;
+    if (this.originChatId === undefined && opts.originChatId) {
+      this.originChatId = opts.originChatId;
+    }
   }
 
   status(): MeetingSessionStatus {
