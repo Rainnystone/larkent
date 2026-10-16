@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { RunOutcome } from './run-outcome';
+import { classify } from './feishu-error';
 import { log } from '../core/logger';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
@@ -25,6 +26,8 @@ export type TurnJournalStatus =
   | 'notice-delivered'
   | 'voided';
 
+export type OutboxItemState = 'staged' | 'sent' | 'rejected' | 'voided';
+
 export interface TurnReply {
   markdown: string;
   replyTo: string;
@@ -34,6 +37,7 @@ export interface TurnReply {
   messageId?: string;
   /** True when the receipt is an interactive card (stream create or card send). */
   interactive?: boolean;
+  state?: OutboxItemState;
 }
 
 export type ContinuationStatus =
@@ -61,6 +65,7 @@ export interface TurnNotice {
   continueHint?: string;
   messageId?: string;
   deliveryId?: string;
+  state?: OutboxItemState;
 }
 
 export interface TurnJournalEntry {
@@ -119,6 +124,8 @@ export interface JournalRecoverOptions {
   orphanGraceMs?: number;
   /** Live scopes owned by this process; skip orphan reaping for those entries. */
   isActive?: (scope: string) => boolean;
+  /** I6: while the link is down, redeliver stages and returns. */
+  isDown?: () => boolean;
 }
 
 interface JournalDocument {
@@ -142,7 +149,7 @@ export class TurnJournal {
   private persistDirty = false;
   private loading: Promise<void> | undefined;
   private persistenceDisabled = false;
-  private recovering: Promise<{ orphans: number; resent: number }> | undefined;
+  private redelivering: Promise<void> | undefined;
   private readonly enqueuedThisProcess = new Set<string>();
 
   constructor(path: string, opts: TurnJournalOptions = {}) {
@@ -220,14 +227,6 @@ export class TurnJournal {
     this.patch(turnId, { status: 'settled', outcome });
   }
 
-  markReplyDelivered(turnId: string): void {
-    this.replyDelivered(turnId);
-  }
-
-  markCompletedUndelivered(turnId: string, reply: TurnReply): void {
-    this.stageReply(turnId, reply);
-  }
-
   stageReply(turnId: string, reply: {
     markdown: string;
     replyTo: string;
@@ -237,23 +236,48 @@ export class TurnJournal {
     messageId?: string;
     interactive?: boolean;
   }): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    const nextReply: TurnReply = {
+      markdown: reply.markdown,
+      replyTo: reply.replyTo,
+      replyMode: reply.replyMode ?? 'text',
+      ...(reply.replyInThread ? { replyInThread: true } : {}),
+      deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
+      ...(reply.messageId ? { messageId: reply.messageId } : {}),
+      ...(reply.interactive === true ? { interactive: true } : {}),
+      state: 'staged',
+    };
     this.patch(turnId, {
-      status: 'completed-undelivered',
-      reply: {
-        markdown: reply.markdown,
-        replyTo: reply.replyTo,
-        replyMode: reply.replyMode ?? 'text',
-        ...(reply.replyInThread ? { replyInThread: true } : {}),
-        deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
-        ...(reply.messageId ? { messageId: reply.messageId } : {}),
-        ...(reply.interactive === true ? { interactive: true } : {}),
-      },
+      status: current && isStagedNotice({ ...current, reply: nextReply })
+        ? 'notice-pending'
+        : 'completed-undelivered',
+      reply: nextReply,
     });
   }
 
   replyDelivered(turnId: string, messageId?: string): void {
     if (messageId?.trim()) this.noteReplyReceipt(turnId, messageId);
-    this.patch(turnId, { status: 'reply-delivered' });
+    const current = this.entries.find((item) => item.turnId === turnId);
+    if (!current) return;
+    const existing = replyState(current);
+    if (existing === 'rejected' || existing === 'voided') return;
+    const reply = current.reply ? { ...current.reply, state: 'sent' as const } : current.reply;
+    this.patch(turnId, {
+      ...(reply ? { reply } : {}),
+      status: isStagedNotice({ ...current, reply: reply ?? current.reply })
+        ? 'notice-pending'
+        : 'reply-delivered',
+    });
+  }
+
+  replyRejected(turnId: string): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    if (!current?.reply) return;
+    const reply = { ...current.reply, state: 'rejected' as const };
+    this.patch(turnId, {
+      reply,
+      status: isStagedNotice({ ...current, reply }) ? 'notice-pending' : 'reply-delivered',
+    });
   }
 
   noteReplyReceipt(turnId: string, messageId: string, interactive?: boolean): void {
@@ -290,27 +314,29 @@ export class TurnJournal {
     });
   }
 
-  markNoticePending(turnId: string, notice: TurnNotice): void {
-    this.stageNotice(turnId, notice);
-  }
-
   stageNotice(turnId: string, notice: TurnNotice): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    const nextNotice: TurnNotice = {
+      ...notice,
+      deliveryId: notice.deliveryId ?? noticeDeliveryKey(turnId),
+      state: notice.state ?? 'staged',
+    };
     this.patch(turnId, {
       status: 'notice-pending',
       noticeStatus: 'pending',
-      notice: {
-        ...notice,
-        deliveryId: notice.deliveryId ?? noticeDeliveryKey(turnId),
-      },
+      notice: nextNotice,
+      ...(current?.reply ? { reply: current.reply } : {}),
     });
   }
 
-  markNoticeDelivered(turnId: string): void {
-    this.noticeDelivered(turnId);
-  }
-
   noticeDelivered(turnId: string): void {
-    this.patch(turnId, { status: 'notice-delivered', noticeStatus: 'delivered' });
+    const current = this.entries.find((item) => item.turnId === turnId);
+    const notice = current?.notice ? { ...current.notice, state: 'sent' as const } : current?.notice;
+    this.patch(turnId, {
+      ...(notice ? { notice } : {}),
+      noticeStatus: 'delivered',
+      status: current && isStagedReply(current) ? 'completed-undelivered' : 'notice-delivered',
+    });
   }
 
   recordNotice(turnId: string, notice: TurnNotice): void {
@@ -318,7 +344,12 @@ export class TurnJournal {
   }
 
   voidTurn(turnId: string): void {
-    this.patch(turnId, { status: 'voided' });
+    const current = this.entries.find((item) => item.turnId === turnId);
+    this.patch(turnId, {
+      status: 'voided',
+      ...(current?.reply ? { reply: { ...current.reply, state: 'voided' as const } } : {}),
+      ...(current?.notice ? { notice: { ...current.notice, state: 'voided' as const } } : {}),
+    });
   }
 
   noteTurnMeta(turnId: string, fields: { resumeHandle?: string; policyFingerprint?: string }): void {
@@ -330,17 +361,26 @@ export class TurnJournal {
     status: ContinuationStatus,
     extra?: { consecutiveInterrupts?: number; noticeInvalidated?: boolean },
   ): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    const notice = extra?.noticeInvalidated === true && current?.notice
+      ? { ...current.notice, state: 'voided' as const }
+      : undefined;
     this.patch(turnId, {
       continuation: { status },
       ...(extra?.consecutiveInterrupts !== undefined
         ? { consecutiveInterrupts: extra.consecutiveInterrupts }
         : {}),
       ...(extra?.noticeInvalidated === true ? { noticeInvalidated: true } : {}),
+      ...(notice ? { notice } : {}),
     });
   }
 
   invalidateNotice(turnId: string): void {
-    this.patch(turnId, { noticeInvalidated: true });
+    const current = this.entries.find((item) => item.turnId === turnId);
+    this.patch(turnId, {
+      noticeInvalidated: true,
+      ...(current?.notice ? { notice: { ...current.notice, state: 'voided' as const } } : {}),
+    });
   }
 
   voidScope(scope: string): void {
@@ -356,6 +396,8 @@ export class TurnJournal {
       }
       if (!isIncomplete(entry.status)) continue;
       entry.status = 'voided';
+      if (entry.reply) entry.reply = { ...entry.reply, state: 'voided' };
+      if (entry.notice) entry.notice = { ...entry.notice, state: 'voided' };
       entry.updatedAt = this.now();
       changed = true;
     }
@@ -365,102 +407,69 @@ export class TurnJournal {
     }
   }
 
-  recover(opts: JournalRecoverOptions): Promise<{ orphans: number; resent: number }> {
-    if (this.recovering) return this.recovering;
-    this.recovering = this.recoverOwned(opts).finally(() => {
-      this.recovering = undefined;
-    });
-    return this.recovering;
-  }
-
   async reapOrphans(opts: JournalRecoverOptions = {}): Promise<void> {
     await this.reapOrphansOwned(opts);
     await this.flush();
   }
 
   async redeliver(opts: JournalRecoverOptions = {}): Promise<void> {
-    await this.redeliverOwned(opts);
-    await this.flush();
-  }
-
-  private async recoverOwned(
-    opts: JournalRecoverOptions,
-  ): Promise<{ orphans: number; resent: number }> {
-    const reap = await this.reapOrphansOwned(opts);
-    const delivery = await this.redeliverOwned(opts);
-    await this.flush();
-    return { orphans: reap.orphans, resent: delivery.resent };
+    if (this.redelivering) return this.redelivering;
+    this.redelivering = this.redeliverOwned(opts).then(async () => {
+      await this.flush();
+    }).finally(() => {
+      this.redelivering = undefined;
+    });
+    return this.redelivering;
   }
 
   private async redeliverOwned(
     opts: JournalRecoverOptions,
   ): Promise<{ resent: number; notices: number }> {
-    const snapshot = this.entries.filter((entry) => isStagedDelivery(entry));
+    const snapshot = this.entries.filter((entry) => isStagedReply(entry) || isStagedNotice(entry));
     if (snapshot.length === 0) return { resent: 0, notices: 0 };
 
     let resent = 0;
     let notices = 0;
-    const pendingNoticeCount = snapshot.filter((item) => item.status === 'notice-pending').length;
+    const pendingNoticeCount = snapshot.filter((item) => isStagedNotice(item)).length;
 
     for (const entry of snapshot) {
+      if (opts.isDown?.()) break;
       const current = this.entries.find((item) => item.turnId === entry.turnId);
-      if (!current || !isStagedDelivery(current)) continue;
+      if (!current) continue;
 
-      if (current.status === 'notice-pending' && opts.isActive?.(current.scope)) continue;
-      if (
-        current.status === 'completed-undelivered'
-        && current.reply
-        && replyAlreadyVisible(current)
-      ) {
-        this.replyDelivered(current.turnId);
-        continue;
-      }
-      if (current.reply && !replyAlreadyVisible(current) && opts.resend) {
-        try {
-          const ok = await opts.resend({ ...current });
-          if (ok && current.status === 'completed-undelivered') {
-            this.replyDelivered(current.turnId);
-            resent += 1;
-          } else if (ok) {
-            resent += 1;
-          }
-        } catch (error) {
-          log.warn('journal', 'resend-failed', {
-            turnId: current.turnId,
-            err: error instanceof Error ? error.message : String(error),
-          });
-        }
-      }
-      if (current.status === 'settled' && current.reply) {
-        if (replyAlreadyVisible(current)) {
+      if (isStagedReply(current)) {
+        if (current.cliAlreadySent) {
           this.replyDelivered(current.turnId);
-          continue;
-        }
-        if (!opts.resend) continue;
-        try {
-          const ok = await opts.resend({ ...current });
-          if (ok) {
-            this.replyDelivered(current.turnId);
-            resent += 1;
+        } else if (opts.resend) {
+          try {
+            const ok = await opts.resend({ ...current });
+            if (ok) {
+              this.replyDelivered(current.turnId);
+              resent += 1;
+            }
+          } catch (error) {
+            log.warn('journal', 'resend-failed', {
+              turnId: current.turnId,
+              err: error instanceof Error ? error.message : String(error),
+            });
+            if (classify(error) === 'link') break;
           }
-        } catch (error) {
-          log.warn('journal', 'resend-failed', {
-            turnId: current.turnId,
-            err: error instanceof Error ? error.message : String(error),
-          });
         }
-        continue;
       }
-      if (current.status !== 'notice-pending') continue;
-      if (!opts.resendNotice || current.noticeInvalidated) continue;
-      if (current.notice?.messageId) {
-        this.noticeDelivered(current.turnId);
+
+      if (opts.isDown?.()) break;
+      const latest = this.entries.find((item) => item.turnId === entry.turnId);
+      if (!latest || !isStagedNotice(latest)) continue;
+      if (opts.isActive?.(latest.scope)) continue;
+      if (!opts.resendNotice) continue;
+      if (latest.notice?.messageId) {
+        this.noticeDelivered(latest.turnId);
         continue;
       }
       try {
-        const ok = await opts.resendNotice({ ...current });
+        const ok = await opts.resendNotice({ ...latest });
         if (ok) {
-          this.noticeDelivered(current.turnId);
+          this.noticeDelivered(latest.turnId);
           notices += 1;
           if (opts.noticeGapMs && notices < pendingNoticeCount) {
             await (opts.sleep ?? defaultSleep)(opts.noticeGapMs);
@@ -468,9 +477,10 @@ export class TurnJournal {
         }
       } catch (error) {
         log.warn('journal', 'notice-resend-failed', {
-          turnId: current.turnId,
+          turnId: latest.turnId,
           err: error instanceof Error ? error.message : String(error),
         });
+        if (classify(error) === 'link') break;
       }
     }
 
@@ -483,7 +493,9 @@ export class TurnJournal {
   private async reapOrphansOwned(
     opts: JournalRecoverOptions,
   ): Promise<{ orphans: number; interrupted: number; notices: number }> {
-    const snapshot = this.entries.filter((entry) => isRecoverable(entry.status) && !isStagedDelivery(entry));
+    const snapshot = this.entries.filter((entry) => (
+      isRecoverable(entry.status) && !isStagedReply(entry) && !isStagedNotice(entry)
+    ));
     if (snapshot.length === 0) return { orphans: 0, interrupted: 0, notices: 0 };
 
     let orphans = 0;
@@ -498,7 +510,7 @@ export class TurnJournal {
 
     for (const entry of snapshot) {
       const current = this.entries.find((item) => item.turnId === entry.turnId);
-      if (!current || !isRecoverable(current.status) || isStagedDelivery(current)) continue;
+      if (!current || !isRecoverable(current.status) || isStagedReply(current) || isStagedNotice(current)) continue;
 
       if (opts.isActive?.(current.scope) && (
         current.status === 'queued' || current.status === 'running' || current.status === 'settled'
@@ -750,6 +762,7 @@ function parseNotice(raw: unknown): TurnNotice | undefined {
     ...(typeof raw.continueHint === 'string' ? { continueHint: raw.continueHint } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
     ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
+    ...(isOutboxItemState(raw.state) ? { state: raw.state } : {}),
   };
 }
 
@@ -786,6 +799,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
     ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
     ...(raw.interactive === true ? { interactive: true } : {}),
+    ...(isOutboxItemState(raw.state) ? { state: raw.state } : {}),
   };
 }
 
@@ -826,29 +840,72 @@ function isIncomplete(status: TurnJournalStatus): boolean {
   }
 }
 
-function replyAlreadyVisible(entry: TurnJournalEntry): boolean {
-  return Boolean(entry.cliAlreadySent);
+function isOutboxItemState(value: unknown): value is OutboxItemState {
+  switch (value) {
+    case 'staged':
+    case 'sent':
+    case 'rejected':
+    case 'voided':
+      return true;
+    default:
+      return false;
+  }
 }
 
-function isStagedDelivery(entry: TurnJournalEntry): boolean {
+export function replyState(entry: TurnJournalEntry): OutboxItemState | undefined {
+  if (!entry.reply) return undefined;
+  if (entry.status === 'voided') return 'voided';
+  if (entry.reply.state) return entry.reply.state;
   switch (entry.status) {
+    case 'reply-delivered':
+      return 'sent';
     case 'completed-undelivered':
-    case 'notice-pending':
-      return true;
     case 'settled':
-      return entry.reply !== undefined;
+    case 'notice-pending':
     case 'queued':
     case 'running':
     case 'interrupted':
-    case 'reply-delivered':
+      return 'staged';
     case 'notice-delivered':
-    case 'voided':
-      return false;
+      return entry.reply.messageId ? 'sent' : 'staged';
     default: {
       const _exhaustive: never = entry.status;
       return _exhaustive;
     }
   }
+}
+
+export function noticeState(entry: TurnJournalEntry): OutboxItemState | undefined {
+  if (!entry.notice) return undefined;
+  if (entry.noticeInvalidated || entry.status === 'voided') return 'voided';
+  if (entry.notice.state) return entry.notice.state;
+  switch (entry.status) {
+    case 'notice-pending':
+      return 'staged';
+    case 'notice-delivered':
+      return 'sent';
+    case 'queued':
+    case 'running':
+    case 'settled':
+    case 'reply-delivered':
+    case 'completed-undelivered':
+    case 'interrupted':
+      if (entry.noticeStatus === 'pending') return 'staged';
+      if (entry.noticeStatus === 'delivered' || entry.notice.messageId) return 'sent';
+      return 'staged';
+    default: {
+      const _exhaustive: never = entry.status;
+      return _exhaustive;
+    }
+  }
+}
+
+function isStagedReply(entry: TurnJournalEntry): boolean {
+  return replyState(entry) === 'staged';
+}
+
+function isStagedNotice(entry: TurnJournalEntry): boolean {
+  return noticeState(entry) === 'staged';
 }
 
 function isRecoverable(status: TurnJournalStatus): boolean {

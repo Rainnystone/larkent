@@ -115,6 +115,7 @@ import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
   replyDeliveryKey,
+  replyState,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnJournalResource,
@@ -140,6 +141,9 @@ import {
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
+/** Bounded retry of staged 4xx/local cards while the link stays up (I1). */
+const OUTBOX_SWEEP_MS = 50;
+const OUTBOX_SWEEP_MAX = 8;
 
 /** Single handshake attempt. Also the force-reconnect budget via connectTimeoutMs. */
 export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
@@ -266,6 +270,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       return channelForCards.updateCard(id, card);
     },
   });
+  const outboxSweep = {
+    schedule() {},
+    stop() {},
+  };
   const activeRuns = new ActiveRuns({
     onSupersede: (scope) => {
       continuations.voidScope(scope);
@@ -470,6 +478,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           continuations,
           cliSelfSent,
           link,
+          onDeliveryWait: () => outboxSweep.schedule(),
         });
       } finally {
         sessionWriter.release();
@@ -534,6 +543,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const journalRecoverOpts = (owned: TurnJournal) => ({
+    isDown: () => link.isDown(),
     resend: (entry: TurnJournalEntry) => resendJournalReply({
       channel,
       journal: owned,
@@ -561,6 +571,23 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       if (planInterruptionNotice(outcome).kind === 'continue') {
         continuations.offer(entry.turnId, outcome);
       }
+      if (link.isDown()) {
+        stageInterruptionNotice({
+          journal: owned,
+          turnId: entry.turnId,
+          outcome,
+          noticeAuth,
+          consecutive: continuations.consecutive(entry.scope),
+          requireBotMention: requireMentionForChat(
+            controls.profileConfig,
+            controls.cfg,
+            entry.chatId,
+          ),
+          ownerId: controls.botOwnerId,
+          authNotified: authNoticeAlreadyDelivered(owned),
+        });
+        return false;
+      }
       const result = await deliverInterruptionNotice({
         send: (chatId, content, options) => channel.send(chatId, content, options),
         journal: owned,
@@ -581,6 +608,36 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     noticeGapMs: NOTICE_RESTART_GAP_MS,
     isActive: (scope: string) => activeRuns.get(scope) !== undefined,
   });
+
+  let sweepTimer: ReturnType<typeof setTimeout> | undefined;
+  let sweepStopped = false;
+  let sweepPasses = 0;
+  let sweepInFlight = false;
+  const runOutboxSweep = (): void => {
+    if (sweepStopped || sweepInFlight || !journal || link.isDown()) return;
+    sweepInFlight = true;
+    sweepPasses += 1;
+    void journal.redeliver(journalRecoverOpts(journal)).finally(() => {
+      sweepInFlight = false;
+    }).then(() => {
+      if (sweepStopped || link.isDown()) return;
+      const pending = journal.list().some((entry) => replyState(entry) === 'staged');
+      if (!pending || sweepPasses >= OUTBOX_SWEEP_MAX) return;
+      sweepTimer = setTimeout(() => {
+        sweepTimer = undefined;
+        runOutboxSweep();
+      }, OUTBOX_SWEEP_MS);
+    });
+  };
+  outboxSweep.schedule = () => {
+    sweepPasses = 0;
+    runOutboxSweep();
+  };
+  outboxSweep.stop = () => {
+    sweepStopped = true;
+    if (sweepTimer) clearTimeout(sweepTimer);
+    sweepTimer = undefined;
+  };
 
   const recovery = createRecovery({
     journal: {
@@ -610,6 +667,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       since: ledger?.getLiveAt() ?? now,
       until: now,
     });
+    outboxSweep.schedule();
   };
 
   let link = {
@@ -842,6 +900,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     tickLink: () => started.tick(),
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
+      outboxSweep.stop();
       resumeCandidates.clear();
       // Commands can themselves call disconnect, so track run consumers only,
       // never the enclosing message/card command handler (which would self-wait).
@@ -1246,6 +1305,7 @@ interface RunBatchDeps {
   continuations: Continuations;
   cliSelfSent?: CliSelfSendTracker;
   link?: { outageEpoch(): number; isDown(): boolean };
+  onDeliveryWait?: () => void;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1272,6 +1332,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     continuations,
     cliSelfSent,
     link,
+    onDeliveryWait,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1679,6 +1740,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           handle,
           notice: noticeCtx,
           cliSelfSent,
+          link,
+          onWait: onDeliveryWait,
         });
         return;
       }
@@ -1761,6 +1824,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         handle,
         notice: noticeCtx,
         cliSelfSent,
+        link,
+        onWait: onDeliveryWait,
       });
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
@@ -1833,6 +1898,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         handle,
         notice: noticeCtx,
         cliSelfSent,
+        link,
+        onWait: onDeliveryWait,
       });
     } else {
       // text mode: drain the agent stream without sending anything during
@@ -1863,6 +1930,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         handle,
         notice: noticeCtx,
         cliSelfSent,
+        link,
+        onWait: onDeliveryWait,
       });
     }
   } catch (err) {
@@ -2061,6 +2130,8 @@ async function deliverFinalReply(input: {
     requireBotMention: boolean;
   };
   cliSelfSent?: CliSelfSendTracker;
+  link?: { isDown(): boolean };
+  onWait?: () => void;
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
     input.journal.markSettled(input.turnId, input.handle.outcome);
@@ -2114,6 +2185,8 @@ async function deliverFinalReply(input: {
     reportMetric(OUTBOUND_SKIP_CLI_SENT_METRIC, 1);
   } else if (skip && stream.kind === 'none') {
     log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
+  } else if (input.link?.isDown()) {
+    return;
   } else {
     const settled = await settleStreamDelivery({
       stream,
@@ -2124,12 +2197,22 @@ async function deliverFinalReply(input: {
         deliveryId,
         state: body.trim() ? input.state : (input.skipFrom ?? input.state),
       }),
+      fallback: () => sendPlainTextReply({
+        channel: input.channel,
+        chatId: input.chatId,
+        body: visibleBody,
+        sendOpts: input.sendOpts,
+        deliveryId,
+      }),
       journal: input.journal,
       turnId: input.turnId,
       replyMode: input.replyMode,
       dedicatedFinal,
     });
-    if (settled === 'wait') return;
+    if (settled === 'wait') {
+      input.onWait?.();
+      return;
+    }
   }
   input.cliSelfSent?.consume(input.scope);
   if (input.journal && input.turnId && !willNotice) input.journal.replyDelivered(input.turnId);
@@ -2141,6 +2224,7 @@ async function deliverFinalReply(input: {
       scope: input.scope,
       outcome,
       notice: input.notice,
+      link: input.link,
     });
   }
 }
@@ -2150,6 +2234,7 @@ async function settleStreamDelivery(input: {
   channel: LarkChannel;
   body: string;
   send: () => Promise<{ messageId?: string } | undefined>;
+  fallback?: () => Promise<{ messageId?: string } | undefined>;
   journal?: TurnJournal;
   turnId?: string;
   replyMode: ReturnType<typeof getMessageReplyMode>;
@@ -2194,6 +2279,7 @@ async function settleStreamDelivery(input: {
 
 async function sendOrWait(input: {
   send: () => Promise<{ messageId?: string } | undefined>;
+  fallback?: () => Promise<{ messageId?: string } | undefined>;
   journal?: TurnJournal;
   turnId?: string;
   replyMode: ReturnType<typeof getMessageReplyMode>;
@@ -2206,13 +2292,26 @@ async function sendOrWait(input: {
     switch (kind) {
       case 'link':
         return 'wait';
-      case 'rejected':
+      case 'rejected': {
+        if (!input.fallback) {
+          if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
+          return 'done';
+        }
+        try {
+          return await recordSend({ ...input, send: input.fallback });
+        } catch (retryErr) {
+          log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
+          if (classify(retryErr) === 'link') return 'wait';
+          if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
+          return 'done';
+        }
+      }
       case 'local':
         try {
           return await recordSend(input);
         } catch (retryErr) {
           log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
-          return classify(retryErr) === 'link' ? 'wait' : 'done';
+          return 'wait';
         }
       default: {
         const _exhaustive: never = kind;
@@ -2357,6 +2456,23 @@ function requireMessageReceipt(result: { messageId?: string }, type: string): vo
   if (!result.messageId?.trim()) {
     throw new Error(`final ${type} reply missing message receipt`);
   }
+}
+
+async function sendPlainTextReply(input: {
+  channel: LarkChannel;
+  chatId: string;
+  body: string;
+  sendOpts: { replyTo: string; replyInThread?: boolean };
+  deliveryId?: string;
+}): Promise<{ messageId?: string } | undefined> {
+  if (!input.body.trim()) return undefined;
+  const result = await input.channel.send(
+    input.chatId,
+    { text: input.body },
+    withDeliveryUuid(input.sendOpts, input.deliveryId),
+  );
+  requireMessageReceipt(result, 'text');
+  return result;
 }
 
 async function sendCotDegradedNotice(input: {
@@ -2883,8 +2999,10 @@ async function sendTurnNotice(input: {
     ownerId?: string;
     requireBotMention: boolean;
   };
+  link?: { isDown(): boolean };
 }): Promise<void> {
   if (planInterruptionNotice(input.outcome).kind === 'none') return;
+  if (input.link?.isDown()) return;
   await deliverInterruptionNotice({
     send: (chatId, content, options) => input.channel.send(chatId, content, options),
     ...noticeArgs(input),

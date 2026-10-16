@@ -1,5 +1,5 @@
-import type { TurnJournalEntry, TurnReply } from './turn-journal';
-import { classify } from './feishu-error';
+import { replyDeliveryKey, type TurnJournalEntry, type TurnReply } from './turn-journal';
+import { classify, isGoneMessage } from './feishu-error';
 
 export const FEISHU_UUID_WINDOW_MS = 60 * 60 * 1000;
 export const FEISHU_LIST_VISIBILITY_LAG_MS = 2_000;
@@ -71,7 +71,10 @@ export async function redeliverStagedReply(input: {
       const kind = classify(err);
       switch (kind) {
         case 'link':
+          throw err;
         case 'rejected':
+          if (!isGoneMessage(err)) throw err;
+          break;
         case 'local':
           throw err;
         default: {
@@ -117,7 +120,7 @@ export async function redeliverStagedReply(input: {
     withDeliveryUuid({
       replyTo: reply.replyTo,
       ...(reply.replyInThread ? { replyInThread: true } : {}),
-    }, reply.deliveryId),
+    }, reply.deliveryId?.trim() || replyDeliveryKey(input.entry.turnId)),
   );
   const messageId = result.messageId?.trim();
   if (!messageId) throw new Error('final journal-resend reply missing message receipt');

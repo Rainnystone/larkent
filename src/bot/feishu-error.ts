@@ -3,6 +3,13 @@ import { OutboundTimeoutError } from './self-message';
 
 export type FeishuErrorClass = 'link' | 'rejected' | 'local';
 
+/** Feishu IM codes that mean the target message is gone and cannot be patched. */
+export const FEISHU_GONE_MESSAGE_CODES = new Set([
+  230002, // invalid message id
+  230025, // message not found
+  230026, // message recalled
+]);
+
 const NETWORK_ERRNO = new Set([
   'ECONNRESET',
   'ETIMEDOUT',
@@ -67,6 +74,21 @@ export function classify(err: unknown): FeishuErrorClass {
   return 'local';
 }
 
+/**
+ * A rejected 4xx that means the interactive card is gone, so same-card patch
+ * can never succeed. Used by stream recovery to fall back to a uuid-keyed send.
+ * Not a fourth classify() class — a refinement of `rejected`.
+ */
+export function isGoneMessage(err: unknown): boolean {
+  for (const node of causeChain(err)) {
+    const status = httpStatus(node);
+    if (status === 404) return true;
+    const code = feishuCode(node);
+    if (code !== undefined && FEISHU_GONE_MESSAGE_CODES.has(code)) return true;
+  }
+  return false;
+}
+
 function* causeChain(err: unknown): Generator<unknown> {
   const seen = new Set<unknown>();
   let current: unknown = err;
@@ -76,6 +98,14 @@ function* causeChain(err: unknown): Generator<unknown> {
     if (typeof current !== 'object') return;
     current = (current as { cause?: unknown }).cause;
   }
+}
+
+function feishuCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const rec = error as { code?: unknown; response?: { data?: { code?: unknown } } };
+  if (typeof rec.code === 'number') return rec.code;
+  const nested = rec.response?.data?.code;
+  return typeof nested === 'number' ? nested : undefined;
 }
 
 function httpStatus(error: unknown): number | undefined {
