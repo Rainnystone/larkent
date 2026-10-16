@@ -54,8 +54,8 @@ describe('turn journal orphan reaper', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     const recovered = new TurnJournal(file);
     await recovered.load();
-    await recovered.recover({ enabled: true, orphanGraceMs: 200 });
-    await recovered.recover({ enabled: true, orphanGraceMs: 200 });
+    await recovered.recover({ orphanGraceMs: 200 });
+    await recovered.recover({ orphanGraceMs: 200 });
 
     expect(recovered.get('turn-orphan')?.status).toBe('interrupted');
     if (verifiedStart === undefined) {
@@ -99,7 +99,7 @@ describe('turn journal orphan reaper', () => {
       const info = vi.spyOn(log, 'info').mockImplementation(() => {});
       const journal = new TurnJournal(file);
       await journal.load();
-      await journal.recover({ enabled: true, orphanGraceMs: 200 });
+      await journal.recover({ orphanGraceMs: 200 });
       expect(isProcessAlive(identity.childPid)).toBe(false);
       expect(journal.get('turn-orphan')?.status).toBe('interrupted');
       expect(info.mock.calls.filter(([phase, event]) => (

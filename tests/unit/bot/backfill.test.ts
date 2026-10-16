@@ -716,26 +716,6 @@ describe('runBackfill', () => {
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_cap_0', 'om_cap_1']);
   });
 
-  it('records truncated mentions when lostMessage is off', async () => {
-    const humans = Array.from({ length: 4 }, (_, i) =>
-      humanItem(`om_legacy_${i}`, CHAT_P2P, `ask ${i}`, NOW - 40_000 + i * 100),
-    );
-    const h = await harness({
-      chats: [],
-      messages: { [CHAT_P2P]: humans },
-    });
-    await runBackfill(await deps({
-      ...h,
-      sessionChatIds: [CHAT_P2P],
-      chatModes: { [CHAT_P2P]: 'p2p' },
-      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxMentionsPerChat: 2 },
-      lostMessage: false,
-    }));
-    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_legacy_2', 'om_legacy_3']);
-    expect(h.ledger.has('om_legacy_0')).toBe(true);
-    expect(h.ledger.has('om_legacy_1')).toBe(true);
-  });
-
   it('keeps group @mention enqueue and still drops group messages without mentionedBot', async () => {
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
@@ -1639,7 +1619,6 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   onGetChatMode?: (chatId: string) => Promise<void>;
   forceShortGapScan?: boolean;
   requireMentionForChat?: (chatId: string) => boolean;
-  lostMessage?: boolean;
   listMessagesHold?: Promise<void>;
   onListMessages?: (chatId: string) => Promise<void>;
 }): Promise<RunBackfillDeps> {
@@ -1675,7 +1654,6 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     ...(input.botAppId !== undefined ? { botAppId: input.botAppId } : {}),
     ...(input.forceShortGapScan !== undefined ? { forceShortGapScan: input.forceShortGapScan } : {}),
     ...(input.requireMentionForChat ? { requireMentionForChat: input.requireMentionForChat } : {}),
-    ...(input.lostMessage !== undefined ? { lostMessage: input.lostMessage } : {}),
     intake: async (msg) => {
       input.intake.push(msg);
       input.onIntake?.(msg);

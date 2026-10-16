@@ -80,15 +80,13 @@ export function noteTerminalStop(handle: StoppableHandle, event: AgentEvent): bo
   return reason ? requestStop(handle, reason) : false;
 }
 
-/** System events always pass. With runOutcome on, a real terminal still lands after stop. */
+/** System events always pass. A real terminal still lands after stop. */
 export function shouldDeliverAgentEvent(
   handle: StoppableHandle,
   event: AgentEvent,
-  runOutcomeEnabled: boolean,
 ): boolean {
   if (event.type === 'system') return true;
   if (!handle.interrupted) return true;
-  if (!runOutcomeEnabled) return false;
   return event.type === 'done' || event.type === 'error';
 }
 

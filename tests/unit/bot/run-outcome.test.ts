@@ -322,12 +322,11 @@ describe('deriveRunOutcome', () => {
 });
 
 describe('shouldDeliverAgentEvent', () => {
-  it('still delivers a terminal event after stop when runOutcome is on', () => {
+  it('still delivers a terminal event after stop', () => {
     const handle = { interrupted: true, stopRequest: { type: 'user-stop' as const } };
-    expect(shouldDeliverAgentEvent(handle, { type: 'done', terminationReason: 'normal' }, true)).toBe(true);
-    expect(shouldDeliverAgentEvent(handle, { type: 'text', delta: 'x' }, true)).toBe(false);
-    expect(shouldDeliverAgentEvent(handle, { type: 'done', terminationReason: 'normal' }, false)).toBe(false);
-    expect(shouldDeliverAgentEvent(handle, { type: 'system' }, false)).toBe(true);
+    expect(shouldDeliverAgentEvent(handle, { type: 'done', terminationReason: 'normal' })).toBe(true);
+    expect(shouldDeliverAgentEvent(handle, { type: 'text', delta: 'x' })).toBe(false);
+    expect(shouldDeliverAgentEvent(handle, { type: 'system' })).toBe(true);
   });
 });
 

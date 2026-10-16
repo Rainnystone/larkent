@@ -1,10 +1,8 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { TurnJournal } from '../../../src/bot/turn-journal';
-import * as logger from '../../../src/core/logger';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
@@ -171,32 +169,10 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     release();
   });
 
-  it('does not write or recover when journal write is off', async () => {
-    const h = await harness({ journal: false });
-    const orig = h.channel.send.bind(h.channel);
-    h.channel.send = async () => {
-      throw new Error('sdk timeout');
-    };
-
-    await h.channel.handlers.message?.(mention('om_run', 'please answer'));
-    await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.runs.length === 1);
-    await waitFor(() => {
-      const run = h.agent.runs[0];
-      return Boolean(run?.stopped || (run !== undefined && run.waitForExitCalls > 0));
-    });
-    await h.journal.flush();
-    await expect(readFile(h.file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-
-    h.channel.send = orig;
-    await h.bridge.recoverMissed();
-    expect(h.channel.sent).toEqual([]);
-  });
 });
 
 async function harness(opts: {
   hold?: Promise<void>;
-  journal?: boolean;
   complete?: boolean;
   fakeTimers?: boolean;
   replyMode?: 'text' | 'card';
@@ -205,7 +181,7 @@ async function harness(opts: {
   const file = join(tmp.profile, 'turn-journal.json');
   const journal = new TurnJournal(file);
   await journal.load();
-  const cfg = profile(tmp.workspace, opts.journal, opts.replyMode);
+  const cfg = profile(tmp.workspace, opts.replyMode);
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const complete = opts.complete !== false;
@@ -266,7 +242,7 @@ async function harness(opts: {
   };
 }
 
-function profile(workspace: string, journal?: boolean, replyMode: 'text' | 'card' = 'text') {
+function profile(workspace: string, replyMode: 'text' | 'card' = 'text') {
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
@@ -277,7 +253,6 @@ function profile(workspace: string, journal?: boolean, replyMode: 'text' | 'card
       cotMessages: 'off',
       requireMentionInGroup: true,
     },
-    ...(journal === false ? { reliability: { journal: false } } : {}),
   });
   cfg.workspaces.default = workspace;
   return cfg;

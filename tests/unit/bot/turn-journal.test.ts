@@ -140,8 +140,8 @@ describe('TurnJournal', () => {
 
     const resend = vi.fn<(entry: TurnJournalEntry) => Promise<boolean>>(async () => true);
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
-    await journal.recover({ enabled: true, resend });
-    await journal.recover({ enabled: true, resend });
+    await journal.recover({ resend });
+    await journal.recover({ resend });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resend.mock.calls[0]?.[0]).toMatchObject({
       turnId: 'turn-1',
@@ -161,30 +161,9 @@ describe('TurnJournal', () => {
       reply: { markdown: 'final answer', replyTo: 'om_1', replyMode: 'text' },
     });
     const resend = vi.fn(async () => true);
-    await journal.recover({ enabled: true, resend });
+    await journal.recover({ resend });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(journal.get('turn-1')?.status).toBe('reply-delivered');
-  });
-
-  it('does not resend or reap orphans when recovery is disabled', async () => {
-    const kill = vi.fn();
-    const { journal } = await fixture();
-    await journal.load();
-    journal.enqueue(queued({ turnId: 'undelivered' }));
-    journal.markCompletedUndelivered('undelivered', {
-      markdown: 'hold',
-      replyTo: 'om_1',
-      replyMode: 'text',
-    });
-    journal.enqueue(queued({ turnId: 'orphan', messageIds: ['om_2'] }));
-    journal.noteSpawn({ scope: 'oc_group', runId: 'run-orphan', pid: 99, startedAt: 1 });
-    await journal.flush();
-    const resend = vi.fn(async () => true);
-    await journal.recover({ enabled: false, resend, kill, isAlive: () => true });
-    expect(resend).not.toHaveBeenCalled();
-    expect(kill).not.toHaveBeenCalled();
-    expect(journal.get('undelivered')?.status).toBe('completed-undelivered');
-    expect(journal.get('orphan')?.status).toBe('running');
   });
 
   it('kills a still-living child whose pid and start time match, then marks interrupted', async () => {
@@ -200,7 +179,6 @@ describe('TurnJournal', () => {
     });
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     await journal.recover({
-      enabled: true,
       kill,
       isAlive: (pid) => pid === 777,
       processStartMs: (pid) => (pid === 777 ? 1_760_000_000_050 : undefined),
@@ -227,7 +205,6 @@ describe('TurnJournal', () => {
       startedAt: 1_760_000_000_050,
     });
     await journal.recover({
-      enabled: true,
       kill,
       isAlive: () => true,
       processStartMs: () => undefined,
@@ -261,7 +238,6 @@ describe('TurnJournal', () => {
       startedAt: 1_760_000_000_050,
     });
     await journal.recover({
-      enabled: true,
       kill,
       isAlive: () => true,
       processStartMs: () => 1_760_000_000_050,
@@ -284,7 +260,6 @@ describe('TurnJournal', () => {
       startedAt: 1_760_000_000_050,
     });
     await journal.recover({
-      enabled: true,
       kill,
       isAlive: () => true,
       processStartMs: () => 1_760_000_000_050,
@@ -306,7 +281,6 @@ describe('TurnJournal', () => {
       startedAt: 1_760_000_000_050,
     });
     await journal.recover({
-      enabled: true,
       kill,
       isAlive: () => true,
       processStartMs: () => 1_760_000_009_000,
@@ -334,7 +308,6 @@ describe('TurnJournal', () => {
     const sent: string[] = [];
     const sleeps: number[] = [];
     await journal.recover({
-      enabled: true,
       resendNotice: async (entry) => {
         sent.push(entry.turnId);
         return true;
@@ -361,7 +334,6 @@ describe('TurnJournal', () => {
     });
     const resendNotice = vi.fn(async () => true);
     await journal.recover({
-      enabled: true,
       resendNotice,
       isActive: (scope) => scope === 'oc_group',
     });
@@ -384,11 +356,11 @@ describe('TurnJournal', () => {
     });
     const resend = vi.fn(async () => true);
     const resendNotice = vi.fn(async () => true);
-    await journal.recover({ enabled: true, resend, resendNotice });
+    await journal.recover({ resend, resendNotice });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
     expect(journal.get('both')?.status).toBe('notice-delivered');
-    await journal.recover({ enabled: true, resend, resendNotice });
+    await journal.recover({ resend, resendNotice });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
   });
@@ -404,7 +376,7 @@ describe('TurnJournal', () => {
     });
     const resendNotice = vi.fn(async () => true);
     const held = journal.withDelivery('notice:inflight', async () => {
-      await journal.recover({ enabled: true, resendNotice });
+      await journal.recover({ resendNotice });
       expect(resendNotice).not.toHaveBeenCalled();
     });
     await held;
@@ -418,7 +390,7 @@ describe('TurnJournal', () => {
         messageId: 'om_landed',
       },
     });
-    await journal.recover({ enabled: true, resendNotice });
+    await journal.recover({ resendNotice });
     expect(resendNotice).not.toHaveBeenCalled();
     expect(journal.get('inflight')?.status).toBe('notice-delivered');
   });
@@ -427,7 +399,7 @@ describe('TurnJournal', () => {
     const { journal } = await fixture();
     await journal.load();
     journal.enqueue(queued({ turnId: 'starting' }));
-    await journal.recover({ enabled: true });
+    await journal.recover({});
     expect(journal.get('starting')?.status).toBe('queued');
     expect(journal.noteSpawn({
       scope: 'oc_group',
@@ -450,7 +422,7 @@ describe('TurnJournal', () => {
     const restarted = new TurnJournal(file, { now: () => 1_760_000_000_000 });
     await restarted.load();
     expect(restarted.get('stale-queued')?.status).toBe('queued');
-    await restarted.recover({ enabled: true });
+    await restarted.recover({});
     expect(restarted.get('stale-queued')?.status).toBe('interrupted');
   });
 
@@ -471,12 +443,10 @@ describe('TurnJournal', () => {
     const restarted = new TurnJournal(file, { now: () => 1_760_000_000_000 });
     await restarted.load();
     await restarted.recover({
-      enabled: true,
       onInterrupted,
       isAlive: () => false,
     });
     await restarted.recover({
-      enabled: true,
       onInterrupted,
       isAlive: () => false,
     });

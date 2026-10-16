@@ -262,7 +262,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const pendingHintByScope = rebuildPendingHints(journal);
   const activeRuns = new ActiveRuns({
     onSupersede: (scope) => {
-      if (reliability().journal) journal?.voidScope(scope);
+      journal?.voidScope(scope);
       consecutiveByScope.set(scope, 0);
       pendingHintByScope.delete(scope);
     },
@@ -278,16 +278,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     agent,
     pool,
     activeRuns,
-    cliSignatures: () => {
-      const rel = streamReliability(controls.profileConfig);
-      return {
-        enabled: rel.cliSignatures !== false,
-        signatures: rel.signatures ?? [],
-        agent: rel.agent ?? 'unknown',
-      };
-    },
+    stderrSignatures: () => streamReliability(controls.profileConfig).signatures,
     onSpawn: (input) => {
-      if (!reliability().journal) return;
       journal?.noteSpawn({
         scope: input.scopeId,
         runId: input.runId,
@@ -410,7 +402,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
   const pending = new PendingQueue(DEBOUNCE_MS, (scope, batch) => {
     if (closing) {
-      if (reliability().lostMessage && ledger) {
+      if (ledger) {
         unrecordAcceptedMessages(ledger, batch);
         log.info('pending', 'handoff', {
           count: batch.length,
@@ -466,7 +458,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           mode,
           backfillMarks,
           ledger,
-          journal: reliability().journal ? journal : undefined,
+          journal,
           noticeEnabled: reliability().notice,
           consecutiveByScope,
           pendingHintByScope,
@@ -527,20 +519,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ...(sessionCatalog?.entries().map((entry) => entry.scopeId) ?? []),
       ],
       intake: (msg) => handOffIntake(msg, 'backfill'),
-      forceShortGapScan: reliability().shortGapScan,
-      lostMessage: reliability().lostMessage,
       requireMentionForChat: (chatId) => (
-        reliability().lostMessage
-          ? requireMentionForChat(controls.profileConfig, controls.cfg, chatId)
-          : true
+        requireMentionForChat(controls.profileConfig, controls.cfg, chatId)
       ),
     }), 'backfill');
   };
 
   const recoverJournal = (): Promise<void> => {
-    if (!journal || !reliability().journalRecover) return Promise.resolve();
+    if (!journal) return Promise.resolve();
     return trackConsumer(journal.recover({
-      enabled: true,
       resend: (entry) => resendJournalReply(channel, entry),
       resendNotice: (entry) => resendPendingNotice({
         send: (chatId, content, options) => channel.send(chatId, content, options),
@@ -598,7 +585,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         return;
       }
       if (closing) {
-        markClosingArrival(ledger, msg, reliability().lostMessage);
+        markClosingArrival(ledger, msg);
         return;
       }
       await handOffIntake(msg, 'ws');
@@ -843,11 +830,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       // A reconnect keeps meeting membership while stopping local timers.
       meetingManager?.dispose();
       controls.meeting = undefined;
-      abandonUnstartedPending(
-        pending,
-        ledger,
-        reliability().lostMessage,
-      );
+      abandonUnstartedPending(pending, ledger);
       const first = await Promise.allSettled([
         channel.disconnect(),
         activeRuns.stopAll(opts?.stopReason ?? { type: 'shutdown-signal' }),
@@ -1137,11 +1120,10 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     controls,
   });
   if (handled) {
-    const flags = getReliabilityConfig(controls.profileConfig);
-    if (!flags.lostMessage || commandClearsPending(emsg.content)) {
+    if (commandClearsPending(emsg.content)) {
       const dropped = pending.cancel(scope);
       log.info('intake', 'command', { scope, droppedPending: dropped.length });
-      if (flags.lostMessage && dropped.length > 0) {
+      if (dropped.length > 0) {
         try {
           await channel.send(
             emsg.chatId,
@@ -1191,10 +1173,9 @@ function unrecordAcceptedMessages(ledger: BackfillLedger, messages: NormalizedMe
 function abandonUnstartedPending(
   pending: PendingQueue,
   ledger: BackfillLedger | undefined,
-  enabled: boolean,
 ): NormalizedMessage[] {
   const dropped = pending.cancelAll();
-  if (!enabled || !ledger || dropped.length === 0) return dropped;
+  if (!ledger || dropped.length === 0) return dropped;
   unrecordAcceptedMessages(ledger, dropped);
   log.info('pending', 'handoff', {
     count: dropped.length,
@@ -1206,9 +1187,8 @@ function abandonUnstartedPending(
 function markClosingArrival(
   ledger: BackfillLedger | undefined,
   msg: NormalizedMessage,
-  enabled: boolean,
 ): void {
-  if (!enabled || !ledger) return;
+  if (!ledger) return;
   const createTime = messageCreateTime(msg) ?? Date.now();
   ledger.markScanIncomplete(createTime);
   log.info('pending', 'handoff', {
@@ -1531,7 +1511,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     });
     if (
       flow.rejectReason.code === 'reconnect-in-progress'
-      && getReliabilityConfig(controls.profileConfig).lostMessage
       && ledger
     ) {
       unrecordAcceptedMessages(ledger, batch);
@@ -2308,9 +2287,7 @@ async function processAgentStream(
   runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
   reliability: StreamReliability = {},
 ): Promise<RunState> {
-  const runOutcomeEnabled = reliability.runOutcome !== false;
-  const cliSignaturesEnabled = reliability.cliSignatures !== false;
-  const signatures = cliSignaturesEnabled ? reliability.signatures : undefined;
+  const signatures = reliability.signatures;
   const runStart = Date.now();
   let state: RunState = seedRunState(runContext ?? {});
   let lastTerminal: AgentEvent | undefined;
@@ -2329,7 +2306,6 @@ async function processAgentStream(
   // The watchdog re-arms when:
   //  - a tool_result drains the in-flight set to zero, OR
   //  - any non-tool event arrives while the set is empty.
-  let idleFired = false;
   let timer: NodeJS.Timeout | undefined;
   const inFlightTools = new Set<string>();
   const armOrPauseIdle = (): void => {
@@ -2338,7 +2314,6 @@ async function processAgentStream(
     timer = undefined;
     if (inFlightTools.size > 0) return;
     timer = setTimeout(() => {
-      idleFired = true;
       requestStop(handle, { type: 'bridge-idle-watchdog' });
       log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs });
       void handle.run.stop().catch(() => {
@@ -2357,7 +2332,7 @@ async function processAgentStream(
         recordSession(evt);
         continue;
       }
-      if (!shouldDeliverAgentEvent(handle, evt, runOutcomeEnabled)) continue;
+      if (!shouldDeliverAgentEvent(handle, evt)) continue;
 
       // Track tool flight before re-arming the idle timer so the arm step
       // sees the correct set size. tool_use opens a window; tool_result
@@ -2397,7 +2372,7 @@ async function processAgentStream(
       const prevTerminal = state.terminal;
       const prevFooter = state.footer;
       state = reduce(state, evt);
-      if (cliSignaturesEnabled && evt.type === 'error' && state.terminal === 'error') {
+      if (evt.type === 'error' && state.terminal === 'error') {
         const stderrTail = handle.run.stderrSnapshot ?? evt.message;
         const matched = matchCliSignature(stderrTail, signatures);
         const early = deriveRunOutcome({
@@ -2408,11 +2383,8 @@ async function processAgentStream(
           exit: handle.run.exit,
           signal: handle.run.signal,
         });
-        const msg = cardUserMessage(early, matched, true);
+        const msg = cardUserMessage(early, matched);
         if (msg) state = { ...state, errorMsg: msg };
-      }
-      if (!runOutcomeEnabled && state.terminal === 'runner_timeout') {
-        state = { ...state, terminal: 'idle_timeout' };
       }
       if (state.footer !== prevFooter || state.terminal !== prevTerminal) {
         log.info('card', 'transition', { footer: state.footer, terminal: state.terminal });
@@ -2442,31 +2414,19 @@ async function processAgentStream(
     exit: handle.run.exit,
     signal: handle.run.signal,
   });
-  if (cliSignaturesEnabled) {
-    noteUnclassifiedStderr({
-      outcome,
-      stderrTail,
-      signature: matched,
-      agent: reliability.agent,
-    });
-  }
-  const userMessage = cardUserMessage(outcome, matched, cliSignaturesEnabled);
-  if (runOutcomeEnabled) {
-    if (
-      state.terminal === 'running'
-      || cardTerminalFromOutcome(outcome) !== state.terminal
-      || userMessage !== undefined
-    ) {
-      state = applyOutcomeToState(state, outcome, idleTimeoutMs, userMessage);
-    }
-  } else if (state.terminal === 'running') {
-    if (idleFired) {
-      state = markIdleTimeout(state, Math.round(idleTimeoutMs! / 60_000));
-    } else if (handle.interrupted) {
-      state = markInterrupted(state);
-    } else {
-      state = finalizeIfRunning(state);
-    }
+  noteUnclassifiedStderr({
+    outcome,
+    stderrTail,
+    signature: matched,
+    agent: reliability.agent,
+  });
+  const userMessage = cardUserMessage(outcome, matched);
+  if (
+    state.terminal === 'running'
+    || cardTerminalFromOutcome(outcome) !== state.terminal
+    || userMessage !== undefined
+  ) {
+    state = applyOutcomeToState(state, outcome, idleTimeoutMs, userMessage);
   }
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };
@@ -2526,18 +2486,13 @@ function applyOutcomeToState(
 }
 
 interface StreamReliability {
-  runOutcome?: boolean;
-  cliSignatures?: boolean;
   signatures?: readonly CliSignature[];
   agent?: string;
 }
 
-function streamReliability(profile: { reliability?: { cliSignatures?: boolean; runOutcome?: boolean }; agentKind: string }): StreamReliability {
-  const flags = getReliabilityConfig(profile);
+function streamReliability(profile: { agentKind: string }): StreamReliability {
   const kind = profile.agentKind;
   return {
-    runOutcome: flags.runOutcome,
-    cliSignatures: flags.cliSignatures,
     signatures: [
       ...(isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : []),
       ...NETWORK_TRANSIENT_SIGNATURES,

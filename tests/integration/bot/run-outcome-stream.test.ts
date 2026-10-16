@@ -48,21 +48,6 @@ describe('run outcome stream', () => {
     expect(rendered(h.channel)).not.toContain('已被中断');
   });
 
-  it('drops the terminal and shows interrupted when runOutcome is off', async () => {
-    const h = await harness({ runOutcome: false });
-    await h.channel.handlers.message?.(message('first', 'please finish'));
-    await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
-    const run = h.agent.manual[0]!;
-    run.push({ type: 'text', delta: 'ALMOST' });
-    await waitFor(() => rendered(h.channel).includes('ALMOST'));
-    await h.channel.handlers.message?.(message('stop', '/stop'));
-    run.push({ type: 'done', terminationReason: 'normal' });
-    run.close();
-    run.releaseCleanup();
-    await waitFor(() => rendered(h.channel).includes('已被中断'));
-  });
-
   it('keeps the agy partial-outcome warning on the final reply', async () => {
     const h = await harness({ agentKind: 'antigravity' });
     await h.channel.handlers.message?.(message('first', 'please run'));
@@ -145,22 +130,6 @@ describe('run outcome stream', () => {
     expect(info.mock.calls.some((call) => call[0] === 'run' && call[1] === 'stderr-unclassified')).toBe(true);
   });
 
-  it('keeps raw truncated stderr on the card when cliSignatures is off', async () => {
-    const h = await harness({ agentKind: 'cursor', cliSignatures: false });
-    await h.channel.handlers.message?.(message('first', 'please run'));
-    await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
-    const run = h.agent.manual[0]!;
-    const raw = 'failed to read /Users/someone/.cursor/projects/secret-repo/config.json';
-    run.stderrSnapshot = raw;
-    run.push({ type: 'error', message: `cursor exited with code 1: ${raw}`, terminationReason: 'failed' });
-    run.close();
-    run.releaseCleanup();
-    await drainIO();
-    await waitFor(() => rendered(h.channel).includes('secret-repo'));
-    expect(rendered(h.channel)).not.toContain('上游连接反复中断');
-  });
-
   it('classifies agy print-timeout on exit 0 as partial', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const h = await harness({ agentKind: 'antigravity' });
@@ -208,22 +177,15 @@ describe('run outcome stream', () => {
 });
 
 async function harness(options?: {
-  runOutcome?: boolean;
-  cliSignatures?: boolean;
   agentKind?: 'claude' | 'cursor' | 'antigravity';
 }) {
   const tmp = await createTmpProfile('run-outcome-stream-');
   const agentKind = options?.agentKind ?? 'claude';
-  const reliability = {
-    ...(options?.runOutcome === false ? { runOutcome: false } : {}),
-    ...(options?.cliSignatures === false ? { cliSignatures: false } : {}),
-  };
   const cfg = createDefaultProfileConfig({
     agentKind,
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: ['ou_user'] },
     preferences: { messageReply: 'card', showToolCalls: true, runIdleTimeoutMinutes: 1, cotMessages: 'off' },
-    ...(Object.keys(reliability).length > 0 ? { reliability } : {}),
   });
   cfg.workspaces.default = tmp.workspace;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));

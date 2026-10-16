@@ -91,7 +91,6 @@ export interface TurnJournalOptions {
 }
 
 export interface JournalRecoverOptions {
-  enabled: boolean;
   resend?: (entry: TurnJournalEntry) => Promise<boolean>;
   resendNotice?: (entry: TurnJournalEntry) => Promise<boolean>;
   /** Crash recovery: notify the user that a running/queued turn was interrupted. */
@@ -304,7 +303,6 @@ export class TurnJournal {
   private async recoverOwned(
     opts: JournalRecoverOptions,
   ): Promise<{ orphans: number; resent: number }> {
-    if (!opts.enabled) return { orphans: 0, resent: 0 };
     const snapshot = this.entries.filter((entry) => isRecoverable(entry.status));
     if (snapshot.length === 0) return { orphans: 0, resent: 0 };
 

@@ -22,11 +22,7 @@ export interface RunExecutorDeps {
   createRunId?: () => string;
   now?: () => number;
   postDoneExitGraceMs?: number;
-  cliSignatures?: () => {
-    enabled: boolean;
-    signatures: readonly CliSignature[];
-    agent: string;
-  };
+  stderrSignatures?: () => readonly CliSignature[] | undefined;
   onSpawn?: (input: {
     scopeId: string;
     runId: string;
@@ -71,7 +67,7 @@ export class RunExecutor {
   private readonly createRunId: () => string;
   private readonly now: () => number;
   private readonly postDoneExitGraceMs: number;
-  private readonly cliSignatures?: RunExecutorDeps['cliSignatures'];
+  private readonly stderrSignatures?: RunExecutorDeps['stderrSignatures'];
   private readonly onSpawn?: RunExecutorDeps['onSpawn'];
 
   constructor(deps: RunExecutorDeps) {
@@ -81,7 +77,7 @@ export class RunExecutor {
     this.createRunId = deps.createRunId ?? randomUUID;
     this.now = deps.now ?? Date.now;
     this.postDoneExitGraceMs = deps.postDoneExitGraceMs ?? DEFAULT_POST_DONE_EXIT_GRACE_MS;
-    this.cliSignatures = deps.cliSignatures;
+    this.stderrSignatures = deps.stderrSignatures;
     this.onSpawn = deps.onSpawn;
   }
 
@@ -264,7 +260,7 @@ export class RunExecutor {
       startedAt,
       now: this.now,
       handle: () => handle,
-      cliSignatures: this.cliSignatures,
+      stderrSignatures: this.stderrSignatures,
     }), finish, () => {
       // Raw exit/cleanup can finish before buffered source events. Release
       // ownership only once the pump has drained them (or observed failure).
@@ -292,7 +288,7 @@ function observeRunEvents(
     startedAt: number;
     now: () => number;
     handle: () => RunHandle;
-    cliSignatures?: RunExecutorDeps['cliSignatures'];
+    stderrSignatures?: RunExecutorDeps['stderrSignatures'];
   },
 ): AsyncIterable<AgentEvent> {
   return {
@@ -309,9 +305,8 @@ function observeRunEvents(
         }
         if (event.type === 'error') {
           const stopRequest = opts.handle().stopRequest ?? stopRequestFromTerminal(event);
-          const cli = opts.cliSignatures?.();
+          const signatures = opts.stderrSignatures?.();
           const stderrTail = opts.handle().run.stderrSnapshot ?? event.message;
-          const signatures = cli?.enabled === false ? undefined : cli?.signatures;
           const outcome = deriveRunOutcome({
             stopRequest: opts.handle().stopRequest,
             terminalEvent: event,

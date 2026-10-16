@@ -47,7 +47,6 @@ export interface RunBackfillDeps {
   botAppId?: string;
   forceShortGapScan?: boolean;
   requireMentionForChat?: (chatId: string) => boolean;
-  lostMessage?: boolean;
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -374,12 +373,9 @@ async function scanChat(input: {
     .sort((a, b) => a.createTime - b.createTime || (a.messageId < b.messageId ? -1 : a.messageId > b.messageId ? 1 : 0));
   if (truncated.length > 0) {
     log.info('backfill', 'mentions-truncated', { chatId, count: truncated.length });
-    if (!deps.prefs.dryRun && deps.lostMessage === false) {
-      for (const msg of truncated) deps.ledger.record(msg.messageId, msg.createTime);
-    }
   }
 
-  const truncatedFrom = truncated.length > 0 && deps.lostMessage !== false
+  const truncatedFrom = truncated.length > 0
     ? Math.min(...truncated.map((msg) => msg.createTime))
     : undefined;
   let enqueued = 0;
