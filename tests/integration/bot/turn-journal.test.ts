@@ -8,6 +8,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { axiosErrno, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -63,7 +64,7 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     h.channel.send = async (...args: Parameters<typeof orig>) => {
       if (fails > 0) {
         fails -= 1;
-        throw new Error('sdk timeout');
+        throw sdkShapedSendError('send_timeout', axiosErrno('ECONNABORTED', 'timeout of 30000ms exceeded'));
       }
       return orig(...args);
     };
@@ -88,7 +89,13 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     h.channel.send = async (...args: Parameters<typeof orig>) => {
       if (fails > 0) {
         fails -= 1;
-        throw new Error('Client network socket disconnected before secure TLS connection was established');
+        throw sdkShapedSendError(
+          'unknown',
+          axiosErrno(
+            'ECONNRESET',
+            'Client network socket disconnected before secure TLS connection was established',
+          ),
+        );
       }
       return orig(...args);
     };
@@ -346,7 +353,7 @@ async function rejectIfRepeatSentinel(
   seen: { value: boolean },
 ): Promise<void> {
   if (payload.includes(sentinel) && seen.value) {
-    throw new Error('getaddrinfo EAI_AGAIN open.feishu.cn');
+    throw axiosErrno('EAI_AGAIN', 'getaddrinfo EAI_AGAIN open.feishu.cn');
   }
   if (payload.includes(sentinel)) seen.value = true;
 }

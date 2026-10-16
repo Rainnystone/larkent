@@ -2,7 +2,8 @@ import type { LarkChannel } from '@larksuite/channel';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { log } from '../core/logger';
-import { OutboundMessageIds, OutboundTimeoutError, wrapChannelOutbound } from './self-message';
+import { classify } from './feishu-error';
+import { OutboundMessageIds, wrapChannelOutbound } from './self-message';
 
 export const FEISHU_LINK_TICK_MS = 15_000;
 export const FEISHU_LINK_SLEEP_MS = 30_000;
@@ -25,9 +26,12 @@ export interface FeishuLink {
   stop(): void;
 }
 
+/** true = reachable; false = link down; `unknown` = local, neither evidence nor outage. */
+export type FeishuProbeResult = boolean | 'unknown';
+
 export interface FeishuLinkDeps {
   channel: LarkChannel;
-  probe: (signal?: AbortSignal) => Promise<boolean>;
+  probe: (signal?: AbortSignal) => Promise<FeishuProbeResult>;
   watermark: { get(): number | undefined; set(at: number): void };
   now?: () => number;
   /** Awake event-loop time. Defaults to `performance.now`. */
@@ -39,7 +43,7 @@ export interface FeishuLinkDeps {
 
 export function createFeishuProbe(
   channel: LarkChannel,
-): (signal?: AbortSignal) => Promise<boolean> {
+): (signal?: AbortSignal) => Promise<FeishuProbeResult> {
   return async (signal) => {
     if (signal?.aborted) return false;
     try {
@@ -47,8 +51,7 @@ export function createFeishuProbe(
       return !signal?.aborted;
     } catch (err) {
       if (signal?.aborted || isAbortError(err)) return false;
-      // A 4xx means Feishu answered; credentials/quota are not a link outage.
-      return isBusiness4xx(err);
+      return probeResultFromError(err);
     }
   };
 }
@@ -89,60 +92,34 @@ function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
 }
 
-function httpStatus(error: unknown): number | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const response = (error as { response?: { status?: unknown } }).response;
-  const status = response?.status;
-  return typeof status === 'number' ? status : undefined;
-}
-
-export function isBusiness4xx(error: unknown): boolean {
-  const status = httpStatus(error);
-  return status !== undefined && status >= 400 && status < 500;
-}
-
-const LINK_ERRNO = new Set([
-  'ECONNRESET',
-  'ETIMEDOUT',
-  'ENOTFOUND',
-  'EAI_AGAIN',
-  'ECONNREFUSED',
-  'EPIPE',
-  'ECONNABORTED',
-  'UND_ERR_CONNECT_TIMEOUT',
-]);
-
-const LINK_MESSAGE = /EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ECONNABORTED|socket hang up|getaddrinfo|no HTTP response|timeout of \d+ms exceeded/i;
-
-/** Transport / 5xx / timeout — wait for recovery. Local and 4xx do not. */
-export function isLinkFailureError(error: unknown): boolean {
-  if (error instanceof OutboundTimeoutError) return true;
-  const status = httpStatus(error);
-  if (status !== undefined && status >= 500) return true;
-  const code = errnoCode(error);
-  if (code !== undefined && LINK_ERRNO.has(code)) return true;
-  const message = error instanceof Error ? error.message : String(error ?? '');
-  return LINK_MESSAGE.test(message);
-}
-
-function errnoCode(error: unknown): string | undefined {
-  if (!error || typeof error !== 'object') return undefined;
-  const code = (error as { code?: unknown }).code;
-  return typeof code === 'string' ? code : undefined;
+function probeResultFromError(err: unknown): FeishuProbeResult {
+  const kind = classify(err);
+  switch (kind) {
+    case 'rejected':
+      return true;
+    case 'link':
+      return false;
+    case 'local':
+      return 'unknown';
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
 }
 
 async function raceProbe(
-  probe: (signal?: AbortSignal) => Promise<boolean>,
+  probe: (signal?: AbortSignal) => Promise<FeishuProbeResult>,
   timeoutMs: number,
   ctrl: AbortController,
-): Promise<boolean> {
+): Promise<FeishuProbeResult> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
       probe(ctrl.signal)
         .then((ok) => (ctrl.signal.aborted ? false : ok))
-        .catch(() => false),
-      new Promise<boolean>((resolve) => {
+        .catch((err: unknown) => (ctrl.signal.aborted || isAbortError(err) ? false : probeResultFromError(err))),
+      new Promise<false>((resolve) => {
         timer = setTimeout(() => {
           ctrl.abort();
           resolve(false);
@@ -284,11 +261,11 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     probeMonoStart = monoFn();
     const ctrl = new AbortController();
     probeAbort = ctrl;
-    let ok = false;
+    let ok: FeishuProbeResult = false;
     try {
       ok = await raceProbe(deps.probe, FEISHU_LINK_PROBE_TIMEOUT_MS, ctrl);
-    } catch {
-      ok = false;
+    } catch (err) {
+      ok = probeResultFromError(err);
     } finally {
       if (probeAbort === ctrl) probeAbort = undefined;
       if (seq !== probeSeq) return;
@@ -299,24 +276,48 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       if (!suspended) lastTickAt = nowFn();
     }
     if (seq !== probeSeq || stopped) return;
-    if (ok) {
-      noteEvidence(nowFn(), wsConnected());
-      lastTickAt = nowFn();
-      return;
+    switch (ok) {
+      case true:
+        noteEvidence(nowFn(), wsConnected());
+        lastTickAt = nowFn();
+        return;
+      case false:
+        goDown(lastEvidenceAt ?? downSince);
+        lastTickAt = nowFn();
+        return;
+      case 'unknown':
+        lastTickAt = nowFn();
+        return;
+      default: {
+        const _exhaustive: never = ok;
+        return _exhaustive;
+      }
     }
-    goDown(lastEvidenceAt ?? downSince);
-    lastTickAt = nowFn();
   };
 
   wrapChannelOutbound(deps.channel, deps.outbound ?? new OutboundMessageIds(), {
     ...(deps.outboundTimeoutMs !== undefined ? { timeoutMs: deps.outboundTimeoutMs } : {}),
     onResult: (result) => {
       if (stopped) return;
-      if (!result.ok && !isBusiness4xx(result.error)) {
-        goDown(lastEvidenceAt ?? downSince);
+      if (result.ok) {
+        noteEvidence(nowFn(), wsConnected());
         return;
       }
-      noteEvidence(nowFn(), wsConnected());
+      const kind = classify(result.error);
+      switch (kind) {
+        case 'link':
+          goDown(lastEvidenceAt ?? downSince);
+          return;
+        case 'rejected':
+          noteEvidence(nowFn(), wsConnected());
+          return;
+        case 'local':
+          return;
+        default: {
+          const _exhaustive: never = kind;
+          return _exhaustive;
+        }
+      }
     },
   });
 

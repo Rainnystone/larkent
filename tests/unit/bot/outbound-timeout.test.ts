@@ -1,9 +1,13 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   OutboundMessageIds,
   OutboundTimeoutError,
   wrapChannelOutbound,
 } from '../../../src/bot/self-message';
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 describe('wrapChannelOutbound timeout', () => {
   it('rejects a hung send so the caller can drain the chat queue', async () => {
@@ -48,6 +52,28 @@ describe('wrapChannelOutbound timeout', () => {
 
     await expect(channel.send('oc', { markdown: 'hi' })).rejects.toBeInstanceOf(OutboundTimeoutError);
     expect(outcomes).toEqual([{ ok: false }]);
+  });
+
+  it('does not time out a stream that lasts longer than the outbound request budget', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const channel = {
+      stream: () => new Promise<{ messageId: string }>((resolve) => {
+        setTimeout(() => resolve({ messageId: 'om_s' }), 5 * 60_000);
+      }),
+    };
+    wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 30_000 });
+
+    const pending = channel.stream();
+    await vi.advanceTimersByTimeAsync(30_000);
+    let settled = false;
+    void pending.then(() => {
+      settled = true;
+    });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 30_000);
+    await expect(pending).resolves.toEqual({ messageId: 'om_s' });
   });
 
   it('does not emit unhandledRejection when a send fails', async () => {

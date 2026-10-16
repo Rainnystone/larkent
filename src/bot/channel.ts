@@ -107,7 +107,8 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { createFeishuProbe, isLinkFailureError, startFeishuLink } from './feishu-link';
+import { classify } from './feishu-error';
+import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import { unseenStreamFallback } from './stream-fallback';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
 import {
@@ -2110,6 +2111,25 @@ function remainderReplyState(source: RunState, unseen: string): RunState {
   };
 }
 
+async function fallbackUnlessLink(
+  err: unknown,
+  input: Parameters<typeof deliverUnseenStreamFallback>[0],
+): Promise<'wait' | 'fallback-done'> {
+  const kind = classify(err);
+  switch (kind) {
+    case 'link':
+      return 'wait';
+    case 'rejected':
+    case 'local':
+      await deliverUnseenStreamFallback(input);
+      return 'fallback-done';
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
+}
+
 async function deliverUnseenStreamFallback(input: {
   channel: LarkChannel;
   chatId: string;
@@ -2206,13 +2226,17 @@ async function deliverFinalReply(input: {
       }
     } catch (err) {
       log.fail('stream', err, { mode: input.replyMode, step: 'final-patch' });
-      if (isLinkFailureError(err)) return;
-      await deliverUnseenStreamFallback(input);
+      if (await fallbackUnlessLink(err, input) === 'wait') return;
     }
   } else {
-    const sent = await sendFinalReply(input);
-    if (input.journal && input.turnId && sent?.messageId) {
-      input.journal.noteReplyReceipt(input.turnId, sent.messageId);
+    try {
+      const sent = await sendFinalReply(input);
+      if (input.journal && input.turnId && sent?.messageId) {
+        input.journal.noteReplyReceipt(input.turnId, sent.messageId);
+      }
+    } catch (err) {
+      log.fail('outbound', err, { mode: input.replyMode, step: 'final-send' });
+      if (await fallbackUnlessLink(err, input) === 'wait') return;
     }
   }
   input.cliSelfSent?.consume(input.scope);

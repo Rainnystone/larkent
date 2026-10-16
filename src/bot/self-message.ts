@@ -110,7 +110,8 @@ export class OutboundTimeoutError extends Error {
   }
 }
 
-const OUTBOUND_OPS = ['send', 'stream', 'updateCard', 'updateCardById'] as const;
+const TIMED_OUTBOUND_OPS = ['send', 'updateCard', 'updateCardById'] as const;
+const WRAPPED_OUTBOUND_OPS = ['send', 'stream', 'updateCard', 'updateCardById'] as const;
 
 export async function withOutboundTimeout<T>(
   op: string,
@@ -149,7 +150,7 @@ export function wrapChannelOutbound(
 ): void {
   const timeoutMs = opts.timeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
   const mutable = channel as Record<string, unknown>;
-  for (const op of OUTBOUND_OPS) {
+  for (const op of WRAPPED_OUTBOUND_OPS) {
     const current = mutable[op];
     if (typeof current !== 'function') continue;
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
@@ -158,7 +159,8 @@ export function wrapChannelOutbound(
         if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
         return result;
       });
-      return withOutboundTimeout(op, work, timeoutMs).then(
+      const pending = isTimedOutboundOp(op) ? withOutboundTimeout(op, work, timeoutMs) : work;
+      return pending.then(
         (result) => {
           opts.onResult?.({ ok: true });
           return result;
@@ -170,4 +172,8 @@ export function wrapChannelOutbound(
       );
     };
   }
+}
+
+function isTimedOutboundOp(op: (typeof WRAPPED_OUTBOUND_OPS)[number]): boolean {
+  return (TIMED_OUTBOUND_OPS as readonly string[]).includes(op);
 }

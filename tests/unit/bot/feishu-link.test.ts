@@ -8,10 +8,14 @@ import {
   FEISHU_LINK_SLEEP_MS,
   FEISHU_LINK_TICK_MS,
   createFeishuProbe,
-  isLinkFailureError,
   startFeishuLink,
   type Outage,
 } from '../../../src/bot/feishu-link';
+import {
+  axiosErrno,
+  axiosHttpError,
+  sdkShapedSendError,
+} from '../../helpers/sdk-feishu-errors';
 
 describe('FeishuLink', () => {
   afterEach(() => {
@@ -191,14 +195,16 @@ describe('FeishuLink', () => {
     expect(link.isDown()).toBe(false);
   });
 
-  it('takes the link down on OutboundTimeoutError and keeps it up on a business 4xx', async () => {
+  it('takes the link down on OutboundTimeoutError and keeps it up on a rejected 4xx', async () => {
     let now = 1_700_000_000_000;
     let mode: 'ok' | '4xx' | 'hang' = 'ok';
     const channel = {
       getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
       send: () => {
         if (mode === 'hang') return new Promise<never>(() => {});
-        if (mode === '4xx') return Promise.reject(httpError(403));
+        if (mode === '4xx') {
+          return Promise.reject(sdkShapedSendError('permission_denied', axiosHttpError(403, 'Bot is not in the chat')));
+        }
         return Promise.resolve({ messageId: 'om_ok' });
       },
     } as unknown as LarkChannel;
@@ -214,9 +220,10 @@ describe('FeishuLink', () => {
 
     mode = '4xx';
     await expect(channel.send('oc', { markdown: 'denied' })).rejects.toMatchObject({
-      response: { status: 403 },
+      code: 'permission_denied',
     });
     expect(link.isDown()).toBe(false);
+    expect(link.outageEpoch()).toBe(0);
 
     mode = 'hang';
     await expect(channel.send('oc', { markdown: 'slow' })).rejects.toBeInstanceOf(OutboundTimeoutError);
@@ -257,7 +264,7 @@ describe('FeishuLink', () => {
     let now = 1_700_000_000_000;
     const channel = {
       getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
-      send: () => Promise.reject(httpError(502)),
+      send: () => Promise.reject(sdkShapedSendError('unknown', axiosHttpError(502))),
     } as unknown as LarkChannel;
     const link = startFeishuLink({
       channel,
@@ -268,19 +275,134 @@ describe('FeishuLink', () => {
     await link.tick();
     expect(link.isDown()).toBe(false);
     await expect(channel.send('oc', { markdown: 'fail' })).rejects.toMatchObject({
-      response: { status: 502 },
+      code: 'unknown',
     });
     expect(link.isDown()).toBe(true);
   });
 
-  it('keeps the link up when the authenticated probe gets a business 4xx', async () => {
-    await expect(createFeishuProbe(probeChannel(httpError(403)))()).resolves.toBe(true);
-    await expect(createFeishuProbe(probeChannel(httpError(429)))()).resolves.toBe(true);
+  it('takes the link down on SDK-wrapped ENETUNREACH and keeps it up on a local bug', async () => {
+    let now = 1_700_000_000_000;
+    let mode: 'ok' | 'net' | 'bug' = 'ok';
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
+      send: () => {
+        if (mode === 'net') {
+          return Promise.reject(sdkShapedSendError(
+            'unknown',
+            axiosErrno('ENETUNREACH', 'connect ENETUNREACH 1.2.3.4:443'),
+          ));
+        }
+        if (mode === 'bug') return Promise.reject(new TypeError('x is not a function'));
+        return Promise.resolve({ messageId: 'om_ok' });
+      },
+    } as unknown as LarkChannel;
+    const link = startFeishuLink({
+      channel,
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+    const epoch = link.outageEpoch();
+
+    mode = 'bug';
+    await expect(channel.send('oc', { markdown: 'bug' })).rejects.toBeInstanceOf(TypeError);
+    expect(link.isDown()).toBe(false);
+    expect(link.outageEpoch()).toBe(epoch);
+
+    mode = 'net';
+    await expect(channel.send('oc', { markdown: 'net' })).rejects.toMatchObject({ code: 'unknown' });
+    expect(link.isDown()).toBe(true);
+    expect(link.outageEpoch()).toBe(epoch + 1);
+  });
+
+  it('does not treat a 5-minute stream as an outage', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let now = 1_700_000_000_000;
+    const recovered: Outage[] = [];
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
+      stream: () => new Promise<{ messageId: string }>((resolve) => {
+        setTimeout(() => resolve({ messageId: 'om_s' }), 5 * 60_000);
+      }),
+    } as unknown as LarkChannel;
+    const link = startFeishuLink({
+      channel,
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+    expect(link.isDown()).toBe(false);
+    const epoch = link.outageEpoch();
+
+    const pending = channel.stream('oc', { markdown: async () => {} });
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    await expect(pending).resolves.toEqual({ messageId: 'om_s' });
+    expect(link.isDown()).toBe(false);
+    expect(link.outageEpoch()).toBe(epoch);
+    expect(recovered).toHaveLength(0);
+  });
+
+  it('keeps the link up when the authenticated probe gets a rejected 4xx', async () => {
+    await expect(createFeishuProbe(probeChannel(axiosHttpError(403)))()).resolves.toBe(true);
+    await expect(createFeishuProbe(probeChannel(axiosHttpError(400)))()).resolves.toBe(true);
+  });
+
+  it('treats a 429 probe as a link failure', async () => {
+    await expect(createFeishuProbe(probeChannel(axiosHttpError(429)))()).resolves.toBe(false);
   });
 
   it('treats 5xx and transport failures as probe-down', async () => {
-    await expect(createFeishuProbe(probeChannel(httpError(502)))()).resolves.toBe(false);
-    await expect(createFeishuProbe(probeChannel(new Error('ECONNRESET')))()).resolves.toBe(false);
+    await expect(createFeishuProbe(probeChannel(axiosHttpError(502)))()).resolves.toBe(false);
+    await expect(createFeishuProbe(probeChannel(axiosErrno('ECONNRESET', 'read ECONNRESET')))()).resolves.toBe(false);
+  });
+
+  it('treats a local probe bug as neither evidence nor a link outage', async () => {
+    await expect(createFeishuProbe(probeChannel(new TypeError('x is not a function')))()).resolves.toBe(
+      'unknown',
+    );
+  });
+
+  it('does not take the link down when a silent probe throws a local bug', async () => {
+    let now = 1_700_000_000_000;
+    let failLocal = false;
+    const recovered: Outage[] = [];
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
+      getAppInfo: async () => {
+        if (failLocal) throw new TypeError('x is not a function');
+        return { ownerId: 'ou_owner' };
+      },
+    } as unknown as LarkChannel;
+    const link = startFeishuLink({
+      channel,
+      probe: createFeishuProbe(channel),
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+    recovered.length = 0;
+    const epoch = link.outageEpoch();
+
+    failLocal = true;
+    const silentUntil = now + FEISHU_LINK_SILENT_PROBE_MS;
+    do {
+      now += FEISHU_LINK_TICK_MS;
+      await link.tick();
+    } while (now < silentUntil);
+    expect(link.isDown()).toBe(false);
+    expect(link.outageEpoch()).toBe(epoch);
+    expect(recovered).toHaveLength(0);
   });
 
   it('ignores a late getAppInfo after the probe is aborted', async () => {
@@ -294,15 +416,6 @@ describe('FeishuLink', () => {
     ctrl.abort();
     await expect(pending).resolves.toBe(false);
     finish?.({ ownerId: 'ou_owner' });
-  });
-
-  it('classifies transport and 5xx as link outages and local patch errors as not', () => {
-    expect(isLinkFailureError(httpError(502))).toBe(true);
-    expect(isLinkFailureError(new OutboundTimeoutError('stream', 30_000))).toBe(true);
-    expect(isLinkFailureError(new Error('getaddrinfo EAI_AGAIN open.feishu.cn'))).toBe(true);
-    expect(isLinkFailureError(Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }))).toBe(true);
-    expect(isLinkFailureError(httpError(400))).toBe(false);
-    expect(isLinkFailureError(new Error('stream controller is closed'))).toBe(false);
   });
 
   it('does not treat a slow but successful probe as host sleep', async () => {
@@ -525,10 +638,6 @@ function probeChannel(error: Error): LarkChannel {
       throw error;
     },
   } as unknown as LarkChannel;
-}
-
-function httpError(status: number): Error {
-  return Object.assign(new Error(`HTTP ${status}`), { response: { status } });
 }
 
 function fakeChannel(

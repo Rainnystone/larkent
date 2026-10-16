@@ -188,6 +188,29 @@ describe('static architecture contracts', () => {
     expect(read('src/bot/channel.ts')).not.toMatch(/wrapChannelOutbound/);
   });
 
+  it('uses one Feishu error classifier and does not time the stream lifetime', () => {
+    const forbidden = [
+      /\bisBusiness4xx\b/,
+      /\bisLinkFailureError\b/,
+      /\bLINK_ERRNO\b/,
+      /\bLINK_MESSAGE\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(read('src/bot/feishu-error.ts')).toMatch(/\bexport function classify\b/);
+    expect(read('src/bot/feishu-link.ts')).toMatch(/\bclassify\b/);
+    expect(read('src/bot/channel.ts')).toMatch(/\bclassify\b/);
+    expect(read('src/bot/self-message.ts')).not.toMatch(
+      /const OUTBOUND_OPS = \[[^\]]*'stream'[^\]]*\] as const/,
+    );
+  });
+
   it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
     const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
     const webFiles = collectTsFiles('web/src');
