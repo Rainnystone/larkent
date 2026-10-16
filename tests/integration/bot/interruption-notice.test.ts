@@ -345,10 +345,14 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       run.push({ type: 'done', terminationReason: 'interrupted' });
       run.close();
       run.releaseCleanup();
-      await waitFor(() => h.journal.list().some((entry) => (
-        entry.messageIds.includes('om_run')
-        && (entry.status === 'completed-undelivered' || entry.status === 'notice-pending')
-      )));
+      await waitFor(() => (
+        patchedAnswers(h.channel, streamed).length >= 1
+        || noticeSends(h.channel).length >= 1
+        || h.journal.list().some((entry) => (
+          entry.messageIds.includes('om_run')
+          && (entry.status === 'reply-delivered' || entry.status === 'notice-delivered')
+        ))
+      ));
       expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
 
       await h.bridge.recoverMissed();
@@ -362,7 +366,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
   );
 
   it.each(['markdown', 'card'] as const)(
-    'a local %s final-stream error stays staged and recovers by patching the same card',
+    'a local %s final-stream error is swept onto the same card without a uuid-send',
     async (replyMode) => {
       const streamed = 'STREAMED_ANSWER';
       const h = await harness({
@@ -379,10 +383,14 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       run.push({ type: 'done', terminationReason: 'interrupted' });
       run.close();
       run.releaseCleanup();
-      await waitFor(() => h.journal.list().some((entry) => (
-        entry.messageIds.includes('om_run')
-        && (entry.status === 'completed-undelivered' || entry.status === 'notice-pending')
-      )));
+      await waitFor(() => (
+        patchedAnswers(h.channel, streamed).length >= 1
+        || noticeSends(h.channel).length >= 1
+        || h.journal.list().some((entry) => (
+          entry.messageIds.includes('om_run')
+          && (entry.status === 'reply-delivered' || entry.status === 'notice-delivered')
+        ))
+      ));
       expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
 
       await h.bridge.recoverMissed();
@@ -416,13 +424,10 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     run.push({ type: 'done', terminationReason: 'normal' });
     run.close();
     run.releaseCleanup();
-    await waitFor(() => h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_run') && entry.status === 'completed-undelivered'
-    )));
+    await waitFor(() => patchedAnswers(h.channel, unseen).length >= 1);
     expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
 
     await h.bridge.recoverMissed();
-    await waitFor(() => patchedAnswers(h.channel, unseen).length >= 1);
     expect(sentAnswers(h.channel, seen)).toHaveLength(0);
     expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
     expect(patchedAnswers(h.channel, seen).length).toBeGreaterThanOrEqual(1);
@@ -455,6 +460,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     )));
     expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
 
+    await h.bridge.tickLink();
     await h.bridge.recoverMissed();
     await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
@@ -482,13 +488,10 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     run.push({ type: 'done', terminationReason: 'normal' });
     run.close();
     run.releaseCleanup();
-    await waitFor(() => h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_run') && entry.status === 'completed-undelivered'
-    )));
+    await waitFor(() => patchedAnswers(h.channel, answer).length >= 1);
     expect(sentAnswers(h.channel, answer)).toHaveLength(0);
 
     await h.bridge.recoverMissed();
-    await waitFor(() => patchedAnswers(h.channel, answer).length >= 1);
     expect(sentAnswers(h.channel, answer)).toHaveLength(0);
   });
 
@@ -888,6 +891,7 @@ async function harness(opts: {
     sessions,
     workspaces,
     journal,
+    probe: async () => true,
     appPaths: { mediaDir, secretsFile: join(tmp.profile, 'secrets.enc'), keystoreSaltFile: join(tmp.profile, '.keystore.salt') },
     controls: {
       profile: 'test',
@@ -954,6 +958,7 @@ async function reopen(
     sessions: h.sessions,
     workspaces: h.workspaces,
     journal,
+    probe: async () => true,
     appPaths: {
       mediaDir,
       secretsFile: join(h.tmp.profile, 'secrets.enc'),

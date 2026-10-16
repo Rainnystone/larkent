@@ -37,6 +37,11 @@ async function fixture(now = () => 1_760_000_000_000) {
   return { file, journal: new TurnJournal(file, { now }) };
 }
 
+async function recoverJournal(journal: TurnJournal, opts: Parameters<TurnJournal['reapOrphans']>[0] = {}) {
+  await journal.reapOrphans(opts);
+  await journal.redeliver(opts);
+}
+
 function queued(overrides: Partial<TurnJournalEntry> = {}): Omit<TurnJournalEntry, 'updatedAt' | 'createdAt'> {
   return {
     turnId: 'turn-1',
@@ -131,7 +136,7 @@ describe('TurnJournal', () => {
       startedAt: 1_760_000_000_100,
     });
     journal.markSettled('turn-1', { kind: 'completed', retriable: false, needsHuman: false });
-    journal.markReplyDelivered('turn-1');
+    journal.replyDelivered('turn-1');
     await journal.flush();
     expect(journal.get('turn-1')).toMatchObject({
       status: 'reply-delivered',
@@ -147,7 +152,7 @@ describe('TurnJournal', () => {
     await journal.load();
     journal.enqueue(queued());
     journal.markSettled('turn-1', { kind: 'completed', retriable: false, needsHuman: false });
-    journal.markCompletedUndelivered('turn-1', {
+    journal.stageReply('turn-1', {
       markdown: 'final answer',
       replyTo: 'om_1',
       replyMode: 'text',
@@ -157,8 +162,8 @@ describe('TurnJournal', () => {
 
     const resend = vi.fn<(entry: TurnJournalEntry) => Promise<boolean>>(async () => true);
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
-    await journal.recover({ resend });
-    await journal.recover({ resend });
+    await journal.redeliver({ resend });
+    await journal.redeliver({ resend });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resend.mock.calls[0]?.[0]).toMatchObject({
       turnId: 'turn-1',
@@ -180,7 +185,7 @@ describe('TurnJournal', () => {
       replyMode: 'text',
     });
     const resend = vi.fn(async () => true);
-    await journal.recover({ resend });
+    await journal.redeliver({ resend });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(journal.get('turn-1')?.status).toBe('reply-delivered');
   });
@@ -197,7 +202,7 @@ describe('TurnJournal', () => {
       startedAt: 1_760_000_000_050,
     });
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
-    await journal.recover({
+    await recoverJournal(journal, {
       kill,
       isAlive: (pid) => pid === 777,
       processStartMs: (pid) => (pid === 777 ? 1_760_000_000_050 : undefined),
@@ -223,7 +228,7 @@ describe('TurnJournal', () => {
       pid: 777,
       startedAt: 1_760_000_000_050,
     });
-    await journal.recover({
+    await recoverJournal(journal, {
       kill,
       isAlive: () => true,
       processStartMs: () => undefined,
@@ -256,7 +261,7 @@ describe('TurnJournal', () => {
       pid: 777,
       startedAt: 1_760_000_000_050,
     });
-    await journal.recover({
+    await recoverJournal(journal, {
       kill,
       isAlive: () => true,
       processStartMs: () => 1_760_000_000_050,
@@ -278,7 +283,7 @@ describe('TurnJournal', () => {
       pid: 777,
       startedAt: 1_760_000_000_050,
     });
-    await journal.recover({
+    await recoverJournal(journal, {
       kill,
       isAlive: () => true,
       processStartMs: () => 1_760_000_000_050,
@@ -299,7 +304,7 @@ describe('TurnJournal', () => {
       pid: 777,
       startedAt: 1_760_000_000_050,
     });
-    await journal.recover({
+    await recoverJournal(journal, {
       kill,
       isAlive: () => true,
       processStartMs: () => 1_760_000_009_000,
@@ -314,19 +319,19 @@ describe('TurnJournal', () => {
     await journal.load();
     journal.enqueue(queued({ turnId: 'n1', messageIds: ['om_a'] }));
     journal.enqueue(queued({ turnId: 'n2', messageIds: ['om_b'] }));
-    journal.markNoticePending('n1', {
+    journal.stageNotice('n1', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice-one',
     });
-    journal.markNoticePending('n2', {
+    journal.stageNotice('n2', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice-two',
     });
     const sent: string[] = [];
     const sleeps: number[] = [];
-    await journal.recover({
+    await recoverJournal(journal, {
       resendNotice: async (entry) => {
         sent.push(entry.turnId);
         return true;
@@ -346,13 +351,13 @@ describe('TurnJournal', () => {
     const { journal } = await fixture();
     await journal.load();
     journal.enqueue(queued({ turnId: 'live-notice' }));
-    journal.markNoticePending('live-notice', {
+    journal.stageNotice('live-notice', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice-live',
     });
     const resendNotice = vi.fn(async () => true);
-    await journal.recover({
+    await recoverJournal(journal, {
       resendNotice,
       isActive: (scope) => scope === 'oc_group',
     });
@@ -369,7 +374,7 @@ describe('TurnJournal', () => {
       replyTo: 'om_a',
       replyMode: 'text',
     });
-    journal.markNoticePending('turn-a', {
+    journal.stageNotice('turn-a', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice-a',
@@ -380,7 +385,7 @@ describe('TurnJournal', () => {
       replyTo: 'om_b',
       replyMode: 'text',
     });
-    journal.markNoticePending('turn-b', {
+    journal.stageNotice('turn-b', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice-b',
@@ -392,7 +397,7 @@ describe('TurnJournal', () => {
     expect(journal.get('turn-b')?.cliAlreadySent).toBe(true);
 
     const resent: string[] = [];
-    await journal.recover({
+    await recoverJournal(journal, {
       resend: async (entry) => {
         resent.push(entry.turnId);
         return true;
@@ -418,7 +423,7 @@ describe('TurnJournal', () => {
       },
     });
     const resend = vi.fn(async () => true);
-    await journal.recover({ resend });
+    await recoverJournal(journal, { resend });
     expect(resend).not.toHaveBeenCalled();
     expect(journal.get('cli')?.status).toBe('reply-delivered');
   });
@@ -434,7 +439,7 @@ describe('TurnJournal', () => {
       messageId: 'om_stream',
       interactive: true,
     });
-    journal.markNoticePending('streamed', {
+    journal.stageNotice('streamed', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice',
@@ -445,7 +450,7 @@ describe('TurnJournal', () => {
     await reloaded.load();
     const resend = vi.fn(async () => true);
     const resendNotice = vi.fn(async () => true);
-    await reloaded.recover({ resend, resendNotice });
+    await recoverJournal(reloaded, { resend, resendNotice });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
     expect(reloaded.get('streamed')?.status).toBe('notice-delivered');
@@ -464,14 +469,14 @@ describe('TurnJournal', () => {
       messageId: 'om_stream',
       interactive: true,
     });
-    journal.markNoticePending('streamed', {
+    journal.stageNotice('streamed', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice',
     });
     const resend = vi.fn(async () => true);
     const resendNotice = vi.fn(async () => true);
-    await journal.recover({ resend, resendNotice });
+    await recoverJournal(journal, { resend, resendNotice });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
     expect(journal.get('streamed')?.status).toBe('notice-delivered');
@@ -487,7 +492,7 @@ describe('TurnJournal', () => {
       replyMode: 'card',
       deliveryId: 'reply:both',
     });
-    journal.markNoticePending('both', {
+    journal.stageNotice('both', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice',
@@ -495,11 +500,11 @@ describe('TurnJournal', () => {
     });
     const resend = vi.fn(async () => true);
     const resendNotice = vi.fn(async () => true);
-    await journal.recover({ resend, resendNotice });
+    await recoverJournal(journal, { resend, resendNotice });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
     expect(journal.get('both')?.status).toBe('notice-delivered');
-    await journal.recover({ resend, resendNotice });
+    await recoverJournal(journal, { resend, resendNotice });
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
   });
@@ -516,7 +521,7 @@ describe('TurnJournal', () => {
       messageId: 'om_landed',
     });
     const resendNotice = vi.fn(async () => true);
-    await journal.recover({ resendNotice });
+    await recoverJournal(journal, { resendNotice });
     expect(resendNotice).not.toHaveBeenCalled();
     expect(journal.get('landed')?.status).toBe('notice-delivered');
   });
@@ -525,7 +530,7 @@ describe('TurnJournal', () => {
     const { journal } = await fixture();
     await journal.load();
     journal.enqueue(queued({ turnId: 'starting' }));
-    await journal.recover({});
+    await recoverJournal(journal, {});
     expect(journal.get('starting')?.status).toBe('queued');
     expect(journal.noteSpawn({
       scope: 'oc_group',
@@ -548,7 +553,7 @@ describe('TurnJournal', () => {
     const restarted = new TurnJournal(file, { now: () => 1_760_000_000_000 });
     await restarted.load();
     expect(restarted.get('stale-queued')?.status).toBe('queued');
-    await restarted.recover({});
+    await recoverJournal(restarted, {});
     expect(restarted.get('stale-queued')?.status).toBe('interrupted');
   });
 
@@ -568,11 +573,11 @@ describe('TurnJournal', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     const restarted = new TurnJournal(file, { now: () => 1_760_000_000_000 });
     await restarted.load();
-    await restarted.recover({
+    await recoverJournal(restarted, {
       onInterrupted,
       isAlive: () => false,
     });
-    await restarted.recover({
+    await recoverJournal(restarted, {
       onInterrupted,
       isAlive: () => false,
     });
@@ -594,15 +599,30 @@ describe('TurnJournal', () => {
     const { journal } = await fixture();
     await journal.load();
     journal.enqueue(queued({ turnId: 'done-notice' }));
-    journal.markNoticePending('done-notice', {
+    journal.stageNotice('done-notice', {
       kind: 'continue',
       recipientChatId: 'oc_group',
       markdown: 'notice',
     });
-    journal.markNoticeDelivered('done-notice');
+    journal.noticeDelivered('done-notice');
     journal.voidScope('oc_group');
     expect(journal.get('done-notice')?.status).toBe('notice-delivered');
     expect(journal.get('done-notice')?.noticeInvalidated).toBe(true);
+  });
+
+  it('does not let replyDelivered overwrite a rejected fallback', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued());
+    journal.stageReply('turn-1', {
+      markdown: 'NOPE',
+      replyTo: 'om_1',
+      replyMode: 'text',
+      deliveryId: 'reply:turn-1',
+    });
+    journal.replyRejected('turn-1');
+    journal.replyDelivered('turn-1');
+    expect(journal.get('turn-1')?.reply?.state).toBe('rejected');
   });
 
   it('voids incomplete records for a scope on session switch', async () => {
@@ -628,8 +648,8 @@ describe('TurnJournal', () => {
     });
     journal.voidScope('oc_group');
     journal.markSettled('turn-1', { kind: 'interrupted', reason: { type: 'superseded', by: 'new' }, retriable: false, needsHuman: false });
-    journal.markReplyDelivered('turn-1');
-    journal.markCompletedUndelivered('turn-1', {
+    journal.replyDelivered('turn-1');
+    journal.stageReply('turn-1', {
       markdown: 'late',
       replyTo: 'om_1',
       replyMode: 'text',

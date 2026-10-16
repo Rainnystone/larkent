@@ -128,6 +128,7 @@ describe('one classifier and untimed stream', { timeout: 20_000 }, () => {
     )));
     expect(answerSends(h.channel)).toHaveLength(0);
 
+    await h.bridge.tickLink();
     await h.bridge.recoverMissed();
     await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_net') && entry.status === 'reply-delivered'

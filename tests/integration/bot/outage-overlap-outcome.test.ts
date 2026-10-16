@@ -59,6 +59,7 @@ describe('retriability from outcome shape plus outage overlap', { timeout: 20_00
     });
     run.close();
     run.releaseCleanup();
+    await recoverLink(h);
     await waitFor(() => noticeCards(h.channel).length === 1);
 
     const notice = JSON.stringify(noticeCards(h.channel)[0]?.content);
@@ -86,6 +87,7 @@ describe('retriability from outcome shape plus outage overlap', { timeout: 20_00
     run.push({ type: 'error', message: stderr, terminationReason: 'failed' });
     run.close();
     run.releaseCleanup();
+    await recoverLink(h);
     await waitFor(() => h.channel.sent.some((item) => item.chatId === OWNER));
 
     const initiator = h.channel.sent.filter((item) => (
@@ -116,6 +118,7 @@ describe('retriability from outcome shape plus outage overlap', { timeout: 20_00
     });
     run.close();
     run.releaseCleanup();
+    await recoverLink(h);
     await waitFor(() => noticeCards(h.channel).length === 1);
 
     const notice = JSON.stringify(noticeCards(h.channel)[0]?.content);
@@ -301,6 +304,14 @@ function mention(messageId: string, content: string): NormalizedMessage {
     mentionedBot: true,
     createTime: Date.now(),
   } as unknown as NormalizedMessage;
+}
+
+async function recoverLink(h: {
+  channel: { connectionState: 'connected' | 'reconnecting' | 'failed' };
+  bridge: { tickLink(): Promise<void> };
+}) {
+  h.channel.connectionState = 'connected';
+  await h.bridge.tickLink();
 }
 
 function rendered(channel: ReturnType<typeof createRecordingLarkChannel>) {

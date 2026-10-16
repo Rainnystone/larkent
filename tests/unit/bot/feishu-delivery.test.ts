@@ -137,6 +137,57 @@ describe('redeliverStagedReply', () => {
     expect(JSON.stringify(channel.updatedCards.at(-1)?.card)).toContain('FULL ANSWER');
   });
 
+  it('does not uuid-send when a rejected patch is not a gone card', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    const card = await channel.send(CHAT, { card: recoveryAnswerCard('partial') }, { uuid: 'reply:kept' });
+    channel.updateCard = async () => {
+      throw Object.assign(new Error('Request failed with status code 400'), {
+        cause: { response: { status: 400 } },
+      });
+    };
+    const before = channel.sent.length;
+    await expect(redeliverStagedReply({
+      channel,
+      entry: staged({
+        turnId: 'kept',
+        deliveryId: 'reply:kept',
+        markdown: 'FULL ANSWER',
+        replyMode: 'card',
+        messageId: card.messageId,
+        interactive: true,
+      }),
+      botAppId: APP,
+      now: () => 1_760_000_000_000,
+    })).rejects.toMatchObject({ message: expect.stringContaining('400') });
+    expect(channel.sent).toHaveLength(before);
+  });
+
+  it('uuid-sends with reply:<turnId> when a gone card has no stored deliveryId', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    channel.updateCard = async () => {
+      throw Object.assign(new Error('message not found'), {
+        cause: { response: { status: 400, data: { code: 230025 } } },
+      });
+    };
+    const result = await redeliverStagedReply({
+      channel,
+      entry: staged({
+        turnId: '2e1b7c9a-1111-4111-8111-aaaaaaaaaaaa',
+        markdown: 'FULL ANSWER',
+        replyMode: 'card',
+        messageId: 'om_gone_missing',
+        interactive: true,
+      }),
+      botAppId: APP,
+      now: () => 1_760_000_000_000,
+    });
+    expect(result.delivered).toBe(true);
+    expect(channel.sent).toHaveLength(1);
+    expect((channel.sent[0]?.options as { uuid?: string } | undefined)?.uuid).toBe(
+      replyDeliveryKey('2e1b7c9a-1111-4111-8111-aaaaaaaaaaaa'),
+    );
+  });
+
   it('does not patch a markdown or text receipt as an interactive card', async () => {
     const channel = createFakeChannel({ botAppId: APP });
     const posted = await channel.send(CHAT, { markdown: 'partial' }, { uuid: 'reply:md', replyTo: 'om_src' });
@@ -297,7 +348,7 @@ describe('readBackBotReply', () => {
 
 function staged(input: {
   turnId: string;
-  deliveryId: string;
+  deliveryId?: string;
   markdown: string;
   replyMode?: string;
   messageId?: string;
@@ -317,7 +368,7 @@ function staged(input: {
       markdown: input.markdown,
       replyTo: 'om_src',
       replyMode: input.replyMode ?? 'text',
-      deliveryId: input.deliveryId,
+      ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
       ...(input.messageId ? { messageId: input.messageId } : {}),
       ...(input.interactive === true ? { interactive: true } : {}),
     },

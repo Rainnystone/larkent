@@ -53,7 +53,7 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     expect(streamId).toBeTruthy();
     expect(answerSends(h.channel)).toHaveLength(0);
 
-    await h.bridge.recoverMissed();
+    await recoverLink(h);
     await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_md') && entry.status === 'reply-delivered'
     )));
@@ -76,7 +76,7 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     )));
     expect(noticeSends(h.channel)).toHaveLength(0);
 
-    await h.bridge.recoverMissed();
+    await recoverLink(h);
     await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_short') && entry.status === 'reply-delivered'
     )));
@@ -88,7 +88,7 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     expect(answerSends(h.channel)).toHaveLength(0);
   });
 
-  it('stays staged when recovery patch is 400, then patches the same card without a uuid-send', async () => {
+  it('retries a one-time 400 patch while the link stays up and delivers the same card without a uuid-send', async () => {
     const h = await harness({ replyMode: 'card' });
     h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
     const origUpdate = h.channel.updateCard.bind(h.channel);
@@ -103,26 +103,19 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
 
     await h.channel.handlers.message?.(mention('om_400', 'please answer'));
     await waitFor(() => h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_400') && entry.status === 'completed-undelivered'
+      entry.messageIds.includes('om_400') && entry.status === 'reply-delivered'
     )));
     const streamId = h.channel.streams[0]?.messageId;
     expect(streamId).toBeTruthy();
-    expect(answerSends(h.channel)).toHaveLength(0);
-
-    await h.bridge.recoverMissed();
-    expect(h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_400') && entry.status === 'completed-undelivered'
-    ))).toBe(true);
-    expect(answerSends(h.channel)).toHaveLength(0);
-
-    await h.bridge.recoverMissed();
-    await waitFor(() => h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_400') && entry.status === 'reply-delivered'
-    )));
+    expect(patches).toBeGreaterThanOrEqual(2);
     expect(answerSends(h.channel)).toHaveLength(0);
     expect(h.channel.updatedCards.some((row) => (
       row.messageId === streamId && JSON.stringify(row.card).includes(ANSWER)
     ))).toBe(true);
+    expect(h.channel.streams.length).toBe(1);
+
+    await h.bridge.recoverMissed();
+    expect(answerSends(h.channel)).toHaveLength(0);
     expect(h.channel.streams.length).toBe(1);
   });
 
@@ -140,7 +133,7 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     expect(h.channel.streams[0]?.messageId ?? '').toBe('');
     expect(answerSends(h.channel)).toHaveLength(0);
 
-    await h.bridge.recoverMissed();
+    await recoverLink(h);
     await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_open') && entry.status === 'reply-delivered'
     )));
@@ -206,6 +199,7 @@ async function harness(opts: {
     sessions,
     workspaces,
     journal,
+    probe: async () => true,
     controls: {
       profile: 'test',
       profileConfig: cfg,
@@ -268,6 +262,13 @@ function mention(messageId: string, content: string): NormalizedMessage {
     mentionedBot: true,
     createTime: Date.now(),
   } as unknown as NormalizedMessage;
+}
+
+async function recoverLink(h: {
+  bridge: { tickLink(): Promise<void>; recoverMissed(): Promise<void> };
+}) {
+  await h.bridge.tickLink();
+  await h.bridge.recoverMissed();
 }
 
 async function drainIO() {

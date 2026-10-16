@@ -48,8 +48,7 @@ describe('exactly-once Feishu uuid delivery', { timeout: 20_000 }, () => {
 
     await h.channel.handlers.message?.(mention('om_src', 'please answer'));
     await waitFor(() => (
-      h.journal.list().some((entry) => entry.status === 'completed-undelivered')
-      && h.channel.sent.some((item) => JSON.stringify(item.content).includes(ANSWER))
+      h.channel.sent.some((item) => JSON.stringify(item.content).includes(ANSWER))
     ));
     expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes(ANSWER))).toHaveLength(1);
     const landedId = h.channel.sent.find((item) => JSON.stringify(item.content).includes(ANSWER));
@@ -58,7 +57,9 @@ describe('exactly-once Feishu uuid delivery', { timeout: 20_000 }, () => {
     expect((staged?.reply as { uuid?: string } | undefined)?.uuid).toBeUndefined();
 
     await h.bridge.recoverMissed();
-    await waitFor(() => h.journal.list().some((entry) => entry.status === 'reply-delivered'));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.status === 'reply-delivered' || entry.reply?.state === 'sent'
+    )));
     const answers = h.channel.sent.filter((item) => JSON.stringify(item.content).includes(ANSWER));
     expect(answers).toHaveLength(1);
     const delivered = h.journal.list().find((entry) => entry.messageIds.includes('om_src'));

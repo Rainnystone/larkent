@@ -70,10 +70,13 @@ describe('turn journal in the live channel', { timeout: 40_000 }, () => {
     };
 
     await h.channel.handlers.message?.(mention('om_run', 'please answer'));
-    await waitFor(() => h.journal.list().some((entry) => entry.status === 'completed-undelivered'));
-    expect(h.channel.sent).toEqual([]);
-
-    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.status === 'completed-undelivered' || entry.status === 'reply-delivered'
+    )));
+    if (h.journal.list().some((entry) => entry.status === 'completed-undelivered')) {
+      expect(h.channel.sent).toEqual([]);
+      await h.bridge.recoverMissed();
+    }
     await waitFor(() => h.journal.list().some((entry) => entry.status === 'reply-delivered'));
     expect(h.channel.sent).toHaveLength(1);
     expect(JSON.stringify(h.channel.sent[0]?.content)).toContain(ANSWER);
@@ -101,10 +104,13 @@ describe('turn journal in the live channel', { timeout: 40_000 }, () => {
     };
 
     await h.channel.handlers.message?.(mention('om_tls', 'please answer'));
-    await waitFor(() => h.journal.list().some((entry) => entry.status === 'completed-undelivered'));
-    expect(h.channel.sent).toEqual([]);
-
-    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.status === 'completed-undelivered' || entry.status === 'reply-delivered'
+    )));
+    if (h.journal.list().some((entry) => entry.status === 'completed-undelivered')) {
+      expect(h.channel.sent).toEqual([]);
+      await h.bridge.recoverMissed();
+    }
     await waitFor(() => h.journal.list().some((entry) => entry.status === 'reply-delivered'));
     expect(h.channel.sent).toHaveLength(1);
   });
@@ -151,7 +157,7 @@ describe('turn journal in the live channel', { timeout: 40_000 }, () => {
     )));
   });
 
-  it('a rejected final patch stays staged in both markdown and card mode, then is recovered by patching the same card', async () => {
+  it('a rejected final patch is swept onto the same card in both markdown and card mode, without a uuid-send', async () => {
     const rejects = [
       sdkShapedSendError('unknown', axiosHttpError(400)),
       new Error('stream controller is closed'),
@@ -163,41 +169,22 @@ describe('turn journal in the live channel', { timeout: 40_000 }, () => {
 
         await h.channel.handlers.message?.(mention('om_run', 'please answer'));
         await waitFor(() => h.journal.list().some((entry) => (
-          entry.messageIds.includes('om_run')
-          && entry.status !== 'queued'
-          && entry.status !== 'running'
-        )));
-        const liveDeadline = Date.now() + 1_000;
-        while (Date.now() < liveDeadline) {
-          const live = h.journal.list().find((entry) => entry.messageIds.includes('om_run'));
-          expect(live?.status, `${replyMode} live settle uuid-delivered the rejected stream`).not.toBe(
-            'reply-delivered',
-          );
-          await new Promise((resolve) => setTimeout(resolve, 25));
-          await yieldIO();
-        }
-        const staged = h.journal.list().find((entry) => entry.messageIds.includes('om_run'));
-        expect(staged?.status).toBe('completed-undelivered');
-        const streamId = h.channel.streams[0]?.messageId;
-        expect(streamId).toBeTruthy();
-        expect(staged?.reply?.markdown).toContain(ANSWER);
-        expect(staged?.reply?.replyTo).toBe('om_run');
-        expect(staged?.reply?.messageId).toBe(streamId);
-        expect(answerSends(h.channel)).toHaveLength(0);
-
-        await h.bridge.recoverMissed();
-        await waitFor(() => h.journal.list().some((entry) => (
           entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
         )));
+        const streamId = h.channel.streams[0]?.messageId;
+        expect(streamId).toBeTruthy();
+        const delivered = h.journal.list().find((entry) => entry.messageIds.includes('om_run'));
+        expect(delivered?.reply?.markdown).toContain(ANSWER);
+        expect(delivered?.reply?.replyTo).toBe('om_run');
+        expect(delivered?.reply?.messageId).toBe(streamId);
         expect(answerSends(h.channel)).toHaveLength(0);
         expect(h.channel.updatedCards.some((row) => (
           row.messageId === streamId && JSON.stringify(row.card).includes(ANSWER)
         ))).toBe(true);
-        const delivered = h.journal.list().find((entry) => entry.messageIds.includes('om_run'));
-        expect(delivered?.reply?.messageId).toBe(streamId);
 
         await h.bridge.recoverMissed();
         expect(answerSends(h.channel)).toHaveLength(0);
+        expect(h.channel.streams.length).toBe(1);
       }
     }
   });

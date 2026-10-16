@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LarkChannelError } from '@larksuite/channel';
-import { classify } from '../../../src/bot/feishu-error';
+import { classify, isGoneMessage } from '../../../src/bot/feishu-error';
 import { OutboundTimeoutError } from '../../../src/bot/self-message';
 import {
   axiosErrno,
   axiosHttpError,
   axiosLike,
   captureSdkSendError,
+  sdkShapedSendError,
 } from '../../helpers/sdk-feishu-errors';
 
 afterEach(() => {
@@ -106,5 +107,27 @@ describe('classify Feishu errors from the real SDK', () => {
   it('walks .cause so a wrapper around an SDK error still classifies', async () => {
     const inner = await captureSdkSendError(axiosHttpError(403, 'Bot is not in the chat'));
     expect(classify(Object.assign(new Error('delivery failed'), { cause: inner }))).toBe('rejected');
+  });
+});
+
+describe('isGoneMessage', () => {
+  it.each([230002, 230025, 230026])('treats Feishu %s as a gone card, still classified rejected', (code) => {
+    const err = sdkShapedSendError('unknown', axiosLike('message not found', {
+      response: { status: 400, data: { code } },
+    }));
+    expect(classify(err)).toBe('rejected');
+    expect(isGoneMessage(err)).toBe(true);
+  });
+
+  it('treats HTTP 404 as gone', () => {
+    const err = sdkShapedSendError('unknown', axiosHttpError(404));
+    expect(classify(err)).toBe('rejected');
+    expect(isGoneMessage(err)).toBe(true);
+  });
+
+  it('does not treat a generic 400 as gone', () => {
+    const err = sdkShapedSendError('unknown', axiosHttpError(400));
+    expect(classify(err)).toBe('rejected');
+    expect(isGoneMessage(err)).toBe(false);
   });
 });
