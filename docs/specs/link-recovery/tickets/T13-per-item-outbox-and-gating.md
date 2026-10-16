@@ -24,7 +24,9 @@ Delivery invariants (I3, I6, I8); §4 Outbox
 - [ ] J3: an entry that is settled with a reply is sent once per pass, not twice.
 - [ ] The link drops in the middle of the redelivery loop → the loop stops; the rest go out at the next recovery, each exactly once.
 - [ ] Link down at turn end → zero send calls until recovery, then exactly one.
-- [ ] Non-stream final send rejected (400) → one plain-text fallback, item terminal, no recovery triggered.
+- [ ] Completed-but-undelivered rows are retried by a bounded sweep that runs whether the link is up or down. Each retry is always a same-card patch, never a send without a uuid. If the card is permanently gone (a 4xx that can never succeed), the row falls back to a reply keyed by the row's stored uuid, so the user gets exactly one complete answer (I1).
+- [ ] A final patch fails once with a 4xx while the link stays up → the user still receives exactly one complete reply.
+- [ ] The card is permanently gone → exactly one reply keyed by the row's stored uuid.
 - [ ] An old journal file (shared `status`) loads and its staged items are delivered once.
 - [ ] `pnpm ci:local` passes.
 
