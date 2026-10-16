@@ -14,6 +14,7 @@ Spec: [../../link-recovery.md](../../link-recovery.md). One ticket per session; 
 | [T7](T7-transport-only-reconnect.md) | Transport-only reconnect | T1 |
 | [T8](T8-stall-check-after-recovery.md) | Stall check after recovery | T1, T4 |
 | [T9](T9-e2e-disconnect-then-recover.md) | E2E round 4: disconnect then recover | T0, T1, T2, T3, T4, T5, T6, T7, T8 |
+| [T10](T10-review-followups.md) | Review follow-ups (fix alongside code review) | T0–T8 |
 
 ## Blocking graph
 

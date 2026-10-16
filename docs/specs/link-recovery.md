@@ -34,7 +34,7 @@ flags and the three in-process dedupe guards are deleted: no legacy branch remai
 
 User-visible contract after an outage of any cause:
 
-- every message sent during the outage gets **exactly one** reply or **one** notice;
+- every message sent during the outage gets **exactly one** reply or **one** notice, except the cases under *Known limitations*;
 - the queue drains; no chat stays blocked behind a dead run longer than the idle bound;
 - an ordinary message after an interruption **abandons** the previous turn (card → 已放弃) and only the new
   message is answered; only the button or typed 继续 resumes (card → 已继续);
@@ -202,6 +202,16 @@ seam; command splitting / single preferences parser; e2e proxy cleanup (D1).
 - Modules tested directly: FeishuLink (fake channel status, fake probe, fake clock), Recovery (ordering, coalescing), Outbox (stage/deliver/redeliver idempotence across restart), Continuations (abandon/continue/stale/restart), liveness watchdog, outcome derivation.
 - Prior art: the recording Lark channel adapter, existing backfill/journal tests (to be rewritten), the e2e test-bridge with proxy faults (`ws-freeze`, `blackhole --host`, `slow`, `disconnect`, `eai_again`) and the host-sleep scenario.
 - Final E2E (T9) tests ONE scenario — disconnect then recover — with disconnection induced 2–3 ways plus kill -9, in card and markdown modes; each run ends with exactly one reply or notice and a drained queue.
+
+## Known limitations
+
+Recovery does not cover these; each is logged or declared rather than silent. Follow-ups: [T10](link-recovery/tickets/T10-review-followups.md).
+
+- **Outage longer than `lookbackMs`** (default 6 h): messages older than the window are not backfilled. At minimum a `backfill.window-truncated` log line; a one-time per-chat notice is proposed in T10.
+- **Thread replies in normal groups**: the chat container returns only thread roots, so an @bot inside a thread reply is not backfilled (`backfill.topic-partial`).
+- **First-contact DM**: a DM chat with no prior session is not scanned.
+- **Ledger pruned or lost**: the processed ledger keeps ids for 2× lookback (12 h); if it is pruned or lost, a message can be answered a second time.
+- **Redelivered final reply**: a reply whose final send timed out but actually landed may appear twice (accepted, §4); a reply the agent already sent via CLI must not be redelivered (T10 item 2).
 
 ## Out of Scope
 
