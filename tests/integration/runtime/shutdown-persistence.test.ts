@@ -227,6 +227,7 @@ describe('settled profile persistence', () => {
         if (updates === 1) producerReady.resolve();
         else { renderingBlocked.resolve(); await renderRelease.promise; }
       } });
+      return { messageId: 'om_stream' };
     };
     const run = controlledAgent({ beforeSecond: producerReady.promise });
     const h = await channelHarness(run.agent, 'card');
