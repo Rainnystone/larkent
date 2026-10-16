@@ -7,6 +7,8 @@ import { OutboundMessageIds, wrapChannelOutbound } from './self-message';
 export const FEISHU_LINK_TICK_MS = 15_000;
 export const FEISHU_LINK_SLEEP_MS = 30_000;
 export const FEISHU_LINK_SILENT_PROBE_MS = 60_000;
+/** Must stay below `FEISHU_LINK_SLEEP_MS` so a hung probe cannot look like suspend. */
+export const FEISHU_LINK_PROBE_TIMEOUT_MS = 20_000;
 const TIMER_STORM_GUARD_MS = 5_000;
 const WS_DOWN_LOG_EVERY = 20;
 
@@ -59,6 +61,24 @@ export function isBusiness4xx(error: unknown): boolean {
   return status !== undefined && status >= 400 && status < 500;
 }
 
+async function raceProbe(
+  probe: () => Promise<boolean>,
+  timeoutMs: number,
+): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      probe().catch(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
 export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Promise<void> } {
   const nowFn = deps.now ?? Date.now;
   const monoFn = deps.monotonic ?? (() => performance.now());
@@ -70,6 +90,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let lastTickAt = 0;
   let lastEvidenceAt: number | undefined;
   let probing = false;
+  let probeSeq = 0;
   let probeWallStart = 0;
   let probeMonoStart = 0;
   let wsDownTicks = 0;
@@ -119,26 +140,31 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
   const wsConnected = (): boolean => deps.channel.getConnectionStatus()?.state === 'connected';
 
-  const suspendDuringProbeMs = (): number => {
-    const wallElapsed = Math.max(0, nowFn() - probeWallStart);
-    const monoElapsed = Math.max(0, monoFn() - probeMonoStart);
-    return Math.max(0, wallElapsed - monoElapsed);
-  };
+  const probeWallElapsedMs = (): number => Math.max(0, nowFn() - probeWallStart);
 
-  const noteSleepIfProbeSuspended = (): void => {
-    const sleptMs = suspendDuringProbeMs();
-    if (sleptMs <= FEISHU_LINK_SLEEP_MS) return;
-    log.info('link', 'sleep', { sleptMs });
+  const noteSleepIfProbeSuspended = (): boolean => {
+    // Wall elapsed covers Windows QPC (monotonic includes standby, so
+    // wall-minus-mono is ~0). Do not move lastTickAt until after goDown.
+    const wallElapsed = probeWallElapsedMs();
+    const monoElapsed = Math.max(0, monoFn() - probeMonoStart);
+    if (wallElapsed <= FEISHU_LINK_SLEEP_MS) return false;
+    log.info('link', 'sleep', { sleptMs: wallElapsed, monoElapsed });
     goDown(probeWallStart);
+    return true;
   };
 
   const tick = async (fromTimer = false): Promise<void> => {
     if (stopped) return;
     const now = nowFn();
     if (probing) {
-      // Do not move lastTickAt: a post-wake tick must not erase the suspend
-      // gap. Wall minus awake (monotonic) time is the sleep signal.
-      noteSleepIfProbeSuspended();
+      // Do not move lastTickAt while the probe is still in flight.
+      if (noteSleepIfProbeSuspended()) return;
+      if (probeWallElapsedMs() > FEISHU_LINK_PROBE_TIMEOUT_MS) {
+        probeSeq += 1;
+        probing = false;
+        goDown(lastEvidenceAt ?? downSince);
+        lastTickAt = nowFn();
+      }
       return;
     }
     const sinceLast = lastTickAt > 0 ? now - lastTickAt : 0;
@@ -174,25 +200,31 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     const shouldProbe = down || silentMs >= FEISHU_LINK_SILENT_PROBE_MS;
     if (!shouldProbe) return;
 
+    const seq = ++probeSeq;
     probing = true;
     probeWallStart = now;
     probeMonoStart = monoFn();
     let ok = false;
     try {
-      ok = await deps.probe();
+      ok = await raceProbe(deps.probe, FEISHU_LINK_PROBE_TIMEOUT_MS);
     } catch {
       ok = false;
     } finally {
+      if (seq !== probeSeq) return;
       probing = false;
-      noteSleepIfProbeSuspended();
-      lastTickAt = nowFn();
+      const suspended = noteSleepIfProbeSuspended();
+      // Record sleep before moving the baseline. Resetting first would hide
+      // a Windows standby gap where wall-minus-mono is ~0.
+      if (!suspended) lastTickAt = nowFn();
     }
-    if (stopped) return;
+    if (seq !== probeSeq || stopped) return;
     if (ok) {
       noteEvidence(nowFn(), wsConnected());
+      lastTickAt = nowFn();
       return;
     }
     goDown(lastEvidenceAt ?? downSince);
+    lastTickAt = nowFn();
   };
 
   wrapChannelOutbound(deps.channel, deps.outbound ?? new OutboundMessageIds(), {

@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { LarkChannel } from '@larksuite/channel';
 import { OutboundTimeoutError } from '../../../src/bot/self-message';
+import { log } from '../../../src/core/logger';
 import {
+  FEISHU_LINK_PROBE_TIMEOUT_MS,
   FEISHU_LINK_SILENT_PROBE_MS,
   FEISHU_LINK_SLEEP_MS,
   FEISHU_LINK_TICK_MS,
@@ -11,6 +13,11 @@ import {
 } from '../../../src/bot/feishu-link';
 
 describe('FeishuLink', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
   it('emits one recovered outage after a 2 min probe failure while WS stays connected', async () => {
     let now = 1_700_000_000_000;
     const watermark = { value: now as number | undefined };
@@ -278,8 +285,8 @@ describe('FeishuLink', () => {
   it('does not treat a slow but successful probe as host sleep', async () => {
     const recovered = await hangSilentProbe({
       onHang: (clock) => {
-        clock.now += FEISHU_LINK_SLEEP_MS + 5_000;
-        clock.mono += FEISHU_LINK_SLEEP_MS + 5_000;
+        clock.now += 10_000;
+        clock.mono += 10_000;
       },
     });
     expect(recovered.link.isDown()).toBe(false);
@@ -290,6 +297,73 @@ describe('FeishuLink', () => {
     const recovered = await hangSilentProbe({
       onHang: (clock) => {
         clock.now += 5 * 60_000;
+      },
+    });
+    expect(recovered.outages).toHaveLength(1);
+    expect(recovered.outages[0]!.since).toBe(recovered.probeStartedAt);
+    expect(recovered.outages[0]!.until).toBe(recovered.clock.now);
+    expect(recovered.link.isDown()).toBe(false);
+  });
+
+  it('times out a hung probe below the sleep threshold without counting it as suspend', async () => {
+    expect(FEISHU_LINK_PROBE_TIMEOUT_MS).toBeLessThan(FEISHU_LINK_SLEEP_MS);
+    const recovered = await hangSilentProbe({
+      onHang: (clock) => {
+        clock.now += FEISHU_LINK_PROBE_TIMEOUT_MS + 1_000;
+        clock.mono += FEISHU_LINK_PROBE_TIMEOUT_MS + 1_000;
+      },
+    });
+    expect(recovered.outages).toHaveLength(0);
+    expect(recovered.link.isDown()).toBe(true);
+
+    const sleep = vi.spyOn(log, 'info');
+    recovered.clock.now += FEISHU_LINK_TICK_MS;
+    recovered.clock.mono += FEISHU_LINK_TICK_MS;
+    await recovered.link.tick();
+    expect(sleep.mock.calls.some((call) => call[0] === 'link' && call[1] === 'sleep')).toBe(false);
+  });
+
+  it('bounds a hung probe with the probe timer without waiting for the next tick', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let now = 1_700_000_000_000;
+    const recovered: Outage[] = [];
+    let hang = false;
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: () => {
+        if (!hang) return Promise.resolve(true);
+        return new Promise<boolean>(() => {});
+      },
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+    recovered.length = 0;
+
+    hang = true;
+    let probing: Promise<void> | undefined;
+    const silentUntil = now + FEISHU_LINK_SILENT_PROBE_MS;
+    while (now < silentUntil) {
+      now += FEISHU_LINK_TICK_MS;
+      probing = link.tick();
+      if (now < silentUntil) await probing;
+    }
+    expect(link.isDown()).toBe(false);
+    await vi.advanceTimersByTimeAsync(FEISHU_LINK_PROBE_TIMEOUT_MS);
+    await probing;
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+  });
+
+  it('treats a probe wall-time gap above sleep as suspend when both clocks jump together', async () => {
+    const recovered = await hangSilentProbe({
+      onHang: (clock) => {
+        clock.now += 5 * 60_000;
+        clock.mono += 5 * 60_000;
       },
     });
     expect(recovered.outages).toHaveLength(1);
