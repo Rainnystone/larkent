@@ -43,6 +43,7 @@ export interface TurnNotice {
   initiatorDelivered?: boolean;
   ownerDelivered?: boolean;
   continueHint?: string;
+  messageId?: string;
 }
 
 export interface TurnJournalEntry {
@@ -552,6 +553,7 @@ function parseNotice(raw: unknown): TurnNotice | undefined {
     ...(raw.initiatorDelivered === true ? { initiatorDelivered: true } : {}),
     ...(raw.ownerDelivered === true ? { ownerDelivered: true } : {}),
     ...(typeof raw.continueHint === 'string' ? { continueHint: raw.continueHint } : {}),
+    ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
   };
 }
 

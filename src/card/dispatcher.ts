@@ -9,6 +9,7 @@ import type { CallbackAuth } from './callback-auth';
 import {
   type NoticeAction,
   type NoticeActionAuth,
+  resolveInterruptionNotice,
 } from '../bot/interruption-notice';
 import type { TurnJournal, TurnJournalEntry } from '../bot/turn-journal';
 import { runCommandHandler, type CommandContext, type Controls } from '../commands';
@@ -316,6 +317,14 @@ async function dispatchNoticeAction(
   }
   if (cmd === 'notice.dismiss') {
     deps.journal?.update(entry.turnId, { noticeInvalidated: true });
+    if (deps.journal) {
+      await resolveInterruptionNotice({
+        journal: deps.journal,
+        turnId: entry.turnId,
+        resolution: 'dismissed',
+        updateCard: (id, card) => deps.channel.updateCard(id, card),
+      });
+    }
     log.info('notice', 'dismissed', { turnId: entry.turnId, scope });
     return;
   }

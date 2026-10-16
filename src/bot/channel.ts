@@ -37,6 +37,7 @@ import {
   latestContinueNotice,
   planInterruptionNotice,
   resendPendingNotice,
+  resolveInterruptionNotice,
 } from './interruption-notice';
 import { renderCard } from '../card/run-renderer';
 import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
@@ -618,9 +619,17 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
           journal,
           noticeAuth,
-          onNoticeAction: ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
+          onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
             if (action !== 'notice.continue') return;
             journal?.update(entry.turnId, { noticeInvalidated: true });
+            if (journal) {
+              await resolveInterruptionNotice({
+                journal,
+                turnId: entry.turnId,
+                resolution: 'continued',
+                updateCard: (id, card) => channel.updateCard(id, card),
+              });
+            }
             continueByScope.set(scope, {
               turnId: entry.turnId,
               ...(entry.resumeHandle ? { resumeHandle: entry.resumeHandle } : {}),
@@ -1354,7 +1363,15 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     journal?.list()
       .filter((entry) => entry.scope === scope && (entry.notice?.kind === 'continue' || entry.notice?.kind === 'plain'))
       .forEach((entry) => journal.update(entry.turnId, { noticeInvalidated: true }));
-  } else if (journal) journal.update(continueReq.turnId, { noticeInvalidated: true });
+  } else if (journal) {
+    journal.update(continueReq.turnId, { noticeInvalidated: true });
+    await resolveInterruptionNotice({
+      journal,
+      turnId: continueReq.turnId,
+      resolution: 'continued',
+      updateCard: (id, card) => channel.updateCard(id, card),
+    });
+  }
   const pendingHint = pendingHintByScope.get(scope);
   if (pendingHint) {
     extraInstructions.push(pendingHint);

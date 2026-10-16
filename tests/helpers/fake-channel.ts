@@ -51,6 +51,8 @@ export interface FakeChannel {
   };
   createCard(cardJson: unknown): Promise<{ cardId: string }>;
   updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void>;
+  updateCard(messageId: string, cardJson: unknown): Promise<void>;
+  readonly updatedCards: Array<{ messageId: string; card: unknown }>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
 }
@@ -59,6 +61,7 @@ export function createFakeChannel(): FakeChannel {
   const sent: FakeChannelMessage[] = [];
   const streams: FakeChannelStream[] = [];
   const requests: FakeRawClientRequest[] = [];
+  const updatedCards: Array<{ messageId: string; card: unknown }> = [];
   const rawThreadIds = new Map<string, string>();
   const cardById = new Map<string, unknown>();
   let nextCard = 1;
@@ -78,6 +81,7 @@ export function createFakeChannel(): FakeChannel {
   return {
     sent,
     streams,
+    updatedCards,
     rawThreadIds,
     async fetchRawMessage(messageId: string): Promise<Array<{ thread_id?: string }>> {
       const threadId = rawThreadIds.get(messageId);
@@ -133,6 +137,10 @@ export function createFakeChannel(): FakeChannel {
     },
     async updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void> {
       requests.push({ method: 'cardkit.v1.card.update', params: { cardId, cardJson, sequence } });
+    },
+    async updateCard(messageId: string, cardJson: unknown): Promise<void> {
+      updatedCards.push({ messageId, card: cardJson });
+      requests.push({ method: 'im.v1.message.patch', params: { messageId, cardJson } });
     },
     async send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }> {
       // Resolve a `{ cardId }` reference back to the card JSON so assertions

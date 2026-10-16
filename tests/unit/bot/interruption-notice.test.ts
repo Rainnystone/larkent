@@ -8,6 +8,7 @@ import {
   isContinuePrompt,
   noticeUsesButtons,
   planInterruptionNotice,
+  resolvedNoticeCard,
 } from '../../../src/bot/interruption-notice';
 import { interruptionNoticeCard } from '../../../src/card/templates';
 import type { RunOutcome } from '../../../src/bot/run-outcome';
@@ -188,5 +189,15 @@ describe('interruption notice actions', () => {
     expect(json).toContain('notice.continue');
     expect(json).toContain('notice.dismiss');
     expect(json).toContain('tok-c');
+  });
+
+  it('renders a resolved card without continue/dismiss buttons', () => {
+    const continued = JSON.stringify(resolvedNoticeCard('continued'));
+    expect(continued).toContain('已继续');
+    expect(continued).not.toContain('notice.continue');
+    expect(continued).not.toContain('暂不');
+    const dismissed = JSON.stringify(resolvedNoticeCard('dismissed'));
+    expect(dismissed).toContain('已忽略');
+    expect(dismissed).not.toContain('notice.dismiss');
   });
 });

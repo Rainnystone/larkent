@@ -60,6 +60,8 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('CONTINUED')));
     const continued = h.channel.sent.find((item) => JSON.stringify(item.content).includes('CONTINUED'));
     expect(continued?.options).toMatchObject({ replyTo: 'om_notice' });
+    await waitFor(() => resolvedCards(h.channel).some((card) => JSON.stringify(card).includes('已继续')));
+    expect(JSON.stringify(resolvedCards(h.channel).at(-1))).not.toContain('notice.continue');
 
     const sentBefore = h.channel.sent.length;
     await h.channel.handlers.cardAction?.(cardClick(USER, token));
@@ -310,6 +312,37 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions[1]?.prompt).not.toContain(SECRET);
     expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
   });
+
+  it('resolves the notice card on typed 继续 and ignores a later button click', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+        [{ type: 'text', delta: 'CONTINUED' }, { type: 'final_text', content: 'CONTINUED' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+        [{ type: 'text', delta: 'SECOND' }, { type: 'final_text', content: 'SECOND' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    const noticeId = h.journal.list().find((entry) => entry.notice?.messageId)?.notice?.messageId;
+    expect(noticeId).toBeTruthy();
+
+    await h.channel.handlers.message?.(mention('om_cont', '@_user_1 继续'));
+    await waitFor(() => h.agent.runOptions.length === 2);
+    await waitFor(() => resolvedCards(h.channel).some((card) => JSON.stringify(card).includes('已继续')));
+    const resolved = resolvedCards(h.channel).at(-1)!;
+    expect(JSON.stringify(resolved)).toContain('已继续');
+    expect(JSON.stringify(resolved)).not.toContain('notice.continue');
+    expect(JSON.stringify(resolved)).not.toContain('暂不');
+    expect(h.channel.callLog.some((call) => call.op === 'updateCard' && call.messageId === noticeId)).toBe(true);
+
+    const sentBefore = h.channel.sent.length;
+    await h.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(h.agent.runOptions.length).toBe(2);
+    expect(JSON.stringify(h.channel.sent.slice(sentBefore))).toMatch(/失效/);
+    expect(JSON.stringify(h.channel.sent)).not.toContain('SECOND');
+  });
 });
 
 async function harness(opts: {
@@ -442,6 +475,12 @@ function noticeCards(channel: ReturnType<typeof createRecordingLarkChannel>) {
 
 function plainNotices(channel: ReturnType<typeof createRecordingLarkChannel>) {
   return noticeSends(channel).filter((item) => !JSON.stringify(item.content).includes('notice.continue'));
+}
+
+function resolvedCards(channel: ReturnType<typeof createRecordingLarkChannel>) {
+  return channel.callLog
+    .filter((call): call is Extract<typeof call, { op: 'updateCard' }> => call.op === 'updateCard')
+    .map((call) => call.card);
 }
 
 function continueToken(send: { content: unknown }): string {

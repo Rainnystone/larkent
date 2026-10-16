@@ -13,6 +13,8 @@ export const NOTICE_RESTART_GAP_MS = 500;
 
 export type NoticeKind = 'none' | 'continue' | 'auth';
 export type NoticeAction = 'notice.continue' | 'notice.dismiss';
+export type NoticeResolution = 'continued' | 'dismissed';
+export type NoticeCardUpdater = (messageId: string, card: object) => Promise<void>;
 
 export interface NoticePlan {
   kind: NoticeKind;
@@ -207,6 +209,39 @@ export type NoticeSender = (
   options?: { replyTo?: string; replyInThread?: boolean },
 ) => Promise<{ messageId?: string }>;
 
+export function resolvedNoticeCard(resolution: NoticeResolution): object {
+  switch (resolution) {
+    case 'continued':
+      return interruptionNoticeCard({ body: '已继续' });
+    case 'dismissed':
+      return interruptionNoticeCard({ body: '已忽略' });
+    default: {
+      const _exhaustive: never = resolution;
+      return _exhaustive;
+    }
+  }
+}
+
+export async function resolveInterruptionNotice(input: {
+  journal: TurnJournal;
+  turnId: string;
+  resolution: NoticeResolution;
+  updateCard?: NoticeCardUpdater;
+}): Promise<void> {
+  const notice = input.journal.get(input.turnId)?.notice;
+  if (!notice?.includeButtons || !notice.messageId || !input.updateCard) return;
+  try {
+    await input.updateCard(notice.messageId, resolvedNoticeCard(input.resolution));
+    log.info('notice', 'resolved', { turnId: input.turnId, resolution: input.resolution });
+  } catch (error) {
+    log.warn('notice', 'resolve-failed', {
+      turnId: input.turnId,
+      resolution: input.resolution,
+      err: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function latestContinueNotice(journal: TurnJournal, scope: string): TurnJournalEntry | undefined {
   return [...journal.list()].reverse().find((entry) => (
     entry.scope === scope
@@ -258,7 +293,7 @@ export async function resendPendingNotice(input: {
   if (notice.kind === 'auth') {
     return sendAuthPayload(input.send, input.entry, notice, input.journal);
   }
-  await postNotice(input.send, input.entry, notice, input.noticeAuth);
+  await postNotice(input.send, input.entry, notice, input.noticeAuth, input.journal);
   return true;
 }
 
@@ -297,7 +332,7 @@ async function sendContinueNotice(
   }
   if (input.stageOnly) return { delivered: false, pending: true };
   try {
-    await postNotice(input.send, { ...entry, notice }, notice, input.noticeAuth);
+    await postNotice(input.send, { ...entry, notice }, notice, input.noticeAuth, input.journal);
     input.journal.markNoticeDelivered(input.turnId);
     log.info('notice', 'sent', { turnId: input.turnId, kind: notice.kind, consecutive: input.consecutive });
     return { delivered: true, pending: false };
@@ -380,6 +415,7 @@ async function postNotice(
   entry: TurnJournalEntry,
   notice: TurnNotice,
   noticeAuth?: NoticeActionAuth,
+  journal?: TurnJournal,
 ): Promise<void> {
   const opts = sendOpts(entry, notice);
   if (notice.includeButtons && noticeAuth && entry.policyFingerprint) {
@@ -405,10 +441,23 @@ async function postNotice(
       opts,
     );
     requireReceipt(result, 'notice-card');
+    persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
     return;
   }
   const result = await send(notice.recipientChatId, { markdown: notice.markdown }, opts);
   requireReceipt(result, 'notice-text');
+  persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
+}
+
+function persistNoticeMessageId(
+  journal: TurnJournal | undefined,
+  turnId: string,
+  notice: TurnNotice,
+  messageId: string | undefined,
+): void {
+  if (!journal || !messageId?.trim()) return;
+  const current = journal.get(turnId)?.notice ?? notice;
+  journal.update(turnId, { notice: { ...current, messageId } });
 }
 
 function sendOpts(
