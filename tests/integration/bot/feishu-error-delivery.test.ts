@@ -34,6 +34,8 @@ const TEXT_CHAT = 'oc_text';
 const ANSWER = 'T11_FINAL_ANSWER';
 const NOW = 1_760_000_000_000;
 const STREAM_MS = 5 * 60_000;
+// Keep in lockstep with STREAM_TERMINAL_GRACE_MS in src/bot/channel.ts.
+const STREAM_TERMINAL_GRACE_MS = 3_000;
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -66,17 +68,22 @@ describe('one classifier and untimed stream', { timeout: 20_000 }, () => {
 
     await vi.advanceTimersByTimeAsync(STREAM_MS);
     await drainIO();
+    await h.bridge.tickLink();
     expect(recovered).toHaveLength(0);
     expect(toolRun.run.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     await drainIO();
+    await h.bridge.tickLink();
+    expect(recovered).toHaveLength(0);
     expect(toolRun.run.stopped).toBe(false);
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
 
     streamRun.push({ type: 'done', terminationReason: 'normal' });
     streamRun.close();
     streamRun.releaseCleanup();
+    await drainIO();
+    await vi.advanceTimersByTimeAsync(STREAM_TERMINAL_GRACE_MS);
     await drainIO();
     await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_stream') && entry.status === 'reply-delivered'
@@ -145,12 +152,6 @@ async function streamHarness(opts: {
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = new StreamingFakeAgent();
   const channel = createRecordingLarkChannel();
-  const origStream = channel.stream.bind(channel);
-  channel.stream = async (chatId, input, options) => origStream(
-    chatId,
-    chatId === STREAM_CHAT ? holdStream(input, STREAM_MS) : input,
-    options,
-  );
   sdk.channel = channel;
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'] });
   vi.setSystemTime(NOW);
@@ -341,38 +342,6 @@ function manualRun(recorded: AgentRun) {
   };
 }
 
-function holdStream(input: unknown, ms: number): unknown {
-  if (!isRecord(input)) return input;
-  if (isRecord(input.card) && typeof input.card.producer === 'function') {
-    const producer = input.card.producer as (ctrl: { update(card: unknown): Promise<void> }) => Promise<void>;
-    return {
-      ...input,
-      card: {
-        ...input.card,
-        producer: async (ctrl: { update(card: unknown): Promise<void> }) => {
-          await producer(ctrl);
-          await new Promise<void>((resolve) => {
-            setTimeout(resolve, ms);
-          });
-        },
-      },
-    };
-  }
-  if (typeof input.markdown === 'function') {
-    const markdown = input.markdown as (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
-    return {
-      ...input,
-      markdown: async (ctrl: { setContent(markdown: string): Promise<void> }) => {
-        await markdown(ctrl);
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, ms);
-        });
-      },
-    };
-  }
-  return input;
-}
-
 function p2p(chatId: string, messageId: string, content: string): NormalizedMessage {
   return {
     messageId,
@@ -396,26 +365,25 @@ function rendered(channel: ReturnType<typeof createRecordingLarkChannel>) {
   return JSON.stringify({ sent: channel.sent, streams: channel.streams });
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
 async function drainIO() {
   for (let n = 0; n < 50; n++) await yieldIO();
 }
 
 async function waitFor(predicate: () => boolean) {
-  const deadline = Date.now() + 8_000;
-  for (let n = 0; n < 10_000; n++) {
-    if (predicate()) return;
-    if (vi.isFakeTimers()) {
-      await vi.advanceTimersByTimeAsync(25);
-      if (Date.now() > deadline) break;
-    } else {
-      if (Date.now() > deadline) break;
+  // Timer progression stays explicit at the call site. Fake Date is the
+  // business clock, not a wait deadline — advancing it here raced stream
+  // grace against delivery on ubuntu/windows CI.
+  if (vi.isFakeTimers()) {
+    for (let n = 0; n < 10_000; n++) {
+      if (predicate()) return;
+      await yieldIO();
+    }
+  } else {
+    const deadline = Date.now() + 8_000;
+    while (Date.now() < deadline) {
+      if (predicate()) return;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-    await yieldIO();
   }
   throw new Error('expected T11 delivery transition was not observed');
 }
