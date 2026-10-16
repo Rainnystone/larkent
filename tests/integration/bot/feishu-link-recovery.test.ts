@@ -54,6 +54,11 @@ describe('FeishuLink recovery through the bridge', () => {
     });
 
     await waitFor(() => recovered.length === 1);
+    // Startup recover is not awaited; wrapping REST success feeds the
+    // classifier with nowFn(). Wait for that scan to settle before the
+    // silent-probe clock starts, or lastEvidenceAt jumps and the outage
+    // window starts after failureStart.
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
     recovered.length = 0;
 
     probeOk = false;
@@ -142,6 +147,58 @@ describe('FeishuLink recovery through the bridge', () => {
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
     await waitForDebounce();
+    expect(stagedSends()).toHaveLength(1);
+  });
+
+  it('redelivers a staged reply on the next recovery after journal flush throws', async () => {
+    const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
+    const h = await startHarness({
+      now: () => NOW,
+      probe: async () => true,
+      lastLiveAt: NOW,
+      history: { [CHAT]: [] },
+      withJournal: true,
+    });
+    await waitFor(() => h.ledger.getLiveAt() === NOW);
+    await h.bridge.recover();
+
+    const orig = h.journal!.redeliver.bind(h.journal);
+    // Stay failing across Recovery + the post-recover outbox sweep. Clearing
+    // the flag inside the first throw lets sweep send before the retry recover.
+    let boom = true;
+    h.journal!.redeliver = async (opts) => {
+      if (boom) {
+        throw new Error('ENOSPC journal persist');
+      }
+      return orig(opts);
+    };
+
+    h.journal!.enqueue({
+      turnId: 'turn-flush-throw',
+      scope: CHAT,
+      chatId: CHAT,
+      messageIds: ['om_src_flush'],
+      senderId: USER,
+      initiatorId: USER,
+      status: 'completed-undelivered',
+      reply: {
+        markdown: 'FLUSH_RETRY',
+        replyTo: 'om_src_flush',
+        replyMode: 'text',
+      },
+    });
+    await h.journal!.flush();
+    const stagedSends = () => h.channel.sent.filter((item) =>
+      JSON.stringify(item.content).includes('FLUSH_RETRY'),
+    );
+
+    await h.bridge.recover({ since: NOW - 1_000, until: NOW, hostSuspended: false });
+    expect(stagedSends()).toHaveLength(0);
+    expect(fail.mock.calls.some((call) => call[0] === 'recovery')).toBe(true);
+
+    boom = false;
+    await h.bridge.recover({ since: NOW - 1_000, until: NOW, hostSuspended: false });
+    await waitFor(() => stagedSends().length === 1);
     expect(stagedSends()).toHaveLength(1);
   });
 

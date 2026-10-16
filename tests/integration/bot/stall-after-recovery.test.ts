@@ -43,7 +43,7 @@ describe('stall check after recovery', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     const since = Date.now();
     await vi.advanceTimersByTimeAsync(1_000);
-    await h.bridge.recover({ since, until: Date.now() });
+    await h.bridge.recover({ since, until: Date.now(), hostSuspended: false });
 
     await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
     expect(h.agent.runs[0]!.stopped).toBe(false);
@@ -54,6 +54,64 @@ describe('stall check after recovery', () => {
     await drainIO();
     await waitFor(() => rendered(h.channel).includes('空闲超时'));
     expect(rendered(h.channel)).toContain('notice.continue');
+  });
+
+  it('after a host suspend, a silent open-tool run is stopped and posts one retriable notice within 2 min', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(message('first', 'please run the tool'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
+    await waitFor(() => rendered(h.channel).includes('long_tool'));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const since = Date.now();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.bridge.recover({ since, until: Date.now(), hostSuspended: true });
+
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+    await drainIO();
+    await waitFor(() => rendered(h.channel).includes('空闲超时'));
+    expect(rendered(h.channel)).toContain('notice.continue');
+    expect((rendered(h.channel).match(/notice\.continue/g) ?? []).length).toBe(1);
+  });
+
+  it('does not stop a 10-minute open tool call after a network-only outage', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(message('first', 'please run the tool'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
+    await waitFor(() => rendered(h.channel).includes('long_tool'));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const since = Date.now();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.bridge.recover({ since, until: Date.now(), hostSuspended: false });
+
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+
+    run.push({ type: 'tool_result', id: 'tool-1', output: 'TOOL_OK', isError: false });
+    run.push({ type: 'text', delta: 'DONE_AFTER_TOOL' });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => rendered(h.channel).includes('DONE_AFTER_TOOL'));
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+    expect(rendered(h.channel)).not.toContain('空闲超时');
+    const deliveries = h.channel.snapshotCalls().filter((call) => call.op === 'send' || call.op === 'stream');
+    expect(deliveries).toHaveLength(1);
+    expect(JSON.stringify(deliveries[0])).toContain('DONE_AFTER_TOOL');
   });
 
   it('leaves a run that keeps producing output alone', async () => {
@@ -68,7 +126,7 @@ describe('stall check after recovery', () => {
     await vi.advanceTimersByTimeAsync(5_000);
     const since = Date.now();
     await vi.advanceTimersByTimeAsync(1_000);
-    await h.bridge.recover({ since, until: Date.now() });
+    await h.bridge.recover({ since, until: Date.now(), hostSuspended: false });
 
     run.push({ type: 'text', delta: ' STILL_GOING' });
     await waitFor(() => rendered(h.channel).includes('STILL_GOING'));
