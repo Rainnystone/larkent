@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as nativeSetTimeout } from 'node:timers';
 import * as lockfile from 'proper-lockfile';
 import type { AppPaths } from '../config/app-paths';
 import { RUNTIME_LOCK_SCHEMA_VERSION } from '../config/migrations';
@@ -242,7 +243,18 @@ async function stealDeadHolderLock(target: string): Promise<void> {
   } catch {
     // Lock file may already be gone; still drop the stale pid sidecar.
   }
-  await unlink(runtimeLockMetaFile(target)).catch(() => {});
+  const metaFile = runtimeLockMetaFile(target);
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    try {
+      await unlink(metaFile);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      if ((code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') || attempt === 8) return;
+      await new Promise((resolve) => nativeSetTimeout(resolve, 20 * attempt));
+    }
+  }
 }
 
 function isRuntimeLockMeta(value: unknown): value is RuntimeLockMeta {

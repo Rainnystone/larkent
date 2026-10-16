@@ -1,11 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, open, rm } from 'node:fs/promises';
+import { chmod, mkdir, open, rename as fsRename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as nativeSetTimeout } from 'node:timers';
-import { promisify } from 'node:util';
-import gracefulFs from 'graceful-fs';
-
-const gracefulRename = promisify(gracefulFs.rename);
 
 export interface AtomicWriteOptions {
   mode?: number;
@@ -18,8 +14,13 @@ export interface AtomicWriteOptions {
   ) => Promise<void>;
 }
 
-const DEFAULT_RENAME_ATTEMPTS = 5;
-const DEFAULT_RETRY_DELAY_MS = 25;
+// graceful-fs.rename retries EPERM/EBUSY/EACCES for up to 60s on Windows when
+// the destination is missing (AV locking the directory). Session store and
+// journal startup writes hit that path, so tests die at 5s with no EPERM in
+// the log. Bound the retry ourselves instead.
+const WINDOWS = process.platform === 'win32';
+const DEFAULT_RENAME_ATTEMPTS = WINDOWS ? 12 : 5;
+const DEFAULT_RETRY_DELAY_MS = WINDOWS ? 40 : 25;
 
 export async function writeFileAtomic(
   path: string,
@@ -36,7 +37,9 @@ export async function writeFileAtomic(
     try {
       await handle.writeFile(data);
       try {
-        await handle.sync();
+        // Directory/file fsync can hang under Windows AV while the handle is
+        // still open. Close first, then rename; durability follows close+rename.
+        if (!WINDOWS) await handle.sync();
       } catch (err) {
         if (!isIgnorableWindowsFsyncError(err)) throw err;
       }
@@ -49,7 +52,7 @@ export async function writeFileAtomic(
       if (!isIgnorableWindowsPermError(err)) throw err;
     }
     await renameWithRetry(tmp, path, opts);
-    await fsyncDir(dirname(path));
+    if (!WINDOWS) await fsyncDir(dirname(path));
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
@@ -67,7 +70,7 @@ async function renameWithRetry(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await rename(from, to, gracefulRename);
+      await rename(from, to, fsRename);
       return;
     } catch (err) {
       lastErr = err;
@@ -84,7 +87,7 @@ export function isTransientRenameError(err: unknown): boolean {
 }
 
 function isIgnorableWindowsPermError(err: unknown): boolean {
-  if (process.platform !== 'win32') return false;
+  if (!WINDOWS) return false;
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
   return code === 'EPERM' || code === 'EACCES';
 }

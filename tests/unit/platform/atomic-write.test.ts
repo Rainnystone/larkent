@@ -35,6 +35,30 @@ describe('atomic write retry', () => {
     expect((await readdir(root)).filter((name) => name.includes('.tmp-'))).toEqual([]);
   });
 
+  it('bounds EPERM retries when the destination is missing instead of waiting a minute', async () => {
+    // graceful-fs.rename retries that Windows AV case for up to 60s. Our
+    // fallback must keep a short budget so a stuck rename fails fast.
+    const root = await tmpRoot();
+    const file = join(root, 'sessions.json');
+    const started = Date.now();
+    let attempts = 0;
+    await expect(
+      writeFileAtomic(file, '{}\n', {
+        mode: 0o600,
+        maxRenameAttempts: 4,
+        retryDelayMs: 5,
+        rename: async () => {
+          attempts++;
+          const err = new Error('locked') as NodeJS.ErrnoException;
+          err.code = 'EPERM';
+          throw err;
+        },
+      }),
+    ).rejects.toThrow('locked');
+    expect(attempts).toBe(4);
+    expect(Date.now() - started).toBeLessThan(2_000);
+  });
+
   it('cleans up temp files when rename retries are exhausted', async () => {
     const root = await tmpRoot();
     const file = join(root, 'config.json');

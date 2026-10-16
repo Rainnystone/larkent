@@ -352,6 +352,13 @@ class ManagedProfile {
       this.agent = nextAgent;
       this.controls = nextControls;
       if (oldAppLock) await this.releaseOwnedLock(oldAppLock);
+      await Promise.all([
+        this.sessions.flush().catch(() => {}),
+        this.sessionCatalog.flush().catch(() => {}),
+        this.workspaces.flush().catch(() => {}),
+        this.journal.flush().catch(() => {}),
+        this.ledger.flush().catch(() => {}),
+      ]);
       // Recovery runs after the swap is published. A reject here must not
       // unwind the live bridge or drop the app lock it now needs.
       await this.bridge.recoverMissed?.();
