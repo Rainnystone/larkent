@@ -37,7 +37,7 @@ afterEach(async () => {
 });
 
 describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
-  it('posts a continue card, resumes without replaying the original prompt, and rejects a replayed nonce', async () => {
+  it('posts a continue card, resumes with the interrupted turn input, and rejects a replayed nonce', async () => {
     const h = await harness({
       events: [
         [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
@@ -56,7 +56,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     await waitFor(() => h.agent.runOptions.length === 2);
     expect(h.agent.runOptions[1]?.resumeHandle).toBe('sess-1');
     expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
-    expect(h.agent.runOptions[1]?.prompt).not.toContain(SECRET);
+    expect(h.agent.runOptions[1]?.prompt).toContain(SECRET);
     await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('CONTINUED')));
     const continued = h.channel.sent.find((item) => JSON.stringify(item.content).includes('CONTINUED'));
     expect(continued?.options).toMatchObject({ replyTo: 'om_notice' });
@@ -309,7 +309,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     await h.channel.handlers.message?.(mention('om_cont', '@_user_1 继续'));
     await waitFor(() => h.agent.runOptions.length === 2);
     expect(h.agent.runOptions[1]?.resumeHandle).toBe('sess-1');
-    expect(h.agent.runOptions[1]?.prompt).not.toContain(SECRET);
+    expect(h.agent.runOptions[1]?.prompt).toContain(SECRET);
     expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
   });
 

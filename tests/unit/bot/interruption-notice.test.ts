@@ -5,6 +5,7 @@ import {
   NOTICE_MAX_BUTTON_STREAK,
   NoticeActionAuth,
   buildNoticeMarkdown,
+  continueExtraInstruction,
   isContinuePrompt,
   noticeUsesButtons,
   planInterruptionNotice,
@@ -72,6 +73,19 @@ describe('interruption notice decision', () => {
       retriable: false,
       needsHuman: false,
     })).toEqual({ kind: 'none' });
+  });
+
+  it('puts the interrupted turn user input on the resume extra instruction', () => {
+    const outcome: RunOutcome = {
+      kind: 'failed',
+      cause: 'transient-upstream',
+      retriable: true,
+      needsHuman: false,
+    };
+    expect(continueExtraInstruction(outcome)).toContain('上游网络中断');
+    expect(continueExtraInstruction(outcome)).not.toContain('原始输入');
+    expect(continueExtraInstruction(outcome, '写两行短诗')).toContain('写两行短诗');
+    expect(continueExtraInstruction(outcome, '  ')).not.toContain('原始输入');
   });
 
   it('treats 继续 / @bot 继续 as the continue prompt and other text as ordinary', () => {

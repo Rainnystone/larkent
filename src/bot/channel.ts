@@ -576,7 +576,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           authNotified: authNoticeAlreadyDelivered(journal),
         });
         if (result.delivered || result.pending) {
-          pendingHintByScope.set(entry.scope, continueExtraInstruction(outcome));
+          pendingHintByScope.set(entry.scope, continueExtraInstruction(outcome, entry.userInput));
         }
         return result.delivered;
       },
@@ -2805,7 +2805,10 @@ async function sendTurnNotice(input: {
     stageOnly: input.stageOnly === true,
   });
   if (plan.kind === 'continue' && (result.delivered || result.pending)) {
-    input.notice.pendingHintByScope.set(input.scope, continueExtraInstruction(input.outcome));
+    input.notice.pendingHintByScope.set(
+      input.scope,
+      continueExtraInstruction(input.outcome, input.journal.get(input.turnId)?.userInput),
+    );
   }
 }
 

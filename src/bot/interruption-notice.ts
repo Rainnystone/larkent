@@ -99,8 +99,11 @@ export function buildAuthOwnerMarkdown(): string {
   return '有一次 run 因为 CLI 登录失效而停下。请重新登录对应 CLI；新的消息不会被暂停。';
 }
 
-export function continueExtraInstruction(outcome: RunOutcome): string {
-  return `上一轮因为「${describeRunOutcome(outcome)}」被中断。${CONTINUE_HINT}。`;
+export function continueExtraInstruction(outcome: RunOutcome, userInput?: string): string {
+  const base = `上一轮因为「${describeRunOutcome(outcome)}」被中断。${CONTINUE_HINT}。`;
+  const trimmed = userInput?.trim();
+  if (!trimmed) return base;
+  return `${base}\n原始输入：\n${trimmed}`;
 }
 
 export interface NoticeSignInput {
@@ -368,7 +371,7 @@ async function sendContinueNotice(
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     includeButtons: buttons,
-    continueHint: continueExtraInstruction(input.outcome),
+    continueHint: continueExtraInstruction(input.outcome, entry.userInput),
     deliveryId: randomUUID(),
   };
   if (!notice.deliveryId) notice = { ...notice, deliveryId: randomUUID() };
