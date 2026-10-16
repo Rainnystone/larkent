@@ -269,14 +269,10 @@ export class TurnJournal {
     this.patch(turnId, { cliAlreadySent: true });
   }
 
-  noteCliAlreadySentForScope(scope: string): void {
-    for (const entry of this.entries) {
-      if (entry.scope !== scope) continue;
-      if (!isStagedDelivery(entry) && entry.status !== 'queued' && entry.status !== 'running' && entry.status !== 'settled') {
-        continue;
-      }
-      this.patch(entry.turnId, { cliAlreadySent: true });
-    }
+  noteCliAlreadySentForScope(scope: string, turnId: string): void {
+    const entry = this.entries.find((item) => item.turnId === turnId);
+    if (!entry || entry.scope !== scope) return;
+    this.noteCliAlreadySent(turnId);
   }
 
   markInterrupted(turnId: string, outcome: RunOutcome, consecutiveInterrupts?: number): void {

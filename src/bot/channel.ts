@@ -1615,7 +1615,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const reactionPromise =
     cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
 
-  cliSelfSent?.begin(scope);
+  cliSelfSent?.begin(scope, turnId);
   try {
     if (cotEnabled) {
       const cotPublisher = new CotPublisher({
@@ -2932,7 +2932,8 @@ function dropInboundSelfMessage(input: {
     ? `${input.msg.chatId}:${input.msg.threadId}`
     : input.msg.chatId;
   const cliSelfSend = input.tracker.has(scope) || input.tracker.has(input.msg.chatId);
-  if (cliSelfSend) input.journal?.noteCliAlreadySentForScope(scope);
+  const turnId = input.tracker.turnIdFor(scope) ?? input.tracker.turnIdFor(input.msg.chatId);
+  if (cliSelfSend && turnId) input.journal?.noteCliAlreadySentForScope(scope, turnId);
   log.info('intake', 'skip-self', {
     msgId: input.msg.messageId,
     chatId: input.msg.chatId,

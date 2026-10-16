@@ -51,15 +51,19 @@ export function outboundMessageId(result: unknown): string | undefined {
 }
 
 export class CliSelfSendTracker {
-  private readonly active = new Set<string>();
-  private readonly sent = new Set<string>();
+  private readonly active = new Map<string, string | undefined>();
+  private readonly sent = new Map<string, string | undefined>();
 
-  begin(scope: string): void {
-    this.active.add(scope);
+  begin(scope: string, turnId?: string): void {
+    this.active.set(scope, turnId);
   }
 
   has(scope: string): boolean {
     return this.sent.has(scope);
+  }
+
+  turnIdFor(scope: string): string | undefined {
+    return this.sent.get(scope) ?? this.active.get(scope);
   }
 
   consume(scope: string): boolean {
@@ -71,11 +75,11 @@ export class CliSelfSendTracker {
   noteInbound(chatId: string, threadId?: string): boolean {
     const topicScope = threadId ? `${chatId}:${threadId}` : undefined;
     if (topicScope !== undefined && this.active.has(topicScope)) {
-      this.sent.add(topicScope);
+      this.sent.set(topicScope, this.active.get(topicScope));
       return true;
     }
     if (this.active.has(chatId)) {
-      this.sent.add(chatId);
+      this.sent.set(chatId, this.active.get(chatId));
       return true;
     }
     return false;

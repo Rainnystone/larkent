@@ -360,6 +360,50 @@ describe('TurnJournal', () => {
     expect(journal.get('live-notice')?.status).toBe('notice-pending');
   });
 
+  it('does not mark an older undelivered reply as CLI-sent for a later turn in the same scope', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'turn-a', messageIds: ['om_a'] }));
+    journal.stageReply('turn-a', {
+      markdown: 'OLDER_ANSWER',
+      replyTo: 'om_a',
+      replyMode: 'text',
+    });
+    journal.markNoticePending('turn-a', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice-a',
+    });
+    journal.enqueue(queued({ turnId: 'turn-b', messageIds: ['om_b'] }));
+    journal.stageReply('turn-b', {
+      markdown: 'NEWER_ANSWER',
+      replyTo: 'om_b',
+      replyMode: 'text',
+    });
+    journal.markNoticePending('turn-b', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice-b',
+    });
+
+    journal.noteCliAlreadySentForScope('oc_group', 'turn-b');
+
+    expect(journal.get('turn-a')?.cliAlreadySent).toBeUndefined();
+    expect(journal.get('turn-b')?.cliAlreadySent).toBe(true);
+
+    const resent: string[] = [];
+    await journal.recover({
+      resend: async (entry) => {
+        resent.push(entry.turnId);
+        return true;
+      },
+      resendNotice: async () => true,
+    });
+    expect(resent).toEqual(['turn-a']);
+    expect(journal.get('turn-a')?.cliAlreadySent).toBeUndefined();
+    expect(journal.get('turn-b')?.status).toBe('notice-delivered');
+  });
+
   it('does not resend a reply the agent already posted via CLI', async () => {
     const { journal } = await fixture();
     await journal.load();
