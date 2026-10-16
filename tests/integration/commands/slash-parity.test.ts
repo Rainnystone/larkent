@@ -118,7 +118,7 @@ async function createHarness(kind: PinAgentKind): Promise<{
     catalog.upsertActive({ ...identity, resumeHandle: 'thread-slash-codex', now: 1_700_000_000_000 });
   } else {
     catalog.upsertActive({ ...identity, resumeHandle: `sess-slash-${kind}`, now: 1_700_000_000_000 });
-    sessions.set('chat-1', `sess-slash-${kind}`, workspaceRealpath);
+    sessions.set('chat-1', `sess-slash-${kind}`, workspaceRealpath, kind);
   }
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({

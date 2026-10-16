@@ -38,7 +38,7 @@ describe('/status and /doctor diagnostics', () => {
 
   it('shows passive status for active run, queue, stale session, and owner API state', async () => {
     const h = await createHarness({ configuredWorkspace: true });
-    h.sessions.set('chat-1', 'sess-old', '/old');
+    h.sessions.set('chat-1', 'sess-old', '/old', 'claude');
     const activeRun = h.agent.run({ runId: 'run-active', prompt: 'running' }) as FakeAgentRun;
     h.activeRuns.register('chat-1', activeRun);
     const release = await h.pool.acquire();

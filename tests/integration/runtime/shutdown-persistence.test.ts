@@ -191,7 +191,7 @@ describe('settled profile persistence', () => {
     });
     const h = await channelHarness(controlledAgent().agent, 'text', 3, 'kimi');
     vi.spyOn(h.channel as unknown as LarkChannel, 'getChatMode').mockResolvedValue('p2p');
-    h.sessions.set('oc_test', 'resume-before-close', h.root);
+    h.sessions.set('oc_test', 'resume-before-close', h.root, 'kimi');
     const command = {
       messageId: 'om_resume', chatId: 'oc_test', chatType: 'p2p', senderId: 'ou_user',
       content: '/resume', rawContentType: 'text', resources: [], mentionedBot: true,
