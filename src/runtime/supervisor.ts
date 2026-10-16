@@ -88,6 +88,7 @@ class ManagedProfile {
     private workspaces: WorkspaceStore,
     private startChannelFn: StartChannelFn,
     private onExitCommand: (profile: string) => Promise<void>,
+    private readonly runPreflight: boolean,
   ) {
     this.ledger = new BackfillLedger(appPaths.backfillStateFile, {
       pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
@@ -280,8 +281,10 @@ class ManagedProfile {
         ...nextRuntime.appPaths,
         configPath: nextRuntime.configPath,
       });
-      const availability = await checkRuntimeAgentAvailability(nextAgent);
-      if (!availability.ok) throw availability.error;
+      if (this.runPreflight) {
+        const availability = await checkRuntimeAgentAvailability(nextAgent);
+        if (!availability.ok) throw availability.error;
+      }
 
       const appChanged = next.accounts.app.id !== this.cfg.accounts.app.id;
       if (appChanged) {
@@ -485,6 +488,7 @@ export class Supervisor {
       workspaces,
       this.startChannelFn,
       (p) => this.stopProfile(p),
+      this.opts.runPreflight !== false,
     );
     this.managed.set(appPaths.profile, managed);
     try {

@@ -78,11 +78,12 @@ describe('start runtime agent factory', () => {
 
   it('updates the process registry before releasing the old app lock during reconnect', async () => {
     const h = await supervisorHarness();
+    const nextAppId = `${h.appId}_new`;
     const registryAtRelease: string[][] = [];
     const acquire = locks.acquireAppRuntimeLock;
     vi.spyOn(locks, 'acquireAppRuntimeLock').mockImplementation(async (...args) => {
       const lock = await acquire(...args);
-      if (args[1] !== 'cli_xxx') return lock;
+      if (args[1] !== h.appId) return lock;
       return { ...lock, release: async () => {
         registryAtRelease.push(readAndPrune(h.paths.userRegistryFile).map(entry => entry.appId));
         await lock.release();
@@ -90,18 +91,39 @@ describe('start runtime agent factory', () => {
     });
     try {
       await h.supervisor.startProfile('test');
-      h.config.profiles.test!.accounts.app.id = 'cli_new';
+      h.config.profiles.test!.accounts.app.id = nextAppId;
       await saveRootConfig(h.config, h.paths.configFile);
       await h.supervisor.restartProfile('test');
-      expect(registryAtRelease).toEqual([['cli_new']]);
-      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_xxx'))).locked).toBe(false);
-      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_new'))).locked).toBe(true);
+      expect(registryAtRelease).toEqual([[nextAppId]]);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile(h.appId))).locked).toBe(false);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile(nextAppId))).locked).toBe(true);
       await h.supervisor.shutdown();
-      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_new'))).locked).toBe(false);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile(nextAppId))).locked).toBe(false);
       expect((await locks.checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(false);
     } finally {
       await h.supervisor.shutdown();
       vi.restoreAllMocks();
+      await rm(h.root, { recursive: true, force: true });
+    }
+  });
+
+  it('reconnects without a version-check spawn when preflight is disabled', async () => {
+    // Reconnect used to call checkRuntimeAgentAvailability even with
+    // runPreflight: false. That spawn uses a 5s --version timeout, the same
+    // as vitest's default, so a stuck Windows cmd.exe timed the test out
+    // while still holding the machine app lock.
+    const h = await supervisorHarness({ binaryPath: join('missing-claude-binary') });
+    const nextAppId = `${h.appId}_new`;
+    try {
+      await h.supervisor.startProfile('test');
+      h.config.profiles.test!.accounts.app.id = nextAppId;
+      await saveRootConfig(h.config, h.paths.configFile);
+      await h.supervisor.restartProfile('test');
+      expect(h.supervisor.isOnline('test')).toBe(true);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile(h.appId))).locked).toBe(false);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile(nextAppId))).locked).toBe(true);
+    } finally {
+      await h.supervisor.shutdown();
       await rm(h.root, { recursive: true, force: true });
     }
   });
@@ -139,10 +161,10 @@ describe('start runtime agent factory', () => {
       hooks.get('SIGTERM')!();
       await releasing;
       expect(exits).toEqual([]);
-      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_xxx'))).locked).toBe(true);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile(h.appId))).locked).toBe(true);
       allowRelease();
       await vi.waitFor(() => expect(exits).toEqual([{ code: 0, appLockReleased: true, online: false }]));
-      expect((await locks.checkRuntimeLock(h.paths.appLockFile('cli_xxx'))).locked).toBe(false);
+      expect((await locks.checkRuntimeLock(h.paths.appLockFile(h.appId))).locked).toBe(false);
       expect((await locks.checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(false);
       expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
     } finally {
@@ -178,23 +200,24 @@ describe('start runtime agent factory', () => {
   });
 });
 
-async function supervisorHarness() {
+async function supervisorHarness(options: { binaryPath?: string } = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'start-agent-factory-')));
   const paths = resolveAppPaths({ rootDir: root, profile: 'test' });
-  const profile = createDefaultProfileConfig({ agentKind: 'claude', accounts: appAccount() });
-  profile.agent.binaryPath = await writeVersionExecutable(root, 'fake-claude', '1.0.0');
+  const appId = `cli_saf_${process.pid}_${Math.random().toString(16).slice(2, 10)}`;
+  const profile = createDefaultProfileConfig({ agentKind: 'claude', accounts: appAccount(appId) });
+  profile.agent.binaryPath = options.binaryPath ?? await writeVersionExecutable(root, 'fake-claude', '1.0.0');
   const config = createRootConfig('test', profile);
   await saveRootConfig(config, paths.configFile);
   const supervisor = new Supervisor({ configPath: paths.configFile, rootDir: root, runPreflight: false,
     startChannelFn: async () => ({ channel: {}, disconnect: async () => {} }) as never,
   });
-  return { root, paths, config, supervisor };
+  return { root, paths, config, supervisor, appId };
 }
 
-function appAccount() {
+function appAccount(id = 'cli_xxx') {
   return {
     app: {
-      id: 'cli_xxx',
+      id,
       secret: '${APP_SECRET}',
       tenant: 'feishu' as const,
     },
