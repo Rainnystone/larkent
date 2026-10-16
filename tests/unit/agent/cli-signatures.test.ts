@@ -119,6 +119,8 @@ describe('CLI stderr signature table', () => {
     'socket-tls-disconnect.txt',
     'econnreset.txt',
     'eproto.txt',
+    'eai-again.txt',
+    'enotfound.txt',
   ])('classifies network golden %s as transient-upstream', (file) => {
     const stderrTail = readGolden('network', file);
     const outcome = deriveRunOutcome({

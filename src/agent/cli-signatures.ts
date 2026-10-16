@@ -44,6 +44,18 @@ export const NETWORK_TRANSIENT_SIGNATURES: readonly CliSignature[] = Object.free
     classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
     userMessage: NETWORK_TRANSIENT_USER_MESSAGE,
   },
+  {
+    pattern: /\bEAI_AGAIN\b|\bENOTFOUND\b|\bEAI_NODATA\b|\bEAI_NONAME\b|\bEAI_FAIL\b/,
+    cliVersion: 'node (observed 2026-10-16)',
+    classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+    userMessage: NETWORK_TRANSIENT_USER_MESSAGE,
+  },
+  {
+    pattern: /\bENETUNREACH\b|\bEHOSTUNREACH\b/,
+    cliVersion: 'node (observed 2026-10-16)',
+    classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+    userMessage: NETWORK_TRANSIENT_USER_MESSAGE,
+  },
 ]);
 
 export function matchCliSignature(
