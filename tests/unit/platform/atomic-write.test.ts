@@ -1,8 +1,8 @@
-import { readdir, readFile, rm } from 'node:fs/promises';
+import { open, readdir, readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { mkdtemp } from 'node:fs/promises';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { writeFileAtomic } from '../../../src/platform/atomic-write.js';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -77,6 +77,33 @@ describe('atomic write retry', () => {
     ).rejects.toThrow('busy');
 
     expect((await readdir(root)).filter((name) => name.includes('.tmp-'))).toEqual([]);
+  });
+
+  it('flushes the temp file before rename on the win32 path', async () => {
+    const root = await tmpRoot();
+    const file = join(root, 'durable.json');
+    const probe = await open(join(root, 'probe'), 'w');
+    const handleProto = Object.getPrototypeOf(probe) as { sync: () => Promise<void> };
+    await probe.close();
+    const realPlatform = process.platform;
+    const syncSpy = vi.spyOn(handleProto, 'sync');
+    let syncedBeforeRename = false;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      await writeFileAtomic(file, 'payload\n', {
+        rename: async (from, to, fallbackRename) => {
+          syncedBeforeRename = syncSpy.mock.calls.length > 0;
+          await fallbackRename(from, to);
+        },
+      });
+      expect(syncedBeforeRename).toBe(true);
+      // Windows cannot fsync directory handles, so only the file is synced.
+      expect(syncSpy).toHaveBeenCalledTimes(1);
+      await expect(readFile(file, 'utf8')).resolves.toBe('payload\n');
+    } finally {
+      syncSpy.mockRestore();
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+    }
   });
 });
 

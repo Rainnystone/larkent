@@ -18,9 +18,14 @@ export interface AtomicWriteOptions {
 // the destination is missing (AV locking the directory). Session store and
 // journal startup writes hit that path, so tests die at 5s with no EPERM in
 // the log. Bound the retry ourselves instead.
-const WINDOWS = process.platform === 'win32';
-const DEFAULT_RENAME_ATTEMPTS = WINDOWS ? 12 : 5;
-const DEFAULT_RETRY_DELAY_MS = WINDOWS ? 40 : 25;
+const DEFAULT_RENAME_ATTEMPTS_WINDOWS = 12;
+const DEFAULT_RENAME_ATTEMPTS_POSIX = 5;
+const DEFAULT_RETRY_DELAY_MS_WINDOWS = 40;
+const DEFAULT_RETRY_DELAY_MS_POSIX = 25;
+
+function isWindows(): boolean {
+  return process.platform === 'win32';
+}
 
 export async function writeFileAtomic(
   path: string,
@@ -37,9 +42,9 @@ export async function writeFileAtomic(
     try {
       await handle.writeFile(data);
       try {
-        // Directory/file fsync can hang under Windows AV while the handle is
-        // still open. Close first, then rename; durability follows close+rename.
-        if (!WINDOWS) await handle.sync();
+        // Durability requires the temp file on disk before rename. Windows
+        // cannot fsync directory handles, but file-handle sync is supported.
+        await handle.sync();
       } catch (err) {
         if (!isIgnorableWindowsFsyncError(err)) throw err;
       }
@@ -52,7 +57,7 @@ export async function writeFileAtomic(
       if (!isIgnorableWindowsPermError(err)) throw err;
     }
     await renameWithRetry(tmp, path, opts);
-    if (!WINDOWS) await fsyncDir(dirname(path));
+    if (!isWindows()) await fsyncDir(dirname(path));
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
@@ -64,8 +69,10 @@ async function renameWithRetry(
   to: string,
   opts: AtomicWriteOptions,
 ): Promise<void> {
-  const maxAttempts = opts.maxRenameAttempts ?? DEFAULT_RENAME_ATTEMPTS;
-  const delayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const maxAttempts = opts.maxRenameAttempts
+    ?? (isWindows() ? DEFAULT_RENAME_ATTEMPTS_WINDOWS : DEFAULT_RENAME_ATTEMPTS_POSIX);
+  const delayMs = opts.retryDelayMs
+    ?? (isWindows() ? DEFAULT_RETRY_DELAY_MS_WINDOWS : DEFAULT_RETRY_DELAY_MS_POSIX);
   const rename = opts.rename ?? ((src, dest, fallback) => fallback(src, dest));
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
@@ -87,7 +94,7 @@ export function isTransientRenameError(err: unknown): boolean {
 }
 
 function isIgnorableWindowsPermError(err: unknown): boolean {
-  if (!WINDOWS) return false;
+  if (!isWindows()) return false;
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
   return code === 'EPERM' || code === 'EACCES';
 }
