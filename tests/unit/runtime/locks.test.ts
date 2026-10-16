@@ -7,6 +7,7 @@ import {
   acquireProfileRuntimeLock,
   RuntimeLockConflictError,
   runtimeLockMetaFile,
+  runtimeLockPidFile,
   withProfileAndAppLocks,
 } from '../../../src/runtime/locks';
 
@@ -38,6 +39,7 @@ describe('runtime locks', () => {
         if (process.platform !== 'win32') {
           expect(mode).toBe(0o600);
         }
+        expect(await readFile(lock.target, 'utf8')).toBe('');
         const metaFile = `${lock.target}.meta.json`;
         metaFiles.push(metaFile);
         const meta = JSON.parse(await readFile(metaFile, 'utf8')) as {
@@ -129,6 +131,20 @@ describe('runtime locks', () => {
     );
   });
 
+  it('reclaims a leftover lock from the pid sidecar when meta is missing', async () => {
+    const root = await makeRoot();
+    const paths = resolveAppPaths({ rootDir: root, profile: 'claude' });
+    await mkdir(dirname(paths.profileLockFile), { recursive: true });
+    await writeFile(paths.profileLockFile, '', { mode: 0o600 });
+    await writeFile(runtimeLockPidFile(paths.profileLockFile), '2147483647\n', { mode: 0o600 });
+    await mkdir(`${paths.profileLockFile}.lock`, { recursive: true });
+
+    const started = Date.now();
+    const lock = await acquireProfileRuntimeLock(paths, 'claude');
+    expect(Date.now() - started).toBeLessThan(3_000);
+    await lock.release();
+  });
+
   it('does not reclaim a leftover profile lock when the holder pid is unknown', async () => {
     const root = await makeRoot();
     const paths = resolveAppPaths({ rootDir: root, profile: 'claude' });
@@ -144,7 +160,8 @@ describe('runtime locks', () => {
 
 async function writeLeftoverProfileLock(target: string, pid: number): Promise<void> {
   await mkdir(dirname(target), { recursive: true });
-  await writeFile(target, `${pid}\n`, { mode: 0o600 });
+  await writeFile(target, '', { mode: 0o600 });
+  await writeFile(runtimeLockPidFile(target), `${pid}\n`, { mode: 0o600 });
   await mkdir(`${target}.lock`, { recursive: true });
   await writeFile(
     runtimeLockMetaFile(target),

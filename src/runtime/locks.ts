@@ -144,6 +144,10 @@ export function runtimeLockMetaFile(target: string): string {
   return `${target}.meta.json`;
 }
 
+export function runtimeLockPidFile(target: string): string {
+  return `${target}.pid`;
+}
+
 export async function readRuntimeLockMeta(target: string): Promise<RuntimeLockMeta | undefined> {
   try {
     const parsed = JSON.parse(await readFile(runtimeLockMetaFile(target), 'utf8')) as unknown;
@@ -198,10 +202,11 @@ async function acquireRuntimeLock(
     pid: process.pid,
     startedAt: new Date().toISOString(),
   };
-  // Persist pid on the lock target so a kill -9 leftover can be reclaimed
-  // even if the sidecar meta never landed or cannot be read.
-  await writeFile(meta.target, `${process.pid}\n`, { mode: 0o600 });
-  await chmod(meta.target, 0o600);
+  // Sidecar only — never rewrite the lock target after acquire. Machine app
+  // targets are already named `*.lock`; replacing that file on Windows can
+  // leave proper-lockfile's directory lock stuck for the rest of the worker.
+  const pidFile = runtimeLockPidFile(meta.target);
+  await writeFile(pidFile, `${process.pid}\n`, { mode: 0o600 });
   const metaFile = runtimeLockMetaFile(meta.target);
   await writeFile(metaFile, `${JSON.stringify(fullMeta, null, 2)}\n`, {
     mode: 0o600,
@@ -212,6 +217,7 @@ async function acquireRuntimeLock(
     kind: meta.kind,
     target: meta.target,
     async release() {
+      await unlink(pidFile).catch(() => {});
       await unlink(metaFile).catch(() => {});
       await release();
     },
@@ -226,6 +232,7 @@ async function lockWithDeadHolderTakeover(
       realpath: false,
       stale: 30_000,
       update: 10_000,
+      retries: 0,
     });
   } catch (err) {
     const pid = await readLockHolderPid(meta.target);
@@ -239,6 +246,7 @@ async function lockWithDeadHolderTakeover(
       realpath: false,
       stale: 30_000,
       update: 10_000,
+      retries: 0,
     });
   }
 }
@@ -247,7 +255,7 @@ async function readLockHolderPid(target: string): Promise<number | undefined> {
   const holder = await readRuntimeLockMeta(target);
   if (isUsablePid(holder?.pid)) return holder.pid;
   try {
-    const raw = (await readFile(target, 'utf8')).trim();
+    const raw = (await readFile(runtimeLockPidFile(target), 'utf8')).trim();
     const pid = Number(raw);
     return isUsablePid(pid) ? pid : undefined;
   } catch {
@@ -269,6 +277,7 @@ async function stealDeadHolderLock(target: string): Promise<void> {
   } catch {
     // Lock file may already be gone; still drop the stale pid sidecar.
   }
+  await unlink(runtimeLockPidFile(target)).catch(() => {});
   const metaFile = runtimeLockMetaFile(target);
   for (let attempt = 1; attempt <= 8; attempt++) {
     try {
