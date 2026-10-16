@@ -25,3 +25,9 @@ Solution (user-visible contract); Testing Decisions
 ## Blocked by
 
 T0, T1, T2, T3, T4, T5, T6, T7, T8
+
+## Latency check (normal network)
+
+- In Bot Arena on the isolated test bridge, with the network healthy, measure time from the tester's message to the bot's first visible reply and to the final reply, in card and markdown modes (≥5 samples each).
+- Compare against the E2E round-3 baseline. Accept if there is no user-noticeable regression; record the numbers in the E2E report.
+- Reply-before-send journaling is local disk only (no model tokens); this check confirms it in real use rather than via a unit-test threshold.
