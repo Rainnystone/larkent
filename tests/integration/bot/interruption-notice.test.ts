@@ -148,7 +148,9 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
 
     await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
     await waitFor(() => h.agent.runOptions.length === 5);
-    expect(h.agent.runOptions[4]?.prompt).toContain(CONTINUE_HINT);
+    expect(h.agent.runOptions[4]?.prompt).toContain('已放弃');
+    expect(h.agent.runOptions[4]?.prompt).toContain('不得继续或重做');
+    expect(h.agent.runOptions[4]?.prompt).not.toContain(CONTINUE_HINT);
     expect(h.agent.runOptions[4]?.prompt).not.toContain(SECRET);
     expect(h.agent.runOptions[4]?.prompt).not.toContain('原始输入');
     const cardsBeforeReset = noticeCards(h.channel).length;
@@ -299,7 +301,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       .toMatchObject({ replyTo: 'om_notice' });
   });
 
-  it('does not inject the interrupted turn input into an ordinary new message', async () => {
+  it('abandons the interrupted turn on an ordinary follow-up and rejects a later continue click', async () => {
     const h = await harness({
       events: [
         [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
@@ -308,12 +310,49 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     });
     await h.channel.handlers.message?.(mention('om_run', SECRET));
     await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
     await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
     await waitFor(() => h.agent.runOptions.length === 2);
-    expect(h.agent.runOptions[1]?.prompt).toContain('请改另一个文件');
-    expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
-    expect(h.agent.runOptions[1]?.prompt).not.toContain(SECRET);
-    expect(h.agent.runOptions[1]?.prompt).not.toContain('原始输入');
+    const prompt = h.agent.runOptions[1]?.prompt ?? '';
+    expect(prompt).toContain('请改另一个文件');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).toContain('不得继续或重做');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    expect(prompt).not.toContain('原始输入');
+    await waitFor(() => resolvedCards(h.channel).some((card) => JSON.stringify(card).includes('已放弃')));
+    expect(JSON.stringify(resolvedCards(h.channel).at(-1))).toContain('已放弃');
+    expect(JSON.stringify(resolvedCards(h.channel).at(-1))).not.toContain('notice.continue');
+
+    const sentBefore = h.channel.sent.length;
+    await h.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(h.agent.runOptions.length).toBe(2);
+    expect(JSON.stringify(h.channel.sent.slice(sentBefore))).toMatch(/此继续已失效/);
+  });
+
+  it('abandons the interrupted turn after 暂不 so a new message is not continued', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+        [{ type: 'text', delta: 'NEW' }, { type: 'final_text', content: 'NEW' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const card = noticeCards(h.channel)[0]!;
+    await h.channel.handlers.cardAction?.(dismissClick(USER, dismissToken(card)));
+    await waitFor(() => resolvedCards(h.channel).some((item) => JSON.stringify(item).includes('已忽略')));
+    await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
+    await waitFor(() => h.agent.runOptions.length === 2);
+    const prompt = h.agent.runOptions[1]?.prompt ?? '';
+    expect(prompt).toContain('请改另一个文件');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).toContain('不得继续或重做');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    expect(JSON.stringify(resolvedCards(h.channel).at(-1))).toContain('已忽略');
+    expect(JSON.stringify(resolvedCards(h.channel))).not.toContain('已放弃');
   });
 
   it('starts the same continue request from @bot 继续 text', async () => {
@@ -361,6 +400,129 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions.length).toBe(2);
     expect(JSON.stringify(h.channel.sent.slice(sentBefore))).toMatch(/失效/);
     expect(JSON.stringify(h.channel.sent)).not.toContain('SECOND');
+  });
+
+  it('keeps abandon, stale click, and one-shot continue after a bridge restart', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      events: [
+        [{ type: 'text', delta: 'NEW' }, { type: 'final_text', content: 'NEW' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await restarted.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    const prompt = restarted.agent.runOptions[0]?.prompt ?? '';
+    expect(prompt).toContain('请改另一个文件');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    await waitFor(() => resolvedCards(restarted.channel).some((card) => JSON.stringify(card).includes('已放弃')));
+
+    const sentBefore = restarted.channel.sent.length;
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(restarted.agent.runOptions.length).toBe(1);
+    expect(JSON.stringify(restarted.channel.sent.slice(sentBefore))).toMatch(/此继续已失效/);
+  });
+
+  it('resumes from a continue click exactly once after a bridge restart', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      events: [
+        [{ type: 'text', delta: 'CONTINUED' }, { type: 'final_text', content: 'CONTINUED' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    expect(restarted.agent.runOptions[0]?.resumeHandle).toBe('sess-1');
+    expect(restarted.agent.runOptions[0]?.prompt).toContain(CONTINUE_HINT);
+    expect(restarted.agent.runOptions[0]?.prompt).toContain(SECRET);
+    await waitFor(() => resolvedCards(restarted.channel).some((card) => JSON.stringify(card).includes('已继续')));
+
+    const sentBefore = restarted.channel.sent.length;
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(restarted.agent.runOptions.length).toBe(1);
+    expect(JSON.stringify(restarted.channel.sent.slice(sentBefore))).toMatch(/失效/);
+  });
+
+  it('resumes from typed 继续 exactly once after a bridge restart', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      events: [
+        [{ type: 'text', delta: 'CONTINUED' }, { type: 'final_text', content: 'CONTINUED' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await restarted.channel.handlers.message?.(mention('om_cont', '@_user_1 继续'));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    expect(restarted.agent.runOptions[0]?.resumeHandle).toBe('sess-1');
+    expect(restarted.agent.runOptions[0]?.prompt).toContain(CONTINUE_HINT);
+    await waitFor(() => resolvedCards(restarted.channel).some((card) => JSON.stringify(card).includes('已继续')));
+
+    const sentBefore = restarted.channel.sent.length;
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(restarted.agent.runOptions.length).toBe(1);
+    expect(JSON.stringify(restarted.channel.sent.slice(sentBefore))).toMatch(/失效/);
+  });
+
+  it('kimi kill-9 restart then an ordinary message answers only the new request', async () => {
+    const h = await harness({
+      agentKind: 'kimi',
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-kimi' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      agentKind: 'kimi',
+      events: [
+        [{ type: 'text', delta: 'ONLY NEW' }, { type: 'final_text', content: 'ONLY NEW' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-kimi' }],
+      ],
+    });
+    await restarted.channel.handlers.message?.(mention('om_after_kill', '换一个任务'));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    const prompt = restarted.agent.runOptions[0]?.prompt ?? '';
+    expect(prompt).toContain('换一个任务');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).toContain('不得继续或重做');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    await waitFor(() => restarted.channel.sent.some((item) => JSON.stringify(item.content).includes('ONLY NEW')));
   });
 
   it('sends one notice card when recover races a still-in-flight send', async () => {
@@ -433,7 +595,7 @@ async function harness(opts: {
   fence?: boolean;
   topic?: boolean;
   owner?: boolean;
-  agentKind?: 'claude' | 'cursor';
+  agentKind?: 'claude' | 'cursor' | 'kimi';
   fakeTimers?: boolean;
 } = {}) {
   const tmp = await createTmpProfile('notice-channel-');
@@ -447,6 +609,7 @@ async function harness(opts: {
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = new FakeAgentAdapter({
     id: opts.agentKind ?? 'claude',
+    displayName: opts.agentKind === 'kimi' ? 'Kimi Code' : undefined,
     events: opts.events ?? [[{ type: 'done', terminationReason: 'interrupted' }]],
   });
   const channel = createRecordingLarkChannel({
@@ -482,10 +645,72 @@ async function harness(opts: {
     await bridge.disconnect().catch(() => {});
     await tmp.cleanup();
   });
-  return { channel, bridge, agent, journal, workspace: tmp.workspace, sessions };
+  return {
+    channel,
+    bridge,
+    agent,
+    journal,
+    workspace: tmp.workspace,
+    sessions,
+    workspaces,
+    cfg,
+    tmp,
+    owner: OWNER,
+  };
 }
 
-function profile(workspace: string, opts: { notice?: boolean; fence?: boolean; agentKind?: 'claude' | 'cursor' }) {
+async function reopen(
+  h: Awaited<ReturnType<typeof harness>>,
+  opts: {
+    events?: FakeAgentEvents;
+    agentKind?: 'claude' | 'cursor' | 'kimi';
+  } = {},
+) {
+  const journal = new TurnJournal(h.journal.getFilePath());
+  await journal.load();
+  const agent = new FakeAgentAdapter({
+    id: opts.agentKind ?? 'claude',
+    displayName: opts.agentKind === 'kimi' ? 'Kimi Code' : undefined,
+    events: opts.events ?? [[{ type: 'text', delta: 'ok' }, { type: 'final_text', content: 'ok' }, { type: 'done', terminationReason: 'normal' }]],
+  });
+  const channel = createRecordingLarkChannel({
+    chats: [{ id: CHAT, name: 'G' }],
+    chatMode: 'group',
+    botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
+  });
+  sdk.channel = channel;
+  const mediaDir = join(h.tmp.profile, 'media');
+  const bridge = await startChannel({
+    cfg: h.cfg,
+    agent,
+    sessions: h.sessions,
+    workspaces: h.workspaces,
+    journal,
+    appPaths: {
+      mediaDir,
+      secretsFile: join(h.tmp.profile, 'secrets.enc'),
+      keystoreSaltFile: join(h.tmp.profile, '.keystore.salt'),
+    },
+    controls: {
+      profile: 'test',
+      profileConfig: h.cfg,
+      cfg: h.cfg,
+      botOwnerId: OWNER,
+      ownerRefreshState: 'ok',
+      async refreshOwner() {},
+      async restart() {},
+      async exit() {},
+      configPath: join(h.tmp.root, 'config.json'),
+      processId: 'test-notice-restart',
+    },
+  });
+  cleanups.push(async () => {
+    await bridge.disconnect().catch(() => {});
+  });
+  return { ...h, channel, bridge, agent, journal };
+}
+
+function profile(workspace: string, opts: { notice?: boolean; fence?: boolean; agentKind?: 'claude' | 'cursor' | 'kimi' }) {
   const cfg = createDefaultProfileConfig({
     agentKind: opts.agentKind ?? 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
@@ -542,6 +767,15 @@ function cardClick(operatorId: string, token: string): CardActionEvent {
   } as unknown as CardActionEvent;
 }
 
+function dismissClick(operatorId: string, token: string): CardActionEvent {
+  return {
+    action: { value: { cmd: 'notice.dismiss', notice_token: token } },
+    chatId: CHAT,
+    messageId: 'om_notice',
+    operator: { openId: operatorId, name: 'Op' },
+  } as unknown as CardActionEvent;
+}
+
 function isNoticeContent(content: unknown): boolean {
   const json = JSON.stringify(content);
   return json.includes('notice.continue') || json.includes('中断通知') || json.includes(CONTINUE_HINT);
@@ -566,9 +800,17 @@ function resolvedCards(channel: ReturnType<typeof createRecordingLarkChannel>) {
 }
 
 function continueToken(send: { content: unknown }): string {
+  return noticeToken(send, 'notice.continue');
+}
+
+function dismissToken(send: { content: unknown }): string {
+  return noticeToken(send, 'notice.dismiss');
+}
+
+function noticeToken(send: { content: unknown }, cmd: 'notice.continue' | 'notice.dismiss'): string {
   const json = JSON.stringify(send.content);
-  const match = json.match(/"notice_token":"([^"]+)"/);
-  if (!match?.[1]) throw new Error(`missing notice token in ${json}`);
+  const match = json.match(new RegExp(`"cmd":"${cmd}","notice_token":"([^"]+)"`));
+  if (!match?.[1]) throw new Error(`missing ${cmd} token in ${json}`);
   return match[1];
 }
 

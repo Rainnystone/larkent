@@ -13,13 +13,15 @@ import {
 
 export const CONTINUE_HINT =
   '上一轮在哪里、因为什么被中断，请先核对已完成的步骤，避免重复执行有副作用的操作';
+export const ABANDON_HINT =
+  '现已放弃。不得继续或重做上一轮未完成的工作，只处理用户现在这条新消息';
 export const NOTICE_MAX_BUTTON_STREAK = 3;
 export const NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
 export const NOTICE_RESTART_GAP_MS = 500;
 
 export type NoticeKind = 'none' | 'continue' | 'auth';
 export type NoticeAction = 'notice.continue' | 'notice.dismiss';
-export type NoticeResolution = 'continued' | 'dismissed';
+export type NoticeResolution = 'continued' | 'dismissed' | 'abandoned';
 export type NoticeCardUpdater = (messageId: string, card: object) => Promise<void>;
 
 const liveNoticeSends = new Set<string>();
@@ -104,6 +106,10 @@ export function continueExtraInstruction(outcome: RunOutcome, userInput?: string
   const trimmed = userInput?.trim();
   if (!trimmed) return base;
   return `${base}\n原始输入：\n${trimmed}`;
+}
+
+export function abandonExtraInstruction(outcome: RunOutcome): string {
+  return `上一轮因为「${describeRunOutcome(outcome)}」被中断，${ABANDON_HINT}。`;
 }
 
 export interface NoticeSignInput {
@@ -238,6 +244,8 @@ export function resolvedNoticeCard(resolution: NoticeResolution): object {
       return interruptionNoticeCard({ body: '已继续' });
     case 'dismissed':
       return interruptionNoticeCard({ body: '已忽略' });
+    case 'abandoned':
+      return interruptionNoticeCard({ body: '已放弃' });
     default: {
       const _exhaustive: never = resolution;
       return _exhaustive;
@@ -263,15 +271,6 @@ export async function resolveInterruptionNotice(input: {
       err: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-export function latestContinueNotice(journal: TurnJournal, scope: string): TurnJournalEntry | undefined {
-  return [...journal.list()].reverse().find((entry) => (
-    entry.scope === scope
-    && !entry.noticeInvalidated
-    && (entry.notice?.kind === 'continue' || entry.notice?.kind === 'plain')
-    && (entry.status === 'notice-delivered' || entry.status === 'notice-pending')
-  ));
 }
 
 export function authNoticeAlreadyDelivered(journal: TurnJournal): boolean {
@@ -371,7 +370,6 @@ async function sendContinueNotice(
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     includeButtons: buttons,
-    continueHint: continueExtraInstruction(input.outcome),
     deliveryId: randomUUID(),
   };
   if (!notice.deliveryId) notice = { ...notice, deliveryId: randomUUID() };

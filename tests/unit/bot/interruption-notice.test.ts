@@ -5,6 +5,7 @@ import {
   NOTICE_MAX_BUTTON_STREAK,
   NoticeActionAuth,
   buildNoticeMarkdown,
+  abandonExtraInstruction,
   continueExtraInstruction,
   isContinuePrompt,
   noticeUsesButtons,
@@ -87,6 +88,9 @@ describe('interruption notice decision', () => {
     expect(continueExtraInstruction(outcome, '写两行短诗')).toContain('写两行短诗');
     expect(continueExtraInstruction(outcome, '  ')).not.toContain('原始输入');
     expect(continueExtraInstruction(outcome)).not.toContain('写两行短诗');
+    expect(abandonExtraInstruction(outcome)).toContain('已放弃');
+    expect(abandonExtraInstruction(outcome)).toContain('不得继续或重做');
+    expect(abandonExtraInstruction(outcome)).not.toContain(CONTINUE_HINT);
   });
 
   it('treats 继续 / @bot 继续 as the continue prompt and other text as ordinary', () => {
@@ -214,5 +218,8 @@ describe('interruption notice actions', () => {
     const dismissed = JSON.stringify(resolvedNoticeCard('dismissed'));
     expect(dismissed).toContain('已忽略');
     expect(dismissed).not.toContain('notice.dismiss');
+    const abandoned = JSON.stringify(resolvedNoticeCard('abandoned'));
+    expect(abandoned).toContain('已放弃');
+    expect(abandoned).not.toContain('notice.continue');
   });
 });

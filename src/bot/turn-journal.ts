@@ -34,6 +34,18 @@ export interface TurnReply {
   messageId?: string;
 }
 
+export type ContinuationStatus =
+  | 'offered'
+  | 'continue-requested'
+  | 'continued'
+  | 'abandoned'
+  | 'voided'
+  | 'dismissed';
+
+export interface TurnContinuation {
+  status: ContinuationStatus;
+}
+
 export interface TurnNotice {
   kind: 'continue' | 'plain' | 'auth';
   recipientChatId: string;
@@ -67,6 +79,7 @@ export interface TurnJournalEntry {
   noticeStatus?: 'none' | 'pending' | 'delivered';
   noticeInvalidated?: boolean;
   notice?: TurnNotice;
+  continuation?: TurnContinuation;
   consecutiveInterrupts?: number;
   userInput?: string;
   resources?: TurnJournalResource[];
@@ -589,6 +602,7 @@ function parseEntry(raw: unknown): TurnJournalEntry | undefined {
       : {}),
     ...(raw.noticeInvalidated === true ? { noticeInvalidated: true } : {}),
     ...(parseNotice(raw.notice) ? { notice: parseNotice(raw.notice) } : {}),
+    ...(parseContinuation(raw.continuation) ? { continuation: parseContinuation(raw.continuation) } : {}),
     ...(typeof raw.consecutiveInterrupts === 'number' && Number.isFinite(raw.consecutiveInterrupts)
       ? { consecutiveInterrupts: raw.consecutiveInterrupts }
       : {}),
@@ -598,6 +612,21 @@ function parseEntry(raw: unknown): TurnJournalEntry | undefined {
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
+}
+
+function parseContinuation(raw: unknown): TurnContinuation | undefined {
+  if (!isObject(raw)) return undefined;
+  switch (raw.status) {
+    case 'offered':
+    case 'continue-requested':
+    case 'continued':
+    case 'abandoned':
+    case 'voided':
+    case 'dismissed':
+      return { status: raw.status };
+    default:
+      return undefined;
+  }
 }
 
 function parseNotice(raw: unknown): TurnNotice | undefined {

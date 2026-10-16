@@ -126,6 +126,25 @@ describe('static architecture contracts', () => {
     expect(read('src/agent/runner/jsonl-cli-runner.ts')).toMatch(/\bspawnProcess\b/);
   });
 
+  it('does not keep leftover in-process continuation maps on the channel', () => {
+    const forbidden = [
+      /\bpendingHintByScope\b/,
+      /\bcontinueByScope\b/,
+      /\bconsecutiveByScope\b/,
+      /\btakeContinueRequest\b/,
+      /\brebuildPendingHints\b/,
+      /\brebuildConsecutive\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+  });
+
   it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
     const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
     const webFiles = collectTsFiles('web/src');

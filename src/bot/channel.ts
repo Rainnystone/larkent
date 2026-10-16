@@ -31,15 +31,12 @@ import {
   NOTICE_RESTART_GAP_MS,
   NoticeActionAuth,
   authNoticeAlreadyDelivered,
-  continueExtraInstruction,
   deliverInterruptionNotice,
   endLiveNoticeSend,
-  isContinuePrompt,
-  latestContinueNotice,
   planInterruptionNotice,
   resendPendingNotice,
-  resolveInterruptionNotice,
 } from './interruption-notice';
+import { createContinuations, type ContinuationTaken, type Continuations } from './continuation';
 import { renderCard } from '../card/run-renderer';
 import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
 import {
@@ -258,13 +255,17 @@ export interface StartChannelDeps {
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, journal, controls } = deps;
   const reliability = () => getReliabilityConfig(controls.profileConfig);
-  const consecutiveByScope = rebuildConsecutive(journal);
-  const pendingHintByScope = rebuildPendingHints(journal);
+  let channelForCards: LarkChannel | undefined;
+  const continuations = createContinuations({
+    journal,
+    updateCard: (id, card) => {
+      if (!channelForCards) return Promise.resolve();
+      return channelForCards.updateCard(id, card);
+    },
+  });
   const activeRuns = new ActiveRuns({
     onSupersede: (scope) => {
-      journal?.voidScope(scope);
-      consecutiveByScope.set(scope, 0);
-      pendingHintByScope.delete(scope);
+      continuations.voidScope(scope);
     },
   });
   const resumeCandidates = new ResumeCandidates();
@@ -307,7 +308,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const noticeAuth = callbackNonceStore
     ? new NoticeActionAuth({ secret: appSecret, nonceStore: callbackNonceStore })
     : undefined;
-  const continueByScope = new Map<string, ContinueRequest>();
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model
   // switch can inject a one-time "model changed" note into the next (resumed)
@@ -373,6 +373,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const channel = createLarkChannel(opts);
+  channelForCards = channel;
   const outboundIds = new OutboundMessageIds();
   const cliSelfSent = new CliSelfSendTracker();
   wrapChannelOutbound(channel, outboundIds, {
@@ -460,9 +461,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           ledger,
           journal,
           noticeEnabled: reliability().notice,
-          consecutiveByScope,
-          pendingHintByScope,
-          continueByScope,
+          continuations,
           cliSelfSent,
         });
       } finally {
@@ -542,11 +541,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           retriable: true,
           needsHuman: false,
         };
-        const alreadyPending = journal.get(entry.turnId)?.status === 'notice-pending';
-        let consecutive = consecutiveByScope.get(entry.scope) ?? 0;
-        if (!alreadyPending) {
-          consecutive += 1;
-          consecutiveByScope.set(entry.scope, consecutive);
+        if (planInterruptionNotice(outcome).kind === 'continue') {
+          continuations.offer(entry.turnId, outcome);
         }
         const result = await deliverInterruptionNotice({
           send: (chatId, content, options) => channel.send(chatId, content, options),
@@ -554,7 +550,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           turnId: entry.turnId,
           outcome,
           noticeAuth: reliability().notice ? noticeAuth : undefined,
-          consecutive,
+          consecutive: continuations.consecutive(entry.scope),
           requireBotMention: requireMentionForChat(
             controls.profileConfig,
             controls.cfg,
@@ -563,9 +559,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           ownerId: controls.botOwnerId,
           authNotified: authNoticeAlreadyDelivered(journal),
         });
-        if (result.delivered || result.pending) {
-          pendingHintByScope.set(entry.scope, continueExtraInstruction(outcome));
-        }
         return result.delivered;
       },
       noticeGapMs: NOTICE_RESTART_GAP_MS,
@@ -615,24 +608,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
           journal,
           noticeAuth,
+          continuations,
           onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
             if (action !== 'notice.continue') return;
-            journal?.update(entry.turnId, { noticeInvalidated: true });
-            if (journal) {
-              await resolveInterruptionNotice({
-                journal,
-                turnId: entry.turnId,
-                resolution: 'continued',
-                updateCard: (id, card) => channel.updateCard(id, card),
-              });
-            }
-            continueByScope.set(scope, {
-              turnId: entry.turnId,
-              ...(entry.resumeHandle ? { resumeHandle: entry.resumeHandle } : {}),
-              ...(entry.userInput ? { userInput: entry.userInput } : {}),
-              ...(entry.policyFingerprint ? { policyFingerprint: entry.policyFingerprint } : {}),
-              ...(entry.resources ? { resources: entry.resources } : {}),
-            });
             pending.push(scope, {
               messageId: messageId || entry.messageIds.at(-1) || `notice-continue-${entry.turnId}`,
               chatId: entry.chatId,
@@ -1219,9 +1197,7 @@ interface RunBatchDeps {
   journal?: TurnJournal;
   noticeEnabled?: boolean;
   noticeAuth?: NoticeActionAuth;
-  consecutiveByScope: Map<string, number>;
-  pendingHintByScope: Map<string, string>;
-  continueByScope: Map<string, ContinueRequest>;
+  continuations: Continuations;
   cliSelfSent?: CliSelfSendTracker;
 }
 
@@ -1246,9 +1222,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     journal,
     noticeEnabled,
     noticeAuth,
-    consecutiveByScope,
-    pendingHintByScope,
-    continueByScope,
+    continuations,
     cliSelfSent,
   } = deps;
   if (batch.length === 0) return;
@@ -1369,34 +1343,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
   lastRunModelByScope.set(scope, modelSelection);
   const extraInstructions: string[] = [];
-  const continueReq = takeContinueRequest({
-    scope,
-    batch,
-    journal,
-    noticeEnabled: noticeEnabled === true,
-    continueByScope,
-  });
-  if (!continueReq) {
-    consecutiveByScope.set(scope, 0);
-    journal?.list()
-      .filter((entry) => entry.scope === scope && (entry.notice?.kind === 'continue' || entry.notice?.kind === 'plain'))
-      .forEach((entry) => journal.update(entry.turnId, { noticeInvalidated: true }));
-  } else if (journal) {
-    journal.update(continueReq.turnId, { noticeInvalidated: true });
-    await resolveInterruptionNotice({
-      journal,
-      turnId: continueReq.turnId,
-      resolution: 'continued',
-      updateCard: (id, card) => channel.updateCard(id, card),
-    });
-  }
-  const pendingHint = pendingHintByScope.get(scope);
-  if (pendingHint) {
-    extraInstructions.push(pendingHint);
-    pendingHintByScope.delete(scope);
-  }
-  const resumeInput = continueReq?.userInput?.trim();
-  if (resumeInput) extraInstructions.push(`原始输入：\n${resumeInput}`);
+  const taken = noticeEnabled === true
+    ? await continuations.take(scope, batch)
+    : { kind: 'none' as const };
+  applyTakenInstruction(taken, extraInstructions);
   if (modelSwitched) {
     extraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
@@ -1414,8 +1364,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }));
   }
 
-  const promptBatch = continueReq && !continueReq.resumeHandle && continueReq.userInput
-    ? [{ ...lastMsg, content: continueReq.userInput }]
+  const promptBatch = taken.kind === 'continue' && !taken.resumeHandle && taken.userInput
+    ? [{ ...lastMsg, content: taken.userInput }]
     : batch;
   const prompt = buildPrompt(
     promptBatch,
@@ -1485,12 +1435,12 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     executor,
     now: Date.now(),
     stopGraceMs: getAgentStopGraceMs(controls.cfg),
-    ...(continueReq
-      ? continueReq.resumeHandle
+    ...(taken.kind === 'continue'
+      ? taken.resumeHandle
         ? {
-          forceResumeHandle: continueReq.resumeHandle,
-          ...(continueReq.policyFingerprint
-            ? { forceResumeFingerprint: continueReq.policyFingerprint }
+          forceResumeHandle: taken.resumeHandle,
+          ...(taken.policyFingerprint
+            ? { forceResumeFingerprint: taken.policyFingerprint }
             : {}),
         }
         : { forceResumeHandle: null }
@@ -1539,8 +1489,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     ? {
         enabled: true as const,
         auth: noticeAuth,
-        consecutiveByScope,
-        pendingHintByScope,
+        continuations,
         ownerId: controls.botOwnerId,
         requireBotMention: lastMsg.chatType !== 'p2p'
           && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
@@ -2054,8 +2003,7 @@ async function deliverFinalReply(input: {
   notice?: {
     enabled: true;
     auth?: NoticeActionAuth;
-    consecutiveByScope: Map<string, number>;
-    pendingHintByScope: Map<string, string>;
+    continuations: Continuations;
     ownerId?: string;
     requireBotMention: boolean;
   };
@@ -2630,38 +2578,19 @@ function scheduleWorkingReactionCleanup(
   })();
 }
 
-interface ContinueRequest {
-  turnId: string;
-  resumeHandle?: string;
-  userInput?: string;
-  policyFingerprint?: string;
-  resources?: TurnJournalResource[];
-}
-
-function takeContinueRequest(input: {
-  scope: string;
-  batch: NormalizedMessage[];
-  journal?: TurnJournal;
-  noticeEnabled: boolean;
-  continueByScope: Map<string, ContinueRequest>;
-}): ContinueRequest | undefined {
-  if (!input.noticeEnabled) return undefined;
-  const queued = input.continueByScope.get(input.scope);
-  if (queued) {
-    input.continueByScope.delete(input.scope);
-    return queued;
+function applyTakenInstruction(taken: ContinuationTaken, extraInstructions: string[]): void {
+  switch (taken.kind) {
+    case 'none':
+      return;
+    case 'continue':
+    case 'abandoned':
+      extraInstructions.push(taken.instruction);
+      return;
+    default: {
+      const _exhaustive: never = taken;
+      return _exhaustive;
+    }
   }
-  const last = input.batch[input.batch.length - 1];
-  if (!last || !isContinuePrompt(last.content) || !input.journal) return undefined;
-  const entry = latestContinueNotice(input.journal, input.scope);
-  if (!entry) return undefined;
-  return {
-    turnId: entry.turnId,
-    ...(entry.resumeHandle ? { resumeHandle: entry.resumeHandle } : {}),
-    ...(entry.userInput ? { userInput: entry.userInput } : {}),
-    ...(entry.policyFingerprint ? { policyFingerprint: entry.policyFingerprint } : {}),
-    ...(entry.resources ? { resources: entry.resources } : {}),
-  };
 }
 
 function journalResources(batch: NormalizedMessage[]): { resources: TurnJournalResource[] } | Record<string, never> {
@@ -2698,31 +2627,6 @@ function journalResourceSourceId(resource: unknown): string | undefined {
     : undefined;
 }
 
-function rebuildPendingHints(journal?: TurnJournal): Map<string, string> {
-  const map = new Map<string, string>();
-  if (!journal) return map;
-  for (const entry of journal.list()) {
-    if (entry.noticeInvalidated) continue;
-    if (entry.notice?.kind !== 'continue' && entry.notice?.kind !== 'plain') continue;
-    if (entry.notice.continueHint) map.set(entry.scope, entry.notice.continueHint);
-  }
-  return map;
-}
-
-function rebuildConsecutive(journal?: TurnJournal): Map<string, number> {
-  const map = new Map<string, number>();
-  if (!journal) return map;
-  for (const entry of journal.list()) {
-    if (typeof entry.consecutiveInterrupts === 'number' && !entry.noticeInvalidated) {
-      map.set(entry.scope, entry.consecutiveInterrupts);
-    }
-    if (entry.status === 'reply-delivered' && entry.outcome?.kind === 'completed') {
-      map.set(entry.scope, 0);
-    }
-  }
-  return map;
-}
-
 async function sendTurnNotice(input: {
   channel: LarkChannel;
   journal: TurnJournal;
@@ -2731,8 +2635,7 @@ async function sendTurnNotice(input: {
   outcome: RunOutcome;
   notice: {
     auth?: NoticeActionAuth;
-    consecutiveByScope: Map<string, number>;
-    pendingHintByScope: Map<string, string>;
+    continuations: Continuations;
     ownerId?: string;
     requireBotMention: boolean;
   };
@@ -2740,30 +2643,19 @@ async function sendTurnNotice(input: {
 }): Promise<void> {
   const plan = planInterruptionNotice(input.outcome);
   if (plan.kind === 'none') return;
-  const alreadyPending = input.journal.get(input.turnId)?.status === 'notice-pending';
-  let consecutive = input.notice.consecutiveByScope.get(input.scope) ?? 0;
-  if (plan.kind === 'continue' && !alreadyPending) {
-    consecutive += 1;
-    input.notice.consecutiveByScope.set(input.scope, consecutive);
-  }
-  const result = await deliverInterruptionNotice({
+  if (plan.kind === 'continue') input.notice.continuations.offer(input.turnId, input.outcome);
+  await deliverInterruptionNotice({
     send: (chatId, content, options) => input.channel.send(chatId, content, options),
     journal: input.journal,
     turnId: input.turnId,
     outcome: input.outcome,
     noticeAuth: input.notice.auth,
-    consecutive,
+    consecutive: input.notice.continuations.consecutive(input.scope),
     requireBotMention: input.notice.requireBotMention,
     ownerId: input.notice.ownerId,
     authNotified: authNoticeAlreadyDelivered(input.journal),
     stageOnly: input.stageOnly === true,
   });
-  if (plan.kind === 'continue' && (result.delivered || result.pending)) {
-    input.notice.pendingHintByScope.set(
-      input.scope,
-      continueExtraInstruction(input.outcome),
-    );
-  }
 }
 
 function delay(ms: number): Promise<void> {

@@ -89,6 +89,23 @@ describe('TurnJournal', () => {
     expect(reloaded.get('turn-1')?.status).toBe('queued');
   });
 
+  it('persists continuation status across reload', async () => {
+    const { file, journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({
+      continuation: { status: 'offered' },
+    }));
+    expect(journal.get('turn-1')?.continuation).toEqual({ status: 'offered' });
+    await journal.flush();
+    const raw = JSON.parse(await readFile(file, 'utf8')) as {
+      entries: TurnJournalEntry[];
+    };
+    expect(raw.entries[0]?.continuation).toEqual({ status: 'offered' });
+    const reloaded = new TurnJournal(file, { now: () => 1_760_000_000_000 });
+    await reloaded.load();
+    expect(reloaded.get('turn-1')?.continuation).toEqual({ status: 'offered' });
+  });
+
   it('persists message resources for resumeless continue replay', async () => {
     const { file, journal } = await fixture();
     await journal.load();

@@ -6,6 +6,7 @@ import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
 import type { CallbackAuth } from './callback-auth';
+import type { Continuations } from '../bot/continuation';
 import {
   type NoticeAction,
   type NoticeActionAuth,
@@ -52,6 +53,7 @@ export interface CardDispatchDeps {
   callbackPolicyFingerprintForScope?: (scope: string) => string | undefined;
   journal?: TurnJournal;
   noticeAuth?: NoticeActionAuth;
+  continuations?: Continuations;
   onNoticeAction?: (input: {
     action: NoticeAction;
     entry: TurnJournalEntry;
@@ -315,8 +317,13 @@ async function dispatchNoticeAction(
     await sendNoticeInvalid(deps);
     return;
   }
+  if (cmd === 'notice.continue' && deps.continuations && !deps.continuations.click(entry.turnId)) {
+    await sendNoticeInvalid(deps);
+    return;
+  }
   if (cmd === 'notice.dismiss') {
-    deps.journal?.update(entry.turnId, { noticeInvalidated: true });
+    if (deps.continuations) deps.continuations.dismiss(entry.turnId);
+    else deps.journal?.update(entry.turnId, { noticeInvalidated: true });
     if (deps.journal) {
       await resolveInterruptionNotice({
         journal: deps.journal,
