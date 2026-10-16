@@ -130,14 +130,25 @@ resend on connected ticks.
 
 ### 4a. Exactly-once delivery (no duplicate, no loss)
 
-These mechanisms were checked against master `426f670` and the `@larksuite/channel` 0.7.1 source.
+Checked against master `426f670`, the `@larksuite/channel` 0.7.1 source, and a live Feishu proof run on 2026-10-17 (facts marked *verified*).
 
-1. **Feishu request idempotency.** Every final reply and notice is sent with `uuid = deliveryId`. The `deliveryId` is the stable per-turn key `replyDeliveryKey(turnId)`, already persisted in the turn journal. It is kept, not deleted, and is no longer stripped by `stripOutboundUuid`. The uuid is set inside the SDK's `rawSend` through a `pnpm patch` of `@larksuite/channel`, on `im.v1.message.create` / `reply`. That way the SDK's own internal retries (`rawSendWithRetry` on `unknown` errors) carry the same uuid too. Feishu dedupes the same uuid for about 1 hour.
-2. **Streamed and card replies.** The stream message id is recorded as the receipt when the stream message is created.
-   - If the final write is uncertain, recovery does a replace-all patch of that same card (`updateCard`, or CardKit `updateCardById`, which already carries a uuid) with the full answer. It never sends a new message.
+1. **Feishu request idempotency.**
+   - Every final reply and notice is sent with `uuid = deliveryId`. The `deliveryId` is the stable per-turn key `replyDeliveryKey(turnId)`, already persisted in the turn journal. It is kept, no longer stripped by `stripOutboundUuid`, and must be at most 50 characters.
+   - The uuid is set inside the SDK's `rawSend` through a `pnpm patch` of `@larksuite/channel`, on `im.v1.message.create` / `reply`, so the SDK's own internal retries (`rawSendWithRetry` on `unknown` errors) carry it too.
+   - Feishu sends at most one message per uuid within 1 hour ([message create docs](https://open.feishu.cn/document/server-docs/im-v1/message/create)).
+   - *Verified:* a repeated uuid on `create` or `reply` returns code 0 and the **original** `message_id`, never an error. A send that landed but whose response was lost, resent with the same uuid, returns the original id, and the chat holds one message.
+   - *Verified:* a repeat with different content gets a response body that echoes the new text, while the stored message keeps the original content. **On any send, trust only the returned `message_id`, never the response body.**
+2. **Streamed and card replies: patch the same interactive card.**
+   - The stream message id is recorded as the receipt when the stream message is created. *Verified:* `stream()` in card mode exposes its message id at creation, and it equals the id `stream()` returns.
+   - If the final write is uncertain, recovery does a replace-all patch of that same interactive card (`updateCard` / `im.v1.message.patch`) with the full answer. It never sends a new message. *Verified:* patching twice leaves the final content and creates no new message; a post-stream `updateCard` to the final card works.
    - If the stream message was never created, recovery falls back to the uuid-protected send from (1).
-   - Markdown streams use a bridge-owned CardKit card, or a patch of the SDK, so that a failed final write is reported rather than swallowed.
-3. **Beyond the 1-hour uuid window.** Before any redelivery send, the bridge reads back the chat with `rawClient.im.v1.message.list`: the bot's own messages after the turn started, matched against the recorded receipt or `deliveryId`. It sends only if no match is found. If a matching card exists, it is patched instead of sent.
+   - **CardKit (`updateCardById`) is unverified.** The update call succeeds, but `im.v1.message.get` returns only an "upgrade client" placeholder, so its content cannot be confirmed by read-back. Interactive-card patch is the recovery path. Markdown streams need a patch of the SDK or a bridge-owned interactive card (not CardKit, unless that is verified later) so that a failed final write is reported.
+3. **Read-back beyond the 1-hour uuid window.** Before a redelivery send outside the window, the bridge lists the chat with `rawClient.im.v1.message.list`.
+   - *Verified:* the list does **not** expose uuid; the bot sender appears as its app id, not an open_id; a new message is visible after about 1.6 s.
+   - Match the bot's answer by: `parent_id` equal to the triggering inbound message id (bot answers always reply to the trigger), sender equal to the bot's app id, and `create_time` after the turn started (or simply the recorded receipt id).
+   - Page through with a hard cap.
+   - **Never embed visible markers in reply content** for matching.
+   - If a match is found, the item is marked sent (or its card is patched). Otherwise, exactly one send.
 
 ### 5. Liveness
 
@@ -212,7 +223,7 @@ seam; command splitting / single preferences parser; e2e proxy cleanup (D1).
 Every delivery change must keep these true. They come from the 2026-10-16 failure-mode audit of the code branch (T11–T16).
 
 - **I1 Exactly one complete answer per inbound message.** Every inbound message ends with exactly one complete answer the user can see, or exactly one notice if its run was interrupted. No duplicate, no loss. A duplicate is a bug, not an acceptable trade-off. *(User decision, 2026-10-17. It replaces the audit's "duplicate OK, loss not OK" wording, which was never approved.)*
-- **I2a Retries are idempotent.** Every send of a final reply or notice, including the SDK's internal retries and redelivery after recovery, carries the same `deliveryId` as its Feishu `uuid`. A streamed answer is completed by patching its own card. Past the uuid window, a read-back runs before any send (§4a).
+- **I2a Retries are idempotent.** Every send of a final reply or notice, including the SDK's internal retries and redelivery after recovery, carries the same `deliveryId` as its Feishu `uuid`. A streamed answer is completed by patching its own card. Past the uuid window, a read-back by `parent_id` runs before any send (§4a). Only the returned `message_id` is trusted, never the echoed body.
 - **I2 Only the bridge's own awaited calls confirm delivery.** A delivery counts only when a call the bridge awaited returned a receipt (message id). The SDK's internal throttled stream writes never count, because they always resolve.
 - **I3 Everything terminal goes through the outbox.** Replies, notices and notice-card resolutions are staged before their first attempt. They leave the outbox only on a receipt, on a terminal "rejected" after their fallback, or when the user explicitly voids them.
 - **I4 One error classifier.** A single function sorts every Feishu error into exactly one of `link`, `rejected` or `local`. It looks through wrapper errors (`.cause`), is used by both FeishuLink and delivery, and never matches message text.
@@ -238,9 +249,9 @@ Recovery does not cover these; each is logged or declared rather than silent. Fo
 - **Outage longer than `lookbackMs`** (default 6 h, F29): messages older than the window are not backfilled. At minimum a `backfill.window-truncated` log line; a one-time per-chat notice is proposed in T10.
 - **Thread replies in normal groups**: the chat container returns only thread roots, so an @bot inside a thread reply is not backfilled (`backfill.topic-partial`).
 - **First-contact DM**: a DM chat with no prior session is not scanned.
-- **Ledger pruned or lost — NEEDS USER SIGN-OFF**: the processed ledger keeps ids for 2× lookback (12 h). If it is pruned or lost and the same inbound message reappears in a later backfill window, it can start a second turn and so get a second answer. The new turn has a new `deliveryId`, so neither the uuid nor the read-back catches it. This residual breaks I1.
-- ~~Redelivered final reply~~ (F11) is no longer a limitation. A send that timed out but landed is deduped by the uuid (≤ 1 h) or the read-back (> 1 h); see §4a and T16. A reply the agent already sent via CLI is not redelivered (T10 item 2).
-- **CLI answer during an outage — NEEDS USER SIGN-OFF** (audit F24): this happens when the agent sends its answer via CLI during the outage, the echo is lost, and the bridge's final send fails. The read-back (§4a.3) treats bot messages in the chat after the turn started as candidates. But a CLI message carries no `deliveryId` and may not reply to the trigger message, so it may not be recognised, and the bridge answer can then appear a second time. This residual breaks I1 unless the read-back matching rule is widened.
+- **Local ledger file deleted or corrupted**: backfill looks back only 6 h, and the processed ledger keeps ids for 12 h. So a message older than the window is never fetched again, and the normal prune cannot cause a second answer. A duplicate is possible only if the local ledger file is deleted or corrupted while the message is still within the 6 h window. That is local data corruption and is documented here as a known limitation.
+- ~~Redelivered final reply~~ (F11) is no longer a limitation. A send that timed out but landed is deduped by the uuid (≤ 1 h, verified live) or the `parent_id` read-back (> 1 h); see §4a and T16. A reply the agent already sent via CLI is not redelivered (T10 item 2).
+- **CLI answer during an outage** (audit F24): not applicable. In a real network outage the agent's CLI send cannot reach Feishu either, so there is no landed CLI answer for the bridge to duplicate.
 - **Notice card resolution is not staged** (F15): if updating the card to 已继续 / 已放弃 fails, the old buttons stay; a later click answers 此继续已失效.
 - **Inbound works while REST is blackholed** (F18): an inbound WebSocket event counts as evidence, so the link can flap up and down on each inbound message while sends keep failing. Recovery still converges once REST returns.
 - **WebSocket permanently failed** (F23): the link stays down forever and nothing is delivered; the bridge only logs. Exiting on this is deferred (§10).

@@ -11,9 +11,9 @@ Delivery of a streamed answer is judged only by the `stream()` result the bridge
   - failed + rejected/local: patch the same card with the full answer now. Only if that patch is itself rejected (card gone), or the stream message was never created, fall back to the uuid-protected send from T16 (read-back first). Never two answers (I1).
 - Markdown final-flush failure must surface:
   - **Preferred:** a `pnpm patch` of `@larksuite/channel` so the markdown `run()` rejects with the last error when streaming failed or the final flush failed (card mode already rejects).
-  - **Fallback if the patch is not viable:** a bridge-owned awaited final update. In card mode that is one `channel.updateCard(messageId, finalCard)`. In markdown mode it is bridge-owned CardKit (`createCard` + `updateCardById`, both wrapped).
+  - **Fallback if the patch is not viable:** a bridge-owned awaited final update. In card mode that is one `channel.updateCard(messageId, finalCard)`. In markdown mode it is a bridge-owned interactive card patched with `im.v1.message.patch` (verified live). CardKit `updateCardById` is **not** used for recovery: its content could not be verified by read-back (spec §4a.2).
   - Record the choice in the ticket PR.
-- Record the stream message id at creation, so the bridge's own echo is never taken as a CLI self-send (F25).
+- Record the stream message id at creation (verified: card-mode `stream()` exposes it at creation, equal to its return value), so the bridge's own echo is never taken as a CLI self-send (F25).
 - SDK-faithful fake channel: `update`/`setContent` always resolve; only `stream()` rejects (card) or, with the patch, markdown `run()` (I10).
 
 ## Spec sections
@@ -23,7 +23,7 @@ Delivery invariants (I1, I2, I3, I10); §4 Outbox (streamed staging)
 ## Acceptance (behaviour, failing first, against the SDK-faithful fake)
 
 - [ ] Streamed final patch fails (card, link error) → after recovery the **same card** ends with the full answer, and the chat holds no new message.
-- [ ] Markdown stream, final write fails with ENETUNREACH → the failure is reported (patch or bridge-owned CardKit), and after recovery the same message ends with the full answer and no new message appears.
+- [ ] Markdown stream, final write fails with ENETUNREACH → the failure is reported (SDK patch or bridge-owned interactive card), and after recovery the same message ends with the full answer and no new message appears.
 - [ ] Card stream, short run, final patch fails → no 继续 notice for a completed turn; one full answer in the same card.
 - [ ] Card stream, final patch 400 → the same card is re-patched with the full answer; if that is rejected too, one uuid-protected send. The chat holds exactly one complete answer, the notice is sent, and the journal shows delivered.
 - [ ] Stream open fails (no message created) → one uuid-protected send of the full answer after recovery.
