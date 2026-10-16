@@ -62,10 +62,7 @@ export function createContinuations(deps: {
     if (status !== undefined) return;
     const next = consecutive(entry.scope) + 1;
     streakByScope.set(entry.scope, next);
-    journal.update(turnId, {
-      continuation: { status: 'offered' },
-      consecutiveInterrupts: next,
-    });
+    journal.setContinuation(turnId, 'offered', { consecutiveInterrupts: next });
   }
 
   function click(turnId: string): boolean {
@@ -74,7 +71,7 @@ export function createContinuations(deps: {
     const entry = journal.get(turnId);
     if (!entry) return false;
     if (continuationStatus(entry) !== 'offered') return false;
-    journal.update(turnId, { continuation: { status: 'continue-requested' } });
+    journal.setContinuation(turnId, 'continue-requested');
     return true;
   }
 
@@ -101,10 +98,7 @@ export function createContinuations(deps: {
     journal: TurnJournal,
     entry: TurnJournalEntry,
   ): Promise<Extract<ContinuationTaken, { kind: 'continue' }>> {
-    journal.update(entry.turnId, {
-      continuation: { status: 'continued' },
-      noticeInvalidated: true,
-    });
+    journal.setContinuation(entry.turnId, 'continued', { noticeInvalidated: true });
     await resolveInterruptionNotice({
       journal,
       turnId: entry.turnId,
@@ -129,10 +123,7 @@ export function createContinuations(deps: {
     updateCard: boolean,
   ): Promise<Extract<ContinuationTaken, { kind: 'abandoned' }>> {
     streakByScope.set(entry.scope, 0);
-    journal.update(entry.turnId, {
-      continuation: { status: 'abandoned' },
-      noticeInvalidated: true,
-    });
+    journal.setContinuation(entry.turnId, 'abandoned', { noticeInvalidated: true });
     voidOtherOpenOffers(journal, entry.scope, entry.turnId);
     if (updateCard) {
       await resolveInterruptionNotice({
@@ -156,10 +147,7 @@ export function createContinuations(deps: {
     if (!entry) return;
     const status = continuationStatus(entry);
     if (status !== 'offered' && status !== 'continue-requested') return;
-    journal.update(turnId, {
-      continuation: { status: 'dismissed' },
-      noticeInvalidated: true,
-    });
+    journal.setContinuation(turnId, 'dismissed', { noticeInvalidated: true });
   }
 
   function voidScope(scope: string): void {
@@ -170,10 +158,7 @@ export function createContinuations(deps: {
       if (entry.scope !== scope) continue;
       const status = continuationStatus(entry);
       if (status !== 'offered' && status !== 'continue-requested') continue;
-      journal.update(entry.turnId, {
-        continuation: { status: 'voided' },
-        noticeInvalidated: true,
-      });
+      journal.setContinuation(entry.turnId, 'voided', { noticeInvalidated: true });
     }
     journal.voidScope(scope);
   }
@@ -209,10 +194,7 @@ function voidOtherOpenOffers(journal: TurnJournal, scope: string, keepTurnId: st
     if (entry.scope !== scope || entry.turnId === keepTurnId) continue;
     const status = continuationStatus(entry);
     if (status !== 'offered' && status !== 'continue-requested') continue;
-    journal.update(entry.turnId, {
-      continuation: { status: 'voided' },
-      noticeInvalidated: true,
-    });
+    journal.setContinuation(entry.turnId, 'voided', { noticeInvalidated: true });
   }
 }
 

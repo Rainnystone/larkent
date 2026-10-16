@@ -93,6 +93,9 @@ describe('FeishuLink recovery through the bridge', () => {
     });
     await waitFor(() => h.ledger.getLiveAt() === NOW);
     expect(h.journal).toBeDefined();
+    // Drain startup Recovery before staging so its redeliver does not
+    // observe a reply enqueued after the outage callback fired.
+    await h.bridge.recover();
 
     h.journal!.enqueue({
       turnId: 'turn-staged',

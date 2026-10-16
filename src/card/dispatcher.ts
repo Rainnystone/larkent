@@ -323,7 +323,7 @@ async function dispatchNoticeAction(
   }
   if (cmd === 'notice.dismiss') {
     if (deps.continuations) deps.continuations.dismiss(entry.turnId);
-    else deps.journal?.update(entry.turnId, { noticeInvalidated: true });
+    else deps.journal?.invalidateNotice(entry.turnId);
     if (deps.journal) {
       await resolveInterruptionNotice({
         journal: deps.journal,

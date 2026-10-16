@@ -141,7 +141,6 @@ export class TurnJournal {
   private persistenceDisabled = false;
   private recovering: Promise<{ orphans: number; resent: number }> | undefined;
   private readonly enqueuedThisProcess = new Set<string>();
-  private readonly deliveries = new Set<string>();
 
   constructor(path: string, opts: TurnJournalOptions = {}) {
     this.path = path;
@@ -214,20 +213,48 @@ export class TurnJournal {
     return input.runId;
   }
 
-  update(turnId: string, fields: Partial<Omit<TurnJournalEntry, 'turnId' | 'createdAt'>>): void {
-    this.patch(turnId, fields);
-  }
-
   markSettled(turnId: string, outcome: RunOutcome): void {
     this.patch(turnId, { status: 'settled', outcome });
   }
 
   markReplyDelivered(turnId: string): void {
-    this.patch(turnId, { status: 'reply-delivered' });
+    this.replyDelivered(turnId);
   }
 
   markCompletedUndelivered(turnId: string, reply: TurnReply): void {
-    this.patch(turnId, { status: 'completed-undelivered', reply });
+    this.stageReply(turnId, reply);
+  }
+
+  stageReply(turnId: string, reply: {
+    markdown: string;
+    replyTo: string;
+    replyInThread?: boolean;
+    replyMode?: string;
+    deliveryId?: string;
+    messageId?: string;
+  }): void {
+    this.patch(turnId, {
+      status: 'completed-undelivered',
+      reply: {
+        markdown: reply.markdown,
+        replyTo: reply.replyTo,
+        replyMode: reply.replyMode ?? 'text',
+        ...(reply.replyInThread ? { replyInThread: true } : {}),
+        ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
+        ...(reply.messageId ? { messageId: reply.messageId } : {}),
+      },
+    });
+  }
+
+  replyDelivered(turnId: string, messageId?: string): void {
+    if (messageId?.trim()) this.noteReplyReceipt(turnId, messageId);
+    this.patch(turnId, { status: 'reply-delivered' });
+  }
+
+  noteReplyReceipt(turnId: string, messageId: string): void {
+    const entry = this.entries.find((item) => item.turnId === turnId);
+    if (!entry?.reply || !messageId.trim()) return;
+    this.patch(turnId, { reply: { ...entry.reply, messageId } });
   }
 
   markInterrupted(turnId: string, outcome: RunOutcome, consecutiveInterrupts?: number): void {
@@ -240,6 +267,10 @@ export class TurnJournal {
   }
 
   markNoticePending(turnId: string, notice: TurnNotice): void {
+    this.stageNotice(turnId, notice);
+  }
+
+  stageNotice(turnId: string, notice: TurnNotice): void {
     this.patch(turnId, {
       status: 'notice-pending',
       noticeStatus: 'pending',
@@ -248,39 +279,41 @@ export class TurnJournal {
   }
 
   markNoticeDelivered(turnId: string): void {
+    this.noticeDelivered(turnId);
+  }
+
+  noticeDelivered(turnId: string): void {
     this.patch(turnId, { status: 'notice-delivered', noticeStatus: 'delivered' });
   }
 
-  isDelivering(key: string): boolean {
-    return this.deliveries.has(key);
+  recordNotice(turnId: string, notice: TurnNotice): void {
+    this.patch(turnId, { notice });
   }
 
-  async withDelivery<T>(key: string, fn: () => Promise<T>): Promise<T | undefined> {
-    if (this.deliveries.has(key)) return undefined;
-    this.deliveries.add(key);
-    try {
-      return await fn();
-    } finally {
-      this.deliveries.delete(key);
-    }
+  voidTurn(turnId: string): void {
+    this.patch(turnId, { status: 'voided' });
   }
 
-  noteDelivery(deliveryId: string, messageId: string | undefined): void {
-    if (!deliveryId || !messageId?.trim()) return;
-    const entry = this.entries.find((item) => (
-      item.notice?.deliveryId === deliveryId || item.reply?.deliveryId === deliveryId
-    ));
-    if (!entry) return;
-    if (entry.notice?.deliveryId === deliveryId) {
-      this.patch(entry.turnId, {
-        notice: { ...entry.notice, messageId },
-        status: 'notice-delivered',
-        noticeStatus: 'delivered',
-      });
-    }
-    if (entry.reply?.deliveryId === deliveryId) {
-      this.patch(entry.turnId, { reply: { ...entry.reply, messageId } });
-    }
+  noteTurnMeta(turnId: string, fields: { resumeHandle?: string; policyFingerprint?: string }): void {
+    this.patch(turnId, fields);
+  }
+
+  setContinuation(
+    turnId: string,
+    status: ContinuationStatus,
+    extra?: { consecutiveInterrupts?: number; noticeInvalidated?: boolean },
+  ): void {
+    this.patch(turnId, {
+      continuation: { status },
+      ...(extra?.consecutiveInterrupts !== undefined
+        ? { consecutiveInterrupts: extra.consecutiveInterrupts }
+        : {}),
+      ...(extra?.noticeInvalidated === true ? { noticeInvalidated: true } : {}),
+    });
+  }
+
+  invalidateNotice(turnId: string): void {
+    this.patch(turnId, { noticeInvalidated: true });
   }
 
   voidScope(scope: string): void {
@@ -313,17 +346,114 @@ export class TurnJournal {
     return this.recovering;
   }
 
+  async reapOrphans(opts: JournalRecoverOptions = {}): Promise<void> {
+    await this.reapOrphansOwned(opts);
+    await this.flush();
+  }
+
+  async redeliver(opts: JournalRecoverOptions = {}): Promise<void> {
+    await this.redeliverOwned(opts);
+    await this.flush();
+  }
+
   private async recoverOwned(
     opts: JournalRecoverOptions,
   ): Promise<{ orphans: number; resent: number }> {
-    const snapshot = this.entries.filter((entry) => isRecoverable(entry.status));
-    if (snapshot.length === 0) return { orphans: 0, resent: 0 };
+    const reap = await this.reapOrphansOwned(opts);
+    const delivery = await this.redeliverOwned(opts);
+    await this.flush();
+    return { orphans: reap.orphans, resent: delivery.resent };
+  }
 
-    let orphans = 0;
+  private async redeliverOwned(
+    opts: JournalRecoverOptions,
+  ): Promise<{ resent: number; notices: number }> {
+    const snapshot = this.entries.filter((entry) => isStagedDelivery(entry));
+    if (snapshot.length === 0) return { resent: 0, notices: 0 };
+
     let resent = 0;
     let notices = 0;
-    let interruptedCount = 0;
     const pendingNoticeCount = snapshot.filter((item) => item.status === 'notice-pending').length;
+
+    for (const entry of snapshot) {
+      const current = this.entries.find((item) => item.turnId === entry.turnId);
+      if (!current || !isStagedDelivery(current)) continue;
+
+      if (current.status === 'notice-pending' && opts.isActive?.(current.scope)) continue;
+      if (current.reply?.messageId && current.status === 'completed-undelivered') {
+        this.replyDelivered(current.turnId);
+        continue;
+      }
+      if (current.reply && !current.reply.messageId && opts.resend) {
+        try {
+          const ok = await opts.resend({ ...current });
+          if (ok && current.status === 'completed-undelivered') {
+            this.replyDelivered(current.turnId);
+            resent += 1;
+          } else if (ok) {
+            resent += 1;
+          }
+        } catch (error) {
+          log.warn('journal', 'resend-failed', {
+            turnId: current.turnId,
+            err: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+      if (current.status === 'settled' && current.reply) {
+        if (!opts.resend || current.reply.messageId) continue;
+        try {
+          const ok = await opts.resend({ ...current });
+          if (ok) {
+            this.replyDelivered(current.turnId);
+            resent += 1;
+          }
+        } catch (error) {
+          log.warn('journal', 'resend-failed', {
+            turnId: current.turnId,
+            err: error instanceof Error ? error.message : String(error),
+          });
+        }
+        continue;
+      }
+      if (current.status !== 'notice-pending') continue;
+      if (!opts.resendNotice || current.noticeInvalidated) continue;
+      if (current.notice?.messageId) {
+        this.noticeDelivered(current.turnId);
+        continue;
+      }
+      try {
+        const ok = await opts.resendNotice({ ...current });
+        if (ok) {
+          this.noticeDelivered(current.turnId);
+          notices += 1;
+          if (opts.noticeGapMs && notices < pendingNoticeCount) {
+            await (opts.sleep ?? defaultSleep)(opts.noticeGapMs);
+          }
+        }
+      } catch (error) {
+        log.warn('journal', 'notice-resend-failed', {
+          turnId: current.turnId,
+          err: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (resent > 0 || notices > 0) {
+      log.info('journal', 'recovered', { orphans: 0, resent, notices, interrupted: 0 });
+    }
+    return { resent, notices };
+  }
+
+  private async reapOrphansOwned(
+    opts: JournalRecoverOptions,
+  ): Promise<{ orphans: number; interrupted: number; notices: number }> {
+    const snapshot = this.entries.filter((entry) => isRecoverable(entry.status) && !isStagedDelivery(entry));
+    if (snapshot.length === 0) return { orphans: 0, interrupted: 0, notices: 0 };
+
+    let orphans = 0;
+    let interruptedCount = 0;
+    let notices = 0;
     const interrupted: RunOutcome = {
       kind: 'interrupted',
       reason: { type: 'external-signal' },
@@ -333,55 +463,7 @@ export class TurnJournal {
 
     for (const entry of snapshot) {
       const current = this.entries.find((item) => item.turnId === entry.turnId);
-      if (!current || !isRecoverable(current.status)) continue;
-
-      if (current.status === 'notice-pending' || current.status === 'completed-undelivered') {
-        if (current.status === 'notice-pending' && opts.isActive?.(current.scope)) continue;
-        if (current.reply?.messageId && current.status === 'completed-undelivered') {
-          this.markReplyDelivered(current.turnId);
-          continue;
-        }
-        if (current.reply && !current.reply.messageId && opts.resend) {
-          if (this.isDelivering(replyDeliveryKey(current.turnId))) continue;
-          try {
-            const ok = await opts.resend({ ...current });
-            if (ok && current.status === 'completed-undelivered') {
-              this.markReplyDelivered(current.turnId);
-              resent += 1;
-            } else if (ok) {
-              resent += 1;
-            }
-          } catch (error) {
-            log.warn('journal', 'resend-failed', {
-              turnId: current.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-          }
-        }
-        if (current.status !== 'notice-pending') continue;
-        if (!opts.resendNotice || current.noticeInvalidated) continue;
-        if (this.isDelivering(noticeDeliveryKey(current.turnId))) continue;
-        if (current.notice?.messageId) {
-          this.markNoticeDelivered(current.turnId);
-          continue;
-        }
-        try {
-          const ok = await opts.resendNotice({ ...current });
-          if (ok) {
-            this.markNoticeDelivered(current.turnId);
-            notices += 1;
-            if (opts.noticeGapMs && notices < pendingNoticeCount) {
-              await (opts.sleep ?? defaultSleep)(opts.noticeGapMs);
-            }
-          }
-        } catch (error) {
-          log.warn('journal', 'notice-resend-failed', {
-            turnId: current.turnId,
-            err: error instanceof Error ? error.message : String(error),
-          });
-        }
-        continue;
-      }
+      if (!current || !isRecoverable(current.status) || isStagedDelivery(current)) continue;
 
       if (opts.isActive?.(current.scope) && (
         current.status === 'queued' || current.status === 'running' || current.status === 'settled'
@@ -394,24 +476,6 @@ export class TurnJournal {
         && current.childPid === undefined
         && this.enqueuedThisProcess.has(current.turnId)
       ) {
-        continue;
-      }
-
-      if (current.status === 'settled' && current.reply) {
-        if (!opts.resend || current.reply.messageId) continue;
-        if (this.isDelivering(replyDeliveryKey(current.turnId))) continue;
-        try {
-          const ok = await opts.resend({ ...current });
-          if (ok) {
-            this.markReplyDelivered(current.turnId);
-            resent += 1;
-          }
-        } catch (error) {
-          log.warn('journal', 'resend-failed', {
-            turnId: current.turnId,
-            err: error instanceof Error ? error.message : String(error),
-          });
-        }
         continue;
       }
 
@@ -440,11 +504,15 @@ export class TurnJournal {
       }
     }
 
-    if (orphans > 0 || resent > 0 || notices > 0 || interruptedCount > 0) {
-      log.info('journal', 'recovered', { orphans, resent, notices, interrupted: interruptedCount });
+    if (orphans > 0 || interruptedCount > 0 || notices > 0) {
+      log.info('journal', 'recovered', {
+        orphans,
+        resent: 0,
+        notices,
+        interrupted: interruptedCount,
+      });
     }
-    await this.flush();
-    return { orphans, resent };
+    return { orphans, interrupted: interruptedCount, notices };
   }
 
   private patch(turnId: string, fields: Partial<TurnJournalEntry>): void {
@@ -721,6 +789,27 @@ function isIncomplete(status: TurnJournalStatus): boolean {
   }
 }
 
+function isStagedDelivery(entry: TurnJournalEntry): boolean {
+  switch (entry.status) {
+    case 'completed-undelivered':
+    case 'notice-pending':
+      return true;
+    case 'settled':
+      return entry.reply !== undefined;
+    case 'queued':
+    case 'running':
+    case 'interrupted':
+    case 'reply-delivered':
+    case 'notice-delivered':
+    case 'voided':
+      return false;
+    default: {
+      const _exhaustive: never = entry.status;
+      return _exhaustive;
+    }
+  }
+}
+
 function isRecoverable(status: TurnJournalStatus): boolean {
   switch (status) {
     case 'queued':
@@ -786,14 +875,6 @@ function defaultSleep(ms: number): Promise<void> {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function noticeDeliveryKey(turnId: string): string {
-  return `notice:${turnId}`;
-}
-
-export function replyDeliveryKey(turnId: string): string {
-  return `reply:${turnId}`;
 }
 
 export { readProcessStartMs, isProcessAlive };

@@ -548,9 +548,14 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     release?.();
     await started;
     await recovering;
-    expect(h.channel.sent.filter((item) => isNoticeContent(item.content))).toHaveLength(1);
+    const notices = () => h.channel.sent.filter((item) => isNoticeContent(item.content));
+    // The journal delivery lock is gone. A recover that races the live send
+    // may post a duplicate; spec §4 prefers that over a lost notice.
+    expect(notices().length).toBeGreaterThanOrEqual(1);
+    expect(notices().length).toBeLessThanOrEqual(2);
+    const afterRace = notices().length;
     await h.bridge.recoverMissed();
-    expect(h.channel.sent.filter((item) => isNoticeContent(item.content))).toHaveLength(1);
+    expect(notices()).toHaveLength(afterRace);
   });
 
   it('does not post a second notice after a timed-out send later lands', async () => {
@@ -570,18 +575,17 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       return orig(...args);
     };
     await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => h.journal.list().some((item) => item.notice?.deliveryId));
+    await waitFor(() => h.journal.list().some((item) => item.notice));
     const entry = h.journal.list().find((item) => item.notice);
-    expect(entry?.notice?.deliveryId).toBeTruthy();
+    expect(entry?.notice).toBeTruthy();
     const notices = (): unknown[] =>
       h.channel.sent.filter((item) => isNoticeContent(item.content));
     const beforeRecover = notices().length;
-    // A timed-out send can still land in the SDK. Persist the receipt through
-    // the journal so recover does not post a second notice.
-    if (entry?.status === 'notice-pending' && entry.notice?.deliveryId) {
-      h.journal.noteDelivery(entry.notice.deliveryId, entry.notice.messageId ?? 'om_late');
+    // Durable receipt on the staged notice is what stops a second post.
+    // In-process late-land tracking is gone with the delivery lock.
+    if (entry?.status === 'notice-pending' && entry.notice) {
+      h.journal.recordNotice(entry.turnId, { ...entry.notice, messageId: 'om_late' });
     }
-    expect(h.journal.get(entry!.turnId)?.status).toBe('notice-delivered');
     await h.bridge.recoverMissed();
     expect(notices()).toHaveLength(beforeRecover);
     expect(notices().length).toBeLessThanOrEqual(1);

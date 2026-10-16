@@ -145,6 +145,30 @@ describe('static architecture contracts', () => {
     expect(stray, stray.join('\n')).toEqual([]);
   });
 
+  it('does not keep journal delivery lock, live-notice set, or streamed staging skip', () => {
+    const forbidden = [
+      /\bwithDelivery\b/,
+      /\bisDelivering\b/,
+      /\bnoteDelivery\b/,
+      /\bliveNoticeSends\b/,
+      /\bstageOnly\b/,
+      /\balreadyStreamed\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(read('src/bot/turn-journal.ts')).not.toMatch(
+      /^\s+(async\s+)?update\s*\(\s*turnId/m,
+    );
+    expect(read('src/bot/turn-journal.ts')).toMatch(/\bstageReply\b/);
+    expect(read('src/bot/turn-journal.ts')).toMatch(/\bredeliver\b/);
+  });
+
   it('does not keep the outbound UUID in-flight guard', () => {
     const forbidden = [
       /\binflightByUuid\b/,

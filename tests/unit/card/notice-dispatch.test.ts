@@ -49,7 +49,7 @@ describe('notice card dispatch', () => {
 
   it('rejects a continue whose policy fingerprint no longer matches', async () => {
     const h = await harness();
-    h.journal.update('turn-1', { policyFingerprint: 'fp-other' });
+    h.journal.noteTurnMeta('turn-1', { policyFingerprint: 'fp-other' });
     await h.dispatch('ou_user', h.token());
     expect(h.actions).toEqual([]);
     expect(JSON.stringify(h.channel.sent)).toMatch(/失效/);

@@ -32,9 +32,9 @@ import {
   NoticeActionAuth,
   authNoticeAlreadyDelivered,
   deliverInterruptionNotice,
-  endLiveNoticeSend,
   planInterruptionNotice,
   resendPendingNotice,
+  stageInterruptionNotice,
 } from './interruption-notice';
 import { createContinuations, type ContinuationTaken, type Continuations } from './continuation';
 import { renderCard } from '../card/run-renderer';
@@ -112,7 +112,6 @@ import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
 import {
   isJournalResourceType,
-  replyDeliveryKey,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnJournalResource,
@@ -532,52 +531,58 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     }), 'backfill');
   };
 
-  const recoverJournal = (): Promise<void> => {
-    if (!journal) return Promise.resolve();
-    return trackConsumer(journal.recover({
-      resend: (entry) => resendJournalReply(channel, entry),
-      resendNotice: (entry) => resendPendingNotice({
+  const journalRecoverOpts = (owned: TurnJournal) => ({
+    resend: (entry: TurnJournalEntry) => resendJournalReply(channel, entry),
+    resendNotice: (entry: TurnJournalEntry) => resendPendingNotice({
+      send: (chatId: string, content: { markdown: string } | { card: object }, options?: {
+        replyTo?: string;
+        replyInThread?: boolean;
+      }) => channel.send(chatId, content, options),
+      entry,
+      journal: owned,
+      noticeAuth: reliability().notice ? noticeAuth : undefined,
+    }),
+    onInterrupted: async (entry: TurnJournalEntry) => {
+      const outcome = entry.outcome ?? {
+        kind: 'interrupted' as const,
+        reason: { type: 'external-signal' as const },
+        retriable: true,
+        needsHuman: false,
+      };
+      if (planInterruptionNotice(outcome).kind === 'continue') {
+        continuations.offer(entry.turnId, outcome);
+      }
+      const result = await deliverInterruptionNotice({
         send: (chatId, content, options) => channel.send(chatId, content, options),
-        entry,
-        journal,
+        journal: owned,
+        turnId: entry.turnId,
+        outcome,
         noticeAuth: reliability().notice ? noticeAuth : undefined,
-      }),
-      onInterrupted: async (entry) => {
-        const outcome = entry.outcome ?? {
-          kind: 'interrupted' as const,
-          reason: { type: 'external-signal' as const },
-          retriable: true,
-          needsHuman: false,
-        };
-        if (planInterruptionNotice(outcome).kind === 'continue') {
-          continuations.offer(entry.turnId, outcome);
-        }
-        const result = await deliverInterruptionNotice({
-          send: (chatId, content, options) => channel.send(chatId, content, options),
-          journal,
-          turnId: entry.turnId,
-          outcome,
-          noticeAuth: reliability().notice ? noticeAuth : undefined,
-          consecutive: continuations.consecutive(entry.scope),
-          requireBotMention: requireMentionForChat(
-            controls.profileConfig,
-            controls.cfg,
-            entry.chatId,
-          ),
-          ownerId: controls.botOwnerId,
-          authNotified: authNoticeAlreadyDelivered(journal),
-        });
-        return result.delivered;
-      },
-      noticeGapMs: NOTICE_RESTART_GAP_MS,
-      isActive: (scope) => activeRuns.get(scope) !== undefined,
-    }).then(() => {}), 'journal');
-  };
+        consecutive: continuations.consecutive(entry.scope),
+        requireBotMention: requireMentionForChat(
+          controls.profileConfig,
+          controls.cfg,
+          entry.chatId,
+        ),
+        ownerId: controls.botOwnerId,
+        authNotified: authNoticeAlreadyDelivered(owned),
+      });
+      return result.delivered;
+    },
+    noticeGapMs: NOTICE_RESTART_GAP_MS,
+    isActive: (scope: string) => activeRuns.get(scope) !== undefined,
+  });
 
   const recovery = createRecovery({
     journal: {
-      reapOrphans: recoverJournal,
-      redeliver: async () => {},
+      reapOrphans: () => {
+        if (!journal) return Promise.resolve();
+        return trackConsumer(journal.reapOrphans(journalRecoverOpts(journal)), 'journal');
+      },
+      redeliver: () => {
+        if (!journal) return Promise.resolve();
+        return trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal');
+      },
     },
     backfill: {
       scan: (fromMs) => launchBackfill(fromMs),
@@ -1504,14 +1509,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       });
     }
     await channel.send(chatId, { markdown: flow.rejectReason.userVisible }, sendOpts);
-    if (journal && turnId) journal.update(turnId, { status: 'voided' });
+    if (journal && turnId) journal.voidTurn(turnId);
     return;
   }
 
   const { execution, cwdRealpath: cwd } = flow;
   activePolicyFingerprints.set(scope, flow.policy.policyFingerprint);
   if (journal && turnId) {
-    journal.update(turnId, {
+    journal.noteTurnMeta(turnId, {
       ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}),
       policyFingerprint: flow.policy.policyFingerprint,
     });
@@ -1545,7 +1550,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     });
     if (evt.type === 'system' && evt.resumeHandle) {
       log.info('session', 'set', { resumeHandle: evt.resumeHandle });
-      if (journal && turnId) journal.update(turnId, { resumeHandle: evt.resumeHandle });
+      if (journal && turnId) journal.noteTurnMeta(turnId, { resumeHandle: evt.resumeHandle });
     }
     // Ground truth for "which model is actually running": claude reports the
     // model it loaded in its init event. Logging requested-vs-actual reveals
@@ -1733,15 +1738,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      const terminalState = finalAnswerOnly
+        ? finalReplyState(progress, filterForPrefs(latestState))
+        : filterForPrefs(latestState);
+      const cardPatch = cardCtrl;
       await deliverFinalReply({
         channel,
         chatId,
         scope,
-        state: finalAnswerOnly
-          ? finalReplyState(progress, filterForPrefs(latestState))
-          : filterForPrefs(latestState),
+        state: terminalState,
         skipFrom: latestState,
-        alreadyStreamed: !finalAnswerOnly && progress.opened() && !progress.abandoned(),
+        finalizeStream: liveStreamFinalize(finalAnswerOnly, progress, cardPatch && (async () => {
+          await cardPatch.update(renderCard(terminalState, cardRenderOptions));
+        })),
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1809,15 +1818,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
       }
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      const terminalState = finalAnswerOnly
+        ? finalReplyState(progress, filterForPrefs(latestState))
+        : filterForPrefs(latestState);
+      const markdownPatch = markdownCtrl;
       await deliverFinalReply({
         channel,
         chatId,
         scope,
-        state: finalAnswerOnly
-          ? finalReplyState(progress, filterForPrefs(latestState))
-          : filterForPrefs(latestState),
+        state: terminalState,
         skipFrom: latestState,
-        alreadyStreamed: !finalAnswerOnly && progress.opened() && !progress.abandoned(),
+        finalizeStream: liveStreamFinalize(finalAnswerOnly, progress, markdownPatch && (async () => {
+          await markdownPatch.setContent(renderText(terminalState));
+        })),
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -2020,13 +2033,22 @@ async function recallStreamedMessage(
   }
 }
 
+function liveStreamFinalize(
+  finalAnswerOnly: boolean,
+  progress: LazyProgressStream,
+  patch: (() => Promise<void>) | undefined,
+): (() => Promise<void>) | undefined {
+  if (finalAnswerOnly || !progress.opened() || progress.abandoned() || !patch) return undefined;
+  return patch;
+}
+
 async function deliverFinalReply(input: {
   channel: LarkChannel;
   chatId: string;
   scope: string;
   state: RunState;
   skipFrom?: RunState;
-  alreadyStreamed?: boolean;
+  finalizeStream?: () => Promise<void>;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
@@ -2048,8 +2070,7 @@ async function deliverFinalReply(input: {
   const body = renderText(input.state);
   const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
     || (input.cliSelfSent?.has(input.scope) === true && (input.skipFrom ?? input.state).terminal === 'done')
-    || !body.trim()
-    || input.alreadyStreamed === true;
+    || !body.trim();
   const outcome = input.handle.outcome;
   const willNotice = Boolean(
     input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
@@ -2059,12 +2080,35 @@ async function deliverFinalReply(input: {
     replyTo: input.sendOpts.replyTo,
     replyMode: input.replyMode,
     ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
-    ...(input.turnId ? { deliveryId: replyDeliveryKey(input.turnId) } : {}),
   };
   if (input.journal && input.turnId && !skip) {
-    if (willNotice) input.journal.update(input.turnId, { reply });
-    else input.journal.markCompletedUndelivered(input.turnId, reply);
+    input.journal.stageReply(input.turnId, reply);
   }
+  if (willNotice && input.notice && input.journal && input.turnId && outcome) {
+    stageTurnNotice({
+      journal: input.journal,
+      turnId: input.turnId,
+      scope: input.scope,
+      outcome,
+      notice: input.notice,
+    });
+  }
+  if (input.journal) await input.journal.flush();
+  if (input.finalizeStream && !skip) {
+    try {
+      await input.finalizeStream();
+    } catch (err) {
+      log.fail('stream', err, { mode: input.replyMode, step: 'final-patch' });
+      return;
+    }
+  } else {
+    const sent = await sendFinalReply(input);
+    if (input.journal && input.turnId && sent?.messageId) {
+      input.journal.noteReplyReceipt(input.turnId, sent.messageId);
+    }
+  }
+  input.cliSelfSent?.consume(input.scope);
+  if (input.journal && input.turnId && !willNotice) input.journal.replyDelivered(input.turnId);
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
       channel: input.channel,
@@ -2073,31 +2117,7 @@ async function deliverFinalReply(input: {
       scope: input.scope,
       outcome,
       notice: input.notice,
-      stageOnly: true,
     });
-  }
-  try {
-    if (input.journal) await input.journal.flush();
-    if (!input.alreadyStreamed) {
-      const sent = await sendFinalReply(input);
-      if (input.journal && input.turnId && sent?.messageId) {
-        input.journal.update(input.turnId, { reply: { ...reply, messageId: sent.messageId } });
-      }
-    }
-    input.cliSelfSent?.consume(input.scope);
-    if (input.journal && input.turnId && !willNotice) input.journal.markReplyDelivered(input.turnId);
-    if (willNotice && input.notice && input.journal && input.turnId && outcome) {
-      await sendTurnNotice({
-        channel: input.channel,
-        journal: input.journal,
-        turnId: input.turnId,
-        scope: input.scope,
-        outcome,
-        notice: input.notice,
-      });
-    }
-  } finally {
-    if (input.turnId) endLiveNoticeSend(input.turnId);
   }
 }
 
@@ -2680,6 +2700,48 @@ function journalResourceSourceId(resource: unknown): string | undefined {
     : undefined;
 }
 
+function noticeArgs(input: {
+  journal: TurnJournal;
+  turnId: string;
+  scope: string;
+  outcome: RunOutcome;
+  notice: {
+    auth?: NoticeActionAuth;
+    continuations: Continuations;
+    ownerId?: string;
+    requireBotMention: boolean;
+  };
+}) {
+  const plan = planInterruptionNotice(input.outcome);
+  if (plan.kind === 'continue') input.notice.continuations.offer(input.turnId, input.outcome);
+  return {
+    journal: input.journal,
+    turnId: input.turnId,
+    outcome: input.outcome,
+    noticeAuth: input.notice.auth,
+    consecutive: input.notice.continuations.consecutive(input.scope),
+    requireBotMention: input.notice.requireBotMention,
+    ownerId: input.notice.ownerId,
+    authNotified: authNoticeAlreadyDelivered(input.journal),
+  };
+}
+
+function stageTurnNotice(input: {
+  journal: TurnJournal;
+  turnId: string;
+  scope: string;
+  outcome: RunOutcome;
+  notice: {
+    auth?: NoticeActionAuth;
+    continuations: Continuations;
+    ownerId?: string;
+    requireBotMention: boolean;
+  };
+}): void {
+  if (planInterruptionNotice(input.outcome).kind === 'none') return;
+  stageInterruptionNotice(noticeArgs(input));
+}
+
 async function sendTurnNotice(input: {
   channel: LarkChannel;
   journal: TurnJournal;
@@ -2692,22 +2754,11 @@ async function sendTurnNotice(input: {
     ownerId?: string;
     requireBotMention: boolean;
   };
-  stageOnly?: boolean;
 }): Promise<void> {
-  const plan = planInterruptionNotice(input.outcome);
-  if (plan.kind === 'none') return;
-  if (plan.kind === 'continue') input.notice.continuations.offer(input.turnId, input.outcome);
+  if (planInterruptionNotice(input.outcome).kind === 'none') return;
   await deliverInterruptionNotice({
     send: (chatId, content, options) => input.channel.send(chatId, content, options),
-    journal: input.journal,
-    turnId: input.turnId,
-    outcome: input.outcome,
-    noticeAuth: input.notice.auth,
-    consecutive: input.notice.continuations.consecutive(input.scope),
-    requireBotMention: input.notice.requireBotMention,
-    ownerId: input.notice.ownerId,
-    authNotified: authNoticeAlreadyDelivered(input.journal),
-    stageOnly: input.stageOnly === true,
+    ...noticeArgs(input),
   });
 }
 
