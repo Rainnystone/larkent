@@ -10,6 +10,10 @@ export interface RunHandle {
   outcome?: RunOutcome;
   /** Last agent-stream event (or register time if none yet). */
   lastEventAt: number;
+  /** Set by recovery when the run was silent before the outage. */
+  stallDeadlineMs?: number;
+  /** Installed by the stream processor so recovery can shorten the idle bound. */
+  armStallDeadline?: (delayMs: number) => void;
 }
 
 export function noteRunEvent(handle: RunHandle, at = Date.now()): void {

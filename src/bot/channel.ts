@@ -108,7 +108,7 @@ import {
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
-import { createRecovery, type Outage } from './recovery';
+import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
 import {
   isJournalResourceType,
   replyDeliveryKey,
@@ -233,8 +233,8 @@ function stringifyArgs(args: unknown[]): string {
 export interface BridgeChannel {
   channel: LarkChannel;
   disconnect(opts?: { stopReason?: StopRequest }): Promise<void>;
-  recover(): Promise<void>;
-  recoverMissed(): Promise<void>;
+  recover(outage?: Outage): Promise<void>;
+  recoverMissed(outage?: Outage): Promise<void>;
   tickLink(): Promise<void>;
 }
 
@@ -573,7 +573,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       scan: (fromMs) => launchBackfill(fromMs),
     },
     runs: {
-      review: (_outage: Outage) => {},
+      review: (outage) => reviewActiveRuns(activeRuns.snapshot(), outage),
     },
     lookbackMs: () => getBackfillPreferences(controls.cfg).lookbackMs,
     ...(deps.now ? { now: deps.now } : {}),
@@ -2258,15 +2258,19 @@ async function processAgentStream(
   // The watchdog re-arms when:
   //  - a tool_result drains the in-flight set to zero, OR
   //  - any event arrives (configured idle when quiet, 60 min while a tool is open).
+  // Recovery can replace that delay with a 2-minute stall for runs already
+  // silent before the outage (`stallDeadlineMs` / `armStallDeadline`).
   const TOOL_IDLE_PAUSE_CAP_MS = 60 * 60_000;
   let timer: NodeJS.Timeout | undefined;
   let armedDelayMs = idleTimeoutMs;
   const inFlightTools = new Set<string>();
-  const armIdleWatchdog = (): void => {
-    if (!idleTimeoutMs) return;
+  const clearIdleTimer = (): void => {
     if (timer) clearTimeout(timer);
     timer = undefined;
-    const delayMs = inFlightTools.size > 0 ? TOOL_IDLE_PAUSE_CAP_MS : idleTimeoutMs;
+  };
+  const armIdleTimer = (delayMs: number): void => {
+    clearIdleTimer();
+    delete handle.stallDeadlineMs;
     armedDelayMs = delayMs;
     timer = setTimeout(() => {
       requestStop(handle, { type: 'bridge-idle-watchdog' });
@@ -2276,7 +2280,21 @@ async function processAgentStream(
       });
     }, delayMs);
   };
-  armIdleWatchdog();
+  const armIdleWatchdog = (): void => {
+    delete handle.stallDeadlineMs;
+    if (!idleTimeoutMs) {
+      clearIdleTimer();
+      return;
+    }
+    const delayMs = inFlightTools.size > 0 ? TOOL_IDLE_PAUSE_CAP_MS : idleTimeoutMs;
+    armIdleTimer(delayMs);
+  };
+  handle.armStallDeadline = armIdleTimer;
+  if (handle.stallDeadlineMs !== undefined) {
+    armIdleTimer(handle.stallDeadlineMs);
+  } else {
+    armIdleWatchdog();
+  }
 
   try {
     for await (const evt of events) {
@@ -2352,7 +2370,9 @@ async function processAgentStream(
       if (state.terminal !== 'running') break;
     }
   } finally {
-    if (timer) clearTimeout(timer);
+    clearIdleTimer();
+    delete handle.armStallDeadline;
+    delete handle.stallDeadlineMs;
   }
 
   // If state already reached a terminal event (done/error/etc.) before the

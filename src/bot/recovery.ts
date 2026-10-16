@@ -3,6 +3,27 @@ import type { Outage } from './feishu-link';
 
 export type { Outage };
 
+/** After recovery, a run silent since before `outage.since` may keep running this long. */
+export const STALL_AFTER_RECOVERY_MS = 2 * 60_000;
+
+export interface ReviewableRun {
+  lastEventAt: number;
+  interrupted: boolean;
+  /** Pending stall delay when the stream processor has not installed a hook yet. */
+  stallDeadlineMs?: number;
+  armStallDeadline?(delayMs: number): void;
+}
+
+export function reviewActiveRuns(runs: Iterable<ReviewableRun>, outage: Outage): void {
+  for (const handle of runs) {
+    if (handle.interrupted) continue;
+    if (handle.lastEventAt >= outage.since) continue;
+    // Silent before the outage: 2 min from recovery, including an open tool.
+    handle.stallDeadlineMs = STALL_AFTER_RECOVERY_MS;
+    handle.armStallDeadline?.(STALL_AFTER_RECOVERY_MS);
+  }
+}
+
 export interface RecoveryDeps {
   journal: { reapOrphans(): Promise<void>; redeliver(): Promise<void> };
   backfill: { scan(fromMs: number): Promise<void> };
