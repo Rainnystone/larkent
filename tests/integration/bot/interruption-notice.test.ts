@@ -389,15 +389,21 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       return orig(...args);
     };
     await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending' && entry.notice?.deliveryId));
+    await waitFor(() => h.journal.list().some((item) => item.notice?.deliveryId));
     const entry = h.journal.list().find((item) => item.notice);
-    const landedId = h.channel.sent.find((item) => isNoticeContent(item.content))
-      ? (h.journal.get(entry!.turnId)?.notice?.messageId ?? 'om_late')
-      : 'om_late';
-    h.journal.noteDelivery(entry!.notice!.deliveryId!, landedId);
+    expect(entry?.notice?.deliveryId).toBeTruthy();
+    const notices = (): unknown[] =>
+      h.channel.sent.filter((item) => isNoticeContent(item.content));
+    const beforeRecover = notices().length;
+    // Timeout after the SDK send can still land: wrap/onSettled persists the
+    // receipt. Do not require notice-pending — that races the settle path.
+    if (entry?.status === 'notice-pending' && entry.notice?.deliveryId) {
+      h.journal.noteDelivery(entry.notice.deliveryId, entry.notice.messageId ?? 'om_late');
+    }
     expect(h.journal.get(entry!.turnId)?.status).toBe('notice-delivered');
     await h.bridge.recoverMissed();
-    expect(h.channel.sent.filter((item) => isNoticeContent(item.content)).length).toBeLessThanOrEqual(1);
+    expect(notices()).toHaveLength(beforeRecover);
+    expect(notices().length).toBeLessThanOrEqual(1);
     expect(h.journal.get(entry!.turnId)?.status).toBe('notice-delivered');
   });
 });
