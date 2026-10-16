@@ -50,6 +50,7 @@ import {
   outboundMessageId,
   outboundInFlight,
   senderTypeFromRaw,
+  attachOutboundUuid,
   wrapChannelOutbound,
 } from './self-message';
 import {
@@ -2146,11 +2147,13 @@ async function resendJournalReply(channel: LarkChannel, entry: TurnJournalEntry)
   const result = await channel.send(
     entry.chatId,
     { markdown: entry.reply.markdown },
-    {
-      replyTo: entry.reply.replyTo,
-      ...(entry.reply.replyInThread ? { replyInThread: true } : {}),
-      uuid: deliveryId,
-    },
+    attachOutboundUuid(
+      {
+        replyTo: entry.reply.replyTo,
+        ...(entry.reply.replyInThread ? { replyInThread: true } : {}),
+      },
+      deliveryId,
+    ),
   );
   requireMessageReceipt(result, 'journal-resend');
   log.info('outbound', 'journal-resend', {
@@ -2197,10 +2200,7 @@ async function sendFinalReply(input: {
     return undefined;
   }
 
-  const sendOpts = {
-    ...input.sendOpts,
-    ...(input.deliveryId ? { uuid: input.deliveryId } : {}),
-  };
+  const sendOpts = attachOutboundUuid(input.sendOpts, input.deliveryId);
 
   if (input.replyMode === 'card') {
     const result = await input.channel.send(

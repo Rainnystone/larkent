@@ -157,7 +157,7 @@ export function wrapChannelOutbound(
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
     mutable[op] = (...args: unknown[]) => {
       const uuid = outboundUuid(args);
-      const work = orig(...args).then((result) => {
+      const work = orig(...stripOutboundUuid(args)).then((result) => {
         if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
         if (uuid) opts.onSettled?.(uuid, result);
         return result;
@@ -173,9 +173,22 @@ export function wrapChannelOutbound(
   }
 }
 
+/** Attach an in-process delivery id. Stripped before the SDK send. */
+export function attachOutboundUuid<T extends object>(opts: T, uuid?: string): T {
+  if (!uuid) return opts;
+  return { ...opts, uuid } as T;
+}
+
 function outboundUuid(args: unknown[]): string | undefined {
   const last = args.at(-1);
   if (!last || typeof last !== 'object') return undefined;
   const uuid = (last as { uuid?: unknown }).uuid;
   return typeof uuid === 'string' && uuid ? uuid : undefined;
+}
+
+function stripOutboundUuid(args: unknown[]): unknown[] {
+  const last = args.at(-1);
+  if (!last || typeof last !== 'object' || !('uuid' in last)) return args;
+  const { uuid: _uuid, ...rest } = last as { uuid?: unknown } & Record<string, unknown>;
+  return [...args.slice(0, -1), rest];
 }

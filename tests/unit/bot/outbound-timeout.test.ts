@@ -59,4 +59,18 @@ describe('wrapChannelOutbound timeout', () => {
     expect(outboundInFlight('notice-1')).toBe(false);
     expect(settled).toEqual([{ uuid: 'notice-1', messageId: 'om_late' }]);
   });
+
+  it('strips the in-process delivery uuid before calling the SDK send', async () => {
+    let seen: unknown;
+    const channel = {
+      send: async (_chat: string, _content: unknown, opts?: unknown) => {
+        seen = opts;
+        return { messageId: 'om_ok' };
+      },
+    };
+    wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 200 });
+    await channel.send('oc', { markdown: 'hi' }, { replyTo: 'om_src', uuid: 'delivery-1' });
+    expect(seen).toEqual({ replyTo: 'om_src' });
+    expect(seen).not.toHaveProperty('uuid');
+  });
 });
