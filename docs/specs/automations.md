@@ -1,174 +1,191 @@
 # Spec: In-group automations（群内定时自动化）
 
-Status: ready-for-agent（docs track）。Grill 已完成（设计记录见 PR #43）；第 4 节的产品决策已由用户锁定，不再重新 Grill。第 10 节的阻断项需要 test bridge 或开发者控制台验证后才能拆对应 ticket。
-Written 2026-10-16，基线 `feat/run-reliability@43f4050`（run-reliability 的 mini-baseline，不是 master）。本 spec 引用该分支上已有的 `RunOutcome` / `StopRequest`、turn journal、scope 规则、硬 access 围栏和 `e2e/test-bridge/`。
-
-本文是目的地，只写行为、产品决策、边界和验收；不写 ticket，不写文件级构造。
+Status: ready-for-agent · Docs track: PR #44（本分支）· Code track: separate PR, one ticket per session
+Tickets: [`automations/tickets/`](automations/tickets/README.md)
+Baseline: `master@426f670`（run-reliability 已合入）。**Depends on link-recovery（PR #47）**：fire 结果的投递复用其 **Outbox**（stage → send → delivered → recovery 时 redeliver）；**永不**使用 **Continuations**（fire 被中断不提供“继续”，也不自动续跑）。
+Decisions: grill 2026-10-16 锁定（ADR-001..009，见文末 Decision log）。本文只写行为、决策、边界与验收，不写文件路径。
 
 ---
 
-## 1. Problem Statement
+## Problem Statement
 
-群成员希望让 bot 定时做事（例如“工作日 9:00 汇总昨天的 issue”），到点后在后台跑一次 agent，把结果发回群里。现在只能每次手动 @bot。
+群成员想让 bot 在某个时刻或按周期做事：到点提醒一句话，或到点跑一次 agent 并把结果发回群里。现在只能每次手动 @bot。约束：
 
-约束来自现状：
-- 群里的人工对话不能被打扰：不能排队在自动化后面、不能被合并进同一批、不能被写入自动化内容。
-- agent 默认 `full` 权限、自动批准工具调用；profile 的 lark-cli 身份同时持有 bot 和 bot owner 的用户身份，而用户身份带有加/减群成员的权限。team 模式下任何群成员都能 @bot。自动化把这种能力变成“无人值守、延迟、重复”的。
-- 飞书卡片只能由发送它的身份更新（probe：其他身份更新返回 230001），而多个 bot 共处一群。
+- 群里的人工对话不能被打扰、排队或混入自动化内容。
+- agent 默认 full 权限、自动批准工具；profile 的 lark-cli 同时持有 bot 与 owner 用户身份（含加/减群成员）。自动化把它变成“无人值守、延迟、重复”的能力。
+- 飞书卡片只能由发送身份更新；多个 bot 共处一群；飞书**没有**置顶/取消置顶事件（实测，见 Further Notes）。
+- 承载 bridge 的电脑会睡眠。Larkent 只在绝对时刻触发；睡眠期间错过的 fire 由外部 larkent-monitor 负责（以后），Larkent 只需暴露只读 hook。
 
-## 2. Solution（用户视角）
+## Solution
 
-- 群里任何人 @bot，用自然语言（“每个工作日 9 点帮我…”）或 `/auto new 时间表 | 名称 | 任务` 创建自动化。bot 回复一段确定性渲染的完整描述和一张「是 / 否」卡，群里任何人都能点。
-- 到点后 bot 在后台独立跑一次，群里只出现一条结果消息；想追问就在这条结果消息的话题里回复。
-- 每个有自动化的 bot 在群里置顶自己的一张看板卡，只列出该 bot 的自动化及下次执行时间、最近状态（一个群可能有多张看板）。
-- 只有创建者能编辑、暂停、删除自己的自动化。
-- 自动化**不能**做任何人事/组织操作（建群、加人、踢人、退群等）。
+- 群里 @bot，用自然语言或 `/auto new` 创建 **automation**：**一次性**或**周期**（iPhone 日历模型），类型为 **reminder**（纯文本，无成本）或 **agent**（跑一次 agent prompt）。
+- bridge 校验时间表；缺结束时间时发**确定性脚本卡**索要；齐全后发**确认卡**（逐字列出类型、时间表、时区、接下来 3 次触发、结束时间、任务原文、执行身份），群里任何人点「是」即生效。
+- 到点：reminder 发一条文本；agent 在后台新开 session 跑一次，结果发为一条 **result post**，可在其话题里追问。每次 fire 互不阻塞，允许重叠。
+- 每个有自动化的 bot 在群里置顶一张自己的 **board**：每任务一行（内容、下次触发、结束），带【暂停】【删除】按钮，任何人可点；卡内含可见的机读 **monitor hook** 文本块。被取消置顶会在下次看板更新时重新置顶。
+- `/auto` 列表命令作为备用查看入口。
+- 周期任务到期即删除，无续期提醒、无保留。错过的 fire 只记 `missed`，不补跑。
 
-## 3. Vocabulary（同步加入 CONTEXT.md）
+## User Stories
 
-- **automation**：持久记录，绑定一个群和一个 profile；含时间表、时区、名称、任务文本、cwd 快照、创建者、确认人、状态。
-- **automation creator**（`createdBy`）：发出促成创建那条消息的**人**。不要裸用 “creator”。
-- **bot owner**：飞书应用所有者。现有 `isCreator()` 指的就是 bot owner，重命名为 `isBotOwner()`（行为不变）。
-- **confirmer**：在确认卡上点「是」的人，可以是任何群成员。
-- **draft**：等待「是/否」的自动化，带 TTL。
-- **fire**：时间表上的一个时刻；一次 fire 至多一次 automation run。
-- **automation run**：没有触发消息的 run，scope 为 `auto:<automationId>`。CONTEXT.md 中 **run** 的定义放宽为“一条飞书消息或一次 fire”。
-- **result post**：bridge 为一次 fire 发到群里的唯一一条权威消息；**bridge-owned final reply** 的定义扩展到 fire。
+1. As a group member, I want to say “10 分钟后提醒我交周报”, so that I get a one-shot reminder without learning syntax.
+2. As a group member, I want relative input converted to an absolute time and shown on the confirm card, so that I know exactly when it fires.
+3. As a group member, I want “每个工作日 9:00 提醒站会，到年底结束”, so that routine reminders run themselves.
+4. As a group member, I want weekly schedules on chosen weekdays at one or more times, so that I can match my team rhythm.
+5. As a group member, I want “每 30 分钟，9:00–18:00” style schedules, so that I can poll something during work hours.
+6. As a group member, I want a window that crosses midnight (22:00–02:00), so that night shifts are covered.
+7. As a group member, I want an agent task (“工作日 9 点汇总昨天的 issue”), so that the bot does real work on schedule.
+8. As a group member, I want the confirm card to say whether it is a reminder or an agent run, so that I know whether it costs anything.
+9. As a group member, I want a scripted card asking for an end date when I forget one, so that recurring tasks never run forever.
+10. As a group member, I want recurring tasks capped at one year and one-shots at one year ahead, so that forgotten tasks die.
+11. As a group member, I want too-frequent schedules rejected (reminder < 10 min, agent < 1 h) with a clear message, so that the group isn't spammed.
+12. As any group member, I want to confirm a draft with one tap, so that creation is quick.
+13. As a group member, I want each agent fire to start a fresh session, so that runs don't leak into each other.
+14. As a group member, I want a fire never to wait for or be skipped because of the previous fire, so that the schedule is honoured.
+15. As a group member, I want automation runs never to block or merge with human chat, so that conversation stays responsive.
+16. As a group member, I want exactly one result post per agent fire and to follow up in its thread, so that results are tidy.
+17. As a group member, I want a pinned board listing this bot's tasks with next fire and end, so that I can see what will happen.
+18. As any group member, I want Pause and Delete buttons on the board, so that anyone can stop a noisy task.
+19. As a group member, I want the board re-pinned if someone unpins it, so that it stays findable without deleting tasks.
+20. As a group member, I want `/auto` to list tasks when the board is out of sight, so that there is a fallback.
+21. As a group member, I want weekday schedules to state they ignore holiday swaps, so that I'm not surprised on 调休 days.
+22. As a group member, I want times to follow the profile timezone with sane DST handling, so that 9:00 stays 9:00.
+23. As a group member, I want an expired recurring task to disappear, so that the board stays clean.
+24. As an operator, I want a missed fire (host asleep/offline) recorded as missed, not replayed late, so that stale reminders never fire.
+25. As an operator, I want a restart never to fire the same scheduled instant twice, so that duplicates don't happen.
+26. As an operator, I want fire results delivered through the link-recovery outbox, so that a failed send is redelivered after recovery.
+27. As an operator, I want automation runs blocked from personnel/org operations by a bridge whitelist, so that an unattended run can't add or remove members.
+28. As an operator, I want a machine-readable status block in the board card, so that larkent-monitor can pre-wake the host before a fire.
+29. As an operator, I want that block to contain no IDs, task content or creator, so that nothing sensitive leaks.
+30. As an operator, I want structured log events for create/confirm/fire/missed/result/policy-guard, so that I can audit behaviour.
+31. As an operator, I want the feature off by default per profile, so that rollout is controlled.
+32. As an operator, I want reminder kind to ship before agent kind, so that the zero-cost path proves the scheduler first.
+33. As a maintainer, I want schedule parsing and next-fire computation as pure functions with an injected clock, so that they are table-testable.
+34. As a maintainer, I want an E2E in Bot Arena using a fake clock or test-only floor override, so that tests respect the 10-minute floor in production.
+35. As a group member, I want removing the bot from the group to stop its tasks there, so that nothing fires into a chat the bot left.
+
+## Implementation Decisions
+
+### 1. Glossary（同步并入 CONTEXT.md，随代码 PR 合并，避免与 link-recovery 冲突）
+
+- **automation**：绑定一个群和一个 bot profile 的持久任务；`kind` 为 reminder 或 agent。
+- **one-shot**：单个绝对 UTC 时刻，最远 1 年后。
+- **recurring**：规则 + IANA 时区 + 起止 UTC 时刻；必须有结束，最长 1 年。
+- **reminder**：到点发纯文本，不跑 agent；最小提前量/间隔 10 分钟。
+- **agent task**：到点跑一次 agent prompt；最小间隔 1 小时。
+- **fire**：时间表上的一个绝对时刻；**fire key** = automation id + 计划时刻，跨重启幂等。
+- **automation run**：没有触发消息、scope 为 `auto:<id>:<fireAt>` 的 run。CONTEXT 中 **run** 放宽为“一条飞书消息或一次 fire”。
+- **result post**：一次 agent fire 的唯一权威消息；**bridge-owned final reply** 扩展到 fire；经 Outbox 投递。
 - **follow-up thread**：以 result post 为根的话题，续接该 fire 的 session。
-- **scheduler**：按时间表产生 fire 的定时器，归 profile 所有。它不是恢复机制，与 backfill 无关。
-- **grace window**：错过 fire 后仍允许补跑的时长；不同于 backfill window。
-- **automation sub-pool**：profile 内专供自动化 run 的并发槽。
-- **board**：一个 bot 在一个群里置顶的看板卡，只含该 bot 的自动化。
-- **automation tool whitelist**：自动化 run 中允许的 bridge/lark-cli 能力白名单。
+- **missed**：计划时刻 bridge 未运行或 link 断开；只计数，不补跑。本功能不使用 “grace window / catch-up”。
+- **expire**：周期任务过结束时刻后删除。
+- **scripted card**：bridge 确定性渲染的固定卡片（缺结束时间、校验失败），不经 agent。
+- **draft**：等待确认的自动化，TTL 24 小时。
+- **board**：每 bot 每群一张置顶卡；行 + 暂停/删除按钮。
+- **monitor hook**：board 内可见的机读文本块；事实源为本地 status 文件。
+- **scheduler**：按 `nextFireAt` 产生 fire 的定时器，归 profile 所有；不是恢复机制，与 backfill 无关。
+- **automation creator**（`createdBy`）：促成创建那条消息的人；**bot owner** 即现 `isCreator()`，改名 `isBotOwner()`。
 
-## 4. Locked decisions
+### 2. Time model（ADR-001/002/003）
 
-D1. **创建**：群里任何能 @bot 并通过该群 access（含 run-reliability 0a 围栏，若启用）的**人**都可以创建。bot 发出的消息、以及自动化 run 自身都不能创建自动化（防自我复制）。
-D2. **无人事/组织能力**：自动化 run 不得建群、加/减成员、退群/入群、改群设置或群管理员、读写通讯录或人事数据。因为 profile 的用户身份确实有加/减成员权限，**必须**在 bridge 层对自动化 run 施加 tool whitelist 强制阻断，不能只靠提示词（见 §5.6）。
-D3. **编辑权**：只有 automation creator 能编辑、暂停、恢复、删除、立即执行；bot owner、profile admin、其他成员都不能（bot owner 本人是创建者时除外）。代码中凡指“bot owner”的 `isCreator` 一律改名 `isBotOwner`。
-D4. **自然语言确认**：自然语言创建必须先出描述 + 「是 / 否」卡，群里任何被允许的人都可以点。`/auto new` 走同一张卡（入口一致）。
-D5. **时间与语法**：工作日 = 周一到周五（不含节假日调休）；`/auto` 用 `|` 分隔，只按前两个 `|` 切分。
-D6. **看板（v1）**：每个 bot、每个数据根一张置顶看板卡，只列出该 bot 自己的自动化。同一群里有多个 bot 有自动化时，各自置顶自己的看板，群里可能出现多张。理由：置顶只占群的置顶栏，对聊天影响有限。共享多维表格台账不在 v1 范围（以后可升级）。
-D7. **范围**：不支持 p2p 自动化；不支持命令型自动化（任务文本永远不经过斜杠命令处理）。
-D8. **运行形态**：后台运行，不影响进行中的对话；每次 fire 一个全新 session；scope `auto:<id>`，与人工 run 并行，占用自动化子池；结果一次性发出，无 Typing 表情、无流式卡、无 CoT；追问在 result post 的话题里；cwd 在创建时快照；优先使用仅 bot 身份。
-D9. **看板单写者**：每张看板只由该 bot 自己写（只有发送身份能更新卡片，230001）。同一数据根内用文件锁 + 租约保证同一 bot 只有一个写者，避免重启或重连时重复发卡。
-D11. **创建者离群**：fire 前或成员变更时发现创建者已不在群里，其自动化自动暂停；暂停中的自动化可由群主或群管理员删除（D3 的唯一例外）。bot 能否读取群成员与角色仍待验证（§10）。
-D10. **修 F20**：backfill 不得把 `auto:` 与 `meeting:` scope 送进 chat mode 查询（见 §5.10）。
+- 相对时间只是输入；落库为绝对时间。one-shot 存 UTC 时刻；recurring 存规则 + IANA 时区 + `startAt` / `endAt`（UTC），并持久化 `nextFireAt`、`lastFireAt`。
+- 规则：
+  - `daily` 若干时刻；`weekday`（周一至周五，v1 不计调休，卡片明示）；`weekly`（选定星期 + 若干时刻）。
+  - `every N minutes|hours`，N 分钟 ≥ 10；可选时间窗 `[from, to)`，允许跨午夜（归属开始日）。
+  - 无每日次数上限。
+- 下限：reminder 最小提前量与间隔 10 分钟；agent 最小间隔 1 小时（多时刻规则按相邻时刻差校验）。one-shot ≤ 1 年后；recurring `endAt − startAt ≤ 1 年`。
+- 时区：profile 默认 IANA，再默认 `Asia/Shanghai`；不依赖主机时区。DST：不存在的本地时刻顺延到下一个有效分钟；重复的本地时刻只取第一次。
+- 缺 `endAt` 的 recurring：bridge 发 scripted card 索要（按钮给常用选项 + 文本输入），收到前不出确认卡。
+- 到期：最后一次 fire 后或过 `endAt` 即删除，看板移除该行；无续期提醒、无保留。
 
-## 5. Behavior
+### 3. Creation and confirmation
 
-### 5.1 创建与确认
-- 自然语言：agent 产生一个结构化提案（协议由实现者定，bridge 侧校验）；bridge 生成 draft（TTL 24 小时），随后发：①agent 回复（去掉提案）+ **bridge 确定性渲染**的描述：名称、时间表、时区、接下来 3 次执行时间、目标群、创建者、执行身份、cwd、补跑宽限、超时、谁能编辑、任务原文、“禁止人事/组织操作”声明、同 cwd 并发写风险提示；②「是 / 否」卡。用户确认的内容与落库内容逐字一致。
-- 提案中出现的群、scope、创建者一律忽略，取自当前 run 上下文。批次多发送者时创建者 = 最后一条人类消息的发送者（与 run-reliability 的 initiator 定义一致）。
-- 「是」：转为正式自动化，记录 `confirmedBy`；卡片更新为“已由 X 确认”；更新看板。「否」：draft 作废。过期/重复点击：无副作用，提示已失效。
-- 确认按钮需要**新的签名 action 类型**：绑定 draft、群、动作、一次性 nonce、过期时间；**不绑定 operator、不要求有运行中的 run**。授权依据是飞书回调里的点击者 + 该群 access + 点击者是人。只接受 bridge 自己登记过的卡片消息（CLI 自发的卡无效）。这与 run-reliability D8 的“不绑运行中 run 的签名 action”共用基础。
-- 自然语言的编辑/删除提案同样出卡，但只有创建者点「是」有效。
+- 任何能 @bot 且通过该群 access 的**人**可创建；bot 消息与 automation run 产生的提案一律忽略（防自我复制）。
+- 自然语言：agent 产出结构化提案（含 kind、时间表、任务文本）；群、scope、创建者取自当前 run 上下文。bridge 校验后建 draft，发确认卡；内容与落库逐字一致。
+- `/auto new <时间表> | <名称> | <任务>` 走同一张卡；`|` 只切前两个；kind 默认 reminder，`/auto new agent ...` 指定 agent。
+- 确认卡按钮使用**新签名 action**：绑定 draft、群、动作、一次性 nonce、TTL；不绑 operator、不要求运行中 run；授权 = 回调点击者为人 + 通过该群 access；只接受 bridge 登记过的卡片。与 run-reliability 的 notice action 共用签名基础。
+- 编辑：v1 不提供原地编辑；删除后重建。
 
-### 5.2 `/auto` 命令
+### 4. Scheduler and fire（ADR-004/006）
+
+- scheduler 归 profile，跨 `/reconnect`、bridge swap、进程重启存活；启动时从 `now` 重算 `nextFireAt`。
+- 只在绝对时刻触发。若该时刻进程未运行、FeishuLink 为 down 或 fire 未能开始，记 `missed`（计数 +1，日志），推进到下一时刻；**不补跑、无宽限、断线恢复后不重试**。
+- **幂等**：开始执行前持久化 fire key；重启后同一 fire key 不再执行。
+- 每次 fire 独立：新 session、scope `auto:<id>:<fireAt>`；不等待、不因同任务上一次未结束而跳过（允许重叠）；不进入群 pending queue，不与人工消息合并。
+- 并发：暂不设硬上限（以后可收紧）；人工 run 不排在自动化之后（自动化使用非排队申请，主池满则该 fire 记 `failed(pool-full)`，不重试）。
+- 每次 fire 前校验：bot 仍在群内；否则见 §8。
+
+### 5. Kinds（ADR-005）
+
+- **reminder**：发一条文本消息“⏰ 名称：任务文本”；无 agent、无成本。经 Outbox 投递。先上线。
+- **agent**：在创建时快照的 cwd 下、用该 profile 自己的 agent 跑任务文本；结果作为 result post 一次性发出（无 Typing、无流式卡、无 CoT）；页脚提示“在本消息话题里追问”。硬超时与 link-recovery 的默认空闲上界一致。
+- agent 已自行发到本群：沿用 `skip-cli-already-sent`，fire 记 delivered-by-agent。
+- 追问：result post 话题里的回复续接该 fire 的 session（普通群需按根消息匹配，因普通群回复不带 thread_id）。
+
+### 6. Safety for agent kind
+
+- 优先仅 bot 身份（独立 lark-cli 身份配置，无用户授权），系统提示词使用自动化变体。
+- bridge 层 **tool whitelist**：人事/组织能力（建群、成员增删、退群、群设置、通讯录、人事）或请求用户身份 → 立即停止，`StopRequest` 新增 `policy-guard`，outcome `interrupted(policy-guard)`，群内通知，自动化暂停。审计日志脱敏。
+- 诚实边界：agent 有完整 shell，这是纵深防御；确认卡如实说明。**whitelist 与仅 bot 身份验证前，agent kind 不得在线上开启**；reminder 不受此限。
+
+### 7. Board（ADR-007）与 monitor hook（ADR-008）
+
+- 每 bot 每群一张卡，只含本 bot 的任务；同数据根内锁 + 租约保证单写者；去抖更新。
+- 行：名称/内容摘要、kind、下次触发、结束时间、状态；按钮【暂停/恢复】【删除】，**群里任何人可点**（暂无权限校验；被滥用再议）。点击后卡片原地更新。
+- 置顶：无 unpin 事件，每次更新看板时查询本群 pins，若本卡不在则重新置顶；pin 失败提示一次。取消置顶不影响任务。本 bot 在群内无任务时卡片显示“暂无”并取消置顶。
+- 卡片无法更新（丢失/过期）时重发并置顶，尝试取消旧卡置顶。
+- **monitor hook**：卡内一个**可见**文本块（如 note 元素，HTML 注释与按钮 value 对读者不可见），一行 JSON：
+
+```json
+{"v":1,"bot":"<display name>","items":[{"nextFireAt":0,"lastFireAt":0,"lastStatus":"ok|missed|failed|running","endAt":0,"missed":0}]}
 ```
-/auto                                       列出本群中本 bot 的自动化（任何人）
-/auto new <时间表> | <名称> | <任务>          创建（进入确认卡）
-/auto show <编号>
-/auto edit <编号> <时间表> | <名称> | <任务>   某段写 - 表示不改（仅创建者）
-/auto pause|resume|delete|run|stop <编号>    仅创建者
-```
-- 时间表：`每天 HH:MM`、`工作日 HH:MM`、`每周一三五 HH:MM`、`一次 YYYY-MM-DD HH:MM`；多个时刻逗号分隔，每天最多 4 个。v1 不支持“每 N 分钟”。
-- 时区存 IANA 名，默认 profile 偏好，再默认 `Asia/Shanghai`；不依赖主机时区。
-- 需要 @ 的群里 `/auto` 也要 @bot；p2p 中回复“仅支持群”。`/auto` 不是 admin 命令，创建者校验在命令内部。
-- 管理员现有 `/stop auto:<id>` 保留为安全阀（停止 ≠ 编辑）。
+  时间为 UTC 毫秒。不含飞书 ID、任务内容、创建者。事实源为 profile 数据目录下的本地 status 文件（随 scheduler 原子写），卡片由其渲染。
+- `/auto`：列出本群本 bot 的任务（任何人）；`/auto pause|resume|delete <编号>` 与按钮等价。
 
-### 5.3 调度
-- 调度器归 profile 所有，跨 `/reconnect` 和 keepalive restart 存活，不重复触发、不丢状态。
-- 同一自动化同一时刻至多一个 fire；上一次未结束时本次记为“跳过：仍在运行”。
-- 同分钟的 fire 加确定性抖动（0–60 秒），显示仍用计划时间。
-- 断线/重连期间（`reconnect-in-progress`）不算失败，恢复后在宽限内重试。
-- 补跑：宽限默认 120 分钟（0–720 可设）；多次错过只补最近一次；下一次正常 fire 早于宽限截止则不补；补跑注入延迟提示，结果页脚标注延迟；超出宽限只在看板显示“错过”。
-- 每次 fire 重新核验：创建者仍通过该群 access、仍在群内；否则暂停（D11）。
+### 8. Lifecycle edges
 
-### 5.4 运行隔离
-- scope `auto:<id>`；`ActiveRuns`、pending queue、session、`/stop`、`/new` 与群 scope 天然隔离。群里的 `/stop`、`/new`、`/cd` 不影响自动化；自动化不进入 pending queue，不与人工消息合并。
-- 每次 fire 前清空该 scope 的 session，不续接上次，也不注入群 session 历史。
-- cwd 用创建时快照，fire 时校验仍有效；群 `/cd` 不改变已有自动化。
-- 并发：先拿自动化子池（默认 2，可配），再以非排队方式向主池申请；主池满则在宽限内重试。人工请求永远优先于自动化。
-- 硬超时默认 30 分钟，强制开启空闲看门狗。
-- 群里运行中不出现任何消息或表情；看板显示“运行中”。
+- bot 被移出群或群解散（发送报“不在群内”或成员事件）：该群任务删除，看板不再写；日志一条。
+- 私聊：不支持（回复“仅支持群”）。
+- 无每群 / 每人硬限额（ADR-009）；确认卡写出“约每月 N 次”。
 
-### 5.5 结果与追问
-- 结果在 run 结束后一次性发出：普通群为顶层新消息。头部“⏰ 名称 · 时间表 · 由 X 创建”（纯文本，不真实 @），正文为最终答案，页脚提示“在本消息的话题里追问”。v1 结果消息不放按钮。
-- agent 已自行把结果发到本群时沿用现有“已发送则跳过”逻辑，fire 记为 delivered-by-agent（此时没有追问根）。
-- 追问：在 result post 话题里的回复续接该 fire 的 session 与 cwd（首次接触时预置）；这是人工交互 run，使用交互身份（受限 → 宽松，由人当场发起，可接受；反向永不允许）。引用结果消息回复仍走群 session（现有能力）。
-- **注意**：probe 显示普通群里的话题回复不带 thread_id，而本基线的 scope 规则只在话题群里拆 `chatId:threadId`。因此普通群的追问路由不能依赖 thread_id，需按回复的根消息匹配 result post 并给出独立 scope；话题群行为见 §10。
+### 9. Storage and rollout
 
-### 5.6 身份与 tool whitelist（D2 的强制手段）
-- 自动化 run 优先使用**仅 bot 身份**（独立的 lark-cli 身份配置，不含用户授权），系统提示词使用自动化变体：删除“切换到用户身份”的指引，列出禁止操作。
-- **tool whitelist**：bridge 对自动化 run 的 lark-cli 调用按白名单放行（读消息/文档、向本群发消息、读写已共享给 bot 的文档等）；命中人事/组织类能力（建群、成员增删、退群、群设置、通讯录、人事）或请求用户身份时，立即停止 run，`StopRequest` 新增 `policy-guard` 原因，outcome 为 `interrupted(policy-guard)`，群内通知创建者，自动化暂停。
-- 每次 fire 的所有 lark-cli 调用写本地审计日志（脱敏，不上卡）。
-- 诚实边界：agent 有完整 shell，以上是纵深防御而非安全边界；确认描述中如实写明。若验证发现无法让自动化拿不到用户身份，则必须收紧 bot 应用 scope，且不得宣称“自动化不会使用 owner 身份”。
-- 文档类操作：只操作明确共享给 bot 应用的文档。
+- 每 profile 一个 automations 文件，`schemaVersion: 1`，原子写，supervisor 持有（与 turn journal 同级）；未来版本拒绝加载且不覆盖；旧代码忽略。fire 历史只保留每任务最近若干条。
+- `automations.enabled`（profile 级，默认关）；`automations.agentKind` 单独开关（默认关）。
 
-### 5.7 失败与通知（基于 RunOutcome）
-| outcome | 群里 | 其他 | 状态 |
-|---|---|---|---|
-| `completed` | result post | — | — |
-| `partial` | result post，标注“可能不完整” | — | — |
-| 可重试的 `failed` / `interrupted`（重启、信号等） | 短通知 @创建者 | — | 连续失败 +1 |
-| `failed(auth-required\|quota)` | 短通知，不给重试 | 私聊 bot owner 一次（去重，同 RR D10） | +1 |
-| `interrupted(user-stop)` | 短确认 | — | — |
-| `interrupted(policy-guard)` | 通知 @创建者 | — | 暂停 |
-| 连续 3 次失败 | 通知写明“已自动暂停” | — | 暂停 |
-- 永不自动续跑（RR D5）。一次 fire 是一个没有触发消息的 turn，进入 turn journal（区分 automation 与 im 来源），复用未送达重发与孤儿进程检测。
+### 10. Observability
 
-### 5.8 看板
-- 每个 bot 在每个有其自动化的群里维护一张自己的看板卡，只列出自己的自动化；不与其他 bot 协调，不跨数据根共享。
-- 同一数据根内以锁 + 租约保证同一 bot 只有一个写者；写者去抖后更新卡片。
-- 卡片只读，不放按钮。pin 走 im/v1/pins（probe 可用）；pin 失败则请群里手动置顶，只提示一次。
-- 卡片无法更新时（过期或丢失）重新发卡并 pin，尝试取消旧卡 pin；该 bot 在群里已无自动化时卡片显示“暂无”并取消 pin。
+结构化事件：`auto.draft`、`auto.confirmed`、`auto.rejected`、`auto.fire`、`auto.missed`、`auto.result`（outcome）、`auto.paused`、`auto.deleted`、`auto.expired`、`auto.policy-guard`、`auto.board.repin`。不含任务正文。
 
-### 5.9 限额
-每群每 bot 最多 10 个、每创建者每群最多 5 个（profile 可配）；记录每次 fire 的 usage；描述中给出“每月约 N 次执行”。
+### 11. Backfill fix (F20)
 
-### 5.10 F20 修复
-backfill 从 session scope 推导 chat id 时，`auto:<id>` 与 `meeting:<id>` 会被截成 `auto` / `meeting` 并送进 chat mode 查询，失败可能把扫描标成 incomplete。验收：只有真实群/私聊 scope（含话题 `chat:thread` 形式）进入 chat mode 查询，`auto:` 与 `meeting:` 永不进入；有回归测试。
+backfill 从 scope 推导 chat id 时，`auto:` 与 `meeting:` scope 永不进入 chat mode 查询。
 
-## 6. Acceptance criteria
+## Testing Decisions
 
-1. 群成员创建自然语言自动化 → 出现描述 + 卡；另一成员点「是」→ 落库，`createdBy` 为请求者、`confirmedBy` 为点击者；描述与落库一致。
-2. bot 消息或自动化 run 内产生的提案不会生成 draft。
-3. 非创建者（含 bot owner、admin）`/auto edit|pause|delete|run` 被拒；创建者成功。
-4. `工作日 09:00` 在周六、周日不触发；时区不随主机时区变化。
-5. fire 时群里同时有人工 run：两者并行，人工 run 无可观察延迟，群 session 无自动化内容，群内无 Typing/流式卡/CoT，仅一条 result post。
-6. 连续两次 fire 不共享 session；群 `/cd` 后已有自动化 cwd 不变。
-7. 自动化 run 调用成员增删/建群/用户身份 → 被阻断，outcome `interrupted(policy-guard)`，自动化暂停，有审计记录。
-8. result post 话题里的回复续接该 fire 的 session（普通群与话题群各一例）。
-9. 离线错过 3 次后在宽限内恢复：只补跑一次，带延迟标注；超出宽限：不运行，看板显示“错过”。
-10. 两个 bot 在同一群都有自动化：群里有两张置顶看板，每张只含各自 bot 的条目；同一 bot 重启或重连后不重复发卡。
-13. 创建者离群后其自动化下次 fire 前被暂停；群主或群管理员可删除暂停中的自动化，其他成员不能。
-11. backfill 不对 `auto:` / `meeting:` scope 发起 chat mode 查询。
-12. 开关关闭时行为与基线完全一致；旧代码忽略自动化存储。
+- 只测外部行为：群里看到什么（消息、卡片状态、置顶）、落库与 hook 文本。用 recording channel、scripted CLI、fake executable、fake clock。
+- 最高测试缝：channel 级“推进时钟 → 群里可见输出 + 日志/状态文件”；与 run outcome / turn journal 集成测试同层。时间表解析与下次触发为纯函数，注入 `now()`，在 UTC 宿主时区跑表驱动用例（DST、跨午夜窗口、下限、1 年上限）。
+- 真飞书层：`e2e/test-bridge/`（默认 fake CLI，硬围栏）在 Bot Arena 跑；使用 fake clock 或**仅测试可用**的下限覆盖，不使用“1 分钟后”的生产输入。证据脱敏，不含任何 ID。
+- 不设延迟/耗时类验收。
 
-## 7. 测试策略
+## Out of Scope
 
-- 只测外部行为：确定性层（vitest）用现有 recording channel、scripted CLI、fake executable 助手；时间表解析与下次触发为纯函数，注入 `now()`，以 UTC 宿主时区运行表驱动测试。
-- 最高测试缝：一个“fire 进、群里可见输出 + journal/日志出”的 channel 级接口；与 run-reliability 的 run outcome / turn journal 集成测试同层。
-- 真飞书层使用 `e2e/test-bridge/`（默认 fake CLI，硬围栏），用一次性“1 分钟后”任务覆盖创建→确认→fire→结果→追问，以及卡片、pin、话题行为。证据脱敏，不含任何 ID。
+p2p 自动化；命令型自动化；节假日调休日历；原地编辑；补跑/宽限；续期提醒；硬并发与每群限额（可后续收紧）；跨群创建；fire 之间携带上次结果；跨 bot 共享看板 / 多维表格台账；附件/图片任务；larkent-monitor 侧的预唤醒实现。
 
-## 8. 开关与回滚
+## Further Notes
 
-- `automations.enabled`（profile 级，默认关）；看板单独开关，默认关。**在 tool whitelist 与仅 bot 身份落地并验证前，任何线上 profile 不得开启。**
-- 自动化存储自带 `schemaVersion: 1`，原子写；未来版本拒绝加载且不覆盖。回滚到旧代码时忽略该存储。
+- Bot Arena 实测（2026-10-16）：bot 可发交互卡、im/v1/pins 置顶与取消、PATCH 原地更新（需 `update_multi`）；只读第三方应用可列 pins 并读卡片，但读到的是简化渲染——HTML 注释与按钮 value 丢失，note 文本完整；pin/unpin 不产生事件或系统消息；按钮回调未验证（需运行 test bridge + 真人点击）。
+- 待验证：回调点击者身份可靠性；话题群中 result post / 追问行为；线上 bot 实际 scope 与仅 bot 身份可行性；多 profile 是否共用数据根。
 
-## 9. Out of scope
+### Decision log（2026-10-16 grill）
 
-p2p 自动化；命令型自动化；节假日调休日历；“每 N 分钟”；跨群创建；fire 之间携带上次结果；整机级自动化并发上限；同 cwd 独占；跨 bot 共享看板 / 共享多维表格台账（可后续升级）；附件/图片任务内容。
-
-## 10. Open questions / blockers（未验证，需要 test bridge 或开发者控制台）
-
-已有 probe 事实：只有发送身份能更新卡片（230001）；im/v1/pins 可用；普通群里的回复不带 thread_id。
-
-1. **“任何人可点”需要新令牌类型**：新签名 action 的设计需与 run-reliability D8 对齐，并验证飞书回调里点击者身份的可靠性。
-2. **群成员与角色读取（验证项，支撑 D11）**：bot 能否读取群成员列表并识别群主/群管理员，所需 scope 是否已有。
-3. **跨 bot 需要 union_id**：open_id 按应用隔离，跨 bot 关联同一创建者（如限额、离群检测）需要 union_id；事件中是否可得未验证，拿不到则只显示纯文本名字。
-4. **回调 operator 的 open_id**：卡片回调里的点击者 open_id 是哪个应用视角、能否与消息事件中的发送者对应，未验证。
-5. **话题群**：结果直接发到话题群是否新建话题；话题群里追问的 scope 与预置行为；普通群追问路由（无 thread_id）的可行性。
-6. **线上 bot 的实际 scope**：群消息读取、建群、成员写入、通讯录、人事相关 scope 各 bot 实际持有哪些；仅 bot 身份能否在不放用户授权的前提下完成典型任务；lark-cli 用户授权存放位置能否被隔离。
-7. 线上多个 profile 是否共用同一数据根（决定同一 bot 的单写者锁是否覆盖所有实例）。
+| ADR | 决定 | 取代 |
+|---|---|---|
+| 001 | iPhone 日历模型；存绝对时间 | 只存 IANA |
+| 002 | 规则集与下限（reminder 10 min、agent 1 h、one-shot ≤ 1 y）；工作日不计调休 | 每天 ≤ 4 时刻、无每 N 分钟 |
+| 003 | recurring 必须有结束 ≤ 1 y；到期删除；缺结束发脚本卡 | 续期提醒、保留 |
+| 004 | 只在绝对时刻触发；无宽限/补跑 | grace window 120 min |
+| 005 | reminder / agent 两类；reminder 先上线 | 只有 agent |
+| 006 | 每 fire 独立、允许重叠、暂无硬并发上限 | 运行中则跳过、子池上限 |
+| 007 | 置顶看板带暂停/删除，任何人可点；重新置顶；列表命令兜底 | D3 仅创建者、D6 只读看板 |
+| 008 | monitor hook = 看板内可见机读块；本地 status 文件为事实源 | — |
+| 009 | 暂无每群硬限额 | 10 / 5 |
