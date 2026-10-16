@@ -412,7 +412,7 @@ describe('TurnJournal', () => {
     });
     await journal.flush();
 
-    const onInterrupted = vi.fn(async () => true);
+    const onInterrupted = vi.fn(async (_entry: TurnJournalEntry) => true);
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     const restarted = new TurnJournal(file, { now: () => 1_760_000_000_000 });
     await restarted.load();
