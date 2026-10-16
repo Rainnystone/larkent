@@ -164,7 +164,7 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions.at(-1)?.prompt).toContain('bridge 重连后才补处理');
   });
 
-  it('forces a short-gap scan from incompleteFrom after a 25s disconnect', async () => {
+  it('answers a mention posted during a 25s disconnect instead of skipping the gap', async () => {
     const history: Record<string, unknown[]> = { [CHAT]: [] };
     const h = await harness({ history });
     const queued = mention('om_gap', 'during 25s gap');
@@ -190,7 +190,7 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     });
     cleanups.push(async () => { await second.disconnect().catch(() => {}); });
     await waitFor(() => h.agent.runOptions.some((opts) => opts.prompt.includes('during 25s gap')));
-    expect(info.mock.calls.some((call) => call[0] === 'backfill' && call[1] === 'forced')).toBe(true);
+    expect(h.agent.runOptions.filter((opts) => opts.prompt.includes('during 25s gap'))).toHaveLength(1);
     expect(info.mock.calls.some((call) => call[0] === 'backfill' && call[1] === 'skip-short-gap')).toBe(false);
   });
 

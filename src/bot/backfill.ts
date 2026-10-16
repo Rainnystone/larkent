@@ -11,8 +11,6 @@ import { isSelfSender } from './self-message';
 
 export const WATERMARK_MARGIN_MS = 120_000;
 
-export type BackfillTrigger = 'connect' | 'reconnected' | 'wake-up' | 'handoff';
-
 export interface BackfillMark {
   detectedAt: number;
 }
@@ -34,7 +32,8 @@ export interface BackfillChannel {
 }
 
 export interface RunBackfillDeps {
-  trigger: BackfillTrigger;
+  fromMs: number;
+  since?: number;
   channel: BackfillChannel;
   ledger: BackfillLedger;
   prefs: BackfillPreferences;
@@ -45,26 +44,19 @@ export interface RunBackfillDeps {
   refreshKnownChats?: (chats: KnownChat[]) => void;
   sessionChatIds?: string[];
   botAppId?: string;
-  forceShortGapScan?: boolean;
   requireMentionForChat?: (chatId: string) => boolean;
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
 export function resolveBackfillWindow(input: {
   now: number;
-  lastLiveAt: number;
-  lastBackfillEnd?: number;
+  since: number;
   incompleteFrom?: number;
   lookbackMs: number;
-}): { gapMs: number; windowStart: number; windowEnd: number } {
-  const anchor = Math.min(
-    input.lastLiveAt,
-    input.lastBackfillEnd ?? input.lastLiveAt,
-    input.incompleteFrom ?? input.lastLiveAt,
-  );
+}): { windowStart: number; windowEnd: number } {
+  const origin = Math.min(input.since, input.incompleteFrom ?? input.since);
   return {
-    gapMs: input.now - input.lastLiveAt,
-    windowStart: Math.max(input.now - input.lookbackMs, anchor - WATERMARK_MARGIN_MS),
+    windowStart: Math.max(input.now - input.lookbackMs, origin - WATERMARK_MARGIN_MS),
     windowEnd: input.now,
   };
 }
@@ -86,37 +78,14 @@ export function formatBackfillLatenessHint(input: {
 
 export function createBackfillRun(): (deps: RunBackfillDeps) => Promise<void> {
   let inFlight: Promise<void> | undefined;
-  let followUp: RunBackfillDeps | undefined;
   const launch = (deps: RunBackfillDeps): Promise<void> => {
     if (inFlight) {
       log.info('backfill', 'coalesced');
-      if (deps.trigger === 'handoff') followUp = deps;
       return inFlight;
     }
-    inFlight = (async () => {
-      let current: RunBackfillDeps | undefined = deps;
-      try {
-        while (current) {
-          await runBackfill(current);
-          current = followUp;
-          followUp = undefined;
-        }
-      } catch (error) {
-        const extra = followUp;
-        followUp = undefined;
-        inFlight = undefined;
-        if (extra) {
-          try {
-            await launch(extra);
-          } catch (followError) {
-            throw new AggregateError([error, followError], 'backfill follow-up failed after scan error');
-          }
-        }
-        throw error;
-      } finally {
-        inFlight = undefined;
-      }
-    })();
+    inFlight = runBackfill(deps).finally(() => {
+      inFlight = undefined;
+    });
     return inFlight;
   };
   return launch;
@@ -134,39 +103,15 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     log.info('backfill', 'skip-no-identity', gapFields(deps.ledger, now));
     return;
   }
-  const lastLiveAt = deps.ledger.getLiveAt();
-  if (lastLiveAt === undefined) {
-    deps.ledger.touchLive(now);
-    log.info('backfill', 'watermark-initialized');
-    return;
-  }
-  if (lastLiveAt > now) {
-    deps.ledger.touchLive(now);
-    return;
-  }
   const incompleteFrom = deps.ledger.getIncompleteFrom();
   const incompleteEpoch = deps.ledger.getIncompleteEpoch();
-  const window = resolveBackfillWindow({
-    now,
-    lastLiveAt,
-    lastBackfillEnd: deps.ledger.getLastBackfillEnd(),
-    incompleteFrom,
-    lookbackMs: deps.prefs.lookbackMs,
-  });
-  if (window.gapMs < deps.prefs.minGapMs && incompleteFrom === undefined && !deps.forceShortGapScan) {
-    log.info('backfill', 'skip-short-gap', { gapMs: window.gapMs });
-    return;
-  }
-  if (window.gapMs < deps.prefs.minGapMs) {
-    log.info('backfill', 'forced', {
-      gapMs: window.gapMs,
-      reason: incompleteFrom !== undefined ? 'incomplete' : 'short-gap-scan',
-    });
-  }
+  const origin = deps.since ?? deps.fromMs;
+  const window = {
+    windowStart: deps.fromMs,
+    windowEnd: now,
+  };
 
   log.info('backfill', 'trigger', {
-    trigger: deps.trigger,
-    gapMs: window.gapMs,
     windowStart: window.windowStart,
     windowEnd: window.windowEnd,
   });
@@ -251,7 +196,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
 
   const durationMs = Date.now() - startedAt;
   if (fetchFailures > 0 || chatsFetchFailed || classified.unresolved > 0) {
-    deps.ledger.markScanIncomplete(lastLiveAt);
+    deps.ledger.markScanIncomplete(origin);
     log.info('backfill', 'incomplete', {
       chats: inScope.chats.length,
       enqueuedTotal,

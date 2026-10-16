@@ -76,7 +76,7 @@ Sleep, a process restart, or a short WebSocket blip can drop live messages. The 
 
 Watch the profile log for this sequence:
 
-`keepalive.wake-up` or `ws.reconnected` → `backfill.trigger` → `backfill.done`
+`link.sleep` or `link.recovered` → `backfill.trigger` → `backfill.done`
 
 `/doctor` prints a `self-heal:` line with the ledger path, `lastLiveAt` age, and processed-id count.
 

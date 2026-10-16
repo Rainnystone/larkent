@@ -151,12 +151,10 @@ export class BackfillLedger {
   ): void {
     if (!Number.isFinite(windowEnd) || !Number.isFinite(now)) return;
     this.lastBackfillEnd = windowEnd;
-    this.lastLiveAt = now;
-    this.lastLivePersistAt = now;
     // A mid-scan unrecord (old-bridge handoff) can mark incompleteFrom after
-    // this scan started without changing the numeric min. Clearing that would
-    // make the follow-up skip-short-gap. Epoch is the source of truth when
-    // the caller snapshotted it; otherwise fall back to value equality.
+    // this scan started without changing the numeric min. Epoch is the source
+    // of truth when the caller snapshotted it; otherwise fall back to value
+    // equality. The live watermark is owned by FeishuLink, not scan completion.
     const epochUnchanged = incompleteEpochAtStart === undefined
       ? this.incompleteFrom === incompleteFromAtStart
       : this.incompleteEpoch === incompleteEpochAtStart;

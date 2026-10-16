@@ -81,8 +81,6 @@ export interface BackfillPreferences {
   dryRun: boolean;
   /** Hard cap on the scan window, milliseconds. Default 6 h. */
   lookbackMs: number;
-  /** Skip scans for gaps shorter than this, milliseconds. Default 60 s. */
-  minGapMs: number;
   maxChats: number;
   maxRawPerChat: number;
   maxMentionsPerChat: number;
@@ -99,7 +97,6 @@ export const DEFAULT_BACKFILL_PREFERENCES: BackfillPreferences = {
   enabled: true,
   dryRun: false,
   lookbackMs: 6 * 60 * 60 * 1000,
-  minGapMs: 60 * 1000,
   maxChats: 50,
   maxRawPerChat: 200,
   maxMentionsPerChat: 20,
@@ -348,12 +345,6 @@ export function normalizeBackfillPreferences(
       'lookbackMs',
       warn,
     ),
-    minGapMs: positiveIntOr(
-      input.minGapMs,
-      DEFAULT_BACKFILL_PREFERENCES.minGapMs,
-      'minGapMs',
-      warn,
-    ),
     maxChats: positiveIntOr(
       input.maxChats,
       DEFAULT_BACKFILL_PREFERENCES.maxChats,
@@ -391,7 +382,6 @@ export function isDefaultBackfillPreferences(value: BackfillPreferences): boolea
     value.enabled === DEFAULT_BACKFILL_PREFERENCES.enabled &&
     value.dryRun === DEFAULT_BACKFILL_PREFERENCES.dryRun &&
     value.lookbackMs === DEFAULT_BACKFILL_PREFERENCES.lookbackMs &&
-    value.minGapMs === DEFAULT_BACKFILL_PREFERENCES.minGapMs &&
     value.maxChats === DEFAULT_BACKFILL_PREFERENCES.maxChats &&
     value.maxRawPerChat === DEFAULT_BACKFILL_PREFERENCES.maxRawPerChat &&
     value.maxMentionsPerChat === DEFAULT_BACKFILL_PREFERENCES.maxMentionsPerChat &&
@@ -405,7 +395,6 @@ export function formatBackfillPreferences(prefs: BackfillPreferences): string {
     `enabled=${prefs.enabled}`,
     `dryRun=${prefs.dryRun}`,
     `lookbackMs=${prefs.lookbackMs}`,
-    `minGapMs=${prefs.minGapMs}`,
     `maxChats=${prefs.maxChats}`,
     `maxRawPerChat=${prefs.maxRawPerChat}`,
     `maxMentionsPerChat=${prefs.maxMentionsPerChat}`,

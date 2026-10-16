@@ -43,9 +43,10 @@ pnpm e2e:scenario -- host-sleep-cli-self-send [--freeze-ms 8000]
 `down` reads the pid file and refuses to signal a process whose cmdline is
 not the test instance.
 
-`e2e:up` sets `HTTPS_PROXY` only on the test-bridge child. Node `fetch`
-(`keepalive` `httpProbe`) does not use that proxy — that mismatch is a
-reserved scene, not a bug to "fix" in the harness.
+`e2e:up` sets `HTTPS_PROXY` only on the test-bridge child. FeishuLink's
+authenticated probe uses the same SDK HTTP client as replies (`respectProxyEnv`
++ `httpTimeoutMs`), so a `proxy blackhole --host open.feishu.cn` is visible to
+the link.
 
 `eai_again` as a start mode advertises an unresolvable proxy host. After
 `e2e:up` the proxy is already bound; `e2e:fault proxy eai_again` then

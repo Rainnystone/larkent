@@ -63,6 +63,7 @@ interface FakeLarkChannel {
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
   getConnectionStatus(): { state: 'connected'; reconnectAttempts: number };
+  getAppInfo(): Promise<{ ownerId: string }>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
   addReaction(messageId: string, emojiType: string): Promise<string>;
@@ -776,6 +777,9 @@ function createFakeLarkChannel(harnessOptions: {
     },
     getConnectionStatus() {
       return { state: 'connected', reconnectAttempts: 0 };
+    },
+    async getAppInfo() {
+      return { ownerId: 'ou_owner' };
     },
     async send(chatId, content, options) {
       sent.push({ chatId, content, options });

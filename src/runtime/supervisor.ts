@@ -361,7 +361,7 @@ class ManagedProfile {
       ]);
       // Recovery runs after the swap is published. A reject here must not
       // unwind the live bridge or drop the app lock it now needs.
-      await this.bridge.recoverMissed?.();
+      await (this.bridge.recover ?? this.bridge.recoverMissed)?.();
     } catch (error) {
       if (nextAppLock) {
         try {

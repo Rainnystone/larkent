@@ -55,6 +55,8 @@ export interface FakeChannel {
   readonly updatedCards: Array<{ messageId: string; card: unknown }>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
+  getConnectionStatus(): { state: 'connected' | 'reconnecting' | 'failed'; reconnectAttempts: number };
+  getAppInfo(): Promise<{ ownerId: string }>;
 }
 
 export function createFakeChannel(): FakeChannel {
@@ -152,6 +154,12 @@ export function createFakeChannel(): FakeChannel {
           : content;
       sent.push({ chatId, content: resolved, options });
       return { messageId: `om_fake_${nextMessage++}` };
+    },
+    getConnectionStatus() {
+      return { state: 'connected' as const, reconnectAttempts: 0 };
+    },
+    async getAppInfo() {
+      return { ownerId: 'ou_owner' };
     },
     async stream(chatId: string, input: unknown, options?: unknown): Promise<void> {
       const record: FakeChannelStream = {

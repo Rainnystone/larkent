@@ -109,9 +109,10 @@ import {
   formatBackfillLatenessHint,
   type BackfillChannel,
   type BackfillMark,
-  type BackfillTrigger,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
+import { createFeishuProbe, startFeishuLink } from './feishu-link';
+import { createRecovery, type Outage } from './recovery';
 import {
   isJournalResourceType,
   replyDeliveryKey,
@@ -123,7 +124,6 @@ import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
-import { startKeepalive } from './keepalive';
 import { PendingQueue } from './pending-queue';
 import { ProcessPool } from './process-pool';
 import { fetchQuotedContext, fetchTopicContext, type QuotedContext } from './quote';
@@ -237,7 +237,9 @@ function stringifyArgs(args: unknown[]): string {
 export interface BridgeChannel {
   channel: LarkChannel;
   disconnect(opts?: { stopReason?: StopRequest }): Promise<void>;
+  recover(): Promise<void>;
   recoverMissed(): Promise<void>;
+  tickLink(): Promise<void>;
 }
 
 export interface StartChannelDeps {
@@ -250,6 +252,9 @@ export interface StartChannelDeps {
   journal?: TurnJournal;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
+  now?: () => number;
+  probe?: () => Promise<boolean>;
+  onRecovered?: (outage: Outage) => void;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
@@ -499,15 +504,17 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       log.fail('intake', err);
     });
 
-  const launchBackfill = (trigger: BackfillTrigger): Promise<void> => {
+  const launchBackfill = (fromMs: number, since?: number): Promise<void> => {
     if (!ledger) return Promise.resolve();
     return trackConsumer(runScheduledBackfill({
-      trigger,
+      fromMs,
+      ...(since !== undefined ? { since } : {}),
       channel: channel as unknown as BackfillChannel,
       ledger,
       prefs: getBackfillPreferences(controls.cfg),
       botAppId: controls.cfg.accounts.app.id,
       profile: controls.profileConfig,
+      ...(deps.now ? { now: deps.now } : {}),
       marks: backfillMarks,
       isClosing: () => closing,
       refreshKnownChats: (chats) => {
@@ -566,8 +573,39 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     }).then(() => {}), 'journal');
   };
 
+  const recovery = createRecovery({
+    journal: {
+      reapOrphans: recoverJournal,
+      redeliver: async () => {},
+    },
+    backfill: {
+      scan: (fromMs) => launchBackfill(fromMs),
+    },
+    runs: {
+      review: (_outage: Outage) => {},
+    },
+    lookbackMs: () => getBackfillPreferences(controls.cfg).lookbackMs,
+    ...(deps.now ? { now: deps.now } : {}),
+    incompleteFrom: () => ledger?.getIncompleteFrom(),
+  });
+
+  const recover = async (outage?: Outage): Promise<void> => {
+    const now = (deps.now ?? Date.now)();
+    await recovery.run(outage ?? {
+      since: ledger?.getLiveAt() ?? now,
+      until: now,
+    });
+  };
+
+  let link = {
+    noteInbound(_at?: number) {},
+    tick: async () => {},
+    stop() {},
+  };
+
   channel.on({
     message: async (msg) => {
+      link.noteInbound();
       if (dropInboundSelfMessage({
         msg,
         botOpenId: channel.botIdentity?.openId,
@@ -656,6 +694,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       } else if (consecutiveReconnects === 10) {
         console.error('❌ 已连续重连 10 次,建议在飞书发 /reconnect 或重启 bot。');
       }
+      void link.tick();
     },
     reconnected: () => {
       if (consecutiveReconnects > 1) {
@@ -664,8 +703,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         log.info('ws', 'reconnected');
       }
       consecutiveReconnects = 0;
-      launchBackfill('reconnected');
-      void recoverJournal();
+      void link.tick();
     },
     // Classify common WS errors into the `network` phase so /doctor and grep
     // can find them without scanning generic `ws.fail` entries.
@@ -757,43 +795,32 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     appId: cfg.accounts.app.id,
     procId: controls.processId,
   });
-  launchBackfill('connect');
-  void recoverJournal();
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
-  // App-level keepalive: 15s probe + wake-up detection + HTTP reachability.
-  // Defense-in-depth — the SDK's pingTimeout watchdog handles half-dead WS,
-  // this catches anything that the SDK misses (silent state stuck, etc.).
-  const probeDomain =
-    cfg.accounts.app.tenant === 'lark'
-      ? 'https://open.larksuite.com'
-      : 'https://open.feishu.cn';
-  const keepalive = startKeepalive({
+  const started = startFeishuLink({
     channel,
-    domain: probeDomain,
-    forceReconnect: () => controls.restart({ stopReason: { type: 'keepalive-restart' } }),
-    heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
-    onConnectedTick: (now) => {
-      ledger?.touchLive(now);
-      // Resend completed-undelivered replies while the long connection is
-      // still up, instead of waiting for the next WS reconnect.
-      void recoverJournal();
+    probe: deps.probe ?? createFeishuProbe(channel),
+    watermark: {
+      get: () => ledger?.getLiveAt(),
+      set: (at) => {
+        ledger?.touchLive(at);
+      },
     },
-    ...(ledger
-      ? {
-          // Surviving-socket sleep: scan before the next connected tick
-          // can advance lastLiveAt and close the offline gap.
-          onWakeUp: () => launchBackfill('wake-up'),
-        }
-      : {}),
+    ...(deps.now ? { now: deps.now } : {}),
+    heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
+  started.onRecovered((outage) => {
+    deps.onRecovered?.(outage);
+    void recover(outage);
+  });
+  link = started;
+  await started.tick();
 
   return {
     channel,
-    recoverMissed: async () => {
-      await recoverJournal();
-      await launchBackfill('handoff');
-    },
+    recover,
+    recoverMissed: recover,
+    tickLink: () => started.tick(),
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
       resumeCandidates.clear();
@@ -804,7 +831,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       pool.cancelPending();
       ownerRefresh.stop();
       knownChatsRefresh.stop();
-      keepalive.stop();
+      started.stop();
       // A reconnect keeps meeting membership while stopping local timers.
       meetingManager?.dispose();
       controls.meeting = undefined;

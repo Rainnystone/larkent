@@ -304,7 +304,7 @@ describe('BackfillLedger', () => {
     expect(reloaded.getIncompleteFrom()).toBeUndefined();
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
       schemaVersion: 1,
-      lastLiveAt: now,
+      lastLiveAt: now - 60_000,
       lastBackfillEnd: now,
       processed: {},
     });

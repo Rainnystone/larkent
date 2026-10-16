@@ -129,7 +129,7 @@ describe('README runtime contract', () => {
   it('documents self-heal recovery and a generic staged rollout', async () => {
     const operations = await readFile(new URL('../../../docs/operations.md', import.meta.url), 'utf8');
 
-    expect(operations).toContain('keepalive.wake-up` or `ws.reconnected');
+    expect(operations).toContain('link.sleep` or `link.recovered');
     expect(operations).toContain('enable on one profile, watch one recovery cycle, then the others');
   });
 

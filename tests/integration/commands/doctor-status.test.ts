@@ -91,7 +91,7 @@ describe('/status and /doctor diagnostics', () => {
     expect(lastMarkdownOrText(h.channel)).toContain('未设置工作目录');
     expect(lastMarkdownOrText(h.channel)).toContain('self-check');
     expect(lastMarkdownOrText(h.channel)).toContain(
-      'backfill: enabled=true dryRun=false lookbackMs=21600000 minGapMs=60000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
+      'backfill: enabled=true dryRun=false lookbackMs=21600000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
     );
     expect(lastMarkdownOrText(h.channel)).toContain(
       'self-heal: ledger=unavailable lastLiveAt=not yet recorded processed=0',
@@ -129,7 +129,6 @@ describe('/status and /doctor diagnostics', () => {
       enabled: false,
       dryRun: true,
       lookbackMs: 3_600_000,
-      minGapMs: 15_000,
       maxChats: 4,
       maxRawPerChat: 10,
       maxMentionsPerChat: 2,
@@ -140,7 +139,7 @@ describe('/status and /doctor diagnostics', () => {
     await expect(h.run('/doctor')).resolves.toBe(true);
 
     expect(lastMarkdownOrText(h.channel)).toContain(
-      'backfill: enabled=false dryRun=true lookbackMs=3600000 minGapMs=15000 maxChats=4 maxRawPerChat=10 maxMentionsPerChat=2 chats=oc_only',
+      'backfill: enabled=false dryRun=true lookbackMs=3600000 maxChats=4 maxRawPerChat=10 maxMentionsPerChat=2 chats=oc_only',
     );
   });
 

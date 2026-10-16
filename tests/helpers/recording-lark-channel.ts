@@ -17,7 +17,8 @@ export interface RecordingLarkChannel extends FakeChannel {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
-  getConnectionStatus(): { state: 'connected'; reconnectAttempts: number };
+  connectionState: 'connected' | 'reconnecting' | 'failed';
+  getConnectionStatus(): { state: 'connected' | 'reconnecting' | 'failed'; reconnectAttempts: number };
   listChats(): Promise<Array<{ id: string; name: string }>>;
   getAppInfo(): Promise<{ ownerId: string }>;
   addReaction(messageId: string, emojiType: string): Promise<string>;
@@ -119,8 +120,9 @@ export function createRecordingLarkChannel(options: {
     async getChatMode() {
       return options.chatMode ?? 'group';
     },
+    connectionState: 'connected',
     getConnectionStatus() {
-      return { state: 'connected', reconnectAttempts: 0 };
+      return { state: channel.connectionState, reconnectAttempts: 0 };
     },
     async listChats() {
       listChatsCalls += 1;
