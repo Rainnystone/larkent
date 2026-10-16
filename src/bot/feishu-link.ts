@@ -108,10 +108,11 @@ const LINK_ERRNO = new Set([
   'EAI_AGAIN',
   'ECONNREFUSED',
   'EPIPE',
+  'ECONNABORTED',
   'UND_ERR_CONNECT_TIMEOUT',
 ]);
 
-const LINK_MESSAGE = /EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|getaddrinfo|no HTTP response/i;
+const LINK_MESSAGE = /EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|ECONNABORTED|socket hang up|getaddrinfo|no HTTP response|timeout of \d+ms exceeded/i;
 
 /** Transport / 5xx / timeout — wait for recovery. Local and 4xx do not. */
 export function isLinkFailureError(error: unknown): boolean {

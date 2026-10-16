@@ -404,6 +404,62 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(sentAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
   });
 
+  it('waits for recovery when a final stream patch is ECONNABORTED instead of tail-sending', async () => {
+    const seen = 'SEEN_PARTIAL';
+    const unseen = 'UNSEEN_TAIL';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      manual: true,
+    });
+    failStreamPatchesAfterFirst(
+      h.channel,
+      Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }),
+    );
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.manual.length === 1);
+    const run = h.manual[0]!;
+    run.push({ type: 'text', delta: seen });
+    await waitFor(() => streamedAnswers(h.channel, seen) >= 1);
+    run.push({ type: 'text', delta: unseen });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && entry.status === 'completed-undelivered'
+    )));
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
+    )));
+    expect(sentAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('sends the full final answer when a tool_result header icon changed and the final patch is a 4xx', async () => {
+    const answer = 'FINAL_AFTER_TOOL';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      manual: true,
+      showToolCalls: true,
+    });
+    failStreamPatchesAfterFirst(h.channel, httpError(400));
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.manual.length === 1);
+    const run = h.manual[0]!;
+    run.push({ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'git status' } });
+    await waitFor(() => streamedAnswers(h.channel, '⏳') >= 1);
+    run.push({ type: 'tool_result', id: 'tool-1', output: 'ok', isError: false });
+    run.push({ type: 'text', delta: answer });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await waitFor(() => sentAnswers(h.channel, answer).length >= 1);
+    expect(sentAnswers(h.channel, answer).length).toBeGreaterThanOrEqual(1);
+  });
+
   it('signs continue on a default profile with no reliability.notice key', async () => {
     const h = await harness({
       notice: 'omit',
@@ -766,6 +822,7 @@ async function harness(opts: {
   fakeTimers?: boolean;
   replyMode?: 'text' | 'card' | 'markdown';
   manual?: boolean;
+  showToolCalls?: boolean;
 } = {}) {
   const tmp = await createTmpProfile('notice-channel-');
   const mediaDir = join(tmp.profile, 'media');
@@ -890,6 +947,7 @@ function profile(workspace: string, opts: {
   fence?: boolean;
   agentKind?: 'claude' | 'cursor' | 'kimi';
   replyMode?: 'text' | 'card' | 'markdown';
+  showToolCalls?: boolean;
 }) {
   const cfg = createDefaultProfileConfig({
     agentKind: opts.agentKind ?? 'claude',
@@ -905,6 +963,7 @@ function profile(workspace: string, opts: {
       messageReplyMigrated: true,
       cotMessages: 'off',
       requireMentionInGroup: true,
+      ...(opts.showToolCalls === true ? { showToolCalls: true } : {}),
     },
     ...(opts.notice === 'omit'
       ? {}

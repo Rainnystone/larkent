@@ -10,7 +10,9 @@ describe('unseenStreamFallback', () => {
     expect(unseenStreamFallback('SEEN_PARTIALUNSEEN_TAIL', 'SEEN_PARTIAL')).toBe('UNSEEN_TAIL');
   });
 
-  it('does not append a second full copy when the stream text is not a prefix', () => {
-    expect(unseenStreamFallback('HELLO WORLD', 'WORLD')).toBe('');
+  it('sends the full final answer when a tool_result header icon changed', () => {
+    const streamed = '> ⏳ **Bash** — git status';
+    const final = '> ✅ **Bash** — git status\n\nFINAL_ANSWER';
+    expect(unseenStreamFallback(final, streamed)).toBe(final);
   });
 });

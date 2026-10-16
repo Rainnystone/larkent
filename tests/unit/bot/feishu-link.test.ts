@@ -300,6 +300,7 @@ describe('FeishuLink', () => {
     expect(isLinkFailureError(httpError(502))).toBe(true);
     expect(isLinkFailureError(new OutboundTimeoutError('stream', 30_000))).toBe(true);
     expect(isLinkFailureError(new Error('getaddrinfo EAI_AGAIN open.feishu.cn'))).toBe(true);
+    expect(isLinkFailureError(Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }))).toBe(true);
     expect(isLinkFailureError(httpError(400))).toBe(false);
     expect(isLinkFailureError(new Error('stream controller is closed'))).toBe(false);
   });
