@@ -119,7 +119,7 @@ import {
 } from './turn-journal';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
-import { recordRunSessionEvent, startRunFlow } from './run-flow';
+import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
 import { startKeepalive } from './keepalive';
 import { PendingQueue } from './pending-queue';
@@ -1319,12 +1319,38 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // @-mentioned the bot, plus prior replies — live nowhere the agent can see
   // them. Fetch them so it isn't blind to what the user is pointing at. An
   // already-engaged topic for this CLI keeps that history in its resumed
-  // session, so we skip the fetch there. Lookup is scoped per CLI: another
-  // CLI's handle on the same thread must not skip the fetch, because resume
-  // will not reuse that handle.
+  // session, so we skip the fetch there. Lookup must use the same source of
+  // truth as resume: catalog for thread-resume CLIs (Codex), SessionStore for
+  // session-resume CLIs. Another CLI's handle on the same thread must not
+  // skip the fetch, because resume will not reuse that handle.
   const agentKind = controls.profileConfig.agentKind;
+  const capability = capabilityForProfile(controls.profileConfig);
+  const accessDecision =
+    firstMsg.chatType === 'p2p'
+      ? canUseDm(controls.profileConfig, controls, firstMsg.senderId, firstMsg.chatId)
+      : canUseGroup(controls.profileConfig, controls, firstMsg.chatId, firstMsg.senderId);
   let topicContext: QuotedContext[] = [];
-  if (mode === 'topic' && threadId && !sessions.getRaw(scope, agentKind)?.resumeHandle) {
+  const topicResumeIdentity = mode === 'topic' && threadId
+    ? await commandSessionCatalogIdentity({
+        msg: firstMsg,
+        scope,
+        mode,
+        workspaces,
+        controls,
+        access: accessDecision,
+      })
+    : undefined;
+  const topicResumeHandle = topicResumeIdentity
+    ? resolveRunResumeHandle({
+        sessionCatalog,
+        sessions,
+        scopeId: scope,
+        agentId: topicResumeIdentity.agentId,
+        cwdRealpath: topicResumeIdentity.cwdRealpath,
+        policyFingerprint: topicResumeIdentity.policyFingerprint,
+      })
+    : undefined;
+  if (mode === 'topic' && threadId && !topicResumeHandle) {
     const exclude = new Set([...batchIds, ...quoteTargets]);
     topicContext = await fetchTopicContext(channel, threadId, {
       maxMessages: 40,
@@ -1431,17 +1457,12 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     replyInThread: sendOpts.replyInThread === true,
   });
 
-  const accessDecision =
-    firstMsg.chatType === 'p2p'
-      ? canUseDm(controls.profileConfig, controls, firstMsg.senderId, firstMsg.chatId)
-      : canUseGroup(controls.profileConfig, controls, firstMsg.chatId, firstMsg.senderId);
   const scopeContext: ScopeContext = {
     source: 'im',
     chatId,
     actorId: firstMsg.senderId,
     ...(threadId ? { threadId } : {}),
   };
-  const capability = capabilityForProfile(controls.profileConfig);
   const turnId = journal ? randomUUID() : undefined;
   if (journal && turnId) {
     journal.enqueue({
