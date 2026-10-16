@@ -1679,6 +1679,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
       let producerRendered = false;
+      let lastStreamPatch: StreamPatchStatus | undefined;
       let cardCtrl:
         | { update(next: object | ((current: object) => object)): Promise<void> }
         | undefined;
@@ -1692,7 +1693,13 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
                 producerStarted = true;
                 if (progress.abandoned()) return;
                 cardCtrl = ctrl;
-                await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
+                try {
+                  await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
+                  lastStreamPatch = { ok: true };
+                } catch (err) {
+                  lastStreamPatch = { ok: false, err };
+                  throw err;
+                }
                 producerRendered = true;
                 await renderDone;
               },
@@ -1713,7 +1720,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (cardCtrl) {
             try {
               await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+              lastStreamPatch = { ok: true };
             } catch (err) {
+              lastStreamPatch = { ok: false, err };
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
           }
@@ -1741,16 +1750,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       const terminalState = finalAnswerOnly
         ? finalReplyState(progress, filterForPrefs(latestState))
         : filterForPrefs(latestState);
-      const cardPatch = cardCtrl;
+      const streamPatch = lastStreamPatch;
       await deliverFinalReply({
         channel,
         chatId,
         scope,
         state: terminalState,
         skipFrom: latestState,
-        finalizeStream: liveStreamFinalize(finalAnswerOnly, progress, cardPatch && (async () => {
-          await cardPatch.update(renderCard(terminalState, cardRenderOptions));
-        })),
+        finalizeStream: liveStreamFinalize(
+          finalAnswerOnly,
+          progress,
+          throwIfStreamPatchFailed(streamPatch),
+        ),
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1764,6 +1775,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
       let producerRendered = false;
+      let lastStreamPatch: StreamPatchStatus | undefined;
       let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
         channel.stream(
@@ -1773,7 +1785,13 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               producerStarted = true;
               if (progress.abandoned()) return;
               markdownCtrl = ctrl;
-              await ctrl.setContent(renderText(filterForPrefs(latestState)));
+              try {
+                await ctrl.setContent(renderText(filterForPrefs(latestState)));
+                lastStreamPatch = { ok: true };
+              } catch (err) {
+                lastStreamPatch = { ok: false, err };
+                throw err;
+              }
               producerRendered = true;
               await renderDone;
             },
@@ -1793,7 +1811,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (markdownCtrl) {
             try {
               await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+              lastStreamPatch = { ok: true };
             } catch (err) {
+              lastStreamPatch = { ok: false, err };
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
           }
@@ -1821,16 +1841,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       const terminalState = finalAnswerOnly
         ? finalReplyState(progress, filterForPrefs(latestState))
         : filterForPrefs(latestState);
-      const markdownPatch = markdownCtrl;
+      const streamPatch = lastStreamPatch;
       await deliverFinalReply({
         channel,
         chatId,
         scope,
         state: terminalState,
         skipFrom: latestState,
-        finalizeStream: liveStreamFinalize(finalAnswerOnly, progress, markdownPatch && (async () => {
-          await markdownPatch.setContent(renderText(terminalState));
-        })),
+        finalizeStream: liveStreamFinalize(
+          finalAnswerOnly,
+          progress,
+          throwIfStreamPatchFailed(streamPatch),
+        ),
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -2033,13 +2055,31 @@ async function recallStreamedMessage(
   }
 }
 
+type StreamPatchStatus = { ok: true } | { ok: false; err: unknown };
+
+function throwIfStreamPatchFailed(status: StreamPatchStatus | undefined): () => Promise<void> {
+  return async () => {
+    if (status === undefined) throw new Error('final stream patch missing');
+    switch (status.ok) {
+      case true:
+        return;
+      case false:
+        throw status.err;
+      default: {
+        const _exhaustive: never = status;
+        throw _exhaustive;
+      }
+    }
+  };
+}
+
 function liveStreamFinalize(
   finalAnswerOnly: boolean,
   progress: LazyProgressStream,
-  patch: (() => Promise<void>) | undefined,
+  report: () => Promise<void>,
 ): (() => Promise<void>) | undefined {
-  if (finalAnswerOnly || !progress.opened() || progress.abandoned() || !patch) return undefined;
-  return patch;
+  if (finalAnswerOnly || !progress.opened() || progress.abandoned()) return undefined;
+  return report;
 }
 
 async function deliverFinalReply(input: {
