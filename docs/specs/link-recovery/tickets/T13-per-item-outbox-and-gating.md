@@ -5,7 +5,9 @@
 ## Goal
 
 - Reply and notice are separate journal items (I8). `reply.state` and `notice.state` are each `staged | sent(receipt) | rejected | voided`, separate from the run `status`.
-- One `attempt(item)`: classify the outcome (T11), record the receipt, and on `rejected` run the per-kind fallback (plain text for replies), then make the item terminal.
+- One `attempt(item)`: classify the outcome (T11) and record the receipt.
+  - Non-stream replies: on `rejected`, run the plain-text fallback, then make the item terminal.
+  - Streamed cards: a card whose final patch fails stays completed-undelivered. The bounded same-card sweep retries it. If the card is gone, it falls back to a reply keyed by the stored uuid (I1, exactly once).
 - `resendJournalReply` returns its receipt; it is no longer thrown away (J2).
 - Abandoning or voiding touches only the notice and continuation, never a staged reply (J1). Exception: supersede and `/new` still void the staged answer (F26, kept as intended; see Known limitations).
 - Gate on `link.isDown()` in `deliverFinalReply`, `sendTurnNotice` and `redeliver`: stage and return (I6).
@@ -24,9 +26,10 @@ Delivery invariants (I3, I6, I8); §4 Outbox
 - [ ] J3: an entry that is settled with a reply is sent once per pass, not twice.
 - [ ] The link drops in the middle of the redelivery loop → the loop stops; the rest go out at the next recovery, each exactly once.
 - [ ] Link down at turn end → zero send calls until recovery, then exactly one.
-- [ ] Completed-but-undelivered rows are retried by a bounded sweep that runs whether the link is up or down. Each retry is always a same-card patch, never a send without a uuid. If the card is permanently gone (a 4xx that can never succeed), the row falls back to a reply keyed by the row's stored uuid, so the user gets exactly one complete answer (I1).
-- [ ] A final patch fails once with a 4xx while the link stays up → the user still receives exactly one complete reply.
-- [ ] The card is permanently gone → exactly one reply keyed by the row's stored uuid.
+- [ ] Non-stream final send rejected (400) → one plain-text fallback, item terminal, no recovery triggered.
+- [ ] Streamed card: completed-but-undelivered rows are retried by a bounded sweep that runs whether the link is up or down. Each retry is always a same-card patch, never a send without a uuid. If the card is permanently gone (a 4xx that can never succeed), the row falls back to a reply keyed by the row's stored uuid, so the user gets exactly one complete answer (I1).
+- [ ] Streamed card: a final patch fails once with a 4xx while the link stays up → the user still receives exactly one complete reply.
+- [ ] Streamed card: the card is permanently gone → exactly one reply keyed by the row's stored uuid.
 - [ ] An old journal file (shared `status`) loads and its staged items are delivered once.
 - [ ] `pnpm ci:local` passes.
 
