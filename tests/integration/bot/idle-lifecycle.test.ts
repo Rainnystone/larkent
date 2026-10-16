@@ -6,6 +6,7 @@ import type { AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/t
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
+import { ActiveRuns, type RunHandle } from '../../../src/bot/active-runs';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import { createTmpProfile } from '../../helpers/tmp-profile';
@@ -26,6 +27,109 @@ afterEach(async () => {
 });
 
 describe('bot idle and settlement lifecycle', () => {
+  it('ends an unset-default run as idle_timeout after 15 minutes of silence and runs the queued message next', async () => {
+    const h = await harness(false, 'unset');
+    await h.channel.handlers.message?.(message('first', 'first request'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+    await h.channel.handlers.message?.(message('second', 'queued request'));
+
+    await vi.advanceTimersByTimeAsync(15 * 60_000 - 1);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await waitFor(() => rendered(h.channel).includes('15 分钟无响应'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await drainIO();
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]!.prompt).toContain('queued request');
+  });
+
+  it('stops an open tool call at 60 minutes', async () => {
+    const h = await harness(false, 'unset');
+    await h.channel.handlers.message?.(message('first', 'please run the tool'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
+    await waitFor(() => rendered(h.channel).includes('long_tool'));
+
+    await vi.advanceTimersByTimeAsync(60 * 60_000 - 1);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await waitFor(() => rendered(h.channel).includes('超时'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+  });
+
+  it('disables the idle watchdog after /timeout 0', async () => {
+    const h = await harness(false, 'unset');
+    await h.channel.handlers.message?.(message('cmd', '/timeout 0'));
+    await drainIO();
+
+    await h.channel.handlers.message?.(message('first', 'first request'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('15 分钟无响应');
+  });
+
+  it('ends a blackholed model host run within 15 minutes and drains the queue', async () => {
+    const h = await harness(false, 'unset');
+    await h.channel.handlers.message?.(message('first', 'please talk to the model'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    await h.channel.handlers.message?.(message('second', 'queued after blackhole'));
+
+    await vi.advanceTimersByTimeAsync(15 * 60_000);
+    await waitFor(() => rendered(h.channel).includes('15 分钟无响应'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+
+    await vi.advanceTimersByTimeAsync(0);
+    await drainIO();
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]!.prompt).toContain('queued after blackhole');
+  });
+
+  it('exposes lastEventAt on the run handle and advances it on stream events', async () => {
+    const handles: RunHandle[] = [];
+    const register = ActiveRuns.prototype.register;
+    vi.spyOn(ActiveRuns.prototype, 'register').mockImplementation(function (
+      this: ActiveRuns,
+      chatId,
+      run,
+    ) {
+      const handle = register.call(this, chatId, run);
+      handles.push(handle);
+      return handle;
+    });
+
+    const h = await harness(false, 'unset');
+    await h.channel.handlers.message?.(message('first', 'first request'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => handles.length === 1);
+    const handle = handles[0]!;
+    expect(handle.lastEventAt).toEqual(expect.any(Number));
+    const startedAt = handle.lastEventAt;
+
+    await vi.advanceTimersByTimeAsync(1_000);
+    h.agent.manual[0]!.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+    expect(handle.lastEventAt).toBeGreaterThan(startedAt);
+  });
+
   it('pauses idle for an in-flight tool then stops and publishes timeout after a full idle period', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
@@ -79,13 +183,18 @@ describe('bot idle and settlement lifecycle', () => {
   });
 });
 
-async function harness(holdCleanup = false) {
+async function harness(holdCleanup = false, idleMinutes: number | 'unset' = 1) {
   const tmp = await createTmpProfile('idle-lifecycle-');
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: ['ou_user'] },
-    preferences: { messageReply: 'card', showToolCalls: true, runIdleTimeoutMinutes: 1, cotMessages: 'off' },
+    preferences: {
+      messageReply: 'card',
+      showToolCalls: true,
+      cotMessages: 'off',
+      ...(idleMinutes === 'unset' ? {} : { runIdleTimeoutMinutes: idleMinutes }),
+    },
   });
   cfg.workspaces.default = tmp.workspace;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));

@@ -106,7 +106,7 @@ import type { SessionCatalog } from '../session/catalog';
 import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
-import { ActiveRuns, type RunHandle } from './active-runs';
+import { ActiveRuns, noteRunEvent, type RunHandle } from './active-runs';
 import {
   createBackfillRun,
   formatBackfillLatenessHint,
@@ -1578,7 +1578,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   };
 
   // Resolve idle-timeout for this run: scope override (on SessionEntry) wins
-  // over global default (preferences). 0 / undefined = no watchdog.
+  // over global default (preferences, unset = 15 min). 0 = no watchdog.
   const scopeOverride = sessions.getIdleTimeoutMinutes(scope);
   const idleTimeoutMs =
     scopeOverride !== undefined
@@ -2292,39 +2292,34 @@ async function processAgentStream(
   let state: RunState = seedRunState(runContext ?? {});
   let lastTerminal: AgentEvent | undefined;
 
-  // Idle watchdog: claude going silent for `idleTimeoutMs` is treated as
-  // "presumed hung", we stop() and surface a timeout marker on the card.
-  //
-  // BUT — claude can legitimately be silent for a long time when it's
-  // waiting on a long-running tool call (e.g. `lark-cli` printing an
-  // OAuth URL and blocking until the user clicks authorize). In that
-  // case there's no event stream activity from claude itself, only the
-  // tool subprocess running. We track which tool_use ids haven't matched
-  // a tool_result yet, and pause the watchdog whenever the set is
-  // non-empty.
+  // Idle watchdog: silence for `idleTimeoutMs` is treated as "presumed hung".
+  // An open tool call pauses that bound (a long `lark-cli` OAuth can be
+  // quiet for a while) but the pause itself is capped at 60 minutes.
   //
   // The watchdog re-arms when:
   //  - a tool_result drains the in-flight set to zero, OR
-  //  - any non-tool event arrives while the set is empty.
+  //  - any event arrives (15 min when idle, 60 min while a tool is open).
+  const TOOL_IDLE_PAUSE_CAP_MS = 60 * 60_000;
   let timer: NodeJS.Timeout | undefined;
   const inFlightTools = new Set<string>();
   const armOrPauseIdle = (): void => {
     if (!idleTimeoutMs) return;
     if (timer) clearTimeout(timer);
     timer = undefined;
-    if (inFlightTools.size > 0) return;
+    const delayMs = inFlightTools.size > 0 ? TOOL_IDLE_PAUSE_CAP_MS : idleTimeoutMs;
     timer = setTimeout(() => {
       requestStop(handle, { type: 'bridge-idle-watchdog' });
-      log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs });
+      log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs: delayMs });
       void handle.run.stop().catch(() => {
         /* stop errors are non-fatal */
       });
-    }, idleTimeoutMs);
+    }, delayMs);
   };
   armOrPauseIdle();
 
   try {
     for await (const evt of events) {
+      noteRunEvent(handle);
       // A stopped run can still deliver its final resume handle before cleanup.
       // Keep draining owned events while suppressing further UI updates.
       if (evt.type === 'system') {

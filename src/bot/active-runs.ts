@@ -8,6 +8,12 @@ export interface RunHandle {
   interrupted: boolean;
   stopRequest?: StopRequest;
   outcome?: RunOutcome;
+  /** Last agent-stream event (or register time if none yet). */
+  lastEventAt: number;
+}
+
+export function noteRunEvent(handle: RunHandle, at = Date.now()): void {
+  handle.lastEventAt = at;
 }
 
 export interface ActiveRunsHooks {
@@ -39,7 +45,7 @@ export class ActiveRuns {
       throw new Error(`run already active for scope: ${chatId}`);
     }
     this.reservations.delete(chatId);
-    const handle: RunHandle = { run, interrupted: false };
+    const handle: RunHandle = { run, interrupted: false, lastEventAt: Date.now() };
     this.handles.set(chatId, handle);
     return handle;
   }

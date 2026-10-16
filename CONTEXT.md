@@ -21,6 +21,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 ## Runs and sessions
 
 - **run**: one invocation of an agent for one Feishu message.
+- **idle bound** (`runIdleTimeoutMinutes`): default **15** minutes of stream silence ends the run as `idle_timeout` so the queue can drain. `0` or `/timeout 0` disables the watchdog. An open tool call pauses that bound for at most **60** minutes. Run handles expose `lastEventAt` (register time, then each stream event).
 - **run options** (`AgentRunOptions`): run id, prompt, cwd, optional resume handle, model, images and adapter options. The executor maps the run's effective access into validated options; the profile adapter receives its bot identity through `setBotIdentity`.
 - **resume handle**: the opaque string that continues an **agent** conversation. Codex's thread id and everyone else's session id are both resume handles. Shared agent code has no other name for that handle.
 - **reply mode**: `stream-deltas` or `final-answer`. Declared on the descriptor; decides how the stream maps onto Feishu card updates.
