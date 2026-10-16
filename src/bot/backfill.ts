@@ -216,7 +216,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     chats: inScope.chats.length,
     enqueuedTotal,
     durationMs,
-    lastBackfillEnd: window.windowEnd,
+    windowEnd: window.windowEnd,
   });
   reportMetric('backfill_enqueued', enqueuedTotal);
   reportMetric('backfill_duration_ms', durationMs);

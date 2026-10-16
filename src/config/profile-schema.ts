@@ -31,20 +31,10 @@ export interface AccessFenceConfig {
 
 export interface ReliabilityConfig {
   /**
-   * Interruption notice card. Default off (matches ticket 4). On sends a
-   * new @-initiator continue/dismiss notice after a qualifying outcome.
+   * @deprecated Notices are always on. Old profiles may still contain
+   * `notice`; the loader strips it.
    */
   notice?: boolean;
-}
-
-export function getReliabilityConfig(
-  profile: Pick<ProfileConfig, 'reliability'>,
-): {
-  notice: boolean;
-} {
-  return {
-    notice: profile.reliability?.notice === true,
-  };
 }
 
 export interface ProfileAccess {
@@ -211,7 +201,7 @@ export interface ProfileConfig {
   /** In-meeting agent settings. See {@link MeetingConfig}. */
   meeting: MeetingConfig;
   larkCli: LarkCliConfig;
-  /** Optional interruption-notice switch. Omitted keys use the defaults in {@link getReliabilityConfig}. */
+  /** Legacy key. Loaders strip it; interruption notices are always on. */
   reliability?: ReliabilityConfig;
 }
 
@@ -459,12 +449,9 @@ function logBackfillWarning(warning: BackfillNormalizeWarning): void {
   }
 }
 
-function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
-  const raw = input as Record<string, unknown>;
-  // Drop the six match-master reliability flags. Today's defaults are the
-  // only remaining path; old profiles load and save without those keys.
-  if (raw.notice === true) return { notice: true };
+function normalizeReliability(_input: unknown): ReliabilityConfig | undefined {
+  // Drop the leftover notice toggle and the six match-master flags.
+  // Notices are always on; old profiles load and save without the key.
   return undefined;
 }
 

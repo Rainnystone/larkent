@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WATERMARK_MARGIN_MS } from '../../../src/bot/backfill';
 import { createRecovery, reviewActiveRuns, type Outage, type ReviewableRun } from '../../../src/bot/recovery';
+import { log } from '../../../src/core/logger';
 
 describe('Recovery', () => {
   it('redelivers, then scans the outage window, then reviews runs', async () => {
@@ -87,5 +88,30 @@ describe('Recovery', () => {
     expect(live.stallDeadlineMs).toBeUndefined();
     expect(alreadyStopped.armStallDeadline).not.toHaveBeenCalled();
     expect(notYetStreaming.stallDeadlineMs).toBe(2 * 60_000);
+  });
+
+  it('logs window-truncated once per recovery when the outage exceeds lookback', async () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const lookbackMs = 6 * 60 * 60 * 1000;
+    const now = 8 * 60 * 60 * 1000;
+    const recovery = createRecovery({
+      journal: {
+        reapOrphans: async () => {},
+        redeliver: async () => {},
+      },
+      backfill: { scan: async () => {} },
+      runs: { review: () => {} },
+      lookbackMs: () => lookbackMs,
+      now: () => now,
+    });
+    const longOutage = { since: now - 7 * 60 * 60 * 1000, until: now };
+    await recovery.run(longOutage);
+    expect(info.mock.calls.filter((call) => call[0] === 'backfill' && call[1] === 'window-truncated')).toHaveLength(1);
+    await recovery.run(longOutage);
+    expect(info.mock.calls.filter((call) => call[0] === 'backfill' && call[1] === 'window-truncated')).toHaveLength(2);
+
+    info.mockClear();
+    await recovery.run({ since: now - 3 * 60 * 60 * 1000, until: now });
+    expect(info.mock.calls.filter((call) => call[0] === 'backfill' && call[1] === 'window-truncated')).toHaveLength(0);
   });
 });

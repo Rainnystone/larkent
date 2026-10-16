@@ -6,7 +6,6 @@ import {
 import {
   createDefaultProfileConfig,
   effectiveLarkCliIdentity,
-  getReliabilityConfig,
   normalizeProfileConfig,
 } from '../../../src/config/profile-schema';
 import { getShowToolCalls } from '../../../src/config/schema';
@@ -656,26 +655,9 @@ describe('profile schema', () => {
     });
   });
 
-  it('strips the six legacy reliability flags and keeps notice', () => {
+  it('strips the six legacy reliability flags and the leftover notice toggle', () => {
     const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
     expect(fresh.reliability).toBeUndefined();
-    expect(getReliabilityConfig(fresh).notice).toBe(false);
-    const stripped = normalizeProfileConfig({
-      schemaVersion: 3,
-      agentKind: 'claude',
-      accounts: { app },
-      reliability: {
-        notice: true,
-        lostMessage: false,
-        shortGapScan: true,
-        runOutcome: false,
-        cliSignatures: false,
-        journal: false,
-        journalRecover: false,
-      },
-    });
-    expect(stripped.reliability).toEqual({ notice: true });
-    expect(getReliabilityConfig(stripped).notice).toBe(true);
     const onlyLegacy = normalizeProfileConfig({
       schemaVersion: 3,
       agentKind: 'claude',
@@ -692,16 +674,28 @@ describe('profile schema', () => {
     expect(onlyLegacy.reliability).toBeUndefined();
   });
 
-  it('defaults reliability.notice off and stores an explicit on flag', () => {
-    const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
-    expect(getReliabilityConfig(fresh).notice).toBe(false);
-    const on = normalizeProfileConfig({
+  it('strips reliability.notice so old profiles load and save without the toggle', () => {
+    const stripped = normalizeProfileConfig({
       schemaVersion: 3,
       agentKind: 'claude',
       accounts: { app },
-      reliability: { notice: true },
+      reliability: {
+        notice: true,
+        lostMessage: false,
+        shortGapScan: true,
+        runOutcome: false,
+        cliSignatures: false,
+        journal: false,
+        journalRecover: false,
+      },
     });
-    expect(on.reliability).toEqual({ notice: true });
-    expect(getReliabilityConfig(on).notice).toBe(true);
+    expect(stripped.reliability).toBeUndefined();
+    const off = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      reliability: { notice: false },
+    });
+    expect(off.reliability).toBeUndefined();
   });
 });

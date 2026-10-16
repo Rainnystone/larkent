@@ -260,14 +260,12 @@ export class BackfillLedger {
   private serialize(): {
     schemaVersion: typeof BACKFILL_LEDGER_SCHEMA_VERSION;
     lastLiveAt?: number;
-    lastBackfillEnd?: number;
     incompleteFrom?: number;
     processed: Record<string, number>;
   } {
     return {
       schemaVersion: BACKFILL_LEDGER_SCHEMA_VERSION,
       ...(this.lastLiveAt !== undefined ? { lastLiveAt: this.lastLiveAt } : {}),
-      ...(this.lastBackfillEnd !== undefined ? { lastBackfillEnd: this.lastBackfillEnd } : {}),
       ...(this.incompleteFrom !== undefined ? { incompleteFrom: this.incompleteFrom } : {}),
       processed: Object.fromEntries(this.processed),
     };

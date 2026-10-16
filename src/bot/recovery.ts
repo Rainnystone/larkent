@@ -1,4 +1,5 @@
 import { resolveBackfillWindow } from './backfill';
+import { log } from '../core/logger';
 import type { Outage } from './feishu-link';
 
 export type { Outage };
@@ -43,12 +44,21 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
 
   const runOnce = async (outage: Outage): Promise<void> => {
     const now = (deps.now ?? Date.now)();
+    const lookbackMs = deps.lookbackMs();
     const window = resolveBackfillWindow({
       now,
       since: outage.since,
       incompleteFrom: deps.incompleteFrom?.(),
-      lookbackMs: deps.lookbackMs(),
+      lookbackMs,
     });
+    if (outage.until - outage.since > lookbackMs) {
+      log.info('backfill', 'window-truncated', {
+        since: outage.since,
+        until: outage.until,
+        lookbackMs,
+        windowStart: window.windowStart,
+      });
+    }
     await deps.journal.reapOrphans();
     await deps.journal.redeliver();
     await deps.backfill.scan(window.windowStart);
