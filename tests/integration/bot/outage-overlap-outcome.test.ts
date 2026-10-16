@@ -98,6 +98,31 @@ describe('retriability from outcome shape plus outage overlap', { timeout: 20_00
     expect(noticeCards(h.channel)).toHaveLength(0);
   });
 
+  it('offers continue with network wording when the run started while the link was already down', async () => {
+    const h = await harness({ agentKind: 'cursor' });
+    await h.channel.handlers.message?.(mention('om_queued', 'please run'));
+    h.channel.connectionState = 'reconnecting';
+    await h.bridge.tickLink();
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+
+    run.stderrSnapshot = UNKNOWN_STDERR;
+    run.push({
+      type: 'error',
+      message: `cursor exited with code 1: ${UNKNOWN_STDERR}`,
+      terminationReason: 'failed',
+    });
+    run.close();
+    run.releaseCleanup();
+    await waitFor(() => noticeCards(h.channel).length === 1);
+
+    const notice = JSON.stringify(noticeCards(h.channel)[0]?.content);
+    expect(notice).toContain('上游网络中断');
+    expect(notice).toContain('notice.continue');
+  });
+
   it('still treats a quota failure as needs-human when it overlapped an outage', async () => {
     const h = await harness({ agentKind: 'kimi' });
     await h.channel.handlers.message?.(mention('om_quota', 'please run'));

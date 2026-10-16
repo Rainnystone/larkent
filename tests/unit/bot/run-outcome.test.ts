@@ -409,6 +409,11 @@ describe('runOverlappedOutage', () => {
     expect(runOverlappedOutage({ outageEpoch: () => 1 }, 0)).toBe(true);
     expect(runOverlappedOutage({ outageEpoch: () => 1 }, 1)).toBe(false);
   });
+
+  it('counts a run that started while the link was already down as overlapping', () => {
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 1, true)).toBe(true);
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 1, false)).toBe(false);
+  });
 });
 
 describe('stop request formatting', () => {

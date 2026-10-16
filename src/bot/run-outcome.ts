@@ -98,8 +98,10 @@ export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
 export function runOverlappedOutage(
   link: { outageEpoch(): number } | undefined,
   startedEpoch: number,
+  startedDown = false,
 ): boolean {
   if (!link) return false;
+  if (startedDown) return true;
   return link.outageEpoch() !== startedEpoch;
 }
 

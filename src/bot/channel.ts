@@ -71,7 +71,6 @@ import {
 } from './run-outcome';
 import { renderText } from '../card/text-renderer';
 import { commandClearsPending, tryHandleCommand, type Controls } from '../commands';
-import { getReliabilityConfig } from '../config/profile-schema';
 import type { AppConfig } from '../config/schema';
 import {
   getAgentStopGraceMs,
@@ -108,7 +107,7 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { createFeishuProbe, startFeishuLink } from './feishu-link';
+import { createFeishuProbe, isBusiness4xx, startFeishuLink } from './feishu-link';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
 import {
   isJournalResourceType,
@@ -255,7 +254,6 @@ export interface StartChannelDeps {
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, journal, controls } = deps;
-  const reliability = () => getReliabilityConfig(controls.profileConfig);
   let channelForCards: LarkChannel | undefined;
   const continuations = createContinuations({
     journal,
@@ -464,7 +462,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           backfillMarks,
           ledger,
           journal,
-          noticeEnabled: reliability().notice,
+          noticeEnabled: true,
           continuations,
           cliSelfSent,
           link,
@@ -540,7 +538,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       }) => channel.send(chatId, content, options),
       entry,
       journal: owned,
-      noticeAuth: reliability().notice ? noticeAuth : undefined,
+      noticeAuth,
     }),
     onInterrupted: async (entry: TurnJournalEntry) => {
       const outcome = entry.outcome ?? {
@@ -557,7 +555,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         journal: owned,
         turnId: entry.turnId,
         outcome,
-        noticeAuth: reliability().notice ? noticeAuth : undefined,
+        noticeAuth,
         consecutive: continuations.consecutive(entry.scope),
         requireBotMention: requireMentionForChat(
           controls.profileConfig,
@@ -620,6 +618,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         botAppId: controls.cfg.accounts.app.id,
         outbound: outboundIds,
         tracker: cliSelfSent,
+        journal,
       })) {
         return;
       }
@@ -820,7 +819,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   });
   started.onRecovered((outage) => {
     deps.onRecovered?.(outage);
-    void recover(outage);
+    void trackConsumer(recover(outage), 'recovery');
   });
   link = started;
   await started.tick();
@@ -1235,7 +1234,7 @@ interface RunBatchDeps {
   noticeAuth?: NoticeActionAuth;
   continuations: Continuations;
   cliSelfSent?: CliSelfSendTracker;
-  link?: { outageEpoch(): number };
+  link?: { outageEpoch(): number; isDown(): boolean };
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -2108,9 +2107,14 @@ async function deliverFinalReply(input: {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
   const body = renderText(input.state);
+  const cliSent = input.cliSelfSent?.has(input.scope) === true
+    && (input.skipFrom ?? input.state).terminal === 'done';
   const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
-    || (input.cliSelfSent?.has(input.scope) === true && (input.skipFrom ?? input.state).terminal === 'done')
+    || cliSent
     || !body.trim();
+  if (input.journal && input.turnId && (shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent)) {
+    input.journal.noteCliAlreadySent(input.turnId);
+  }
   const outcome = input.handle.outcome;
   const willNotice = Boolean(
     input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
@@ -2137,9 +2141,17 @@ async function deliverFinalReply(input: {
   if (input.finalizeStream && !skip) {
     try {
       await input.finalizeStream();
+      if (input.journal && input.turnId) {
+        input.journal.noteStreamFinalized(input.turnId);
+        await input.journal.flush();
+      }
     } catch (err) {
       log.fail('stream', err, { mode: input.replyMode, step: 'final-patch' });
-      return;
+      if (!isBusiness4xx(err)) return;
+      const sent = await sendFinalReply(input);
+      if (input.journal && input.turnId && sent?.messageId) {
+        input.journal.noteReplyReceipt(input.turnId, sent.messageId);
+      }
     }
   } else {
     const sent = await sendFinalReply(input);
@@ -2163,7 +2175,16 @@ async function deliverFinalReply(input: {
 
 async function resendJournalReply(channel: LarkChannel, entry: TurnJournalEntry): Promise<boolean> {
   if (!entry.reply?.markdown.trim()) return false;
-  if (entry.reply.messageId) return true;
+  if (entry.reply.messageId || entry.reply.streamFinalized || entry.cliAlreadySent) {
+    if (entry.cliAlreadySent) {
+      log.info('outbound', 'skip-cli-already-sent', {
+        scope: entry.scope,
+        chatId: entry.chatId,
+        mode: 'journal-resend',
+      });
+    }
+    return true;
+  }
   const result = await channel.send(
     entry.chatId,
     { markdown: entry.reply.markdown },
@@ -2545,17 +2566,18 @@ interface StreamReliability {
 
 function streamReliability(
   profile: { agentKind: string },
-  link?: { outageEpoch(): number },
+  link?: { outageEpoch(): number; isDown(): boolean },
 ): StreamReliability {
   const kind = profile.agentKind;
   const startedEpoch = link?.outageEpoch() ?? 0;
+  const startedDown = link?.isDown() ?? false;
   return {
     signatures: [
       ...(isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : []),
       ...NETWORK_TRANSIENT_SIGNATURES,
     ],
     agent: kind,
-    outageOverlapped: () => runOverlappedOutage(link, startedEpoch),
+    outageOverlapped: () => runOverlappedOutage(link, startedEpoch, startedDown),
   };
 }
 
@@ -2889,6 +2911,7 @@ function dropInboundSelfMessage(input: {
   botAppId?: string;
   outbound: OutboundMessageIds;
   tracker: CliSelfSendTracker;
+  journal?: TurnJournal;
 }): boolean {
   const dropped = noteInboundSkipSelf({
     messageId: input.msg.messageId,
@@ -2908,12 +2931,12 @@ function dropInboundSelfMessage(input: {
   const scope = input.msg.threadId
     ? `${input.msg.chatId}:${input.msg.threadId}`
     : input.msg.chatId;
+  const cliSelfSend = input.tracker.has(scope) || input.tracker.has(input.msg.chatId);
+  if (cliSelfSend) input.journal?.noteCliAlreadySentForScope(scope);
   log.info('intake', 'skip-self', {
     msgId: input.msg.messageId,
     chatId: input.msg.chatId,
-    ...(input.tracker.has(scope) || input.tracker.has(input.msg.chatId)
-      ? { reason: 'cli-self-send' }
-      : {}),
+    ...(cliSelfSend ? { reason: 'cli-self-send' } : {}),
   });
   return true;
 }

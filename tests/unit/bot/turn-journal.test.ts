@@ -360,6 +360,75 @@ describe('TurnJournal', () => {
     expect(journal.get('live-notice')?.status).toBe('notice-pending');
   });
 
+  it('does not resend a reply the agent already posted via CLI', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue({
+      ...queued({ turnId: 'cli' }),
+      status: 'completed-undelivered',
+      cliAlreadySent: true,
+      reply: {
+        markdown: 'PINNED_ANSWER',
+        replyTo: 'om_1',
+        replyMode: 'text',
+      },
+    });
+    const resend = vi.fn(async () => true);
+    await journal.recover({ resend });
+    expect(resend).not.toHaveBeenCalled();
+    expect(journal.get('cli')?.status).toBe('reply-delivered');
+  });
+
+  it('does not resend a stream-finalized reply after a journal reload', async () => {
+    const { file, journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'streamed' }));
+    journal.stageReply('streamed', {
+      markdown: 'STREAMED_ANSWER',
+      replyTo: 'om_1',
+      replyMode: 'markdown',
+    });
+    journal.noteStreamFinalized('streamed');
+    journal.markNoticePending('streamed', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice',
+    });
+    await journal.flush();
+
+    const reloaded = new TurnJournal(file);
+    await reloaded.load();
+    const resend = vi.fn(async () => true);
+    const resendNotice = vi.fn(async () => true);
+    await reloaded.recover({ resend, resendNotice });
+    expect(resend).not.toHaveBeenCalled();
+    expect(resendNotice).toHaveBeenCalledTimes(1);
+    expect(reloaded.get('streamed')?.status).toBe('notice-delivered');
+  });
+
+  it('does not resend a stream-finalized reply when retrying a notice', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'streamed' }));
+    journal.stageReply('streamed', {
+      markdown: 'STREAMED_ANSWER',
+      replyTo: 'om_1',
+      replyMode: 'card',
+    });
+    journal.noteStreamFinalized('streamed');
+    journal.markNoticePending('streamed', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice',
+    });
+    const resend = vi.fn(async () => true);
+    const resendNotice = vi.fn(async () => true);
+    await journal.recover({ resend, resendNotice });
+    expect(resend).not.toHaveBeenCalled();
+    expect(resendNotice).toHaveBeenCalledTimes(1);
+    expect(journal.get('streamed')?.status).toBe('notice-delivered');
+  });
+
   it('resends a pending terminal reply together with a notice-pending turn', async () => {
     const { journal } = await fixture();
     await journal.load();

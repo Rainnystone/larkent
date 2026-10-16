@@ -52,7 +52,7 @@ function httpStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
-function isBusiness4xx(error: unknown): boolean {
+export function isBusiness4xx(error: unknown): boolean {
   const status = httpStatus(error);
   return status !== undefined && status >= 400 && status < 500;
 }
@@ -115,8 +115,12 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   const wsConnected = (): boolean => deps.channel.getConnectionStatus()?.state === 'connected';
 
   const tick = async (fromTimer = false): Promise<void> => {
-    if (stopped || probing) return;
+    if (stopped) return;
     const now = nowFn();
+    if (probing) {
+      lastTickAt = now;
+      return;
+    }
     const sinceLast = lastTickAt > 0 ? now - lastTickAt : 0;
     // Storm guard is for stacked interval callbacks after a freeze, not for
     // explicit ticks (SDK reconnecting/reconnected can fire milliseconds apart).
@@ -158,6 +162,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       ok = false;
     } finally {
       probing = false;
+      lastTickAt = nowFn();
     }
     if (stopped) return;
     if (ok) {

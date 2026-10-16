@@ -275,6 +275,44 @@ describe('FeishuLink', () => {
     await expect(createFeishuProbe(probeChannel(new Error('ECONNRESET')))()).resolves.toBe(false);
   });
 
+  it('does not treat a slow but successful probe as host sleep', async () => {
+    let now = 1_700_000_000_000;
+    const recovered: Outage[] = [];
+    let releaseProbe: ((ok: boolean) => void) | undefined;
+    let probeOnce = true;
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: () => {
+        if (!probeOnce) return Promise.resolve(true);
+        probeOnce = false;
+        return new Promise<boolean>((resolve) => {
+          releaseProbe = resolve;
+        });
+      },
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+
+    const probing = link.tick();
+    expect(releaseProbe).toBeTypeOf('function');
+    now += FEISHU_LINK_SLEEP_MS + 5_000;
+    await link.tick();
+    expect(link.isDown()).toBe(true);
+    expect(recovered).toHaveLength(0);
+    releaseProbe?.(true);
+    await probing;
+    expect(link.isDown()).toBe(false);
+    expect(recovered).toHaveLength(1);
+
+    now += FEISHU_LINK_TICK_MS;
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+    expect(recovered).toHaveLength(1);
+  });
+
   it('does not advance the watermark on connected ticks without evidence', async () => {
     let now = 1_700_000_000_000;
     const watermark = memoryWatermark(now);

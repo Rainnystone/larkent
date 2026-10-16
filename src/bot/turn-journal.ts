@@ -32,6 +32,7 @@ export interface TurnReply {
   replyMode: string;
   deliveryId?: string;
   messageId?: string;
+  streamFinalized?: boolean;
 }
 
 export type ContinuationStatus =
@@ -84,6 +85,7 @@ export interface TurnJournalEntry {
   userInput?: string;
   resources?: TurnJournalResource[];
   reply?: TurnReply;
+  cliAlreadySent?: boolean;
   createdAt: number;
   updatedAt: number;
 }
@@ -257,6 +259,26 @@ export class TurnJournal {
     this.patch(turnId, { reply: { ...entry.reply, messageId } });
   }
 
+  noteStreamFinalized(turnId: string): void {
+    const entry = this.entries.find((item) => item.turnId === turnId);
+    if (!entry?.reply) return;
+    this.patch(turnId, { reply: { ...entry.reply, streamFinalized: true } });
+  }
+
+  noteCliAlreadySent(turnId: string): void {
+    this.patch(turnId, { cliAlreadySent: true });
+  }
+
+  noteCliAlreadySentForScope(scope: string): void {
+    for (const entry of this.entries) {
+      if (entry.scope !== scope) continue;
+      if (!isStagedDelivery(entry) && entry.status !== 'queued' && entry.status !== 'running' && entry.status !== 'settled') {
+        continue;
+      }
+      this.patch(entry.turnId, { cliAlreadySent: true });
+    }
+  }
+
   markInterrupted(turnId: string, outcome: RunOutcome, consecutiveInterrupts?: number): void {
     const current = this.entries.find((entry) => entry.turnId === turnId);
     this.patch(turnId, {
@@ -380,11 +402,15 @@ export class TurnJournal {
       if (!current || !isStagedDelivery(current)) continue;
 
       if (current.status === 'notice-pending' && opts.isActive?.(current.scope)) continue;
-      if (current.reply?.messageId && current.status === 'completed-undelivered') {
+      if (
+        current.status === 'completed-undelivered'
+        && current.reply
+        && replyAlreadyVisible(current)
+      ) {
         this.replyDelivered(current.turnId);
         continue;
       }
-      if (current.reply && !current.reply.messageId && opts.resend) {
+      if (current.reply && !replyAlreadyVisible(current) && opts.resend) {
         try {
           const ok = await opts.resend({ ...current });
           if (ok && current.status === 'completed-undelivered') {
@@ -401,7 +427,11 @@ export class TurnJournal {
         }
       }
       if (current.status === 'settled' && current.reply) {
-        if (!opts.resend || current.reply.messageId) continue;
+        if (replyAlreadyVisible(current)) {
+          this.replyDelivered(current.turnId);
+          continue;
+        }
+        if (!opts.resend) continue;
         try {
           const ok = await opts.resend({ ...current });
           if (ok) {
@@ -677,6 +707,7 @@ function parseEntry(raw: unknown): TurnJournalEntry | undefined {
     ...(typeof raw.userInput === 'string' ? { userInput: raw.userInput } : {}),
     ...(parseResources(raw.resources) ? { resources: parseResources(raw.resources) } : {}),
     ...(parseReply(raw.reply) ? { reply: parseReply(raw.reply) } : {}),
+    ...(raw.cliAlreadySent === true ? { cliAlreadySent: true } : {}),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
@@ -749,6 +780,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
     ...(raw.replyInThread === true ? { replyInThread: true } : {}),
     ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
+    ...(raw.streamFinalized === true ? { streamFinalized: true } : {}),
   };
 }
 
@@ -787,6 +819,10 @@ function isIncomplete(status: TurnJournalStatus): boolean {
       return _exhaustive;
     }
   }
+}
+
+function replyAlreadyVisible(entry: TurnJournalEntry): boolean {
+  return Boolean(entry.reply?.messageId || entry.reply?.streamFinalized || entry.cliAlreadySent);
 }
 
 function isStagedDelivery(entry: TurnJournalEntry): boolean {

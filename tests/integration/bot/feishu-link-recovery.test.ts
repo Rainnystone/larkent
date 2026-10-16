@@ -1,9 +1,11 @@
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { NormalizedMessage } from '@larksuite/channel';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import { FEISHU_LINK_SILENT_PROBE_MS, FEISHU_LINK_TICK_MS } from '../../../src/bot/feishu-link';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { log } from '../../../src/core/logger';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
@@ -143,6 +145,35 @@ describe('FeishuLink recovery through the bridge', () => {
     expect(stagedSends()).toHaveLength(1);
   });
 
+  it('keeps the bridge alive when automatic recovery rejects', async () => {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
+    try {
+      const h = await startHarness({
+        now: () => NOW,
+        probe: async () => true,
+        lastLiveAt: NOW,
+        history: { [CHAT]: [] },
+        withJournal: true,
+        boomRedeliver: true,
+      });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(rejections, String(rejections[0])).toEqual([]);
+      expect(fail.mock.calls.some((call) => call[0] === 'recovery')).toBe(true);
+
+      await h.channel.handlers.message?.(mention('om_live', 'still listening'));
+      await waitForDebounce();
+      await waitFor(() => h.agent.runOptions.length === 1);
+      expect(h.agent.runOptions[0]?.prompt).toContain('still listening');
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('does not resend or backfill on connected ticks', async () => {
     let now = NOW;
     const h = await startHarness({
@@ -172,6 +203,7 @@ async function startHarness(opts: {
   history: Record<string, unknown[]>;
   onRecovered?: (outage: { since: number; until: number }) => void;
   withJournal?: boolean;
+  boomRedeliver?: boolean;
 }) {
   const tmp = await createTmpProfile('feishu-link-recovery-');
   const ledger = new BackfillLedger(`${tmp.profile}/backfill-state.json`, { now: opts.now });
@@ -181,6 +213,11 @@ async function startHarness(opts: {
   if (opts.withJournal) {
     journal = new TurnJournal(`${tmp.profile}/turn-journal.json`, { now: opts.now });
     await journal.load();
+    if (opts.boomRedeliver) {
+      journal.redeliver = async () => {
+        throw new Error('ENOSPC journal persist');
+      };
+    }
   }
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
@@ -236,6 +273,21 @@ async function startHarness(opts: {
     await tmp.cleanup();
   });
   return { channel, agent, ledger, bridge, journal };
+}
+
+function mention(messageId: string, content: string): NormalizedMessage {
+  return {
+    messageId,
+    content,
+    chatId: CHAT,
+    chatType: 'group',
+    senderId: USER,
+    senderName: 'User',
+    rawContentType: 'text',
+    resources: [],
+    mentionedBot: true,
+    createTime: NOW,
+  } as unknown as NormalizedMessage;
 }
 
 function mentionItem(
