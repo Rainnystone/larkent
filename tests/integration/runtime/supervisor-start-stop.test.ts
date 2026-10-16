@@ -83,6 +83,7 @@ it.each(['sessions', 'catalog', 'workspaces'] as const)('releases startup locks 
   expect(readAndPrune(paths.userRegistryFile)).toEqual([]);
   expect((await locks.checkRuntimeLock(paths.profileLockFile)).locked).toBe(false);
   expect((await locks.checkRuntimeLock(paths.appLockFile('fake-start-app'))).locked).toBe(false);
+  expect((await locks.checkRuntimeLock(locks.machineAppLockFile('fake-start-app'))).locked).toBe(false);
   await writeFile(file, store === 'catalog' ? '[]' : '{}');
   await supervisor.startProfile('test');
   expect(supervisor.isOnline('test')).toBe(true);

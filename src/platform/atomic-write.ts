@@ -41,13 +41,10 @@ export async function writeFileAtomic(
     const handle = await open(tmp, 'w', opts.mode ?? 0o600);
     try {
       await handle.writeFile(data);
-      try {
-        // Durability requires the temp file on disk before rename. Windows
-        // cannot fsync directory handles, but file-handle sync is supported.
-        await handle.sync();
-      } catch (err) {
-        if (!isIgnorableWindowsFsyncError(err)) throw err;
-      }
+      // POSIX fsyncs before rename. Windows AV pins an open fsync handle, so
+      // the later rename hits EPERM/EBUSY and a second startup persist dies at
+      // the 5s test budget with no errno. Close first; durability is rename.
+      if (!isWindows()) await handle.sync();
     } finally {
       await handle.close();
     }
@@ -82,7 +79,9 @@ async function renameWithRetry(
     } catch (err) {
       lastErr = err;
       if (!isTransientRenameError(err) || attempt === maxAttempts) break;
-      await sleep(delayMs * attempt);
+      // Constant delay: linear 40ms*attempt is 2.6s per write, so two startup
+      // persists (sessions then a repaired workspaces retry) exceed 5s.
+      await sleep(delayMs);
     }
   }
   throw lastErr;
@@ -97,10 +96,6 @@ function isIgnorableWindowsPermError(err: unknown): boolean {
   if (!isWindows()) return false;
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
   return code === 'EPERM' || code === 'EACCES';
-}
-
-function isIgnorableWindowsFsyncError(err: unknown): boolean {
-  return isIgnorableWindowsPermError(err);
 }
 
 async function fsyncDir(path: string): Promise<void> {
