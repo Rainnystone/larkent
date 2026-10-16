@@ -476,7 +476,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           backfillMarks,
           ledger,
           journal,
-          noticeEnabled: true,
           continuations,
           cliSelfSent,
           link,
@@ -619,9 +618,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     if (sweepStopped || sweepInFlight || !journal || link.isDown()) return;
     sweepInFlight = true;
     sweepPasses += 1;
-    void journal.redeliver(journalRecoverOpts(journal)).finally(() => {
-      sweepInFlight = false;
-    }).then(() => {
+    void trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal').then(() => {
       if (sweepStopped || link.isDown()) return;
       const pending = journal.list().some((entry) => replyState(entry) === 'staged');
       if (!pending || sweepPasses >= OUTBOX_SWEEP_MAX) return;
@@ -629,6 +626,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         sweepTimer = undefined;
         runOutboxSweep();
       }, OUTBOX_SWEEP_MS);
+    }, () => {
+      // Logged by trackConsumer. Do not reschedule a failed pass as success.
+    }).finally(() => {
+      sweepInFlight = false;
     });
   };
   outboxSweep.schedule = () => {
@@ -665,9 +666,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   const recover = async (outage?: Outage): Promise<void> => {
     const now = (deps.now ?? Date.now)();
-    await recovery.run(outage ?? {
-      since: ledger?.getLiveAt() ?? now,
-      until: now,
+    await recovery.run({
+      since: outage?.since ?? ledger?.getLiveAt() ?? now,
+      until: outage?.until ?? now,
+      hostSuspended: outage?.hostSuspended === true,
     });
     outboxSweep.schedule();
   };
@@ -1298,7 +1300,6 @@ interface RunBatchDeps {
   backfillMarks: Map<string, BackfillMark>;
   ledger?: BackfillLedger;
   journal?: TurnJournal;
-  noticeEnabled?: boolean;
   noticeAuth?: NoticeActionAuth;
   continuations: Continuations;
   cliSelfSent?: CliSelfSendTracker;
@@ -1325,7 +1326,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     backfillMarks,
     ledger,
     journal,
-    noticeEnabled,
     noticeAuth,
     continuations,
     cliSelfSent,
@@ -1450,9 +1450,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
   lastRunModelByScope.set(scope, modelSelection);
   const extraInstructions: string[] = [];
-  const taken = noticeEnabled === true
-    ? await continuations.take(scope, batch)
-    : { kind: 'none' as const };
+  const taken = await continuations.take(scope, batch);
   applyTakenInstruction(taken, extraInstructions);
   if (modelSwitched) {
     extraInstructions.push(
@@ -1523,8 +1521,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       senderId: firstMsg.senderId,
       initiatorId: lastMsg.senderId,
       status: 'queued',
-      ...(noticeEnabled ? { userInput: promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n') } : {}),
-      ...(noticeEnabled ? journalResources(batch) : {}),
+      userInput: promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n'),
+      ...journalResources(batch),
     });
   }
 
@@ -1592,7 +1590,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   }
   const handle = execution.handle;
   const eventStream = execution.subscribe();
-  const noticeCtx = noticeEnabled && journal
+  const noticeCtx = journal
     ? {
         enabled: true as const,
         auth: noticeAuth,
@@ -2212,7 +2210,6 @@ async function deliverFinalReply(input: {
       return;
     }
   }
-  input.cliSelfSent?.consume(input.scope);
   if (input.journal && input.turnId && !willNotice) input.journal.replyDelivered(input.turnId);
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
@@ -2377,28 +2374,12 @@ async function sendFinalReply(input: {
   chatId: string;
   scope: string;
   state: RunState;
-  /** Run outcome before reply-state projection (card/markdown may force `done`). */
-  skipFrom?: RunState;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
-  cliSelfSent?: CliSelfSendTracker;
   turnId?: string;
   deliveryId?: string;
 }): Promise<{ messageId?: string } | undefined> {
-  if (
-    shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
-    || (input.cliSelfSent?.has(input.scope) === true && (input.skipFrom ?? input.state).terminal === 'done')
-  ) {
-    log.info('outbound', 'skip-cli-already-sent', {
-      scope: input.scope,
-      chatId: input.chatId,
-      mode: input.replyMode,
-    });
-    reportMetric(OUTBOUND_SKIP_CLI_SENT_METRIC, 1);
-    return undefined;
-  }
-
   const body = renderText(input.state);
 
   // Nothing deliverable to send (agent produced no text on a clean finish;
@@ -2425,29 +2406,23 @@ async function sendFinalReply(input: {
     return result;
   }
   if (input.replyMode === 'markdown') {
-    if (body.trim()) {
-      const result = await input.channel.send(
-        input.chatId,
-        { markdown: body },
-        sendOpts,
-      );
-      requireMessageReceipt(result, 'markdown');
-      log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
-      return result;
-    }
-    return undefined;
-  }
-  if (body.trim()) {
     const result = await input.channel.send(
       input.chatId,
       { markdown: body },
       sendOpts,
     );
-    requireMessageReceipt(result, 'text');
-    log.info('outbound', 'sent', outboundLogFields(input, 'text', body, result));
+    requireMessageReceipt(result, 'markdown');
+    log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
     return result;
   }
-  return undefined;
+  const result = await input.channel.send(
+    input.chatId,
+    { markdown: body },
+    sendOpts,
+  );
+  requireMessageReceipt(result, 'text');
+  log.info('outbound', 'sent', outboundLogFields(input, 'text', body, result));
+  return result;
 }
 
 function requireMessageReceipt(result: { messageId?: string }, type: string): void {
@@ -2602,12 +2577,14 @@ async function processAgentStream(
       // closes it. Other event types are bookkept after the if/else.
       if (evt.type === 'tool_use') {
         inFlightTools.add(evt.id);
+        handle.hasOpenToolCall = true;
         log.info('agent', 'tool-in-flight', {
           tool: evt.name,
           inFlight: inFlightTools.size,
         });
       } else if (evt.type === 'tool_result') {
         inFlightTools.delete(evt.id);
+        handle.hasOpenToolCall = inFlightTools.size > 0;
         log.info('agent', 'tool-done', { inFlight: inFlightTools.size });
       }
       armIdleWatchdog();
@@ -2663,6 +2640,7 @@ async function processAgentStream(
     clearIdleTimer();
     delete handle.armStallDeadline;
     delete handle.stallDeadlineMs;
+    delete handle.hasOpenToolCall;
   }
 
   // If state already reached a terminal event (done/error/etc.) before the

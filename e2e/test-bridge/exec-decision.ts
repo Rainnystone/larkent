@@ -30,7 +30,8 @@ async function applyShimDecision(next: ShimDecision): Promise<void> {
     return;
   }
   if (next.mode === 'hang') {
-    await new Promise(() => {});
+    // A pending Promise does not keep Node's event loop alive; a timer does.
+    setInterval(() => undefined, 60_000);
     return;
   }
   const dir = dirname(fileURLToPath(import.meta.url));

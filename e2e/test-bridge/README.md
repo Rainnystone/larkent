@@ -40,8 +40,9 @@ pnpm e2e:scenario -- cursor-stall-notice
 pnpm e2e:scenario -- host-sleep-cli-self-send [--freeze-ms 8000]
 ```
 
-`down` reads the pid file and refuses to signal a process whose cmdline is
-not the test instance.
+`down`, `ws-freeze`, and `kill-cli` read the pid file, refuse a process whose
+cmdline is not the test instance, and fail loudly if that process is already
+dead.
 
 `e2e:up` sets `HTTPS_PROXY` only on the test-bridge child. FeishuLink's
 authenticated probe uses the same SDK HTTP client as replies (`respectProxyEnv`

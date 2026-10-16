@@ -10,6 +10,8 @@ export interface RunHandle {
   outcome?: RunOutcome;
   /** Last agent-stream event (or register time if none yet). */
   lastEventAt: number;
+  /** True while the stream processor has a tool call in flight. */
+  hasOpenToolCall?: boolean;
   /** Set by recovery when the run was silent before the outage. */
   stallDeadlineMs?: number;
   /** Installed by the stream processor so recovery can shorten the idle bound. */

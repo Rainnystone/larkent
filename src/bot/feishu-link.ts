@@ -16,6 +16,8 @@ const WS_DOWN_LOG_EVERY = 20;
 export interface Outage {
   since: number;
   until: number;
+  /** True when a tick gap over 30s (sleep/freeze/clock jump) fell inside the outage. */
+  hostSuspended: boolean;
 }
 
 export interface FeishuLink {
@@ -34,8 +36,6 @@ export interface FeishuLinkDeps {
   probe: (signal?: AbortSignal) => Promise<FeishuProbeResult>;
   watermark: { get(): number | undefined; set(at: number): void };
   now?: () => number;
-  /** Awake event-loop time. Defaults to `performance.now`. */
-  monotonic?: () => number;
   heartbeatPath?: string;
   outbound?: OutboundMessageIds;
   outboundTimeoutMs?: number;
@@ -137,7 +137,6 @@ async function raceProbe(
 
 export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Promise<void> } {
   const nowFn = deps.now ?? Date.now;
-  const monoFn = deps.monotonic ?? (() => performance.now());
   const listeners = new Set<(o: Outage) => void>();
   let stopped = false;
   let down = true;
@@ -148,8 +147,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let probing = false;
   let probeSeq = 0;
   let probeAbort: AbortController | undefined;
-  let probeWallStart = 0;
-  let probeMonoStart = 0;
+  let hostSuspended = false;
   let wsDownTicks = 0;
 
   const touchHeartbeat = (): void => {
@@ -166,7 +164,8 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     for (const listener of listeners) listener(outage);
   };
 
-  const goDown = (since: number): void => {
+  const goDown = (since: number, opts?: { hostSuspended?: boolean }): void => {
+    if (opts?.hostSuspended) hostSuspended = true;
     if (down) {
       downSince = Math.min(downSince, since);
       return;
@@ -181,7 +180,8 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     down = false;
     lastEvidenceAt = until;
     deps.watermark.set(until);
-    const outage = { since: downSince, until };
+    const outage = { since: downSince, until, hostSuspended };
+    hostSuspended = false;
     log.info('link', 'recovered', outage);
     emitRecovered(outage);
   };
@@ -197,44 +197,26 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
   const wsConnected = (): boolean => deps.channel.getConnectionStatus()?.state === 'connected';
 
-  const probeWallElapsedMs = (): number => Math.max(0, nowFn() - probeWallStart);
-
-  const noteSleepIfProbeSuspended = (): boolean => {
-    // Wall elapsed covers Windows QPC (monotonic includes standby, so
-    // wall-minus-mono is ~0). Do not move lastTickAt until after goDown.
-    const wallElapsed = probeWallElapsedMs();
-    const monoElapsed = Math.max(0, monoFn() - probeMonoStart);
-    if (wallElapsed <= FEISHU_LINK_SLEEP_MS) return false;
-    log.info('link', 'sleep', { sleptMs: wallElapsed, monoElapsed });
-    goDown(probeWallStart);
-    return true;
+  const noteSuspendIfGap = (at: number): void => {
+    const sinceLast = lastTickAt > 0 ? at - lastTickAt : 0;
+    if (sinceLast <= FEISHU_LINK_SLEEP_MS) return;
+    log.info('link', 'sleep', { sleptMs: sinceLast });
+    goDown(lastTickAt, { hostSuspended: true });
+    probeSeq += 1;
+    probing = false;
+    probeAbort?.abort();
   };
 
   const tick = async (fromTimer = false): Promise<void> => {
     if (stopped) return;
     const now = nowFn();
-    if (probing) {
-      // Do not move lastTickAt while the probe is still in flight.
-      if (noteSleepIfProbeSuspended()) return;
-      if (probeWallElapsedMs() > FEISHU_LINK_PROBE_TIMEOUT_MS) {
-        probeAbort?.abort();
-        probeSeq += 1;
-        probing = false;
-        goDown(lastEvidenceAt ?? downSince);
-        lastTickAt = nowFn();
-      }
-      return;
-    }
     const sinceLast = lastTickAt > 0 ? now - lastTickAt : 0;
     // Storm guard is for stacked interval callbacks after a freeze, not for
     // explicit ticks (SDK reconnecting/reconnected can fire milliseconds apart).
     if (fromTimer && sinceLast > 0 && sinceLast < TIMER_STORM_GUARD_MS) return;
     touchHeartbeat();
 
-    if (sinceLast > FEISHU_LINK_SLEEP_MS) {
-      log.info('link', 'sleep', { sleptMs: sinceLast });
-      goDown(lastTickAt);
-    }
+    noteSuspendIfGap(now);
     lastTickAt = now;
 
     const status = deps.channel.getConnectionStatus();
@@ -256,12 +238,10 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
     const silentMs = lastEvidenceAt === undefined ? Number.POSITIVE_INFINITY : now - lastEvidenceAt;
     const shouldProbe = down || silentMs >= FEISHU_LINK_SILENT_PROBE_MS;
-    if (!shouldProbe) return;
+    if (!shouldProbe || probing) return;
 
     const seq = ++probeSeq;
     probing = true;
-    probeWallStart = now;
-    probeMonoStart = monoFn();
     const ctrl = new AbortController();
     probeAbort = ctrl;
     let ok: FeishuProbeResult = false;
@@ -271,12 +251,13 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       ok = probeResultFromError(err);
     } finally {
       if (probeAbort === ctrl) probeAbort = undefined;
+      const after = nowFn();
+      // A freeze can resume the probe timer before the next interval tick.
+      // Detect the gap here so lastTickAt is not stamped over the suspend.
+      noteSuspendIfGap(after);
+      lastTickAt = after;
       if (seq !== probeSeq) return;
       probing = false;
-      const suspended = noteSleepIfProbeSuspended();
-      // Record sleep before moving the baseline. Resetting first would hide
-      // a Windows standby gap where wall-minus-mono is ~0.
-      if (!suspended) lastTickAt = nowFn();
     }
     if (seq !== probeSeq || stopped) return;
     switch (ok) {
