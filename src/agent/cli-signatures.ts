@@ -22,6 +22,30 @@ export interface CliSignature {
 
 export const UNCLASSIFIED_USER_MESSAGE = 'agent 运行失败';
 
+export const NETWORK_TRANSIENT_USER_MESSAGE = '网络连接中断，可稍后继续';
+
+/** TLS / socket failures from a CLI's upstream. Shared across every agent. */
+export const NETWORK_TRANSIENT_SIGNATURES: readonly CliSignature[] = Object.freeze([
+  {
+    pattern: /socket disconnected before (secure TLS|TLS) connection/i,
+    cliVersion: 'node (observed 2026-10-16)',
+    classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+    userMessage: NETWORK_TRANSIENT_USER_MESSAGE,
+  },
+  {
+    pattern: /\bECONNRESET\b/,
+    cliVersion: 'node (observed 2026-10-16)',
+    classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+    userMessage: NETWORK_TRANSIENT_USER_MESSAGE,
+  },
+  {
+    pattern: /\bEPROTO\b|ERR_SSL_/,
+    cliVersion: 'node (observed 2026-10-16)',
+    classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+    userMessage: NETWORK_TRANSIENT_USER_MESSAGE,
+  },
+]);
+
 export function matchCliSignature(
   stderrTail: string | undefined,
   signatures: readonly CliSignature[] | undefined,

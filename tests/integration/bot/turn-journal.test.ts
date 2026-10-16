@@ -83,6 +83,27 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     expect(h.channel.sent).toHaveLength(1);
   });
 
+  it('resends an undelivered failure while the long connection stays up', async () => {
+    const h = await harness({ fakeTimers: false });
+    let fails = 1;
+    const orig = h.channel.send.bind(h.channel);
+    h.channel.send = async (...args: Parameters<typeof orig>) => {
+      if (fails > 0) {
+        fails -= 1;
+        throw new Error('Client network socket disconnected before secure TLS connection was established');
+      }
+      return orig(...args);
+    };
+
+    await h.channel.handlers.message?.(mention('om_tls', 'please answer'));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'completed-undelivered'));
+    expect(h.channel.sent).toEqual([]);
+
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'reply-delivered'));
+    expect(h.channel.sent).toHaveLength(1);
+  });
+
   it.each(['/new', '/cd', '/ws use saved', '/resume use sess-1'] as const)(
     'voids the incomplete journal record after %s',
     async (command) => {

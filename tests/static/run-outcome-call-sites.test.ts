@@ -27,6 +27,7 @@ describe('stop request call sites', () => {
     expect(channel).toContain("restart({ stopReason: { type: 'keepalive-restart' } })");
     expect(channel).toContain("stopAll(opts?.stopReason ?? { type: 'shutdown-signal' })");
     expect(channel).toContain("requestStop(handle, { type: 'bridge-idle-watchdog' })");
+    expect(channel).toMatch(/onConnectedTick:[\s\S]*recoverJournal\(\)/);
     expect(channel).toContain('noteTerminalStop(handle, evt)');
     expect(executor).toContain("requestStop(handle, { type: 'subscriber-abandoned' })");
     expect(executor).toContain('stopRequestFromTerminal(event)');

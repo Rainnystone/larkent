@@ -8,7 +8,11 @@ import {
   type CliSignature,
 } from '../../../src/bot/run-outcome';
 import * as logger from '../../../src/core/logger';
-import { cardUserMessage, noteUnclassifiedStderr } from '../../../src/agent/cli-signatures';
+import {
+  cardUserMessage,
+  NETWORK_TRANSIENT_SIGNATURES,
+  noteUnclassifiedStderr,
+} from '../../../src/agent/cli-signatures';
 
 const GOLDENS = join(process.cwd(), 'tests/fixtures/goldens/stderr');
 
@@ -109,6 +113,29 @@ describe('CLI stderr signature table', () => {
       terminalEvent: { type: 'error', message: 'error: interrupted', terminationReason: 'interrupted' },
     });
     expect(outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'user-stop' } });
+  });
+
+  it.each([
+    'socket-tls-disconnect.txt',
+    'econnreset.txt',
+    'eproto.txt',
+  ])('classifies network golden %s as transient-upstream', (file) => {
+    const stderrTail = readGolden('network', file);
+    const outcome = deriveRunOutcome({
+      exit: 1,
+      stderrTail,
+      signatures: NETWORK_TRANSIENT_SIGNATURES,
+      terminalEvent: { type: 'error', message: stderrTail, terminationReason: 'failed' },
+    });
+    expect(outcome).toEqual({
+      kind: 'failed',
+      cause: 'transient-upstream',
+      retriable: true,
+      needsHuman: false,
+    });
+    expect(formatRunOutcome(outcome)).toBe('failed:transient-upstream');
+    expect(cardUserMessage(outcome, matchingSignature(NETWORK_TRANSIENT_SIGNATURES, stderrTail), true))
+      .toBe('网络连接中断，可稍后继续');
   });
 
   it('maps agy stop-exit (error: interrupted, exit 1, failed terminal) to user-stop', () => {

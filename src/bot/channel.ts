@@ -18,6 +18,7 @@ import {
 import {
   cardUserMessage,
   matchCliSignature,
+  NETWORK_TRANSIENT_SIGNATURES,
   noteUnclassifiedStderr,
   type CliSignature,
 } from '../agent/cli-signatures';
@@ -789,9 +790,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     domain: probeDomain,
     forceReconnect: () => controls.restart({ stopReason: { type: 'keepalive-restart' } }),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
+    onConnectedTick: (now) => {
+      ledger?.touchLive(now);
+      // Resend completed-undelivered replies while the long connection is
+      // still up, instead of waiting for the next WS reconnect.
+      void recoverJournal();
+    },
     ...(ledger
       ? {
-          onConnectedTick: (now) => ledger.touchLive(now),
           // Surviving-socket sleep: scan before the next connected tick
           // can advance lastLiveAt and close the offline gap.
           onWakeUp: () => launchBackfill('wake-up'),
@@ -2452,7 +2458,10 @@ function streamReliability(profile: { reliability?: { cliSignatures?: boolean; r
   return {
     runOutcome: flags.runOutcome,
     cliSignatures: flags.cliSignatures,
-    signatures: isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : [],
+    signatures: [
+      ...(isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : []),
+      ...NETWORK_TRANSIENT_SIGNATURES,
+    ],
     agent: kind,
   };
 }
