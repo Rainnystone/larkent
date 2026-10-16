@@ -146,6 +146,31 @@ describe('wrapChannelOutbound timeout', () => {
     await expect(pending).resolves.toEqual({ messageId: 'om_s' });
   });
 
+  it('rejects a hung getChatMode whose TCP connect never completes', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const channel = {
+      getChatMode: () => new Promise<never>(() => {}),
+    };
+    wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 30_000 });
+
+    const pending = channel.getChatMode();
+    await vi.advanceTimersByTimeAsync(29_999);
+    let settled = false;
+    void pending.then(
+      () => { settled = true; },
+      () => { settled = true; },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(OutboundTimeoutError);
+      expect((err as OutboundTimeoutError).op).toBe('getChatMode');
+      return true;
+    });
+  });
+
   it('does not emit unhandledRejection when a send fails', async () => {
     const rejections: unknown[] = [];
     const onUnhandled = (reason: unknown): void => {

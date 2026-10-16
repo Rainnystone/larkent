@@ -183,6 +183,10 @@ describe('FeishuLink recovery through the bridge', () => {
       history: { [CHAT]: [] },
     });
     await waitFor(() => h.ledger.getLiveAt() === NOW);
+    // Startup recover is not awaited; wrapping REST success feeds the
+    // classifier with nowFn(). Wait for that scan to settle before the
+    // connected-tick loop advances `now`.
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
     const listed = h.channel.listChatsCalls;
     const liveAt = h.ledger.getLiveAt();
 

@@ -492,7 +492,8 @@ describe('FeishuLink', () => {
     let hang = false;
     let finish: ((info: { ownerId: string }) => void) | undefined;
     const signals: AbortSignal[] = [];
-    const app = {
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
       getAppInfo: () => {
         if (!hang) return Promise.resolve({ ownerId: 'ou_owner' });
         return new Promise<{ ownerId: string }>((resolve) => {
@@ -500,9 +501,9 @@ describe('FeishuLink', () => {
         });
       },
     } as unknown as LarkChannel;
-    const inner = createFeishuProbe(app);
+    const inner = createFeishuProbe(channel);
     const link = startFeishuLink({
-      channel: fakeChannel(() => 'connected'),
+      channel,
       probe: (signal) => {
         if (signal) signals.push(signal);
         return inner(signal);

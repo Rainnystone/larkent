@@ -79,6 +79,16 @@ describe('backfill static contracts', () => {
     expect(read('src/bot/channel.ts')).not.toMatch(/onConnectedTick/);
   });
 
+  it('creates FeishuLink before connect so owner refresh cannot delay wrapping', () => {
+    const source = read('src/bot/channel.ts');
+    const linkAt = source.indexOf('startFeishuLink({');
+    const connectAt = source.indexOf('await channel.connect()');
+    const ownerAt = source.indexOf('ownerRefresh.start()');
+    expect(linkAt).toBeGreaterThan(-1);
+    expect(connectAt).toBeGreaterThan(linkAt);
+    expect(ownerAt).toBeGreaterThan(connectAt);
+  });
+
   it('hands session-known chat ids into the backfill scan', () => {
     expect(read('src/bot/channel.ts')).toMatch(/sessionChatIds:/);
     expect(read('src/bot/backfill.ts')).toMatch(/sessionChatIds\??:/);

@@ -186,6 +186,9 @@ describe('static architecture contracts', () => {
     expect(stray, stray.join('\n')).toEqual([]);
     expect(read('src/bot/feishu-link.ts')).toMatch(/wrapChannelOutbound/);
     expect(read('src/bot/channel.ts')).not.toMatch(/wrapChannelOutbound/);
+    expect(read('src/bot/self-message.ts')).toMatch(/'getChatMode'/);
+    expect(read('src/bot/channel.ts')).not.toMatch(/outageEpoch: \(\) => 0/);
+    expect(read('src/bot/channel.ts')).toMatch(/streamReliability\(controls\.profileConfig, \(\) => link\)/);
     expect(read('package.json')).toMatch(/"@larksuite\/channel@0\.7\.1": "patches\/@larksuite__channel@0\.7\.1\.patch"/);
     expect(read('patches/@larksuite__channel@0.7.1.patch')).toMatch(/payload\.uuid = args\.uuid/);
     expect(read('src/bot/feishu-delivery.ts')).toMatch(/\bupdateCard\b/);

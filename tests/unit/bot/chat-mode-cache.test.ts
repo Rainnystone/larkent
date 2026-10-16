@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ChatModeCache } from '../../../src/bot/chat-mode-cache.js';
+import { OutboundTimeoutError } from '../../../src/bot/self-message.js';
 
 describe('ChatModeCache', () => {
   it('caches group mode to avoid a chat.get round-trip per message', async () => {
@@ -31,6 +32,33 @@ describe('ChatModeCache', () => {
     await expect(cache.resolve(channel as never, 'oc_chat')).resolves.toBe('topic');
     await expect(cache.resolve(channel as never, 'oc_chat')).resolves.toBe('topic');
     expect(channel.calls).toBe(1);
+  });
+
+  it('does not swallow a link error so intake can release the claim', async () => {
+    const cache = new ChatModeCache();
+    const err = new OutboundTimeoutError('getChatMode', 30_000);
+    const channel = {
+      calls: 0,
+      async getChatMode(): Promise<'group' | 'topic'> {
+        this.calls += 1;
+        throw err;
+      },
+    };
+
+    await expect(cache.resolve(channel as never, 'oc_chat')).rejects.toBe(err);
+    expect(channel.calls).toBe(1);
+    await expect(cache.resolve(channel as never, 'oc_chat')).rejects.toBe(err);
+  });
+
+  it('still falls back to group on a local lookup error', async () => {
+    const cache = new ChatModeCache();
+    const channel = {
+      async getChatMode(): Promise<'group' | 'topic'> {
+        throw new Error('permission denied in test');
+      },
+    };
+
+    await expect(cache.resolve(channel as never, 'oc_chat')).resolves.toBe('group');
   });
 });
 
