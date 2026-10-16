@@ -1,6 +1,6 @@
 # T15: Recovery hardening, simpler probe, channel cleanups
 
-**Status:** ready-for-agent · Audit: D7 part 1 + §5 probe and `channel.ts` items (F19, F22)
+**Status:** ready-for-agent · Audit: D7 (both parts) + §5 probe and `channel.ts` items (F19, F21, F22)
 
 ## Goal
 

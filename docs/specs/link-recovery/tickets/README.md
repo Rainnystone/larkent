@@ -18,7 +18,7 @@ Spec: [../../link-recovery.md](../../link-recovery.md) (see *Delivery invariants
 | [T12](T12-stream-result-is-delivery-signal.md) | Stream result is the only delivery signal (SDK-faithful fake, markdown flush patch) | T11 | ready |
 | [T13](T13-per-item-outbox-and-gating.md) | Per-item reply/notice state; no sends while down | T12 | ready |
 | [T14](T14-link-before-connect.md) | Link and outbound wrapper before connect | T13 | ready |
-| [T15](T15-recovery-hardening-probe-cleanup.md) | Recovery hardening, simpler probe, channel cleanups, CONTEXT.md | T14 | ready |
+| [T15](T15-recovery-hardening-probe-cleanup.md) | Recovery hardening, suspend-only tool-call review, simpler probe, channel cleanups, CONTEXT.md | T14 | ready |
 | [T16](T16-feishu-uuid-idempotency.md) | (Optional) Feishu uuid idempotency | T15 | optional |
 | [T9](T9-e2e-disconnect-then-recover.md) | E2E round 4: disconnect then recover | T0–T8, T11–T15 | blocked (last) |
 
