@@ -2298,15 +2298,17 @@ async function processAgentStream(
   //
   // The watchdog re-arms when:
   //  - a tool_result drains the in-flight set to zero, OR
-  //  - any event arrives (15 min when idle, 60 min while a tool is open).
+  //  - any event arrives (configured idle when quiet, 60 min while a tool is open).
   const TOOL_IDLE_PAUSE_CAP_MS = 60 * 60_000;
   let timer: NodeJS.Timeout | undefined;
+  let armedDelayMs = idleTimeoutMs;
   const inFlightTools = new Set<string>();
-  const armOrPauseIdle = (): void => {
+  const armIdleWatchdog = (): void => {
     if (!idleTimeoutMs) return;
     if (timer) clearTimeout(timer);
     timer = undefined;
     const delayMs = inFlightTools.size > 0 ? TOOL_IDLE_PAUSE_CAP_MS : idleTimeoutMs;
+    armedDelayMs = delayMs;
     timer = setTimeout(() => {
       requestStop(handle, { type: 'bridge-idle-watchdog' });
       log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs: delayMs });
@@ -2315,7 +2317,7 @@ async function processAgentStream(
       });
     }, delayMs);
   };
-  armOrPauseIdle();
+  armIdleWatchdog();
 
   try {
     for await (const evt of events) {
@@ -2323,7 +2325,7 @@ async function processAgentStream(
       // A stopped run can still deliver its final resume handle before cleanup.
       // Keep draining owned events while suppressing further UI updates.
       if (evt.type === 'system') {
-        if (!handle.interrupted) armOrPauseIdle();
+        if (!handle.interrupted) armIdleWatchdog();
         recordSession(evt);
         continue;
       }
@@ -2342,7 +2344,7 @@ async function processAgentStream(
         inFlightTools.delete(evt.id);
         log.info('agent', 'tool-done', { inFlight: inFlightTools.size });
       }
-      armOrPauseIdle();
+      armIdleWatchdog();
 
       if (evt.type === 'usage') {
         const { costUsd, inputTokens, outputTokens } = evt;
@@ -2421,7 +2423,7 @@ async function processAgentStream(
     || cardTerminalFromOutcome(outcome) !== state.terminal
     || userMessage !== undefined
   ) {
-    state = applyOutcomeToState(state, outcome, idleTimeoutMs, userMessage);
+    state = applyOutcomeToState(state, outcome, armedDelayMs, userMessage);
   }
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };

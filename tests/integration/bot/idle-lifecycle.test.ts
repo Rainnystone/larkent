@@ -64,7 +64,7 @@ describe('bot idle and settlement lifecycle', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('超时'));
+    await waitFor(() => rendered(h.channel).includes('60 分钟无响应'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
