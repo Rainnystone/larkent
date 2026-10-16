@@ -242,7 +242,7 @@ export class TurnJournal {
         replyTo: reply.replyTo,
         replyMode: reply.replyMode ?? 'text',
         ...(reply.replyInThread ? { replyInThread: true } : {}),
-        ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
+        deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
         ...(reply.messageId ? { messageId: reply.messageId } : {}),
       },
     });
@@ -292,7 +292,10 @@ export class TurnJournal {
     this.patch(turnId, {
       status: 'notice-pending',
       noticeStatus: 'pending',
-      notice,
+      notice: {
+        ...notice,
+        deliveryId: notice.deliveryId ?? noticeDeliveryKey(turnId),
+      },
     });
   }
 
@@ -818,7 +821,7 @@ function isIncomplete(status: TurnJournalStatus): boolean {
 }
 
 function replyAlreadyVisible(entry: TurnJournalEntry): boolean {
-  return Boolean(entry.reply?.messageId || entry.reply?.streamFinalized || entry.cliAlreadySent);
+  return Boolean(entry.reply?.streamFinalized || entry.cliAlreadySent);
 }
 
 function isStagedDelivery(entry: TurnJournalEntry): boolean {
@@ -907,6 +910,24 @@ function defaultSleep(ms: number): Promise<void> {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export const FEISHU_DELIVERY_ID_MAX_CHARS = 50;
+
+export function replyDeliveryKey(turnId: string): string {
+  return clipDeliveryId(`reply:${turnId}`);
+}
+
+export function noticeDeliveryKey(turnId: string): string {
+  return clipDeliveryId(`notice:${turnId}`);
+}
+
+export function noticeOwnerDeliveryKey(turnId: string): string {
+  return clipDeliveryId(`notice-owner:${turnId}`);
+}
+
+function clipDeliveryId(id: string): string {
+  return id.length <= FEISHU_DELIVERY_ID_MAX_CHARS ? id : id.slice(0, FEISHU_DELIVERY_ID_MAX_CHARS);
 }
 
 export { readProcessStartMs, isProcessAlive };

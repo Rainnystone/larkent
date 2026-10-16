@@ -1,0 +1,376 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f4004000519dd3 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -3991,7 +3991,8 @@ var CardStreamControllerImpl = class {
+ 			msgType: "interactive",
+ 			content: this._current,
+ 			replyTo: this.opts.replyTo,
+-			replyInThread: this.opts.replyInThread
++			replyInThread: this.opts.replyInThread,
++			uuid: this.opts.uuid
+ 		});
+ 		this._messageId = id;
+ 	}
+@@ -4267,6 +4268,13 @@ var MarkdownStreamController = class {
+ //#endregion
+ //#region src/outbound/sender.ts
+ const DEFAULT_CHUNK_LIMIT = 3500;
++
++function chunkDeliveryUuid(uuid, index) {
++	if (!uuid) return;
++	if (index === 0) return uuid;
++	const suffix = `:${index}`;
++	return uuid.length + suffix.length <= 50 ? uuid + suffix : uuid.slice(0, 50 - suffix.length) + suffix;
++}
+ var OutboundSender = class {
+ 	client;
+ 	config;
+@@ -4316,7 +4324,8 @@ var OutboundSender = class {
+ 				msgType: "post",
+ 				content: post,
+ 				replyTo: replyTargetForChunk(i, opts, ids),
+-				replyInThread: opts.replyInThread
++				replyInThread: opts.replyInThread,
++				uuid: chunkDeliveryUuid(opts.uuid, i)
+ 			});
+ 			ids.push(id);
+ 		}
+@@ -4332,7 +4341,8 @@ var OutboundSender = class {
+ 				msgType: "text",
+ 				content: { text: chunks[i] },
+ 				replyTo: replyTargetForChunk(i, opts, ids),
+-				replyInThread: opts.replyInThread
++				replyInThread: opts.replyInThread,
++				uuid: chunkDeliveryUuid(opts.uuid, i)
+ 			});
+ 			ids.push(id);
+ 		}
+@@ -4345,7 +4355,8 @@ var OutboundSender = class {
+ 			msgType: "post",
+ 			content: post,
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	convertMarkdown(md, mentions) {
+@@ -4364,7 +4375,8 @@ var OutboundSender = class {
+ 			msgType: "image",
+ 			content: { image_key: up.fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendFile(to, idType, input, opts) {
+@@ -4379,7 +4391,8 @@ var OutboundSender = class {
+ 			msgType: "file",
+ 			content: { file_key: up.fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendAudio(to, idType, input, opts) {
+@@ -4394,7 +4407,8 @@ var OutboundSender = class {
+ 			msgType: "audio",
+ 			content: { file_key: up.fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendVideo(to, idType, input, opts) {
+@@ -4410,7 +4424,8 @@ var OutboundSender = class {
+ 			msgType: "media",
+ 			content,
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendCard(to, idType, card, opts) {
+@@ -4420,7 +4435,8 @@ var OutboundSender = class {
+ 			msgType: "interactive",
+ 			content: card,
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendShareChat(to, idType, chatId, opts) {
+@@ -4430,7 +4446,8 @@ var OutboundSender = class {
+ 			msgType: "share_chat",
+ 			content: { chat_id: chatId },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendShareUser(to, idType, userId, opts) {
+@@ -4440,7 +4457,8 @@ var OutboundSender = class {
+ 			msgType: "share_user",
+ 			content: { user_id: userId },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendSticker(to, idType, fileKey, opts) {
+@@ -4450,7 +4468,8 @@ var OutboundSender = class {
+ 			msgType: "sticker",
+ 			content: { file_key: fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	/**
+@@ -4486,14 +4505,17 @@ var OutboundSender = class {
+ 			msg_type: args.msgType,
+ 			content: JSON.stringify(args.content)
+ 		};
++		if (args.uuid) payload.uuid = args.uuid;
+ 		if (args.replyTo) {
++			const data = {
++				content: payload.content,
++				msg_type: args.msgType,
++				reply_in_thread: args.replyInThread
++			};
++			if (args.uuid) data.uuid = args.uuid;
+ 			const id = (await this.client.im.v1.message.reply({
+ 				path: { message_id: args.replyTo },
+-				data: {
+-					content: payload.content,
+-					msg_type: args.msgType,
+-					reply_in_thread: args.replyInThread
+-				}
++				data
+ 			})).data?.message_id;
+ 			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
+ 			return id;
+@@ -4543,7 +4565,8 @@ var OutboundSender = class {
+ 				data: { card_id: cardId }
+ 			},
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		});
+ 	}
+ 	/**
+diff --git a/dist/index.d.cts b/dist/index.d.cts
+index 14a25d553bdba19b2be5e4c89c2bc90dd0ff590a..22c6f667db7efeadef29f00aedee16865c8cb7fe 100644
+--- a/dist/index.d.cts
++++ b/dist/index.d.cts
+@@ -206,6 +206,12 @@ interface MediaSource {
+ interface SendOptions {
+   replyTo?: string;
+   replyInThread?: boolean;
++  /**
++   * Feishu request idempotency key for `im.v1.message.create` / `reply`
++   * (max 50 characters). The SDK copies it into `rawSend` so internal
++   * `rawSendWithRetry` retries reuse the same key.
++   */
++  uuid?: string;
+   mentions?: MentionInfo[];
+   /**
+    * Rewrite plaintext `@<name>` tokens in a `{ text }` / `{ markdown }` body
+diff --git a/dist/index.d.mts b/dist/index.d.mts
+index 8ebb5c0be3f6c5f8711d4ec100f62289d859d9af..e854ad2a9ce4541323d5948b72ae677595b162a5 100644
+--- a/dist/index.d.mts
++++ b/dist/index.d.mts
+@@ -206,6 +206,12 @@ interface MediaSource {
+ interface SendOptions {
+   replyTo?: string;
+   replyInThread?: boolean;
++  /**
++   * Feishu request idempotency key for `im.v1.message.create` / `reply`
++   * (max 50 characters). The SDK copies it into `rawSend` so internal
++   * `rawSendWithRetry` retries reuse the same key.
++   */
++  uuid?: string;
+   mentions?: MentionInfo[];
+   /**
+    * Rewrite plaintext `@<name>` tokens in a `{ text }` / `{ markdown }` body
+diff --git a/dist/index.mjs b/dist/index.mjs
+index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f8860ecd4a57 100644
+--- a/dist/index.mjs
++++ b/dist/index.mjs
+@@ -3964,7 +3964,8 @@ var CardStreamControllerImpl = class {
+ 			msgType: "interactive",
+ 			content: this._current,
+ 			replyTo: this.opts.replyTo,
+-			replyInThread: this.opts.replyInThread
++			replyInThread: this.opts.replyInThread,
++			uuid: this.opts.uuid
+ 		});
+ 		this._messageId = id;
+ 	}
+@@ -4240,6 +4241,13 @@ var MarkdownStreamController = class {
+ //#endregion
+ //#region src/outbound/sender.ts
+ const DEFAULT_CHUNK_LIMIT = 3500;
++
++function chunkDeliveryUuid(uuid, index) {
++	if (!uuid) return;
++	if (index === 0) return uuid;
++	const suffix = `:${index}`;
++	return uuid.length + suffix.length <= 50 ? uuid + suffix : uuid.slice(0, 50 - suffix.length) + suffix;
++}
+ var OutboundSender = class {
+ 	client;
+ 	config;
+@@ -4289,7 +4297,8 @@ var OutboundSender = class {
+ 				msgType: "post",
+ 				content: post,
+ 				replyTo: replyTargetForChunk(i, opts, ids),
+-				replyInThread: opts.replyInThread
++				replyInThread: opts.replyInThread,
++				uuid: chunkDeliveryUuid(opts.uuid, i)
+ 			});
+ 			ids.push(id);
+ 		}
+@@ -4305,7 +4314,8 @@ var OutboundSender = class {
+ 				msgType: "text",
+ 				content: { text: chunks[i] },
+ 				replyTo: replyTargetForChunk(i, opts, ids),
+-				replyInThread: opts.replyInThread
++				replyInThread: opts.replyInThread,
++				uuid: chunkDeliveryUuid(opts.uuid, i)
+ 			});
+ 			ids.push(id);
+ 		}
+@@ -4318,7 +4328,8 @@ var OutboundSender = class {
+ 			msgType: "post",
+ 			content: post,
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	convertMarkdown(md, mentions) {
+@@ -4337,7 +4348,8 @@ var OutboundSender = class {
+ 			msgType: "image",
+ 			content: { image_key: up.fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendFile(to, idType, input, opts) {
+@@ -4352,7 +4364,8 @@ var OutboundSender = class {
+ 			msgType: "file",
+ 			content: { file_key: up.fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendAudio(to, idType, input, opts) {
+@@ -4367,7 +4380,8 @@ var OutboundSender = class {
+ 			msgType: "audio",
+ 			content: { file_key: up.fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendVideo(to, idType, input, opts) {
+@@ -4383,7 +4397,8 @@ var OutboundSender = class {
+ 			msgType: "media",
+ 			content,
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendCard(to, idType, card, opts) {
+@@ -4393,7 +4408,8 @@ var OutboundSender = class {
+ 			msgType: "interactive",
+ 			content: card,
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendShareChat(to, idType, chatId, opts) {
+@@ -4403,7 +4419,8 @@ var OutboundSender = class {
+ 			msgType: "share_chat",
+ 			content: { chat_id: chatId },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendShareUser(to, idType, userId, opts) {
+@@ -4413,7 +4430,8 @@ var OutboundSender = class {
+ 			msgType: "share_user",
+ 			content: { user_id: userId },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	async sendSticker(to, idType, fileKey, opts) {
+@@ -4423,7 +4441,8 @@ var OutboundSender = class {
+ 			msgType: "sticker",
+ 			content: { file_key: fileKey },
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		}) };
+ 	}
+ 	/**
+@@ -4459,14 +4478,17 @@ var OutboundSender = class {
+ 			msg_type: args.msgType,
+ 			content: JSON.stringify(args.content)
+ 		};
++		if (args.uuid) payload.uuid = args.uuid;
+ 		if (args.replyTo) {
++			const data = {
++				content: payload.content,
++				msg_type: args.msgType,
++				reply_in_thread: args.replyInThread
++			};
++			if (args.uuid) data.uuid = args.uuid;
+ 			const id = (await this.client.im.v1.message.reply({
+ 				path: { message_id: args.replyTo },
+-				data: {
+-					content: payload.content,
+-					msg_type: args.msgType,
+-					reply_in_thread: args.replyInThread
+-				}
++				data
+ 			})).data?.message_id;
+ 			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
+ 			return id;
+@@ -4516,7 +4538,8 @@ var OutboundSender = class {
+ 				data: { card_id: cardId }
+ 			},
+ 			replyTo: opts.replyTo,
+-			replyInThread: opts.replyInThread
++			replyInThread: opts.replyInThread,
++			uuid: opts.uuid
+ 		});
+ 	}
+ 	/**

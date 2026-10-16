@@ -111,8 +111,10 @@ import { classify } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import { unseenStreamFallback } from './stream-fallback';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
+import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
+  replyDeliveryKey,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnJournalResource,
@@ -532,11 +534,18 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const journalRecoverOpts = (owned: TurnJournal) => ({
-    resend: (entry: TurnJournalEntry) => resendJournalReply(channel, entry),
+    resend: (entry: TurnJournalEntry) => resendJournalReply({
+      channel,
+      journal: owned,
+      entry,
+      botAppId: cfg.accounts.app.id,
+      now: deps.now,
+    }),
     resendNotice: (entry: TurnJournalEntry) => resendPendingNotice({
       send: (chatId: string, content: { markdown: string } | { card: object }, options?: {
         replyTo?: string;
         replyInThread?: boolean;
+        uuid?: string;
       }) => channel.send(chatId, content, options),
       entry,
       journal: owned,
@@ -2198,11 +2207,15 @@ async function deliverFinalReply(input: {
   const willNotice = Boolean(
     input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
   );
+  const deliveryId = input.turnId
+    ? input.journal?.get(input.turnId)?.reply?.deliveryId ?? replyDeliveryKey(input.turnId)
+    : undefined;
   const reply = {
     markdown: body,
     replyTo: input.sendOpts.replyTo,
     replyMode: input.replyMode,
     ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+    ...(deliveryId ? { deliveryId } : {}),
   };
   if (input.journal && input.turnId && !skip) {
     input.journal.stageReply(input.turnId, reply);
@@ -2230,7 +2243,7 @@ async function deliverFinalReply(input: {
     }
   } else {
     try {
-      const sent = await sendFinalReply(input);
+      const sent = await sendFinalReply({ ...input, deliveryId });
       if (input.journal && input.turnId && sent?.messageId) {
         input.journal.noteReplyReceipt(input.turnId, sent.messageId);
       }
@@ -2253,33 +2266,38 @@ async function deliverFinalReply(input: {
   }
 }
 
-async function resendJournalReply(channel: LarkChannel, entry: TurnJournalEntry): Promise<boolean> {
-  if (!entry.reply?.markdown.trim()) return false;
-  if (entry.reply.messageId || entry.reply.streamFinalized || entry.cliAlreadySent) {
-    if (entry.cliAlreadySent) {
-      log.info('outbound', 'skip-cli-already-sent', {
-        scope: entry.scope,
-        chatId: entry.chatId,
-        mode: 'journal-resend',
-      });
-    }
+async function resendJournalReply(input: {
+  channel: LarkChannel;
+  journal: TurnJournal;
+  entry: TurnJournalEntry;
+  botAppId: string;
+  now?: () => number;
+}): Promise<boolean> {
+  const { entry } = input;
+  if (entry.cliAlreadySent) {
+    log.info('outbound', 'skip-cli-already-sent', {
+      scope: entry.scope,
+      chatId: entry.chatId,
+      mode: 'journal-resend',
+    });
     return true;
   }
-  const result = await channel.send(
-    entry.chatId,
-    { markdown: entry.reply.markdown },
-    {
-      replyTo: entry.reply.replyTo,
-      ...(entry.reply.replyInThread ? { replyInThread: true } : {}),
-    },
-  );
-  requireMessageReceipt(result, 'journal-resend');
-  log.info('outbound', 'journal-resend', {
-    scope: entry.scope,
-    turnId: entry.turnId,
-    chatId: entry.chatId,
+  const result = await redeliverStagedReply({
+    channel: input.channel,
+    entry,
+    botAppId: input.botAppId,
+    ...(input.now ? { now: input.now } : {}),
   });
-  return true;
+  if (result.messageId) input.journal.noteReplyReceipt(entry.turnId, result.messageId);
+  if (result.delivered) {
+    log.info('outbound', 'journal-resend', {
+      scope: entry.scope,
+      turnId: entry.turnId,
+      chatId: entry.chatId,
+      messageId: result.messageId,
+    });
+  }
+  return result.delivered;
 }
 
 async function sendFinalReply(input: {
@@ -2293,6 +2311,8 @@ async function sendFinalReply(input: {
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
   cliSelfSent?: CliSelfSendTracker;
+  turnId?: string;
+  deliveryId?: string;
 }): Promise<{ messageId?: string } | undefined> {
   if (
     shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
@@ -2317,11 +2337,16 @@ async function sendFinalReply(input: {
     return undefined;
   }
 
+  const sendOpts = withDeliveryUuid(
+    input.sendOpts,
+    input.deliveryId ?? (input.turnId ? replyDeliveryKey(input.turnId) : undefined),
+  );
+
   if (input.replyMode === 'card') {
     const result = await input.channel.send(
       input.chatId,
       { card: renderCard(input.state, input.cardRenderOptions) },
-      input.sendOpts,
+      sendOpts,
     );
     requireMessageReceipt(result, 'card');
     log.info('outbound', 'sent', outboundLogFields(input, 'card', body, result));
@@ -2332,7 +2357,7 @@ async function sendFinalReply(input: {
       const result = await input.channel.send(
         input.chatId,
         { markdown: body },
-        input.sendOpts,
+        sendOpts,
       );
       requireMessageReceipt(result, 'markdown');
       log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
@@ -2344,7 +2369,7 @@ async function sendFinalReply(input: {
     const result = await input.channel.send(
       input.chatId,
       { markdown: body },
-      input.sendOpts,
+      sendOpts,
     );
     requireMessageReceipt(result, 'text');
     log.info('outbound', 'sent', outboundLogFields(input, 'text', body, result));

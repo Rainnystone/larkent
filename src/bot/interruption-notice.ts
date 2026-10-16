@@ -1,9 +1,12 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CallbackNonceStore } from '../card/callback-store';
 import { interruptionNoticeCard } from '../card/templates';
 import { log } from '../core/logger';
 import { describeRunOutcome, type RunOutcome } from './run-outcome';
+import { withDeliveryUuid } from './feishu-delivery';
 import {
+  noticeDeliveryKey,
+  noticeOwnerDeliveryKey,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnNotice,
@@ -219,7 +222,7 @@ function signatureMatches(actual: string, expected: string): boolean {
 export type NoticeSender = (
   chatId: string,
   content: { markdown: string } | { card: object },
-  options?: { replyTo?: string; replyInThread?: boolean },
+  options?: { replyTo?: string; replyInThread?: boolean; uuid?: string },
 ) => Promise<{ messageId?: string }>;
 
 export function resolvedNoticeCard(resolution: NoticeResolution): object {
@@ -355,9 +358,9 @@ function stageContinueNotice(
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     includeButtons: buttons,
-    deliveryId: randomUUID(),
+    deliveryId: noticeDeliveryKey(input.turnId),
   };
-  if (!notice.deliveryId) notice = { ...notice, deliveryId: randomUUID() };
+  if (!notice.deliveryId) notice = { ...notice, deliveryId: noticeDeliveryKey(input.turnId) };
   if (!existing) {
     input.journal.markInterrupted(input.turnId, input.outcome, input.consecutive);
     input.journal.stageNotice(input.turnId, notice);
@@ -416,7 +419,7 @@ function stageAuthNotice(
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     ...(input.ownerId ? { ownerChatId: input.ownerId } : {}),
-    deliveryId: randomUUID(),
+    deliveryId: noticeDeliveryKey(input.turnId),
   };
   if (!existing) input.journal.stageNotice(input.turnId, notice);
   return input.journal.get(input.turnId) ?? { ...entry, notice };
@@ -464,13 +467,21 @@ async function sendAuthPayload(
   const next: TurnNotice = { ...notice };
   try {
     if (!next.initiatorDelivered) {
-      const result = await send(next.recipientChatId, { markdown: next.markdown }, sendOpts(entry, next));
+      const result = await send(
+        next.recipientChatId,
+        { markdown: next.markdown },
+        sendOpts(entry, next),
+      );
       requireReceipt(result, 'auth-initiator');
       next.initiatorDelivered = true;
       journal?.recordNotice(entry.turnId, next);
     }
     if (next.ownerChatId && !next.ownerDelivered) {
-      const result = await send(next.ownerChatId, { markdown: buildAuthOwnerMarkdown() });
+      const result = await send(
+        next.ownerChatId,
+        { markdown: buildAuthOwnerMarkdown() },
+        withDeliveryUuid({}, noticeOwnerDeliveryKey(entry.turnId)),
+      );
       requireReceipt(result, 'auth-owner');
       next.ownerDelivered = true;
       journal?.recordNotice(entry.turnId, next);
@@ -539,12 +550,12 @@ function persistNoticeMessageId(
 function sendOpts(
   entry: TurnJournalEntry,
   notice: TurnNotice,
-): { replyTo?: string; replyInThread?: boolean } {
+): { replyTo?: string; replyInThread?: boolean; uuid?: string } {
   const replyTo = notice.replyTo ?? entry.messageIds.at(-1);
-  return {
+  return withDeliveryUuid({
     ...(replyTo ? { replyTo } : {}),
     ...(notice.replyInThread || entry.threadId ? { replyInThread: true } : {}),
-  };
+  }, notice.deliveryId ?? noticeDeliveryKey(entry.turnId));
 }
 
 function requireReceipt(result: { messageId?: string }, type: string): void {

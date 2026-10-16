@@ -17,6 +17,11 @@ export interface FakeRawClientRequest {
   params: unknown;
 }
 
+export interface FakeChannelOptions {
+  botAppId?: string;
+  now?: () => number;
+}
+
 export interface FakeChannel {
   readonly sent: FakeChannelMessage[];
   readonly streams: FakeChannelStream[];
@@ -59,25 +64,81 @@ export interface FakeChannel {
   getAppInfo(): Promise<{ ownerId: string }>;
 }
 
-export function createFakeChannel(): FakeChannel {
+interface StoredChatMessage {
+  messageId: string;
+  chatId: string;
+  content: unknown;
+  options: unknown;
+  uuid?: string;
+  createTime: number;
+  parentId?: string;
+  msgType: string;
+}
+
+export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel {
+  const botAppId = options.botAppId ?? 'cli_bot';
+  const now = options.now ?? Date.now;
   const sent: FakeChannelMessage[] = [];
   const streams: FakeChannelStream[] = [];
   const requests: FakeRawClientRequest[] = [];
   const updatedCards: Array<{ messageId: string; card: unknown }> = [];
   const rawThreadIds = new Map<string, string>();
   const cardById = new Map<string, unknown>();
+  const byUuid = new Map<string, StoredChatMessage>();
+  const byId = new Map<string, StoredChatMessage>();
+  const chat: StoredChatMessage[] = [];
   let nextCard = 1;
   let nextMessage = 1;
 
-  const pushManagedCardMessage = (params: unknown, fallbackChatId: string): { message_id: string } => {
-    requests.push({ method: 'im.v1.message.create', params });
+  const land = (input: {
+    chatId: string;
+    content: unknown;
+    options: unknown;
+    uuid?: string;
+    parentId?: string;
+    msgType: string;
+  }): { message_id: string; body: { content: string } } => {
+    const echo = stringifyContent(input.content);
+    if (input.uuid) {
+      const original = byUuid.get(input.uuid);
+      if (original) {
+        return { message_id: original.messageId, body: { content: echo } };
+      }
+    }
+    const messageId = `om_fake_${nextMessage++}`;
+    const stored: StoredChatMessage = {
+      messageId,
+      chatId: input.chatId,
+      content: input.content,
+      options: input.options,
+      createTime: now(),
+      msgType: input.msgType,
+      ...(input.uuid ? { uuid: input.uuid } : {}),
+      ...(input.parentId ? { parentId: input.parentId } : {}),
+    };
+    chat.push(stored);
+    byId.set(messageId, stored);
+    if (input.uuid) byUuid.set(input.uuid, stored);
+    sent.push({ chatId: input.chatId, content: input.content, options: input.options });
+    return { message_id: messageId, body: { content: stringifyContent(input.content) } };
+  };
+
+  const pushManagedCardMessage = (params: unknown, fallbackChatId: string, method: string): {
+    message_id: string;
+    body: { content: string };
+  } => {
+    requests.push({ method, params });
     const card = resolveReferencedCard(params);
-    sent.push({
+    const data = nestedData(params);
+    const content = card ? { card } : parseJsonContent(data?.content) ?? params;
+    return land({
       chatId: extractReceiveId(params) ?? fallbackChatId,
-      content: card ? { card } : params,
+      content,
       options: undefined,
+      uuid: stringField(data, 'uuid'),
+      parentId: replyParentId(params),
+      msgType: stringField(data, 'msg_type') ?? (card ? 'interactive' : 'text'),
     });
-    return { message_id: `om_fake_${nextMessage++}` };
   };
 
   return {
@@ -115,10 +176,10 @@ export function createFakeChannel(): FakeChannel {
         v1: {
           message: {
             async create(params: unknown): Promise<unknown> {
-              return { data: pushManagedCardMessage(params, '') };
+              return { data: pushManagedCardMessage(params, '', 'im.v1.message.create') };
             },
             async reply(params: unknown): Promise<unknown> {
-              return { data: pushManagedCardMessage(params, '') };
+              return { data: pushManagedCardMessage(params, '', 'im.v1.message.reply') };
             },
             async delete(params: unknown): Promise<unknown> {
               requests.push({ method: 'im.v1.message.delete', params });
@@ -126,7 +187,11 @@ export function createFakeChannel(): FakeChannel {
             },
             async list(params: unknown): Promise<unknown> {
               requests.push({ method: 'im.v1.message.list', params });
-              return { data: { items: [], has_more: false } };
+              const containerId = extractContainerId(params);
+              const items = chat
+                .filter((item) => !containerId || item.chatId === containerId)
+                .map((item) => listItem(item, botAppId));
+              return { data: { items, has_more: false } };
             },
           },
         },
@@ -143,17 +208,24 @@ export function createFakeChannel(): FakeChannel {
     async updateCard(messageId: string, cardJson: unknown): Promise<void> {
       updatedCards.push({ messageId, card: cardJson });
       requests.push({ method: 'im.v1.message.patch', params: { messageId, cardJson } });
+      const stored = byId.get(messageId);
+      if (stored) stored.content = { card: cardJson };
     },
     async send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }> {
-      // Resolve a `{ cardId }` reference back to the card JSON so assertions
-      // can read the rendered card content (matching the legacy send shape).
       const cardId = (content as { cardId?: unknown } | undefined)?.cardId;
       const resolved =
         typeof cardId === 'string' && cardById.has(cardId)
           ? { card: cardById.get(cardId) }
           : content;
-      sent.push({ chatId, content: resolved, options });
-      return { messageId: `om_fake_${nextMessage++}` };
+      const landed = land({
+        chatId,
+        content: resolved,
+        options,
+        uuid: outboundUuid(options),
+        parentId: outboundReplyTo(options),
+        msgType: inferMsgType(resolved),
+      });
+      return { messageId: landed.message_id };
     },
     getConnectionStatus() {
       return { state: 'connected' as const, reconnectAttempts: 0 };
@@ -214,6 +286,73 @@ function extractCardJson(params: unknown): unknown {
 function extractReceiveId(params: unknown): string | undefined {
   const receiveId = (params as { data?: { receive_id?: unknown } } | undefined)?.data?.receive_id;
   return typeof receiveId === 'string' ? receiveId : undefined;
+}
+
+function nestedData(params: unknown): Record<string, unknown> | undefined {
+  const rec = asRecord(params);
+  const data = rec?.data;
+  return asRecord(data);
+}
+
+function replyParentId(params: unknown): string | undefined {
+  const rec = asRecord(params);
+  const path = asRecord(rec?.path);
+  const fromPath = path?.message_id;
+  return typeof fromPath === 'string' ? fromPath : undefined;
+}
+
+function extractContainerId(params: unknown): string | undefined {
+  const rec = asRecord(params);
+  const nested = asRecord(rec?.params) ?? rec;
+  const id = nested?.container_id;
+  return typeof id === 'string' ? id : undefined;
+}
+
+function listItem(item: StoredChatMessage, botAppId: string): Record<string, unknown> {
+  return {
+    message_id: item.messageId,
+    ...(item.parentId ? { parent_id: item.parentId } : {}),
+    create_time: String(item.createTime),
+    msg_type: item.msgType,
+    sender: { id: botAppId, id_type: 'app_id', sender_type: 'app' },
+    body: { content: stringifyContent(item.content) },
+  };
+}
+
+function outboundUuid(options: unknown): string | undefined {
+  return stringField(asRecord(options), 'uuid');
+}
+
+function outboundReplyTo(options: unknown): string | undefined {
+  return stringField(asRecord(options), 'replyTo');
+}
+
+function inferMsgType(content: unknown): string {
+  if (asRecord(content)?.card !== undefined) return 'interactive';
+  if (asRecord(content)?.markdown !== undefined) return 'post';
+  return 'text';
+}
+
+function stringifyContent(content: unknown): string {
+  return typeof content === 'string' ? content : JSON.stringify(content);
+}
+
+function parseJsonContent(content: unknown): unknown | undefined {
+  if (typeof content !== 'string') return undefined;
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    return content;
+  }
+}
+
+function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === 'string' && value ? value : undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : undefined;
 }
 
 interface FakeCardController {

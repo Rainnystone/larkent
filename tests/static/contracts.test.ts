@@ -186,6 +186,10 @@ describe('static architecture contracts', () => {
     expect(stray, stray.join('\n')).toEqual([]);
     expect(read('src/bot/feishu-link.ts')).toMatch(/wrapChannelOutbound/);
     expect(read('src/bot/channel.ts')).not.toMatch(/wrapChannelOutbound/);
+    expect(read('package.json')).toMatch(/"@larksuite\/channel@0\.7\.1": "patches\/@larksuite__channel@0\.7\.1\.patch"/);
+    expect(read('patches/@larksuite__channel@0.7.1.patch')).toMatch(/payload\.uuid = args\.uuid/);
+    expect(read('src/bot/feishu-delivery.ts')).toMatch(/\bupdateCard\b/);
+    expect(read('src/bot/feishu-delivery.ts')).not.toMatch(/\bupdateCardById\b/);
   });
 
   it('uses one Feishu error classifier and does not time the stream lifetime', () => {
