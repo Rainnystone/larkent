@@ -1,3 +1,4 @@
+import { stripArgvSeparators } from './argv';
 import { loadTestBridgeConfig } from './config';
 import {
   armDriverFault,
@@ -21,8 +22,9 @@ async function main(argv: string[]): Promise<void> {
   if (process.platform === 'win32') {
     throw new Error('e2e test-bridge commands are POSIX-only');
   }
-  const command = parseCommand(argv[0]);
-  const rest = argv.slice(1);
+  const args = stripArgvSeparators(argv);
+  const command = parseCommand(args[0]);
+  const rest = args.slice(1);
   switch (command) {
     case 'up':
       await cmdUp(rest);
@@ -77,6 +79,7 @@ async function cmdUp(argv: string[]): Promise<void> {
   const running = await up({
     config,
     realCli: Boolean(flags['real-cli']),
+    resetConfig: Boolean(flags['reset-config']),
     ...(stringFlag(flags, 'real-cli-path') ? { realCliPath: stringFlag(flags, 'real-cli-path') } : {}),
   });
   console.log(`test-bridge up pid=${running.pid} root=${running.rootDir} proxy=${running.proxyUrl}`);
@@ -241,7 +244,7 @@ function isProxyMode(value: string): value is FaultProxyMode {
 
 function printHelp(): void {
   console.log(`test-bridge (POSIX)
-  pnpm e2e:up -- [--config e2e/.local/test-bridge.json] [--real-cli]
+  pnpm e2e:up -- [--config e2e/.local/test-bridge.json] [--real-cli] [--reset-config]
   pnpm e2e:down
   pnpm e2e:fault -- arm cursor-stall --run-id 2
   pnpm e2e:fault -- proxy disconnect [--host open.feishu.cn]
@@ -256,7 +259,7 @@ function printHelp(): void {
 `);
 }
 
-const args = process.argv.slice(2);
+const args = stripArgvSeparators(process.argv.slice(2));
 main(args).catch((err: unknown) => {
   console.error(err instanceof Error ? err.message : err);
   process.exit(1);

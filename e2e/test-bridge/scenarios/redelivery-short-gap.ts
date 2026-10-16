@@ -2,6 +2,7 @@ import { loadTestBridgeConfig } from '../config';
 import { DEFAULT_LOCAL_CONFIG } from '../paths';
 import { setProxyMode, up } from '../driver';
 import { readProxyState } from '../proxy-control';
+import { runWithCleanup } from '../scenario-cleanup';
 import { readTesterMessages, sendTesterMessage } from '../tester';
 
 export interface RedeliveryResult {
@@ -34,23 +35,30 @@ export async function runRedeliveryShortGap(opts: {
   }
 
   const token = `e2e-gap-${Date.now().toString(36)}`;
-  await setProxyMode(config.dataRoot, 'disconnect');
-  await sleep(500);
-  const sent = await sendTesterMessage(config, `continue ${token}`);
-  await sleep(gapSec * 1000);
-  await setProxyMode(config.dataRoot, 'off');
-  await sleep(8_000);
-  const messages = await readTesterMessages(config, { pageSize: 30 });
-  const recovered = messages.some((item) => item.text.includes(token));
-  return {
-    gapSec,
-    sentText: redact(sent.text),
-    recovered,
-    viaHint: recovered ? 'present-after-restore' : 'unknown',
-    note: recovered
-      ? 'tester message is visible after restore; inspect bridge logs for WS redelivery vs backfill (card.final / backfill.*).'
-      : 'tester message was not visible after restore in the read-back window; do not treat this as a short-gap skip proof.',
-  };
+  return runWithCleanup(
+    async () => {
+      await setProxyMode(config.dataRoot, 'disconnect');
+      await sleep(500);
+      const sent = await sendTesterMessage(config, `continue ${token}`);
+      await sleep(gapSec * 1000);
+      await setProxyMode(config.dataRoot, 'off');
+      await sleep(8_000);
+      const messages = await readTesterMessages(config, { pageSize: 30 });
+      const recovered = messages.some((item) => item.text.includes(token));
+      return {
+        gapSec,
+        sentText: redact(sent.text),
+        recovered,
+        viaHint: recovered ? 'present-after-restore' : 'unknown',
+        note: recovered
+          ? 'tester message is visible after restore; inspect bridge logs for WS redelivery vs backfill (card.final / backfill.*).'
+          : 'tester message was not visible after restore in the read-back window; do not treat this as a short-gap skip proof.',
+      };
+    },
+    async () => {
+      await setProxyMode(config.dataRoot, 'off').catch(() => {});
+    },
+  );
 }
 
 function clampGap(sec: number): number {
