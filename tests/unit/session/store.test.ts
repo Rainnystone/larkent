@@ -30,7 +30,7 @@ describe('SessionStore v2', () => {
       expect(await readFile(file, 'utf8')).toBe(bytes);
       expect((await stat(file)).mtimeMs).toBe(before.mtimeMs);
       if (process.platform !== 'win32') expect(before.mode & 0o777).toBe(0o600);
-    } finally { await rm(dir, { recursive: true, force: true }); }
+    } finally { await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }); }
   });
 });
 
@@ -47,8 +47,13 @@ beforeEach(async () => {
 
 async function fixture(run: (store: SessionStore, file: string) => Promise<void>) {
   const dir = await mkdtemp(join(tmpdir(), 'session-errors-'));
-  try { await run(new SessionStore(join(dir, 'sessions.json')), join(dir, 'sessions.json')); }
-  finally { await rm(dir, { recursive: true, force: true }); }
+  const store = new SessionStore(join(dir, 'sessions.json'));
+  try {
+    await run(store, join(dir, 'sessions.json'));
+  } finally {
+    await store.flush().catch(() => undefined);
+    await rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+  }
 }
 
 it('creates v2 and keeps all mutation output reloadable, including timeout reset', async () => {
@@ -237,6 +242,7 @@ it('does not resume an untagged legacy handle for a requested agentKind', async 
     store.set('oc_group', 'legacy-sess', '/work');
     expect(store.resumeFor('oc_group', '/work')).toBe('legacy-sess');
     expect(store.resumeFor('oc_group', '/work', 'cursor')).toBeUndefined();
+    await store.flush();
   });
 });
 
