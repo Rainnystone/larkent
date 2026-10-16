@@ -28,6 +28,8 @@ export interface FeishuLinkDeps {
   probe: () => Promise<boolean>;
   watermark: { get(): number | undefined; set(at: number): void };
   now?: () => number;
+  /** Awake event-loop time. Defaults to `performance.now`. */
+  monotonic?: () => number;
   heartbeatPath?: string;
   outbound?: OutboundMessageIds;
   outboundTimeoutMs?: number;
@@ -59,6 +61,7 @@ export function isBusiness4xx(error: unknown): boolean {
 
 export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Promise<void> } {
   const nowFn = deps.now ?? Date.now;
+  const monoFn = deps.monotonic ?? (() => performance.now());
   const listeners = new Set<(o: Outage) => void>();
   let stopped = false;
   let down = true;
@@ -67,6 +70,8 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let lastTickAt = 0;
   let lastEvidenceAt: number | undefined;
   let probing = false;
+  let probeWallStart = 0;
+  let probeMonoStart = 0;
   let wsDownTicks = 0;
 
   const touchHeartbeat = (): void => {
@@ -114,11 +119,26 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
   const wsConnected = (): boolean => deps.channel.getConnectionStatus()?.state === 'connected';
 
+  const suspendDuringProbeMs = (): number => {
+    const wallElapsed = Math.max(0, nowFn() - probeWallStart);
+    const monoElapsed = Math.max(0, monoFn() - probeMonoStart);
+    return Math.max(0, wallElapsed - monoElapsed);
+  };
+
+  const noteSleepIfProbeSuspended = (): void => {
+    const sleptMs = suspendDuringProbeMs();
+    if (sleptMs <= FEISHU_LINK_SLEEP_MS) return;
+    log.info('link', 'sleep', { sleptMs });
+    goDown(probeWallStart);
+  };
+
   const tick = async (fromTimer = false): Promise<void> => {
     if (stopped) return;
     const now = nowFn();
     if (probing) {
-      lastTickAt = now;
+      // Do not move lastTickAt: a post-wake tick must not erase the suspend
+      // gap. Wall minus awake (monotonic) time is the sleep signal.
+      noteSleepIfProbeSuspended();
       return;
     }
     const sinceLast = lastTickAt > 0 ? now - lastTickAt : 0;
@@ -155,6 +175,8 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     if (!shouldProbe) return;
 
     probing = true;
+    probeWallStart = now;
+    probeMonoStart = monoFn();
     let ok = false;
     try {
       ok = await deps.probe();
@@ -162,6 +184,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       ok = false;
     } finally {
       probing = false;
+      noteSleepIfProbeSuspended();
       lastTickAt = nowFn();
     }
     if (stopped) return;

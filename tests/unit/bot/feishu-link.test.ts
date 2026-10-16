@@ -276,41 +276,26 @@ describe('FeishuLink', () => {
   });
 
   it('does not treat a slow but successful probe as host sleep', async () => {
-    let now = 1_700_000_000_000;
-    const recovered: Outage[] = [];
-    let releaseProbe: ((ok: boolean) => void) | undefined;
-    let probeOnce = true;
-    const link = startFeishuLink({
-      channel: fakeChannel(() => 'connected'),
-      probe: () => {
-        if (!probeOnce) return Promise.resolve(true);
-        probeOnce = false;
-        return new Promise<boolean>((resolve) => {
-          releaseProbe = resolve;
-        });
+    const recovered = await hangSilentProbe({
+      onHang: (clock) => {
+        clock.now += FEISHU_LINK_SLEEP_MS + 5_000;
+        clock.mono += FEISHU_LINK_SLEEP_MS + 5_000;
       },
-      watermark: memoryWatermark(now),
-      now: () => now,
     });
-    link.onRecovered((outage) => {
-      recovered.push(outage);
+    expect(recovered.link.isDown()).toBe(false);
+    expect(recovered.outages).toHaveLength(0);
+  });
+
+  it('treats a host suspend during a probe as an outage', async () => {
+    const recovered = await hangSilentProbe({
+      onHang: (clock) => {
+        clock.now += 5 * 60_000;
+      },
     });
-
-    const probing = link.tick();
-    expect(releaseProbe).toBeTypeOf('function');
-    now += FEISHU_LINK_SLEEP_MS + 5_000;
-    await link.tick();
-    expect(link.isDown()).toBe(true);
-    expect(recovered).toHaveLength(0);
-    releaseProbe?.(true);
-    await probing;
-    expect(link.isDown()).toBe(false);
-    expect(recovered).toHaveLength(1);
-
-    now += FEISHU_LINK_TICK_MS;
-    await link.tick();
-    expect(link.isDown()).toBe(false);
-    expect(recovered).toHaveLength(1);
+    expect(recovered.outages).toHaveLength(1);
+    expect(recovered.outages[0]!.since).toBe(recovered.probeStartedAt);
+    expect(recovered.outages[0]!.until).toBe(recovered.clock.now);
+    expect(recovered.link.isDown()).toBe(false);
   });
 
   it('does not advance the watermark on connected ticks without evidence', async () => {
@@ -338,6 +323,57 @@ describe('FeishuLink', () => {
     expect(watermark.get()).toBe(now);
   });
 });
+
+async function hangSilentProbe(opts: {
+  onHang: (clock: { now: number; mono: number }) => void;
+}): Promise<{
+  link: ReturnType<typeof startFeishuLink>;
+  outages: Outage[];
+  probeStartedAt: number;
+  clock: { now: number; mono: number };
+}> {
+  const clock = { now: 1_700_000_000_000, mono: 0 };
+  const outages: Outage[] = [];
+  let hangProbe = false;
+  let releaseProbe: ((ok: boolean) => void) | undefined;
+  const link = startFeishuLink({
+    channel: fakeChannel(() => 'connected'),
+    probe: () => {
+      if (!hangProbe) return Promise.resolve(true);
+      hangProbe = false;
+      return new Promise<boolean>((resolve) => {
+        releaseProbe = resolve;
+      });
+    },
+    watermark: memoryWatermark(clock.now),
+    now: () => clock.now,
+    monotonic: () => clock.mono,
+  });
+  link.onRecovered((outage) => {
+    outages.push(outage);
+  });
+
+  await link.tick();
+  expect(link.isDown()).toBe(false);
+  outages.length = 0;
+
+  hangProbe = true;
+  let probing: Promise<void> | undefined;
+  let probeStartedAt = clock.now;
+  for (let n = 0; n < 8 && !releaseProbe; n++) {
+    clock.now += FEISHU_LINK_TICK_MS;
+    clock.mono += FEISHU_LINK_TICK_MS;
+    probing = link.tick();
+    if (!releaseProbe) await probing;
+  }
+  expect(releaseProbe).toBeTypeOf('function');
+  probeStartedAt = clock.now;
+  opts.onHang(clock);
+  await link.tick();
+  releaseProbe?.(true);
+  await probing;
+  return { link, outages, probeStartedAt, clock };
+}
 
 function probeChannel(error: Error): LarkChannel {
   return {
