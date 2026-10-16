@@ -12,6 +12,7 @@ import type { RunOutcome } from '../../../src/bot/run-outcome';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 
 const dirs: string[] = [];
+const journals: TurnJournal[] = [];
 const interrupted: RunOutcome = {
   kind: 'interrupted',
   reason: { type: 'external-signal' },
@@ -20,6 +21,7 @@ const interrupted: RunOutcome = {
 };
 
 afterEach(async () => {
+  await Promise.all(journals.splice(0).map((journal) => journal.flush().catch(() => {})));
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -69,6 +71,7 @@ describe('Continuations', () => {
     await journal.flush();
 
     const reloaded = new TurnJournal(file);
+    journals.push(reloaded);
     await reloaded.load();
     const cards: object[] = [];
     const next = createContinuations({
@@ -112,6 +115,7 @@ async function setup() {
   dirs.push(dir);
   const file = join(dir, 'turn-journal.json');
   const journal = new TurnJournal(file);
+  journals.push(journal);
   await journal.load();
   journal.enqueue({
     turnId: 'turn-1',
