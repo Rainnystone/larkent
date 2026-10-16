@@ -576,8 +576,8 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     const notices = (): unknown[] =>
       h.channel.sent.filter((item) => isNoticeContent(item.content));
     const beforeRecover = notices().length;
-    // Timeout after the SDK send can still land: wrap/onSettled persists the
-    // receipt. Do not require notice-pending — that races the settle path.
+    // A timed-out send can still land in the SDK. Persist the receipt through
+    // the journal so recover does not post a second notice.
     if (entry?.status === 'notice-pending' && entry.notice?.deliveryId) {
       h.journal.noteDelivery(entry.notice.deliveryId, entry.notice.messageId ?? 'om_late');
     }

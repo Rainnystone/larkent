@@ -44,11 +44,7 @@ import {
   OutboundMessageIds,
   isSelfSender,
   noteInboundSkipSelf,
-  outboundMessageId,
-  outboundInFlight,
   senderTypeFromRaw,
-  attachOutboundUuid,
-  wrapChannelOutbound,
 } from './self-message';
 import {
   finalizeIfRunning,
@@ -381,11 +377,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   channelForCards = channel;
   const outboundIds = new OutboundMessageIds();
   const cliSelfSent = new CliSelfSendTracker();
-  wrapChannelOutbound(channel, outboundIds, {
-    onSettled: (uuid, result) => {
-      journal?.noteDelivery(uuid, outboundMessageId(result));
-    },
-  });
   const media = new MediaCache(channel, deps.appPaths?.mediaDir);
 
   // Pending → run handoff: while a run is active on a chat, block its pending
@@ -806,6 +797,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ledger?.touchLive(at);
       },
     },
+    outbound: outboundIds,
     ...(deps.now ? { now: deps.now } : {}),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
@@ -2073,7 +2065,7 @@ async function deliverFinalReply(input: {
   try {
     if (input.journal) await input.journal.flush();
     if (!input.alreadyStreamed) {
-      const sent = await sendFinalReply({ ...input, deliveryId: reply.deliveryId });
+      const sent = await sendFinalReply(input);
       if (input.journal && input.turnId && sent?.messageId) {
         input.journal.update(input.turnId, { reply: { ...reply, messageId: sent.messageId } });
       }
@@ -2098,18 +2090,13 @@ async function deliverFinalReply(input: {
 async function resendJournalReply(channel: LarkChannel, entry: TurnJournalEntry): Promise<boolean> {
   if (!entry.reply?.markdown.trim()) return false;
   if (entry.reply.messageId) return true;
-  const deliveryId = entry.reply.deliveryId ?? replyDeliveryKey(entry.turnId);
-  if (outboundInFlight(deliveryId)) return false;
   const result = await channel.send(
     entry.chatId,
     { markdown: entry.reply.markdown },
-    attachOutboundUuid(
-      {
-        replyTo: entry.reply.replyTo,
-        ...(entry.reply.replyInThread ? { replyInThread: true } : {}),
-      },
-      deliveryId,
-    ),
+    {
+      replyTo: entry.reply.replyTo,
+      ...(entry.reply.replyInThread ? { replyInThread: true } : {}),
+    },
   );
   requireMessageReceipt(result, 'journal-resend');
   log.info('outbound', 'journal-resend', {
@@ -2131,7 +2118,6 @@ async function sendFinalReply(input: {
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
   cliSelfSent?: CliSelfSendTracker;
-  deliveryId?: string;
 }): Promise<{ messageId?: string } | undefined> {
   if (
     shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
@@ -2156,13 +2142,11 @@ async function sendFinalReply(input: {
     return undefined;
   }
 
-  const sendOpts = attachOutboundUuid(input.sendOpts, input.deliveryId);
-
   if (input.replyMode === 'card') {
     const result = await input.channel.send(
       input.chatId,
       { card: renderCard(input.state, input.cardRenderOptions) },
-      sendOpts,
+      input.sendOpts,
     );
     requireMessageReceipt(result, 'card');
     log.info('outbound', 'sent', outboundLogFields(input, 'card', body, result));
@@ -2173,7 +2157,7 @@ async function sendFinalReply(input: {
       const result = await input.channel.send(
         input.chatId,
         { markdown: body },
-        sendOpts,
+        input.sendOpts,
       );
       requireMessageReceipt(result, 'markdown');
       log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
@@ -2185,7 +2169,7 @@ async function sendFinalReply(input: {
     const result = await input.channel.send(
       input.chatId,
       { markdown: body },
-      sendOpts,
+      input.sendOpts,
     );
     requireMessageReceipt(result, 'text');
     log.info('outbound', 'sent', outboundLogFields(input, 'text', body, result));

@@ -2,6 +2,7 @@ import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import { FEISHU_LINK_SILENT_PROBE_MS, FEISHU_LINK_TICK_MS } from '../../../src/bot/feishu-link';
+import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
@@ -81,6 +82,64 @@ describe('FeishuLink recovery through the bridge', () => {
     expect(replies).toHaveLength(1);
   });
 
+  it('resends a staged reply exactly once after recovery and never while up', async () => {
+    let now = NOW;
+    const h = await startHarness({
+      now: () => now,
+      probe: async () => true,
+      lastLiveAt: NOW,
+      history: { [CHAT]: [] },
+      withJournal: true,
+    });
+    await waitFor(() => h.ledger.getLiveAt() === NOW);
+    expect(h.journal).toBeDefined();
+
+    h.journal!.enqueue({
+      turnId: 'turn-staged',
+      scope: CHAT,
+      chatId: CHAT,
+      messageIds: ['om_src'],
+      senderId: USER,
+      initiatorId: USER,
+      status: 'completed-undelivered',
+      reply: {
+        markdown: 'STAGED_ONCE',
+        replyTo: 'om_src',
+        replyMode: 'text',
+      },
+    });
+    await h.journal!.flush();
+
+    const stagedSends = () => h.channel.sent.filter((item) =>
+      JSON.stringify(item.content).includes('STAGED_ONCE'),
+    );
+
+    for (let n = 0; n < 3; n++) {
+      now += FEISHU_LINK_TICK_MS;
+      await h.bridge.tickLink();
+    }
+    expect(stagedSends()).toHaveLength(0);
+
+    h.channel.connectionState = 'reconnecting';
+    await h.bridge.tickLink();
+    expect(stagedSends()).toHaveLength(0);
+
+    h.channel.connectionState = 'connected';
+    await h.bridge.tickLink();
+    await waitFor(() => h.journal!.get('turn-staged')?.status === 'reply-delivered');
+    expect(stagedSends()).toHaveLength(1);
+
+    await h.bridge.recover();
+    expect(stagedSends()).toHaveLength(1);
+
+    h.channel.connectionState = 'reconnecting';
+    await h.bridge.tickLink();
+    h.channel.connectionState = 'connected';
+    await h.bridge.tickLink();
+    await waitForDebounce();
+    expect(stagedSends()).toHaveLength(1);
+  });
+
   it('does not resend or backfill on connected ticks', async () => {
     let now = NOW;
     const h = await startHarness({
@@ -109,11 +168,17 @@ async function startHarness(opts: {
   lastLiveAt: number;
   history: Record<string, unknown[]>;
   onRecovered?: (outage: { since: number; until: number }) => void;
+  withJournal?: boolean;
 }) {
   const tmp = await createTmpProfile('feishu-link-recovery-');
   const ledger = new BackfillLedger(`${tmp.profile}/backfill-state.json`, { now: opts.now });
   await ledger.load();
   ledger.touchLive(opts.lastLiveAt);
+  let journal: TurnJournal | undefined;
+  if (opts.withJournal) {
+    journal = new TurnJournal(`${tmp.profile}/turn-journal.json`, { now: opts.now });
+    await journal.load();
+  }
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
@@ -146,6 +211,7 @@ async function startHarness(opts: {
     sessions,
     workspaces,
     ledger,
+    ...(journal ? { journal } : {}),
     now: opts.now,
     probe: opts.probe,
     ...(opts.onRecovered ? { onRecovered: opts.onRecovered } : {}),
@@ -166,7 +232,7 @@ async function startHarness(opts: {
     await bridge.disconnect().catch(() => {});
     await tmp.cleanup();
   });
-  return { channel, agent, ledger, bridge };
+  return { channel, agent, ledger, bridge, journal };
 }
 
 function mentionItem(

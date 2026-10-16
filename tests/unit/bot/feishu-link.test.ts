@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { LarkChannel } from '@larksuite/channel';
+import { OutboundTimeoutError } from '../../../src/bot/self-message';
 import {
   FEISHU_LINK_SILENT_PROBE_MS,
   FEISHU_LINK_SLEEP_MS,
@@ -148,6 +149,88 @@ describe('FeishuLink', () => {
     await link.tick();
     expect(recovered).toHaveLength(1);
     expect(link.isDown()).toBe(false);
+  });
+
+  it('takes the link down on OutboundTimeoutError and keeps it up on a business 4xx', async () => {
+    let now = 1_700_000_000_000;
+    let mode: 'ok' | '4xx' | 'hang' = 'ok';
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
+      send: () => {
+        if (mode === 'hang') return new Promise<never>(() => {});
+        if (mode === '4xx') return Promise.reject(httpError(403));
+        return Promise.resolve({ messageId: 'om_ok' });
+      },
+    } as unknown as LarkChannel;
+    const link = startFeishuLink({
+      channel,
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      outboundTimeoutMs: 30,
+    });
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+
+    mode = '4xx';
+    await expect(channel.send('oc', { markdown: 'denied' })).rejects.toMatchObject({
+      response: { status: 403 },
+    });
+    expect(link.isDown()).toBe(false);
+
+    mode = 'hang';
+    await expect(channel.send('oc', { markdown: 'slow' })).rejects.toBeInstanceOf(OutboundTimeoutError);
+    expect(link.isDown()).toBe(true);
+  });
+
+  it('treats a slow-but-successful outbound as evidence and does not duplicate it', async () => {
+    let now = 1_700_000_000_000;
+    const watermark = memoryWatermark(now);
+    let sends = 0;
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
+      send: () => new Promise<{ messageId: string }>((resolve) => {
+        sends += 1;
+        setTimeout(() => resolve({ messageId: 'om_slow' }), 40);
+      }),
+    } as unknown as LarkChannel;
+    const link = startFeishuLink({
+      channel,
+      probe: async () => true,
+      watermark,
+      now: () => now,
+      outboundTimeoutMs: 200,
+    });
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+    const afterProbe = watermark.get();
+
+    now += FEISHU_LINK_TICK_MS;
+    await expect(channel.send('oc', { markdown: 'slow ok' })).resolves.toEqual({ messageId: 'om_slow' });
+    expect(link.isDown()).toBe(false);
+    expect(sends).toBe(1);
+    expect(watermark.get()).toBe(now);
+    expect(watermark.get()).not.toBe(afterProbe);
+  });
+
+  it('takes the link down on outbound 5xx', async () => {
+    let now = 1_700_000_000_000;
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
+      send: () => Promise.reject(httpError(502)),
+    } as unknown as LarkChannel;
+    const link = startFeishuLink({
+      channel,
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+    await expect(channel.send('oc', { markdown: 'fail' })).rejects.toMatchObject({
+      response: { status: 502 },
+    });
+    expect(link.isDown()).toBe(true);
   });
 
   it('keeps the link up when the authenticated probe gets a business 4xx', async () => {

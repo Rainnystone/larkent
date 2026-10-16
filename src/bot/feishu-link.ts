@@ -2,6 +2,7 @@ import type { LarkChannel } from '@larksuite/channel';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { log } from '../core/logger';
+import { OutboundMessageIds, wrapChannelOutbound } from './self-message';
 
 export const FEISHU_LINK_TICK_MS = 15_000;
 export const FEISHU_LINK_SLEEP_MS = 30_000;
@@ -28,6 +29,8 @@ export interface FeishuLinkDeps {
   watermark: { get(): number | undefined; set(at: number): void };
   now?: () => number;
   heartbeatPath?: string;
+  outbound?: OutboundMessageIds;
+  outboundTimeoutMs?: number;
 }
 
 export function createFeishuProbe(channel: LarkChannel): () => Promise<boolean> {
@@ -37,8 +40,7 @@ export function createFeishuProbe(channel: LarkChannel): () => Promise<boolean> 
       return true;
     } catch (err) {
       // A 4xx means Feishu answered; credentials/quota are not a link outage.
-      const status = httpStatus(err);
-      return status !== undefined && status >= 400 && status < 500;
+      return isBusiness4xx(err);
     }
   };
 }
@@ -48,6 +50,11 @@ function httpStatus(error: unknown): number | undefined {
   const response = (error as { response?: { status?: unknown } }).response;
   const status = response?.status;
   return typeof status === 'number' ? status : undefined;
+}
+
+function isBusiness4xx(error: unknown): boolean {
+  const status = httpStatus(error);
+  return status !== undefined && status >= 400 && status < 500;
 }
 
 export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Promise<void> } {
@@ -156,6 +163,18 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     }
     goDown(lastEvidenceAt ?? downSince);
   };
+
+  wrapChannelOutbound(deps.channel, deps.outbound ?? new OutboundMessageIds(), {
+    ...(deps.outboundTimeoutMs !== undefined ? { timeoutMs: deps.outboundTimeoutMs } : {}),
+    onOutcome: (outcome) => {
+      if (stopped) return;
+      if (!outcome.ok && !isBusiness4xx(outcome.error)) {
+        goDown(lastEvidenceAt ?? downSince);
+        return;
+      }
+      noteEvidence(nowFn(), wsConnected());
+    },
+  });
 
   const timer = setInterval(() => {
     void tick(true).catch((err) => log.fail('link', err, { step: 'tick' }));

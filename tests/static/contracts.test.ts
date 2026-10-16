@@ -145,6 +145,25 @@ describe('static architecture contracts', () => {
     expect(stray, stray.join('\n')).toEqual([]);
   });
 
+  it('does not keep the outbound UUID in-flight guard', () => {
+    const forbidden = [
+      /\binflightByUuid\b/,
+      /\boutboundInFlight\b/,
+      /\battachOutboundUuid\b/,
+      /\bstripOutboundUuid\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(read('src/bot/feishu-link.ts')).toMatch(/wrapChannelOutbound/);
+    expect(read('src/bot/channel.ts')).not.toMatch(/wrapChannelOutbound/);
+  });
+
   it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
     const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
     const webFiles = collectTsFiles('web/src');

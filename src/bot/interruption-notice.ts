@@ -3,7 +3,6 @@ import type { CallbackNonceStore } from '../card/callback-store';
 import { interruptionNoticeCard } from '../card/templates';
 import { log } from '../core/logger';
 import { describeRunOutcome, type RunOutcome } from './run-outcome';
-import { outboundInFlight } from './self-message';
 import {
   noticeDeliveryKey,
   type TurnJournal,
@@ -235,7 +234,7 @@ function signatureMatches(actual: string, expected: string): boolean {
 export type NoticeSender = (
   chatId: string,
   content: { markdown: string } | { card: object },
-  options?: { replyTo?: string; replyInThread?: boolean; uuid?: string },
+  options?: { replyTo?: string; replyInThread?: boolean },
 ) => Promise<{ messageId?: string }>;
 
 export function resolvedNoticeCard(resolution: NoticeResolution): object {
@@ -315,7 +314,6 @@ export async function resendPendingNotice(input: {
   if (notice.messageId) return true;
   if (
     isLiveNoticeSend(input.entry.turnId)
-    || outboundInFlight(notice.deliveryId)
     || input.journal?.isDelivering(noticeDeliveryKey(input.entry.turnId))
   ) {
     return false;
@@ -386,7 +384,7 @@ async function sendContinueNotice(
     endLiveNoticeSend(input.turnId);
     return { delivered: true, pending: false };
   }
-  if (outboundInFlight(notice.deliveryId) || input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
+  if (input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
     return { delivered: false, pending: true };
   }
   try {
@@ -435,7 +433,7 @@ async function sendAuthNotice(
     input.journal.markNoticeDelivered(input.turnId);
     return { delivered: true, pending: false };
   }
-  if (outboundInFlight(notice.deliveryId) || input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
+  if (input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
     return { delivered: false, pending: true };
   }
   try {
@@ -510,7 +508,7 @@ async function postNotice(
     const result = await send(
       notice.recipientChatId,
       { card: interruptionNoticeCard({ body: notice.markdown, continueToken, dismissToken }) },
-      { ...opts, ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}) },
+      opts,
     );
     requireReceipt(result, 'notice-card');
     persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
@@ -519,7 +517,7 @@ async function postNotice(
   const result = await send(
     notice.recipientChatId,
     { markdown: notice.markdown },
-    { ...opts, ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}) },
+    opts,
   );
   requireReceipt(result, 'notice-text');
   persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
@@ -539,12 +537,11 @@ function persistNoticeMessageId(
 function sendOpts(
   entry: TurnJournalEntry,
   notice: TurnNotice,
-): { replyTo?: string; replyInThread?: boolean; uuid?: string } {
+): { replyTo?: string; replyInThread?: boolean } {
   const replyTo = notice.replyTo ?? entry.messageIds.at(-1);
   return {
     ...(replyTo ? { replyTo } : {}),
     ...(notice.replyInThread || entry.threadId ? { replyInThread: true } : {}),
-    ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}),
   };
 }
 

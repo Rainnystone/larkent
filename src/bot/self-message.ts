@@ -135,18 +135,16 @@ export async function withOutboundTimeout<T>(
   }
 }
 
-const inflightByUuid = new Map<string, Promise<unknown>>();
-
-export function outboundInFlight(uuid: string | undefined): boolean {
-  return Boolean(uuid && inflightByUuid.has(uuid));
-}
+export type OutboundOutcome =
+  | { ok: true }
+  | { ok: false; error: unknown };
 
 export function wrapChannelOutbound(
   channel: object,
   outbound: OutboundMessageIds,
   opts: {
     timeoutMs?: number;
-    onSettled?: (uuid: string, result: unknown) => void;
+    onOutcome?: (outcome: OutboundOutcome) => void;
   } = {},
 ): void {
   const timeoutMs = opts.timeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
@@ -156,47 +154,20 @@ export function wrapChannelOutbound(
     if (typeof current !== 'function') continue;
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
     mutable[op] = (...args: unknown[]) => {
-      const uuid = outboundUuid(args);
-      const work = orig(...stripOutboundUuid(args)).then((result) => {
+      const work = orig(...args).then((result) => {
         if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
-        if (uuid) opts.onSettled?.(uuid, result);
         return result;
       });
-      if (uuid) {
-        inflightByUuid.set(uuid, work);
-        // Two-branch then: finally() would spawn a second rejected promise
-        // that the caller never sees, and Node would treat a normal send
-        // failure as an unhandledRejection.
-        void work.then(
-          () => {
-            if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
-          },
-          () => {
-            if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
-          },
-        );
-      }
-      return withOutboundTimeout(op, work, timeoutMs);
+      return withOutboundTimeout(op, work, timeoutMs).then(
+        (result) => {
+          opts.onOutcome?.({ ok: true });
+          return result;
+        },
+        (error: unknown) => {
+          opts.onOutcome?.({ ok: false, error });
+          throw error;
+        },
+      );
     };
   }
-}
-
-/** Attach an in-process delivery id. Stripped before the SDK send. */
-export function attachOutboundUuid<T extends object>(opts: T, uuid?: string): T {
-  if (!uuid) return opts;
-  return { ...opts, uuid } as T;
-}
-
-function outboundUuid(args: unknown[]): string | undefined {
-  const last = args.at(-1);
-  if (!last || typeof last !== 'object') return undefined;
-  const uuid = (last as { uuid?: unknown }).uuid;
-  return typeof uuid === 'string' && uuid ? uuid : undefined;
-}
-
-function stripOutboundUuid(args: unknown[]): unknown[] {
-  const last = args.at(-1);
-  if (!last || typeof last !== 'object' || !('uuid' in last)) return args;
-  const { uuid: _uuid, ...rest } = last as { uuid?: unknown } & Record<string, unknown>;
-  return [...args.slice(0, -1), rest];
 }
