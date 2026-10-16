@@ -231,8 +231,8 @@ describe('Bridge command contracts', () => {
     expect(status).toContain('**session**');
     expect(status).toContain('(无)');
     expect(status).not.toContain('**conversation**');
-    expect(status).toContain('permission');
-    expect(status).toContain('plan');
+    expect(status).toContain('权限');
+    expect(status).toContain('计划模式');
     expect(status).not.toContain('bypassPermissions');
     expect(status).not.toContain('workspace-write/workspace-write');
     expect(status).toContain('owner');
