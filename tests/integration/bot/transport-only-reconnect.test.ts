@@ -31,10 +31,12 @@ const CHAT = 'oc_group';
 const NOW = 1_760_000_000_000;
 const ANSWER = 'still here after the blip';
 const STUCK_MS = 60_000;
+const DEBOUNCE_MS = 600;
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   sdk.channel = undefined;
   sdk.options = undefined;
@@ -48,7 +50,7 @@ describe('transport-only WebSocket reconnect', () => {
     const h = await startHarness({ now: () => now, restart, agent });
 
     await h.channel.handlers.message?.(mention('om_run', 'please keep going'));
-    await waitForDebounce();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
     await waitFor(() => agent.runOptions.length === 1);
 
     h.channel.connectionState = 'reconnecting';
@@ -88,7 +90,7 @@ describe('transport-only WebSocket reconnect', () => {
     const h = await startHarness({ now: () => now, restart, agent });
 
     await h.channel.handlers.message?.(mention('om_run', 'please keep going'));
-    await waitForDebounce();
+    await vi.advanceTimersByTimeAsync(DEBOUNCE_MS);
     await waitFor(() => agent.runOptions.length === 1);
 
     h.channel.connectionState = 'reconnecting';
@@ -205,7 +207,9 @@ async function startHarness(opts: {
       processId: 'test-transport-reconnect',
     },
   });
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   cleanups.push(async () => {
+    vi.useRealTimers();
     await bridge.disconnect().catch(() => {});
     await tmp.cleanup();
   });
@@ -233,10 +237,6 @@ function chatText(channel: ReturnType<typeof createRecordingLarkChannel>): strin
     streams: channel.streams,
     calls: channel.snapshotCalls(),
   });
-}
-
-async function waitForDebounce() {
-  await new Promise((resolve) => setTimeout(resolve, 700));
 }
 
 async function waitFor(predicate: () => boolean) {
