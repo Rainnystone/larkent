@@ -344,9 +344,8 @@ async function handleRuntimeLockConflict(
   if (!(err instanceof RuntimeLockConflictError)) return 'unhandled';
   console.error(`✗ 当前 ${err.kind === 'profile' ? 'profile' : 'app'} 已有 bridge 进程占用。`);
   if (err.meta) {
-    const app = err.meta.appId ? ` app=${err.meta.appId}` : '';
     console.error(
-      `  holder: profile=${err.meta.profile}${app} agent=${err.meta.agentKind} pid=${err.meta.pid} startedAt=${err.meta.startedAt}`,
+      `  holder: profile=${err.meta.profile} agent=${err.meta.agentKind} pid=${err.meta.pid} startedAt=${err.meta.startedAt}`,
     );
   } else {
     console.error(`  lock: ${err.target}`);

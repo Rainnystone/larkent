@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { claudeCapability } from '../../../src/agent/capability';
+import { claudeCapability, grokCapability } from '../../../src/agent/capability';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { startRunFlow } from '../../../src/bot/run-flow';
 import { ProcessPool } from '../../../src/bot/process-pool';
@@ -49,7 +49,7 @@ describe('IM run flow', () => {
     const h = await createHarness();
     const workspaceRealpath = await realpath(h.tmp.workspace);
     h.workspaces.setCwd('chat-1', h.tmp.workspace);
-    h.sessions.set('chat-1', 'sess-1', workspaceRealpath);
+    h.sessions.set('chat-1', 'sess-1', workspaceRealpath, 'claude');
 
     const result = await startRunFlow({
       scopeId: 'chat-1',
@@ -98,6 +98,170 @@ describe('IM run flow', () => {
     if (!result.ok) throw new Error('expected run flow to start');
     expect(result.cwdRealpath).toBe(workspaceRealpath);
     expect(h.agent.runOptions[0]?.cwd).toBe(workspaceRealpath);
+  });
+
+  it('forceResumeHandle null starts a fresh run despite a stored session', async () => {
+    const h = await createHarness();
+    const workspaceRealpath = await realpath(h.tmp.workspace);
+    h.workspaces.setCwd('chat-1', h.tmp.workspace);
+    h.sessions.set('chat-1', 'sess-stale', workspaceRealpath);
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: 'replay',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(h.profileConfig),
+      profileConfig: h.profileConfig,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+      forceResumeHandle: null,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected run flow to start');
+    expect(result.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+  });
+
+  it('forceResumeHandle uses the journal handle instead of the stored session', async () => {
+    const h = await createHarness();
+    const workspaceRealpath = await realpath(h.tmp.workspace);
+    h.workspaces.setCwd('chat-1', h.tmp.workspace);
+    h.sessions.set('chat-1', 'sess-live', workspaceRealpath);
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: '继续',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(h.profileConfig),
+      profileConfig: h.profileConfig,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+      forceResumeHandle: 'sess-journal',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected run flow to start');
+    expect(result.resumeFrom).toBe('sess-journal');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBe('sess-journal');
+  });
+
+  it('does not force a journal resume handle when the stored fingerprint no longer matches', async () => {
+    const h = await createHarness();
+    const workspaceRealpath = await realpath(h.tmp.workspace);
+    h.workspaces.setCwd('chat-1', h.tmp.workspace);
+    // Same handle the journal would force — the hole is the fingerprint-blind
+    // SessionStore fallback, not a different live session.
+    h.sessions.set('chat-1', 'sess-journal', workspaceRealpath);
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: '继续',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(h.profileConfig),
+      profileConfig: h.profileConfig,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+      forceResumeHandle: 'sess-journal',
+      forceResumeFingerprint: 'fp-stale',
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected run flow to start');
+    expect(result.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+  });
+
+  it('promises recovery instead of a later retry when reconnect is in progress', async () => {
+    const tmp = await createTmpProfile('bridge-im-reconnect-');
+    const activeRuns = new ActiveRuns();
+    activeRuns.pauseNewRuns('reconnect-in-progress');
+    const agent = new FakeAgentAdapter();
+    const executor = new RunExecutor({
+      agent,
+      pool: new ProcessPool(() => 1),
+      activeRuns,
+      createRunId: () => 'run-1',
+      now: () => 1000,
+    });
+    const profileConfig = createDefaultProfileConfig({
+      agentKind: 'claude',
+      accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
+    });
+    profileConfig.workspaces.default = tmp.workspace;
+    const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+    const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
+    cleanups.push(async () => {
+      await Promise.all([sessions.flush(), workspaces.flush()]);
+      await tmp.cleanup();
+    });
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: 'continue',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: claudeCapability(profileConfig),
+      profileConfig,
+      sessions,
+      workspaces,
+      executor,
+      now: 1000,
+    });
+
+    expect(result).toMatchObject({
+      ok: false,
+      rejectReason: {
+        code: 'reconnect-in-progress',
+        userVisible: '当前 bot 正在重连。这条消息会在重连完成后补处理，请稍候。',
+      },
+    });
+    expect(agent.runOptions).toEqual([]);
+  });
+
+  it('does not resume a previous CLI session after switching agentKind', async () => {
+    const h = await createHarness();
+    const workspaceRealpath = await realpath(h.tmp.workspace);
+    h.workspaces.setCwd('chat-1', h.tmp.workspace);
+    h.sessions.set('chat-1', 'cursor-sess', workspaceRealpath, 'cursor');
+    const grokProfile = createDefaultProfileConfig({
+      agentKind: 'grok',
+      accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
+    });
+    grokProfile.workspaces.default = h.tmp.workspace;
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: 'hello',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: grokCapability(grokProfile),
+      profileConfig: grokProfile,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected run flow to start');
+    expect(result.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    expect(h.sessions.resumeFor('chat-1', workspaceRealpath, 'cursor')).toBe('cursor-sess');
   });
 
 });

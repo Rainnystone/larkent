@@ -3,7 +3,9 @@ import { StringDecoder } from 'node:string_decoder';
 import { log } from '../../core/logger';
 import { RunCleanupFailed } from '../../runtime/errors';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
+import { readProcessStartMs } from '../../platform/process-info';
 import type { AgentEvent, AgentRun } from '../types';
+import { BoundedStderr } from './bounded-stderr';
 
 export type JsonlFinishReason = 'normal' | 'interrupted' | 'timeout';
 
@@ -78,7 +80,9 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     cwd: input.cwd,
     env: input.env,
     stdio: ['pipe', 'pipe', 'pipe'],
+    detached: true,
   }) as CliChild;
+  const startedAt = child.pid ? (readProcessStartMs(child.pid) ?? Date.now()) : undefined;
 
   log.info('agent', 'spawn', {
     pid: child.pid ?? null,
@@ -99,12 +103,15 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   let stdoutBuffer = '';
   let sawStdout = false;
 
-  const stderrChunks: Buffer[] = [];
+  const stderr = new BoundedStderr();
   let runtimeError: Error | null = null;
   let stderrBuffer = '';
   child.stderr.on('data', (chunk: Buffer) => {
-    stderrChunks.push(chunk);
+    stderr.push(chunk);
     stderrBuffer += chunk.toString('utf8');
+    if (stderrBuffer.length > 64 * 1024) {
+      stderrBuffer = stderrBuffer.slice(-1024);
+    }
     let nl = stderrBuffer.indexOf('\n');
     while (nl !== -1) {
       const line = stderrBuffer.slice(0, nl);
@@ -137,6 +144,8 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   };
 
   let exited = false;
+  let exitCode: number | null = null;
+  let exitSignal: NodeJS.Signals | string | null = null;
   let resolveExit!: (code: number | null) => void;
   const exitPromise = new Promise<number | null>(resolve => { resolveExit = resolve; });
   let rejectEventExit!: (error: unknown) => void;
@@ -145,9 +154,11 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     new Promise<never>((_resolve, reject) => { rejectEventExit = reject; }),
   ]);
   void eventExit.catch(() => {});
-  const confirmExit = (code: number | null): void => {
+  const confirmExit = (code: number | null, signal: NodeJS.Signals | string | null = null): void => {
     if (exited) return;
     exited = true;
+    exitCode = code;
+    exitSignal = signal;
     clearTimers();
     detachAbort();
     resolveExit(code);
@@ -319,10 +330,12 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   });
   child.on('exit', (code, signal) => {
     log.info('agent', 'exit', { pid: child.pid ?? null, code, signal });
-    confirmExit(code);
+    confirmExit(code, signal);
   });
   // The process may have exited between spawn and listener registration.
-  if (child.exitCode !== null || child.signalCode !== null) confirmExit(child.exitCode);
+  if (child.exitCode !== null || child.signalCode !== null) {
+    confirmExit(child.exitCode, child.signalCode);
+  }
   child.stdin.on('error', (err) => {
     log.warn('agent', 'stdin-error', { message: err.message });
   });
@@ -371,7 +384,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const events = iterateEvents({
     child,
     stdout,
-    stderrChunks,
+    stderr,
     translator: input.translator,
     spawnName: input.spawnName,
     getError: () => runtimeError,
@@ -380,6 +393,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     failNonzeroAfterTerminal: input.failNonzeroAfterTerminal === true,
     successFinish: input.successFinish,
     waitForExitCode: () => eventExit,
+    getSignal: () => exitSignal,
     onTerminal: () => { terminalEmitted = true; },
     cleanup: async terminal => {
       if (exited) await settlement;
@@ -388,6 +402,8 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   });
   return {
     runId: input.runId,
+    ...(child.pid ? { pid: child.pid } : {}),
+    ...(startedAt !== undefined ? { startedAt } : {}),
     events: {
       [Symbol.asyncIterator]() {
         return {
@@ -403,6 +419,15 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
         };
       },
     },
+    get stderrSnapshot() {
+      return stderr.snapshot();
+    },
+    get exit() {
+      return exited ? exitCode : undefined;
+    },
+    get signal() {
+      return exited ? exitSignal : undefined;
+    },
     stop: () => stop('interrupted'),
     async waitForExit(timeoutMs: number): Promise<boolean> {
       return await within(settlement.then(() => true), timeoutMs) !== false;
@@ -417,7 +442,7 @@ async function* iterateEvents(input: {
     closed(): boolean;
     wait(): Promise<void>;
   };
-  stderrChunks: Buffer[];
+  stderr: BoundedStderr;
   translator: JsonlTranslator;
   spawnName: string;
   getError: () => Error | null;
@@ -426,6 +451,7 @@ async function* iterateEvents(input: {
   failNonzeroAfterTerminal: boolean;
   successFinish?: JsonlFinishReason;
   waitForExitCode: () => Promise<number | null>;
+  getSignal: () => NodeJS.Signals | string | null;
   onTerminal: () => void;
   cleanup: (terminal: boolean) => Promise<void>;
 }): AsyncGenerator<AgentEvent> {
@@ -472,6 +498,8 @@ async function* iterateEvents(input: {
 
     const exitCode = await input.waitForExitCode();
     const stopReason = input.getStopReason();
+    const exitSignal = input.getSignal();
+    const killed = exitSignal === 'SIGKILL';
     if (stopReason === 'interrupted' || stopReason === 'timeout') {
       if (stopReason === 'timeout' && !input.translator.terminalEmitted?.()) {
         terminalSeen = true;
@@ -489,10 +517,18 @@ async function* iterateEvents(input: {
 
     const runtimeError = input.getError();
     const terminal = input.translator.terminalEmitted?.() === true;
+    if (killed && !terminal) {
+      yield* emit(input.translator.fail(`${input.spawnName} killed by SIGKILL`));
+      return;
+    }
+    if (isExternalInterruptSignal(exitSignal) && !terminal) {
+      yield* emit(input.translator.finish('interrupted'));
+      return;
+    }
     if (exitCode !== 0 && exitCode !== null) {
       if (!terminal || input.failNonzeroAfterTerminal) {
-        const stderr = Buffer.concat(input.stderrChunks).toString('utf8').trim();
-        const detail = stderr ? `: ${stderr.slice(0, 500)}` : '';
+        const stderrText = input.stderr.snapshot().trim();
+        const detail = stderrText ? `: ${stderrText.slice(0, 500)}` : '';
         yield* emit(input.translator.fail(`${input.spawnName} exited with code ${exitCode}${detail}`));
       }
       return;
@@ -524,6 +560,10 @@ async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T | false
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+function isExternalInterruptSignal(signal: NodeJS.Signals | string | null | undefined): boolean {
+  return signal === 'SIGTERM' || signal === 'SIGINT';
 }
 
 function failMessage(spawnName: string, error: unknown): string {

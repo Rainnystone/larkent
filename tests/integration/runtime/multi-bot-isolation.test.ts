@@ -65,7 +65,7 @@ describe.each(pairs)('overlapping Supervisor profiles: %s / %s', (kindA, kindB) 
     if (fault === 'stop') await command(a, '/stop');
     else if (fault === 'exit1') await h.fakeA.release();
     else idle!.fire();
-    await completed(a, h.fakeA, fault === 'idle' ? '超时' : fault === 'exit1' ? 'FAILURE_A_ONLY' : '已中断');
+    await completed(a, h.fakeA, fault === 'idle' ? '超时' : fault === 'exit1' ? 'agent 运行失败' : '已中断');
     expect(await pendingA).toEqual({ ok: true });
     // A has settled before B can emit any result; shared chat/topic/cwd cannot
     // accidentally provide the isolation that belongs to the profile.

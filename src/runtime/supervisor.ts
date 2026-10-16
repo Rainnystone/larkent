@@ -1,7 +1,9 @@
 import pkg from '../../package.json';
 import { BackfillLedger } from '../bot/backfill-ledger';
+import { TurnJournal } from '../bot/turn-journal';
 import { startChannel as realStartChannel, type BridgeChannel } from '../bot/channel';
 import type { Controls } from '../commands';
+import type { StopRequest } from '../bot/run-outcome';
 import type { AppPaths } from '../config/app-paths';
 import { getBackfillPruneHorizonMs, isComplete, type AppConfig } from '../config/schema';
 import type { AgentKind, ProfileConfig } from '../config/profile-schema';
@@ -22,6 +24,7 @@ import {
   acquireProfileRuntimeLock,
   type AcquiredRuntimeLock,
 } from './locks';
+import { assertLiveRootAllowed } from './live-root';
 import { resolveProfileRuntime } from './profile-runtime';
 import {
   register,
@@ -71,6 +74,7 @@ class ManagedProfile {
   private shutdownFailure: { error: unknown } | undefined;
   private readonly pendingDisconnects = new Set<BridgeChannel>();
   private readonly ledger: BackfillLedger;
+  private readonly journal: TurnJournal;
 
   constructor(
     readonly profile: string,
@@ -84,10 +88,12 @@ class ManagedProfile {
     private workspaces: WorkspaceStore,
     private startChannelFn: StartChannelFn,
     private onExitCommand: (profile: string) => Promise<void>,
+    private readonly runPreflight: boolean,
   ) {
     this.ledger = new BackfillLedger(appPaths.backfillStateFile, {
       pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
     });
+    this.journal = new TurnJournal(appPaths.turnJournalFile);
   }
 
   get appId(): string {
@@ -116,6 +122,7 @@ class ManagedProfile {
     await this.sessionCatalog.load();
     await this.workspaces.load();
     await this.ledger.load();
+    await this.journal.load();
     this.entry = await register({
       appId: this.appId,
       tenant: this.cfg.accounts.app.tenant,
@@ -133,6 +140,7 @@ class ManagedProfile {
       sessionCatalog: this.sessionCatalog,
       workspaces: this.workspaces,
       ledger: this.ledger,
+      journal: this.journal,
       controls: this.controls,
       appPaths: this.appPaths,
     });
@@ -239,26 +247,26 @@ class ManagedProfile {
         // `/exit` from chat stops THIS profile's channel; the supervisor lives on.
         await self.onExitCommand(self.profile);
       },
-      async restart() {
-        await self.restart();
+      async restart(opts?: { wait?: boolean; stopReason?: StopRequest }) {
+        await self.restart(opts);
       },
     };
     return currentControls;
   }
 
   /** Connect-before-disconnect reconnect for this profile (e.g. after /account). */
-  private restart(): Promise<void> {
+  private restart(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void> {
     if (this.stopOperation) return Promise.reject(new Error(`profile ${this.profile} is stopping`));
     if (this.stopped) return Promise.reject(new Error(`profile ${this.profile} is stopped`));
     if (this.shutdownFailure) return Promise.reject(this.shutdownFailure.error);
     if (this.restartOperation) return this.restartOperation;
-    this.restartOperation = Promise.resolve().then(() => this.reconnect()).finally(() => {
+    this.restartOperation = Promise.resolve().then(() => this.reconnect(opts)).finally(() => {
       this.restartOperation = undefined;
     });
     return this.restartOperation;
   }
 
-  private async reconnect(): Promise<void> {
+  private async reconnect(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void> {
     let nextAppLock: AcquiredRuntimeLock | undefined;
     try {
       const nextRuntime = await resolveProfileRuntime({
@@ -273,8 +281,10 @@ class ManagedProfile {
         ...nextRuntime.appPaths,
         configPath: nextRuntime.configPath,
       });
-      const availability = await checkRuntimeAgentAvailability(nextAgent);
-      if (!availability.ok) throw availability.error;
+      if (this.runPreflight) {
+        const availability = await checkRuntimeAgentAvailability(nextAgent);
+        if (!availability.ok) throw availability.error;
+      }
 
       const appChanged = next.accounts.app.id !== this.cfg.accounts.app.id;
       if (appChanged) {
@@ -293,11 +303,14 @@ class ManagedProfile {
         sessionCatalog: this.sessionCatalog,
         workspaces: this.workspaces,
         ledger: this.ledger,
+        journal: this.journal,
         controls: nextControls,
         appPaths: nextRuntime.appPaths,
       });
       try {
-        await this.bridge.disconnect();
+        await this.bridge.disconnect(
+          opts?.stopReason ? { stopReason: opts.stopReason } : undefined,
+        );
       } catch (err) {
         log.warn('supervisor', 'old-disconnect-failed', { profile: this.profile, err: String(err) });
         const failures = [err];
@@ -339,6 +352,16 @@ class ManagedProfile {
       this.agent = nextAgent;
       this.controls = nextControls;
       if (oldAppLock) await this.releaseOwnedLock(oldAppLock);
+      await Promise.all([
+        this.sessions.flush().catch(() => {}),
+        this.sessionCatalog.flush().catch(() => {}),
+        this.workspaces.flush().catch(() => {}),
+        this.journal.flush().catch(() => {}),
+        this.ledger.flush().catch(() => {}),
+      ]);
+      // Recovery runs after the swap is published. A reject here must not
+      // unwind the live bridge or drop the app lock it now needs.
+      await this.bridge.recoverMissed?.();
     } catch (error) {
       if (nextAppLock) {
         try {
@@ -426,6 +449,7 @@ export class Supervisor {
     });
     const { cfg, appPaths, profileConfig, configPath } = runtime;
     if (!isComplete(cfg)) throw new Error(`profile 配置不完整：${profile}`);
+    assertLiveRootAllowed(appPaths.rootDir, { instance: profileConfig.instance });
 
     // Dedupe by app id — two channels for one app fight over event routing.
     for (const m of this.managed.values()) {
@@ -471,6 +495,7 @@ export class Supervisor {
       workspaces,
       this.startChannelFn,
       (p) => this.stopProfile(p),
+      this.opts.runPreflight !== false,
     );
     this.managed.set(appPaths.profile, managed);
     try {

@@ -13,6 +13,7 @@ import { buildCodexArgs } from '../../src/agent/codex/argv.js';
 import { CursorAdapter } from '../../src/agent/cursor/adapter.js';
 import { GrokAdapter } from '../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../src/agent/kimi/adapter.js';
+import { KimiJsonlTranslator } from '../../src/agent/kimi/jsonl.js';
 import { runJsonlCli, wrapParsedTranslator } from '../../src/agent/runner/jsonl-cli-runner.js';
 import type { AgentEvent } from '../../src/agent/types.js';
 
@@ -227,6 +228,82 @@ describe('runner settlement boundaries', () => {
     expect(f.child.kill.mock.calls).toEqual([['SIGTERM'], ['SIGKILL']]);
     expect(await run.waitForExit(1)).toBe(true);
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps stderr snapshot bounded and available after exit 0', async () => {
+    const f = fixture({
+      translator: wrapParsedTranslator({
+        translate: () => [],
+        finish: () => [{ type: 'done', terminationReason: 'normal' }],
+      }, 'fake'),
+    });
+    const run = f.start();
+    const events = collect(run.events);
+    const chunk = Buffer.alloc(64 * 1024, 0x61);
+    chunk.write('HEAD-MARKER');
+    f.child.stderr.write(chunk);
+    for (let i = 0; i < 16; i++) f.child.stderr.write(Buffer.alloc(64 * 1024, 0x62));
+    const tail = Buffer.alloc(64 * 1024, 0x63);
+    Buffer.from('TAIL-MARKER').copy(tail, tail.length - 'TAIL-MARKER'.length);
+    f.child.stderr.write(tail);
+    f.exit();
+    expect(await events).toEqual([{ type: 'done', terminationReason: 'normal' }]);
+    const snapshot = run.stderrSnapshot ?? '';
+    expect(snapshot.startsWith('HEAD-MARKER')).toBe(true);
+    expect(snapshot.endsWith('TAIL-MARKER')).toBe(true);
+    expect(Buffer.byteLength(snapshot)).toBeLessThan(96 * 1024);
+  });
+
+  it('classifies an unexpected SIGTERM with no JSONL terminal as interrupted, not Kimi success', async () => {
+    const f = fixture({
+      successFinish: 'normal',
+      translator: wrapParsedTranslator(new KimiJsonlTranslator(), 'kimi'),
+    });
+    const run = f.start();
+    const events = collect(run.events);
+    f.child.stdout.end();
+    f.exit('SIGTERM');
+    expect(await events).toEqual([
+      { type: 'done', terminationReason: 'interrupted' },
+    ]);
+    expect(run.exit).toBeNull();
+    expect(run.signal).toBe('SIGTERM');
+  });
+
+  it('classifies a SIGKILL with no JSONL terminal as a failed event, not success', async () => {
+    const f = fixture();
+    const run = f.start();
+    const events = collect(run.events);
+    f.child.stdout.end();
+    f.exit('SIGKILL');
+    const got = await events;
+    expect(got).toEqual([
+      { type: 'error', message: 'fake killed by SIGKILL', terminationReason: 'failed' },
+    ]);
+    expect(run.exit).toBeNull();
+    expect(run.signal).toBe('SIGKILL');
+  });
+
+  it('keeps a signature in the bounded snapshot after a 500-character error slice drops it', async () => {
+    const f = fixture();
+    const run = f.start();
+    const events = collect(run.events);
+    f.child.stdout.write('{}\n');
+    f.child.stdout.end();
+    const prefix = 'x'.repeat(800);
+    f.child.stderr.write(`${prefix}RetriableError: Connection stalled repeatedly\n`);
+    f.child.exitCode = 1;
+    f.child.signalCode = null;
+    f.child.stderr.end();
+    f.child.emit('exit', 1, null);
+    const got = await events;
+    const error = got.find((event) => event.type === 'error');
+    expect(error?.type).toBe('error');
+    if (error?.type !== 'error') throw new Error('expected error event');
+    expect(error.message).toContain('exited with code 1');
+    expect(error.message).not.toContain('Connection stalled');
+    expect(run.stderrSnapshot).toContain('Connection stalled repeatedly');
+    expect(run.stderrSnapshot?.includes('x'.repeat(800))).toBe(true);
   });
 
   it.each(['translator throw', 'consumer return'] as const)('stops and cleans on %s before terminal', async mode => {

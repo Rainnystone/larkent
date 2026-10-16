@@ -55,6 +55,8 @@ export interface MeetingManagerDeps {
   onSession?: (session: MeetingSession) => void;
   /** Bot was invited to a meeting (push only). */
   onInvited?: (meetingNo: string, inviterId?: string) => void;
+  /** When set, auto-join is skipped unless this returns true. */
+  authorizeInvite?: (inviterId: string | undefined, chatId: string | undefined) => boolean;
   /** Meeting ended (push, or observed by the poller). */
   onEnded?: (session: MeetingSession) => void;
 }
@@ -175,10 +177,21 @@ export class MeetingManager {
     }
     const inviter = asRecord(d.operator ?? d.inviter);
     const inviterId = typeof inviter.open_id === 'string' ? inviter.open_id : undefined;
+    const chatId =
+      (typeof meeting.chat_id === 'string' && meeting.chat_id) ||
+      (typeof d.chat_id === 'string' && d.chat_id) ||
+      undefined;
     log.info('meeting', 'invited', { meetingNo });
     this.deps.onInvited?.(meetingNo, inviterId);
     if (this.deps.config().autoJoinOnInvite) {
-      void this.join(meetingNo).catch((err) =>
+      if (this.deps.authorizeInvite && !this.deps.authorizeInvite(inviterId, chatId)) {
+        log.info('meeting', 'skip-not-allowed-user', { meetingNo });
+        return;
+      }
+      void this.join(meetingNo, {
+        ...(chatId ? { originChatId: chatId } : {}),
+        joinedWithAccessCheck: true,
+      }).catch((err) =>
         log.warn('meeting', 'auto-join-failed', { meetingNo, err: String(err) }),
       );
     }
@@ -216,9 +229,18 @@ export class MeetingManager {
    * regardless of push: it is the primary source until a push arrives, and the
    * gap-fill path afterwards.
    */
-  async join(meetingNo: string, opts: { originChatId?: string; password?: string } = {}): Promise<MeetingSession> {
+  async join(meetingNo: string, opts: {
+    originChatId?: string;
+    password?: string;
+    joinedWithAccessCheck?: boolean;
+  } = {}): Promise<MeetingSession> {
     const existing = this.byMeetingNo(meetingNo);
-    if (existing && !existing.ended) return existing;
+    if (existing && !existing.ended) {
+      if (opts.joinedWithAccessCheck === true) {
+        existing.admit({ originChatId: opts.originChatId });
+      }
+      return existing;
+    }
 
     const config = this.deps.config();
     const joined = await joinMeeting(this.deps.client, {
@@ -234,6 +256,7 @@ export class MeetingManager {
       config,
       ...(botOpenId ? { botOpenId } : {}),
       ...(opts.originChatId ? { originChatId: opts.originChatId } : {}),
+      ...(opts.joinedWithAccessCheck === true ? { joinedWithAccessCheck: true } : {}),
     });
     this.sessions.set(session.meetingId, session);
     this.deps.onSession?.(session);

@@ -115,7 +115,7 @@ describe('RunExecutor settlement', () => {
     const next = expect(execution.subscribe()[Symbol.asyncIterator]().next()).rejects.toBe(failure);
     const finished = expect(execution.finished).rejects.toBe(failure);
     if (method === 'stop') await expect(execution.stop()).rejects.toBe(failure);
-    else await expect(h.activeRuns.stopAll()).rejects.toMatchObject({ errors: [failure] });
+    else await expect(h.activeRuns.stopAll({ type: 'user-stop' })).rejects.toMatchObject({ errors: [failure] });
     await Promise.all([next, finished]);
     expect(h.activeRuns.get('s')?.run).toBe(execution.run);
     expect(h.pool.snapshot().active).toBe(1);
@@ -143,7 +143,7 @@ describe('RunExecutor settlement', () => {
     const iterator = execution.subscribe()[Symbol.asyncIterator]();
     await iterator.next();
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.activeRuns.interrupt('s')).toBe(true);
+    expect(h.activeRuns.interrupt('s', { type: 'user-stop' })).toBe(true);
     expect(stopped).toBe(true);
     await execution.finished;
     expect(h.pool.snapshot().active).toBe(0);
@@ -158,6 +158,7 @@ describe('RunExecutor settlement', () => {
       break;
     }
     expect(source.stopped()).toBe(true);
+    expect(execution.handle.stopRequest).toEqual({ type: 'subscriber-abandoned' });
     await execution.finished;
     expect(h.pool.snapshot().active).toBe(0);
   });

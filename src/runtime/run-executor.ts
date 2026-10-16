@@ -1,7 +1,15 @@
 import { randomUUID } from 'node:crypto';
+import type { CliSignature } from '../agent/cli-signatures';
 import { descriptorFor, isAgentKind } from '../agent/registry';
 import { mergeAgentOptions, type AgentAdapter, type AgentEvent, type AgentRun } from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
+import {
+  deriveRunOutcome,
+  formatRunOutcome,
+  formatStopRequest,
+  requestStop,
+  stopRequestFromTerminal,
+} from '../bot/run-outcome';
 import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
 import { log } from '../core/logger';
@@ -14,6 +22,17 @@ export interface RunExecutorDeps {
   createRunId?: () => string;
   now?: () => number;
   postDoneExitGraceMs?: number;
+  cliSignatures?: () => {
+    enabled: boolean;
+    signatures: readonly CliSignature[];
+    agent: string;
+  };
+  onSpawn?: (input: {
+    scopeId: string;
+    runId: string;
+    pid?: number;
+    startedAt: number;
+  }) => void;
 }
 
 export interface SubmitRunInput {
@@ -52,6 +71,8 @@ export class RunExecutor {
   private readonly createRunId: () => string;
   private readonly now: () => number;
   private readonly postDoneExitGraceMs: number;
+  private readonly cliSignatures?: RunExecutorDeps['cliSignatures'];
+  private readonly onSpawn?: RunExecutorDeps['onSpawn'];
 
   constructor(deps: RunExecutorDeps) {
     this.agent = deps.agent;
@@ -60,6 +81,8 @@ export class RunExecutor {
     this.createRunId = deps.createRunId ?? randomUUID;
     this.now = deps.now ?? Date.now;
     this.postDoneExitGraceMs = deps.postDoneExitGraceMs ?? DEFAULT_POST_DONE_EXIT_GRACE_MS;
+    this.cliSignatures = deps.cliSignatures;
+    this.onSpawn = deps.onSpawn;
   }
 
   async submit(input: SubmitRunInput): Promise<RunExecution> {
@@ -163,24 +186,27 @@ export class RunExecutor {
     });
 
     const rawRun = run;
-    let handle: RunHandle;
+    let handle!: RunHandle;
     let finishing: Promise<void> | undefined;
     let stopping: Promise<void> | undefined;
     let settled = false;
-    const requestStop = (): Promise<void> => {
+    const stopChild = (): Promise<void> => {
       stopping ??= (async () => { await rawRun.stop(); })();
       // A forced stop can reject while the graceful wait is still pending.
       void stopping.catch(() => {});
       return stopping;
     };
     const finish = (forceStop: boolean): Promise<void> => {
-      if (forceStop && !settled) requestStop();
+      if (forceStop && !settled) {
+        requestStop(handle, { type: 'subscriber-abandoned' });
+        stopChild();
+      }
       finishing ??= (async () => {
         if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
           log.warn('run', 'post-done-exit-timeout', {
             ...dimensions, graceMs: this.postDoneExitGraceMs,
           });
-          requestStop();
+          stopChild();
         }
         if (stopping) {
           await stopping;
@@ -195,9 +221,20 @@ export class RunExecutor {
     const ownedRun: AgentRun = {
       runId: rawRun.runId,
       events: rawRun.events,
+      get stderrSnapshot() {
+        return rawRun.stderrSnapshot;
+      },
+      get exit() {
+        return rawRun.exit;
+      },
+      get signal() {
+        return rawRun.signal;
+      },
+      pid: rawRun.pid,
+      startedAt: rawRun.startedAt,
       waitForExit: timeoutMs => rawRun.waitForExit(timeoutMs),
       stop: () => {
-        handle.interrupted = true;
+        requestStop(handle, { type: 'subscriber-abandoned' });
         return fanout.stop();
       },
     };
@@ -216,10 +253,18 @@ export class RunExecutor {
         err instanceof Error ? err.message : 'another run is already active for this scope',
       );
     }
+    this.onSpawn?.({
+      scopeId: input.scopeId,
+      runId,
+      pid: rawRun.pid,
+      startedAt: rawRun.startedAt ?? startedAt,
+    });
     const fanout = new EventFanout(observeRunEvents(rawRun.events, {
       dimensions,
       startedAt,
       now: this.now,
+      handle: () => handle,
+      cliSignatures: this.cliSignatures,
     }), finish, () => {
       // Raw exit/cleanup can finish before buffered source events. Release
       // ownership only once the pump has drained them (or observed failure).
@@ -246,6 +291,8 @@ function observeRunEvents(
     dimensions: Record<string, unknown>;
     startedAt: number;
     now: () => number;
+    handle: () => RunHandle;
+    cliSignatures?: RunExecutorDeps['cliSignatures'];
   },
 ): AsyncIterable<AgentEvent> {
   return {
@@ -261,11 +308,25 @@ function observeRunEvents(
           return;
         }
         if (event.type === 'error') {
+          const stopRequest = opts.handle().stopRequest ?? stopRequestFromTerminal(event);
+          const cli = opts.cliSignatures?.();
+          const stderrTail = opts.handle().run.stderrSnapshot ?? event.message;
+          const signatures = cli?.enabled === false ? undefined : cli?.signatures;
+          const outcome = deriveRunOutcome({
+            stopRequest: opts.handle().stopRequest,
+            terminalEvent: event,
+            stderrTail,
+            signatures,
+            exit: opts.handle().run.exit,
+            signal: opts.handle().run.signal,
+          });
           log.warn('run', 'failed', {
             ...opts.dimensions,
             result: event.terminationReason,
             durationMs: opts.now() - opts.startedAt,
             error: event.message,
+            ...(stopRequest ? { stopReason: formatStopRequest(stopRequest) } : {}),
+            outcome: formatRunOutcome(outcome),
           });
           yield event;
           return;

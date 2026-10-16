@@ -42,6 +42,11 @@ export interface MeetingSessionDeps {
   botOpenId?: string;
   /** Chat that started this session — where IM answers go back to. */
   originChatId?: string;
+  /**
+   * True when join already passed an access check (IM `/meeting join` or
+   * an authorized invite). Console joins stay false.
+   */
+  joinedWithAccessCheck?: boolean;
   now?: () => number;
 }
 
@@ -56,7 +61,8 @@ export class MeetingSession {
   readonly meetingNo: string;
   readonly topic?: string;
   readonly startedAt: string;
-  readonly originChatId?: string;
+  originChatId?: string;
+  joinedWithAccessCheck: boolean;
 
   private readonly client: VcRequestClient;
   private readonly config: MeetingConfig;
@@ -92,8 +98,20 @@ export class MeetingSession {
     this.config = deps.config;
     if (deps.botOpenId) this.botOpenId = deps.botOpenId;
     if (deps.originChatId) this.originChatId = deps.originChatId;
+    this.joinedWithAccessCheck = deps.joinedWithAccessCheck === true;
     this.now = deps.now ?? (() => Date.now());
     this.startedAt = new Date(this.now()).toISOString();
+  }
+
+  /**
+   * Promote a console-joined session after a later access-checked join.
+   * Never demotes; originChatId is set only when missing.
+   */
+  admit(opts: { originChatId?: string } = {}): void {
+    this.joinedWithAccessCheck = true;
+    if (this.originChatId === undefined && opts.originChatId) {
+      this.originChatId = opts.originChatId;
+    }
   }
 
   status(): MeetingSessionStatus {

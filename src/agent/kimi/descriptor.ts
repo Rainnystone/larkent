@@ -2,6 +2,7 @@ import { defineDescriptor } from '../definition';
 import { KimiAdapter } from './adapter';
 import { kimiMetadata } from './metadata';
 import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platform/executable';
+import { kimiStderrSignatures } from './stderr-signatures';
 
 export const kimiDescriptor = defineDescriptor({
   ...kimiMetadata,
@@ -9,6 +10,7 @@ export const kimiDescriptor = defineDescriptor({
   acceptsRawResumeHandle: true,
   listResumeHistory: async () => [],
   detectionOrder: 3,
+  stderrSignatures: kimiStderrSignatures,
   resolveProfileBinary: (profile) => profile.agent.binaryPath,
   detectBinary: (command) => command
     ? resolveExecutablePath(command)

@@ -4,6 +4,7 @@ import {
   initialState,
   markIdleTimeout,
   markInterrupted,
+  markRunnerTimeout,
   reduce,
   type RunState,
 } from '../../../src/card/run-state.js';
@@ -63,11 +64,12 @@ describe('run card renderer snapshots', () => {
     ])).toMatchSnapshot();
   });
 
-  it('renders done, error, interrupted, and idle-timeout terminal states', () => {
+  it('renders done, error, interrupted, idle-timeout, and runner-timeout terminal states', () => {
     expectCard(stateFrom([{ type: 'done', terminationReason: 'normal' }])).toMatchSnapshot();
     expectCard(stateFrom([{ type: 'error', message: 'process failed', terminationReason: 'failed' }])).toMatchSnapshot();
     expectCard(markInterrupted(stateFrom([{ type: 'text', delta: 'partial' }]))).toMatchSnapshot();
     expectCard(markIdleTimeout(stateFrom([{ type: 'text', delta: 'partial' }]), 15)).toMatchSnapshot();
+    expectCard(markRunnerTimeout(stateFrom([{ type: 'text', delta: 'partial' }]))).toMatchSnapshot();
   });
 
   it('renders markdown text mode without card-only controls', () => {

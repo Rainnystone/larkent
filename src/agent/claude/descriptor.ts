@@ -3,13 +3,13 @@ import { defineDescriptor } from '../definition';
 import { ClaudeAdapter } from './adapter';
 import { claudeMetadata } from './metadata';
 import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platform/executable';
-
 export const claudeDescriptor = defineDescriptor({
   ...claudeMetadata,
   acceptsImagePaths: false,
   acceptsRawResumeHandle: true,
   listResumeHistory: listClaudeResumeHistory,
   detectionOrder: 1,
+  stderrSignatures: Object.freeze([]),
   resolveProfileBinary: (profile) => profile.agent.binaryPath,
   detectBinary: (command) => command
     ? resolveExecutablePath(command)

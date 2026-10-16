@@ -25,6 +25,73 @@ export type { AgentKind } from '../agent/registry';
 export type SandboxMode = CodexSandboxMode;
 export type { AccessMode, PermissionConfig, PermissionSource };
 
+export interface AccessFenceConfig {
+  enabled: boolean;
+}
+
+export interface ReliabilityConfig {
+  /**
+   * Lost-message recovery. Default on (bugfix). Off matches master:
+   * accepted pending stays recorded if it is dropped.
+   */
+  lostMessage?: boolean;
+  /**
+   * Force a history scan even when the WS gap is below `minGapMs`.
+   * Default off (master skip-short-gap) until a live redelivery result
+   * says Feishu will not replay the gap.
+   */
+  shortGapScan?: boolean;
+  /**
+   * RunOutcome model: keep real terminal events after stop, and distinguish
+   * runner timeout from the idle watchdog on the card. Default on. Off
+   * matches master (drop non-system events after interrupt; timeout renders
+   * as idle_timeout).
+   */
+  runOutcome?: boolean;
+  /**
+   * CLI stderr signature matching and redacted card copy. Default on. Off
+   * matches master (no signature table; cards show truncated raw stderr).
+   */
+  cliSignatures?: boolean;
+  /**
+   * Turn journal writes. Default on. Off matches master (no `turn-journal.json`).
+   */
+  journal?: boolean;
+  /**
+   * Journal recovery (undelivered resend + orphan reaping). Default on when
+   * writes are on. Off skips those actions while still allowing writes.
+   */
+  journalRecover?: boolean;
+  /**
+   * Interruption notice card. Default off (matches ticket 4). On sends a
+   * new @-initiator continue/dismiss notice after a qualifying outcome.
+   */
+  notice?: boolean;
+}
+
+export function getReliabilityConfig(
+  profile: Pick<ProfileConfig, 'reliability'>,
+): {
+  lostMessage: boolean;
+  shortGapScan: boolean;
+  runOutcome: boolean;
+  cliSignatures: boolean;
+  journal: boolean;
+  journalRecover: boolean;
+  notice: boolean;
+} {
+  const journal = profile.reliability?.journal !== false;
+  return {
+    lostMessage: profile.reliability?.lostMessage !== false,
+    shortGapScan: profile.reliability?.shortGapScan === true,
+    runOutcome: profile.reliability?.runOutcome !== false,
+    cliSignatures: profile.reliability?.cliSignatures !== false,
+    journal,
+    journalRecover: journal && profile.reliability?.journalRecover !== false,
+    notice: profile.reliability?.notice === true,
+  };
+}
+
 export interface ProfileAccess {
   allowedUsers: string[];
   allowedChats: string[];
@@ -37,6 +104,12 @@ export interface ProfileAccess {
    * priority over `requireMentionInGroup` for the chats it lists.
    */
   chatRequireMention?: Record<string, boolean>;
+  /**
+   * Hard allowlist fence. Off by default. When enabled, DM, group, comment,
+   * meeting, and card-click entry points all require chat ∈ allowedChats and
+   * sender ∈ allowedUsers; owner and admin are not exempt.
+   */
+  fence?: AccessFenceConfig;
 }
 
 export interface SandboxConfig {
@@ -155,12 +228,16 @@ export interface ProfileAgentConfig {
   options?: unknown;
 }
 
+export type ProfileInstanceKind = 'live' | 'test';
+
 export interface ProfileConfig {
   schemaVersion: 3;
   agent: ProfileAgentConfig;
   agentKind: AgentKind;
   /** Deployment mode switch. Default 'team' in this fork. See {@link ProfileMode}. */
   mode: ProfileMode;
+  /** Marks a test instance so it cannot share the live data root. */
+  instance?: ProfileInstanceKind;
   accounts: {
     app: AppCredentials;
   };
@@ -179,6 +256,8 @@ export interface ProfileConfig {
   /** In-meeting agent settings. See {@link MeetingConfig}. */
   meeting: MeetingConfig;
   larkCli: LarkCliConfig;
+  /** Run-reliability switches. Omitted keys use the defaults in {@link getReliabilityConfig}. */
+  reliability?: ReliabilityConfig;
 }
 
 /**
@@ -222,6 +301,7 @@ export interface CreateDefaultProfileConfigInput {
   secrets?: SecretsConfig;
   larkCli?: LarkCliConfig;
   options?: unknown;
+  reliability?: ReliabilityConfig;
 }
 
 export function createDefaultProfileConfig(
@@ -272,6 +352,8 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     comments?: unknown;
     meeting?: unknown;
     larkCli?: unknown;
+    instance?: unknown;
+    reliability?: unknown;
   };
 
   if (raw.schemaVersion !== PROFILE_SCHEMA_VERSION) {
@@ -304,6 +386,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const comments = normalizeComments(raw.comments);
   const meeting = normalizeMeeting(raw.meeting);
   const larkCli = normalizeLarkCli(raw.larkCli);
+  const reliability = normalizeReliability(raw.reliability);
 
   const binaryPath =
     typeof raw.agent?.binaryPath === 'string' && raw.agent.binaryPath.trim()
@@ -334,6 +417,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     // This fork defaults to 'team': the bot answers anyone without allowlist
     // gating. `personal` is still honored when stored explicitly.
     mode: raw.mode === 'personal' ? 'personal' : 'team',
+    ...(raw.instance === 'test' || raw.instance === 'live' ? { instance: raw.instance } : {}),
     accounts,
     ...(raw.secrets ? { secrets: raw.secrets } : {}),
     preferences,
@@ -354,6 +438,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     comments,
     meeting,
     larkCli,
+    ...(reliability ? { reliability } : {}),
   };
 }
 
@@ -419,6 +504,38 @@ function logBackfillWarning(warning: BackfillNormalizeWarning): void {
   }
 }
 
+function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+  const raw = input as Record<string, unknown>;
+  const lostMessage = raw.lostMessage === false ? false : undefined;
+  const shortGapScan = raw.shortGapScan === true ? true : undefined;
+  const runOutcome = raw.runOutcome === false ? false : undefined;
+  const cliSignatures = raw.cliSignatures === false ? false : undefined;
+  const journal = raw.journal === false ? false : undefined;
+  const journalRecover = raw.journalRecover === false ? false : undefined;
+  const notice = raw.notice === true ? true : undefined;
+  if (
+    lostMessage === undefined
+    && shortGapScan === undefined
+    && runOutcome === undefined
+    && cliSignatures === undefined
+    && journal === undefined
+    && journalRecover === undefined
+    && notice === undefined
+  ) {
+    return undefined;
+  }
+  return {
+    ...(lostMessage === false ? { lostMessage: false } : {}),
+    ...(shortGapScan === true ? { shortGapScan: true } : {}),
+    ...(runOutcome === false ? { runOutcome: false } : {}),
+    ...(cliSignatures === false ? { cliSignatures: false } : {}),
+    ...(journal === false ? { journal: false } : {}),
+    ...(journalRecover === false ? { journalRecover: false } : {}),
+    ...(notice === true ? { notice: true } : {}),
+  };
+}
+
 function normalizeAccess(
   access: Partial<ProfileAccess> | undefined,
   legacyRequireMentionInGroup: boolean | undefined,
@@ -431,6 +548,7 @@ function normalizeAccess(
     requireMentionInGroup: access?.requireMentionInGroup ?? legacyRequireMentionInGroup ?? true,
     // Omit when empty so configs without per-chat overrides stay clean.
     ...(Object.keys(chatRequireMention).length > 0 ? { chatRequireMention } : {}),
+    ...(access?.fence?.enabled === true ? { fence: { enabled: true } } : {}),
   };
 }
 

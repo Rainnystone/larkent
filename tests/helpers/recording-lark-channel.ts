@@ -1,3 +1,4 @@
+import { writeFile } from 'node:fs/promises';
 import { createFakeChannel, type FakeChannel } from './fake-channel.js';
 
 export interface RecordingLarkChannel extends FakeChannel {
@@ -22,15 +23,23 @@ export interface RecordingLarkChannel extends FakeChannel {
   addReaction(messageId: string, emojiType: string): Promise<string>;
   removeReaction(messageId: string, reactionId: string): Promise<void>;
   recallMessage(messageId: string): Promise<void>;
+  downloadResourceToFile(
+    messageId: string,
+    fileKey: string,
+    type: string,
+    destPath: string,
+  ): Promise<{ contentType: string; bytesWritten: number }>;
   snapshotCalls(): RecordingCall[];
 }
 
 export type RecordingCall =
   | { op: 'send'; chatId: string; content: unknown; options: unknown }
   | { op: 'stream'; chatId: string; inputKind: 'card' | 'markdown' | 'other'; cardUpdates: unknown[]; markdownContents: string[] }
+  | { op: 'updateCard'; messageId: string; card: unknown }
   | { op: 'reaction.create'; messageId: string; emojiType: string }
   | { op: 'reaction.delete'; messageId: string; reactionId: string }
   | { op: 'recall'; messageId: string }
+  | { op: 'download'; messageId: string; fileKey: string; type: string }
   | { op: 'raw'; method: string };
 
 export function createRecordingLarkChannel(options: {
@@ -47,6 +56,7 @@ export function createRecordingLarkChannel(options: {
 
   const origSend = inner.send.bind(inner);
   const origStream = inner.stream.bind(inner);
+  const origUpdateCard = inner.updateCard.bind(inner);
 
   inner.send = async (chatId, content, options) => {
     const result = await origSend(chatId, content, options);
@@ -63,6 +73,11 @@ export function createRecordingLarkChannel(options: {
       return { data: { items: scripted, has_more: false } };
     }
     return origList(params);
+  };
+
+  inner.updateCard = async (messageId, cardJson) => {
+    await origUpdateCard(messageId, cardJson);
+    callLog.push({ op: 'updateCard', messageId, card: cardJson });
   };
 
   inner.stream = async (chatId, input, options) => {
@@ -86,6 +101,7 @@ export function createRecordingLarkChannel(options: {
     ...inner,
     send: inner.send,
     stream: inner.stream,
+    updateCard: inner.updateCard,
     botIdentity: { ...(options.botIdentity ?? { openId: 'ou_bot', name: 'Pin Bot' }) },
     handlers,
     callLog,
@@ -123,6 +139,16 @@ export function createRecordingLarkChannel(options: {
     },
     async recallMessage(messageId) {
       callLog.push({ op: 'recall', messageId });
+    },
+    async downloadResourceToFile(
+      messageId: string,
+      fileKey: string,
+      type: string,
+      destPath: string,
+    ) {
+      callLog.push({ op: 'download', messageId, fileKey, type });
+      await writeFile(destPath, 'replayed-file');
+      return { contentType: type === 'image' ? 'image/png' : 'application/octet-stream', bytesWritten: 13 };
     },
     snapshotCalls() {
       return structuredClone(callLog);

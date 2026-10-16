@@ -10,6 +10,7 @@ import type { Controls } from '../commands';
 import { resolveAppPaths } from '../config/app-paths';
 import { log } from '../core/logger';
 import { evaluateRunPolicy } from '../policy/run-policy';
+import { evaluateAccess } from '../policy/access';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { RunRejected } from '../runtime/errors';
 import type { ActiveRuns } from './active-runs';
@@ -117,6 +118,17 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
     });
     return;
   }
+  const accessDecision = evaluateAccess({
+    entry: 'comment',
+    profile: controls.profileConfig,
+    controls,
+    chatId: evt.fileToken,
+    senderId: evt.operator.openId,
+  });
+  if (!accessDecision.ok) {
+    log.info('comment', 'skip', { reason: accessDecision.reason });
+    return;
+  }
   const target = await resolveCommentTarget(channel, evt);
   if (!target) {
     log.info('comment', 'skip', { reason: 'unsupported-target', commentScopeId: eventCommentScopeId });
@@ -205,7 +217,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       prompt,
       requestedCwd,
       cwdRealpath,
-      access: { ok: true, reason: 'comment-mention' },
+      access: accessDecision,
       capability,
       profileConfig: controls.profileConfig,
       now: Date.now(),
@@ -240,8 +252,8 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
         : undefined;
       const storeHandle =
         canResumeAgentSession && descriptorFor(capability.agentId).resume.label === 'session'
-          ? sessions.resumeFor(docSessionScopeId, cwdRealpath) ??
-            sessions.resumeFor(legacyDocSessionScopeId, cwdRealpath)
+          ? sessions.resumeFor(docSessionScopeId, cwdRealpath, capability.agentId) ??
+            sessions.resumeFor(legacyDocSessionScopeId, cwdRealpath, capability.agentId)
           : undefined;
       const resumeHandle = canResumeAgentSession
         ? catalogEntry?.resumeHandle ?? storeHandle
@@ -330,7 +342,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             e.type === 'system' &&
             e.resumeHandle
           ) {
-            sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath);
+            sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath, capability.agentId);
           }
           // Preserve the final session event, but never post an interrupted answer.
           if (execution.handle.interrupted) continue;

@@ -254,6 +254,34 @@ describe('profile store canonical serialization', () => {
     });
   });
 
+  it('persists explicit reliability flags across save→load round-trip', async () => {
+    const root = await tmpRoot();
+    const configPath = join(root, 'config.json');
+    const profile = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
+    profile.reliability = { notice: true, journal: false, lostMessage: false };
+
+    await saveRootConfig({
+      schemaVersion: 3,
+      activeProfile: 'claude',
+      preferences: {},
+      profiles: { claude: profile },
+    }, configPath);
+
+    const saved = JSON.parse(await readFile(configPath, 'utf8'));
+    expect(saved.profiles.claude.reliability).toEqual({
+      notice: true,
+      journal: false,
+      lostMessage: false,
+    });
+
+    const loaded = await loadRootConfig(configPath);
+    expect(loaded?.profiles.claude?.reliability).toEqual({
+      notice: true,
+      journal: false,
+      lostMessage: false,
+    });
+  });
+
   it('marks newly created roots as already evaluated for permission default migration', () => {
     const profile = createDefaultProfileConfig({
       agentKind: 'claude',

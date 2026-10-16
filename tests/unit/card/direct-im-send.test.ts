@@ -150,7 +150,7 @@ describe('RunState.directImSentChatIds', () => {
     );
   });
 
-  it.each(['error', 'interrupted', 'idle_timeout'] as const)(
+  it.each(['error', 'interrupted', 'idle_timeout', 'runner_timeout'] as const)(
     'does not skip the final reply when terminal is %s',
     (terminal) => {
       const recorded = fold([
@@ -162,7 +162,9 @@ describe('RunState.directImSentChatIds', () => {
           ? reduce(recorded, { type: 'error', message: 'failed', terminationReason: 'failed' })
           : terminal === 'interrupted'
             ? reduce(recorded, { type: 'done', terminationReason: 'interrupted' })
-            : reduce(recorded, { type: 'done', terminationReason: 'timeout' });
+            : terminal === 'runner_timeout'
+              ? reduce(recorded, { type: 'done', terminationReason: 'timeout' })
+              : { ...recorded, terminal: 'idle_timeout' as const };
       expect([...ended.directImSentChatIds]).toEqual([CHAT]);
       expect(ended.terminal).toBe(terminal);
       expect(shouldSkipFinalReply(ended, CHAT)).toBe(false);

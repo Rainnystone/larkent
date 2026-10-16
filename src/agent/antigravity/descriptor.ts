@@ -2,6 +2,7 @@ import { defineDescriptor } from '../definition';
 import { AntigravityAdapter } from './adapter';
 import { antigravityMetadata } from './metadata';
 import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platform/executable';
+import { antigravityStderrSignatures } from './stderr-signatures';
 
 export const antigravityDescriptor = defineDescriptor({
   ...antigravityMetadata,
@@ -9,6 +10,7 @@ export const antigravityDescriptor = defineDescriptor({
   acceptsRawResumeHandle: true,
   listResumeHistory: async () => [],
   detectionOrder: 5,
+  stderrSignatures: antigravityStderrSignatures,
   resolveProfileBinary: (profile) => profile.agent.binaryPath,
   detectBinary: (command) => command
     ? resolveExecutablePath(command)

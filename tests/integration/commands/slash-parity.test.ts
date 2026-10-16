@@ -118,7 +118,7 @@ async function createHarness(kind: PinAgentKind): Promise<{
     catalog.upsertActive({ ...identity, resumeHandle: 'thread-slash-codex', now: 1_700_000_000_000 });
   } else {
     catalog.upsertActive({ ...identity, resumeHandle: `sess-slash-${kind}`, now: 1_700_000_000_000 });
-    sessions.set('chat-1', `sess-slash-${kind}`, workspaceRealpath);
+    sessions.set('chat-1', `sess-slash-${kind}`, workspaceRealpath, kind);
   }
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
@@ -222,6 +222,7 @@ function stabilizeSlashSnapshot(value: unknown, cwd: string): unknown {
   const text = JSON.stringify(snap)
     .replace(/\/resume use [0-9a-f-]{8,36}/gi, '/resume use <nonce>')
     .replace(/"arg":"[0-9a-f-]{8,36}"/gi, '"arg":"<nonce>"')
-    .replace(/`[0-9a-f]{8}…`/gi, '`<nonce>…`');
+    .replace(/`[0-9a-f]{8}…`/gi, '`<nonce>…`')
+    .replace(/刷新于 \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}/g, '刷新于 <local-time>');
   return JSON.parse(text) as unknown;
 }

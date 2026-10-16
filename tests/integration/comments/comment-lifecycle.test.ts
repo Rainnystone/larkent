@@ -73,7 +73,7 @@ describe('comment lifecycle', () => {
     const running = handleCommentMention(h.deps(event()));
     const scopeId = await waitForActiveCommentScope(h, threadScopeId);
 
-    expect(h.activeRuns.interrupt(scopeId)).toBe(true);
+    expect(h.activeRuns.interrupt(scopeId, { type: 'user-stop' })).toBe(true);
     h.agent.release(0);
     await running;
 

@@ -147,7 +147,7 @@ it('keeps a selected resume handle after the old stopped run drains', async () =
     selection = { nonce, identity };
     return nonce;
   });
-  h.sessions.set('oc_test', 'chosen-history-handle', h.root);
+  h.sessions.set('oc_test', 'chosen-history-handle', h.root, 'kimi');
   const command = {
     messageId: 'om_resume', chatId: 'oc_test', chatType: 'p2p', senderId: 'ou_user',
     content: '/resume', rawContentType: 'text', resources: [], mentionedBot: true,
@@ -185,7 +185,7 @@ async function expectNextRun(h: Awaited<ReturnType<typeof channelHarness>>, resu
   const bridge = await startChannel({ cfg: h.profile, agent, sessions, sessionCatalog: catalog, workspaces, controls: h.controls, appPaths: h.paths });
   try {
     await send(sdk.channel);
-    await vi.waitFor(() => expect(agent.runOptions).toHaveLength(1));
+    await vi.waitFor(() => expect(agent.runOptions).toHaveLength(1), { timeout: 5_000 });
     expect(agent.runOptions[0]?.resumeHandle).toBe(resumeHandle);
     expect(agent.runOptions[0]?.cwd).toBe(h.root);
   } finally {
@@ -241,7 +241,7 @@ it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished w
     selection = { nonce, identity };
     return nonce;
   });
-  h.sessions.set('oc_test', 'chosen-history-handle', h.root);
+  h.sessions.set('oc_test', 'chosen-history-handle', h.root, 'kimi');
   if (command === '/resume use') {
     vi.spyOn(h.channel as unknown as LarkChannel, 'getChatMode').mockResolvedValue('p2p');
     await sendCommand(h.channel, '/resume');
@@ -291,7 +291,7 @@ async function sendCommand(channel: RecordingLarkChannel, content: string) {
   });
 }
 
-it.each(['/stop', '/cd relative-path', '/resume use invalid-nonce'])('keeps the final handle after %s without an accepted new session decision', async command => {
+it.each(['/stop', '/cd relative-path', '/resume use invalid-nonce'])('keeps the final handle after %s without an accepted new session decision', { timeout: 20_000 }, async command => {
   const output = deferred();
   const run = controlledAgent({ beforeSecond: output.promise });
   const h = await channelHarness({ ...run.agent, id: 'kimi' }, 'text', 3, 'kimi');

@@ -26,8 +26,11 @@ describe('ActiveRuns lifecycle', () => {
     const gate = new Promise<void>(resolve => { settle = resolve; });
     const run: AgentRun = { runId: 'a', events: (async function* () {})(), stop: () => gate, waitForExit: async () => false };
     const handle = active.register('a', run);
-    expect(active.interrupt('a')).toBe(true);
+    expect(active.interrupt('a', { type: 'user-stop' })).toBe(true);
     expect(handle.interrupted).toBe(true);
+    expect(handle.stopRequest).toEqual({ type: 'user-stop' });
+    expect(active.interrupt('a', { type: 'shutdown-signal' })).toBe(true);
+    expect(handle.stopRequest).toEqual({ type: 'user-stop' });
     expect(active.get('a')).toBe(handle);
     expect(active.reserve('a')).toBeUndefined();
     settle();
@@ -46,7 +49,7 @@ describe('ActiveRuns lifecycle', () => {
     active.register('a', a);
     active.register('b', b);
     let complete = false;
-    const result = active.stopAll().then(() => { complete = true; return undefined; }, error => { complete = true; return error; });
+    const result = active.stopAll({ type: 'shutdown-signal' }).then(() => { complete = true; return undefined; }, error => { complete = true; return error; });
     await Promise.resolve();
     expect(complete).toBe(false);
     expect(active.get('a')?.run).toBe(a);

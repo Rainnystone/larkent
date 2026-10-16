@@ -43,6 +43,7 @@ describe('resolveAppPaths', () => {
     expect(paths.defaultWorkspaceDir).toBe(join(`${root}-workspaces`, 'claude', 'default'));
     expect(paths.sessionsFile).toBe(join(profileDir, 'sessions.json'));
     expect(paths.backfillStateFile).toBe(join(profileDir, 'backfill-state.json'));
+    expect(paths.turnJournalFile).toBe(join(profileDir, 'turn-journal.json'));
     expect(paths.workspacesFile).toBe(join(profileDir, 'workspaces.json'));
     expect(paths.secretsFile).toBe(join(profileDir, 'secrets.enc'));
     expect(paths.keystoreSaltFile).toBe(join(profileDir, '.keystore.salt'));

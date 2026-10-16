@@ -240,6 +240,48 @@ describe('BackfillLedger', () => {
     expect(ledger.claim('om_first')).toBe(false);
   });
 
+  it('unrecords an accepted id so a later claim can accept it again and persist v1', async () => {
+    const now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await ledger.load();
+    expect(ledger.claim('om_drop')).toBe(true);
+    ledger.record('om_drop', now - 1_000);
+    expect(ledger.has('om_drop')).toBe(true);
+    expect(ledger.unrecord('om_drop')).toBe(true);
+    expect(ledger.has('om_drop')).toBe(false);
+    expect(ledger.unrecord('om_drop')).toBe(false);
+    expect(ledger.claim('om_drop')).toBe(true);
+    await ledger.flush();
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      processed: {},
+    });
+  });
+
+  it('loads a v1 document that has extra fields a future writer might append', async () => {
+    const now = 1_760_000_000_000;
+    const { file } = await fixture(() => now);
+    await writeFile(file, `${JSON.stringify({
+      schemaVersion: 1,
+      lastLiveAt: now - 10_000,
+      processed: { om_keep: now - 5_000 },
+      extraFutureField: { note: 'ignore me' },
+    })}\n`);
+    const ledger = new BackfillLedger(file, { now: () => now });
+    await ledger.load();
+    expect(ledger.has('om_keep')).toBe(true);
+    expect(ledger.getLiveAt()).toBe(now - 10_000);
+    ledger.unrecord('om_keep');
+    ledger.record('om_next', now);
+    await ledger.flush();
+    const saved = JSON.parse(await readFile(file, 'utf8')) as {
+      schemaVersion: number;
+      processed: Record<string, number>;
+    };
+    expect(saved.schemaVersion).toBe(1);
+    expect(saved.processed).toEqual({ om_next: now });
+  });
+
   it('persists an incomplete scan origin and clears it on a later complete mark', async () => {
     const now = 1_760_000_000_000;
     const { file, ledger } = await fixture(() => now);
@@ -257,7 +299,7 @@ describe('BackfillLedger', () => {
     const reloaded = new BackfillLedger(file, { now: () => now });
     await reloaded.load();
     expect(reloaded.getIncompleteFrom()).toBe(now - 60_000);
-    reloaded.markScanComplete(now, now);
+    reloaded.markScanComplete(now, now, now - 60_000);
     await reloaded.flush();
     expect(reloaded.getIncompleteFrom()).toBeUndefined();
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
@@ -266,6 +308,35 @@ describe('BackfillLedger', () => {
       lastBackfillEnd: now,
       processed: {},
     });
+  });
+
+  it('keeps an incompleteFrom that was set after the completing scan started', async () => {
+    const now = 1_760_000_000_000;
+    const { ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.touchLive(now - 60_000);
+    const epoch = ledger.getIncompleteEpoch();
+    ledger.markScanIncomplete(now - 5_000);
+    ledger.markScanComplete(now, now, undefined, epoch);
+    expect(ledger.getIncompleteFrom()).toBe(now - 5_000);
+  });
+
+  it('keeps incompleteFrom when a mid-scan mark does not change the numeric min', async () => {
+    const now = 1_760_000_000_000;
+    const { ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.markScanIncomplete(100);
+    const epoch = ledger.getIncompleteEpoch();
+    expect(ledger.getIncompleteFrom()).toBe(100);
+
+    ledger.markScanIncomplete(200);
+    ledger.markScanComplete(now, now, 100, epoch);
+    expect(ledger.getIncompleteFrom()).toBe(100);
+
+    const again = ledger.getIncompleteEpoch();
+    ledger.markScanIncomplete(100);
+    ledger.markScanComplete(now, now, 100, again);
+    expect(ledger.getIncompleteFrom()).toBe(100);
   });
 
   it('touchLive writes lastLiveAt, exposes getters, and persists at most once per 30s', async () => {

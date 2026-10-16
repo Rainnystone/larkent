@@ -1,5 +1,5 @@
 import { maskEmails } from './mask-email';
-import type { Block, RunState, ToolEntry } from './run-state';
+import { terminalNote, type Block, type RunState, type ToolEntry } from './run-state';
 import { toolHeaderText } from './tool-render';
 
 /**
@@ -20,14 +20,13 @@ export function renderText(state: RunState): string {
     if (piece) parts.push(piece);
   }
 
-  if (state.terminal === 'interrupted') {
-    parts.push('_⏹ 已被中断_');
-  } else if (state.terminal === 'idle_timeout') {
-    const mins = state.idleTimeoutMinutes ?? 0;
-    parts.push(`_⏱ ${mins} 分钟无响应,已自动终止_`);
-  } else if (state.terminal === 'error' && state.errorMsg) {
+  if (state.terminal === 'error' && state.errorMsg) {
     parts.push(`⚠️ agent 失败:${state.errorMsg}`);
-  } else if (state.terminal === 'running' && state.footer) {
+  } else {
+    const note = terminalNote(state);
+    if (note) parts.push(note);
+  }
+  if (state.terminal === 'running' && state.footer && !terminalNote(state)) {
     parts.push(footerLine(state.footer));
   }
 

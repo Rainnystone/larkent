@@ -1,0 +1,1 @@
+Your stored authentication is invalid. Please run 'agent login'.

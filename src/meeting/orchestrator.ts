@@ -9,6 +9,7 @@ import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { startRunFlow } from '../bot/run-flow';
+import { evaluateAccess, isAccessFenceEnabled } from '../policy/access';
 import { describeMeetingError } from './manager';
 import type { MeetingSession } from './session';
 import type { MeetingSummaryTarget } from '../config/profile-schema';
@@ -104,7 +105,21 @@ export function attachMeetingAgent(deps: MeetingAgentDeps): void {
     );
 
     if (STOP_WORDS.has(question.toLowerCase())) {
-      const stopped = deps.activeRuns.interrupt(meetingScopeId(session.meetingId));
+      const stopAccess = evaluateAccess({
+        entry: 'meeting',
+        profile: controls.profileConfig,
+        controls,
+        chatId: session.originChatId ?? '',
+        senderId: chat.from.id ?? '',
+      });
+      if (!stopAccess.ok) {
+        log.info('meeting', 'skip-not-allowed-user', {
+          meetingId: session.meetingId,
+          reason: stopAccess.reason,
+        });
+        return;
+      }
+      const stopped = deps.activeRuns.interrupt(meetingScopeId(session.meetingId), { type: 'meeting' });
       void session
         .sendMessage(stopped ? '已中断当前任务。' : '当前没有正在执行的任务。')
         .catch((err) => log.warn('meeting', 'stop-reply-failed', { err: String(err) }));
@@ -116,6 +131,7 @@ export function attachMeetingAgent(deps: MeetingAgentDeps): void {
       deliver: 'broadcast',
       ...(usedPrefix ? { usedPrefix } : {}),
       ...(chat.from.name ? { askedBy: chat.from.name } : {}),
+      ...(chat.from.id ? { actorId: chat.from.id } : {}),
     }).catch((err) =>
       log.warn('meeting', 'answer-failed', { meetingId: session.meetingId, err: String(err) }),
     );
@@ -125,6 +141,8 @@ export function attachMeetingAgent(deps: MeetingAgentDeps): void {
 export interface AnswerOptions {
   /** Name of the participant who asked (in-meeting triggers only). */
   askedBy?: string;
+  /** Open id of the user who asked; used by the access fence. */
+  actorId?: string;
   /**
    * Who sees the answer.
    *  - `broadcast`: deliver per `respondIn` — used when the ask came from
@@ -136,6 +154,11 @@ export interface AnswerOptions {
   deliver: 'broadcast' | 'caller';
   /** Prefix the asker actually typed, so hints quote their wording back. */
   usedPrefix?: string;
+  /**
+   * System-triggered run for a meeting that already passed join authorization
+   * (ended-meeting summary). Skips a second actor/chat fence check.
+   */
+  admitted?: boolean;
 }
 
 /**
@@ -157,7 +180,7 @@ export async function answerInMeeting(
     ...(opts.askedBy ? { askedBy: opts.askedBy } : {}),
   });
 
-  const answer = await runMeetingAgent(deps, prompt, opts.usedPrefix);
+  const answer = await runMeetingAgent(deps, prompt, opts.usedPrefix, opts.actorId, opts.admitted);
   if (!answer) return '';
   // The caller relays it themselves; never echo into the meeting.
   if (opts.deliver === 'caller') return answer;
@@ -241,7 +264,7 @@ export async function summarizeEndedMeeting(deps: MeetingAgentDeps): Promise<voi
   const answer = await answerInMeeting(
     deps,
     '会议已结束。请基于以上会议字幕输出一份纪要：讨论了什么、达成的结论、待办（含负责人，如字幕里有）。',
-    { deliver: 'caller' },
+    { deliver: 'caller', admitted: true },
   ).catch((err) => {
     log.warn('meeting', 'summary-run-failed', { meetingId: session.meetingId, err: String(err) });
     return '';
@@ -292,22 +315,45 @@ async function runMeetingAgent(
   deps: MeetingAgentDeps,
   prompt: string,
   usedPrefix?: string,
+  actorId?: string,
+  admitted?: boolean,
 ): Promise<string> {
   const { session, controls } = deps;
   const scopeId = meetingScopeId(session.meetingId);
   const capability = capabilityForProfile(controls.profileConfig);
+  const senderId = actorId ?? '';
+  const evaluated = evaluateAccess({
+    entry: 'meeting',
+    profile: controls.profileConfig,
+    controls,
+    chatId: session.originChatId ?? '',
+    senderId,
+  });
+  const access = evaluated.ok
+    ? evaluated
+    : admitted && session.joinedWithAccessCheck
+      ? { ok: true as const, reason: 'admitted' as const }
+      : evaluated;
+  if (!access.ok) {
+    log.info('meeting', 'skip-not-allowed-user', {
+      meetingId: session.meetingId,
+      reason: access.reason,
+    });
+    return '';
+  }
   const result = await startRunFlow({
     scopeId,
     scope: {
       source: 'meeting',
-      actorId: controls.botOwnerId ?? 'meeting',
+      // Fence-off keeps master's actor (owner). Fence-on attributes the asker.
+      actorId: isAccessFenceEnabled(controls.profileConfig)
+        ? senderId || 'meeting'
+        : (controls.botOwnerId ?? 'meeting'),
       ...(session.originChatId ? { chatId: session.originChatId } : {}),
     },
     prompt,
     attachments: [],
-    // Meeting content is already gated by "the bot was invited into the
-    // meeting"; the per-chat allowlist doesn't apply here.
-    access: { ok: true, reason: 'allowed-chat' },
+    access,
     capability,
     profileConfig: controls.profileConfig,
     sessions: deps.sessions,

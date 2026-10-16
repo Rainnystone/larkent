@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import type { AgentKind } from '../agent/registry';
 import { paths } from '../config/paths';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
@@ -54,32 +55,56 @@ export class SessionStore {
   /**
    * Return the session id for this chat if it was created in the given cwd.
    * Sessions recorded in a different cwd are stale — claude can't resume
-   * them from a different working directory.
+   * them from a different working directory. When `agentKind` is set, only
+   * that CLI's handle is returned — another CLI's id must not be reused.
    */
-  resumeFor(chatId: string, cwd: string): string | undefined {
+  resumeFor(chatId: string, cwd: string, agentKind?: AgentKind): string | undefined {
     const entry = this.data[chatId];
     if (!entry) return undefined;
+    if (agentKind) {
+      const scoped = entry.byAgent?.[agentKind];
+      if (scoped) return scoped.cwd === cwd ? scoped.resumeHandle : undefined;
+      if (entry.agentKind === agentKind && entry.cwd === cwd) return entry.resumeHandle;
+      return undefined;
+    }
     if (entry.cwd !== cwd) return undefined;
     return entry.resumeHandle;
   }
 
-  getRaw(chatId: string): SessionEntry | undefined {
-    return this.data[chatId];
+  getRaw(chatId: string, agentKind?: AgentKind): SessionEntry | undefined {
+    const entry = this.data[chatId];
+    if (!entry) return undefined;
+    if (!agentKind) return entry;
+    const scoped = entry.byAgent?.[agentKind];
+    if (scoped) {
+      return { ...entry, resumeHandle: scoped.resumeHandle, cwd: scoped.cwd, agentKind };
+    }
+    if (entry.agentKind === agentKind) return entry;
+    return {
+      updatedAt: entry.updatedAt,
+      ...(entry.idleTimeoutMinutes !== undefined
+        ? { idleTimeoutMinutes: entry.idleTimeoutMinutes }
+        : {}),
+    };
   }
 
   scopeIds(): string[] {
     return Object.keys(this.data);
   }
 
-  set(chatId: string, resumeHandle: string, cwd: string): void {
+  set(chatId: string, resumeHandle: string, cwd: string, agentKind?: AgentKind): void {
     this.assertMutable();
     // Preserve idleTimeoutMinutes across run starts — it's a per-scope
     // preference, not per-run-instance state. Session resets preserve it.
     const prev = this.data[chatId];
+    const byAgent = { ...prev?.byAgent };
+    if (agentKind) byAgent[agentKind] = { resumeHandle, cwd };
     this.data[chatId] = {
       resumeHandle,
       cwd,
       updatedAt: Date.now(),
+      ...(agentKind ? { agentKind } : prev?.agentKind ? { agentKind: prev.agentKind } : {}),
+      ...(Object.keys(byAgent).length > 0 ? { byAgent } : {}),
       ...(prev?.idleTimeoutMinutes !== undefined
         ? { idleTimeoutMinutes: prev.idleTimeoutMinutes }
         : {}),
@@ -87,10 +112,14 @@ export class SessionStore {
     this.schedulePersist();
   }
 
-  clear(chatId: string): void {
+  clear(chatId: string, agentKind?: AgentKind): void {
     this.assertMutable();
     const prev = this.data[chatId];
     if (!prev) return;
+    if (agentKind) {
+      this.clearAgent(chatId, prev, agentKind);
+      return;
+    }
     if (prev.idleTimeoutMinutes !== undefined) {
       this.data[chatId] = {
         idleTimeoutMinutes: prev.idleTimeoutMinutes,
@@ -99,6 +128,33 @@ export class SessionStore {
     } else {
       delete this.data[chatId];
     }
+    this.schedulePersist();
+  }
+
+  private clearAgent(chatId: string, prev: SessionEntry, agentKind: AgentKind): void {
+    const byAgent = { ...prev.byAgent };
+    delete byAgent[agentKind];
+    const remaining = Object.entries(byAgent) as Array<[AgentKind, { resumeHandle: string; cwd: string }]>;
+    const keepLast = prev.agentKind && prev.agentKind !== agentKind
+      ? { agentKind: prev.agentKind, resumeHandle: prev.resumeHandle, cwd: prev.cwd }
+      : remaining[0]
+        ? { agentKind: remaining[0][0], resumeHandle: remaining[0][1].resumeHandle, cwd: remaining[0][1].cwd }
+        : undefined;
+    if (!keepLast && prev.idleTimeoutMinutes === undefined) {
+      delete this.data[chatId];
+      this.schedulePersist();
+      return;
+    }
+    this.data[chatId] = {
+      updatedAt: Date.now(),
+      ...(keepLast?.resumeHandle && keepLast.cwd
+        ? { resumeHandle: keepLast.resumeHandle, cwd: keepLast.cwd, agentKind: keepLast.agentKind }
+        : {}),
+      ...(remaining.length > 0 ? { byAgent: Object.fromEntries(remaining) } : {}),
+      ...(prev.idleTimeoutMinutes !== undefined
+        ? { idleTimeoutMinutes: prev.idleTimeoutMinutes }
+        : {}),
+    };
     this.schedulePersist();
   }
 

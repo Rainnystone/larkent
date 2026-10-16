@@ -7,6 +7,13 @@ import type {
 import type { Readable, Writable } from 'node:stream';
 import crossSpawn from 'cross-spawn';
 
+/**
+ * Turn journal reaps agent CLI orphans. The JSONL runner passes
+ * `detached: true` so a supervise.sh / Ctrl-C group signal does not kill an
+ * in-flight CLI, and a SIGKILL of the bridge leaves a child the journal can
+ * match by pid + start time. Other `spawnProcess` callers keep the default
+ * (same group) unless they opt in.
+ */
 export function spawnProcess(
   command: string,
   args: readonly string[] = [],

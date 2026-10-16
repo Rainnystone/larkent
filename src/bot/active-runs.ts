@@ -1,11 +1,22 @@
 import type { AgentRun } from '../agent/types';
+import { requestStop, type RunOutcome, type StopRequest } from './run-outcome';
+
+export type { StopRequest };
 
 export interface RunHandle {
   run: AgentRun;
   interrupted: boolean;
+  stopRequest?: StopRequest;
+  outcome?: RunOutcome;
+}
+
+export interface ActiveRunsHooks {
+  onSupersede?: (scope: string) => void;
 }
 
 export class ActiveRuns {
+  constructor(private readonly hooks: ActiveRunsHooks = {}) {}
+
   private readonly handles = new Map<string, RunHandle>();
   private readonly reservations = new Set<string>();
   private readonly sessionWriters = new Map<string, Set<{ current: boolean }>>();
@@ -88,9 +99,10 @@ export class ActiveRuns {
   }
 
   /** An accepted session choice revokes old consumers before requesting stop. */
-  supersedeSession(scope: string): boolean {
+  supersedeSession(scope: string, reason: StopRequest): boolean {
+    this.hooks.onSupersede?.(scope);
     for (const writer of this.sessionWriters.get(scope) ?? []) writer.current = false;
-    return this.interrupt(scope);
+    return this.interrupt(scope, reason);
   }
 
   /**
@@ -98,19 +110,19 @@ export class ActiveRuns {
    * interrupt was issued. The owner unregisters after asynchronous stop
    * settlement; failures remain visible to its finished/stopAll callers.
    */
-  interrupt(chatId: string): boolean {
+  interrupt(chatId: string, reason: StopRequest): boolean {
     const h = this.handles.get(chatId);
     if (!h) return false;
-    h.interrupted = true;
+    requestStop(h, reason);
     void h.run.stop().catch(() => {
       // The owned run retains and reports settlement failure through finished/stopAll.
     });
     return true;
   }
 
-  async stopAll(): Promise<void> {
+  async stopAll(reason: StopRequest): Promise<void> {
     const all = [...this.handles.values()];
-    for (const h of all) h.interrupted = true;
+    for (const h of all) requestStop(h, reason);
     const results = await Promise.allSettled(all.map((h) => h.run.stop()));
     const errors = results.flatMap(result => result.status === 'rejected' ? [result.reason] : []);
     if (errors.length) throw new AggregateError(errors, 'failed to stop all active runs');

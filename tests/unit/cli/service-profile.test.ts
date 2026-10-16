@@ -30,6 +30,7 @@ vi.mock('../../../src/runtime/registry', () => ({
 
 vi.mock('../../../src/runtime/locks', () => ({
   checkRuntimeLock: mocks.checkRuntimeLock,
+  machineAppLockFile: () => '/tmp/lark-channel-home/registry/locks/machine-app/app.lock',
 }));
 
 vi.mock('../../../src/cli/commands/ps', () => ({
@@ -354,6 +355,7 @@ describe('profile-aware service commands', () => {
     mocks.checkRuntimeLock
       .mockResolvedValueOnce({ locked: true, meta: holder })
       .mockResolvedValueOnce({ locked: false })
+      .mockResolvedValueOnce({ locked: false })
       .mockResolvedValueOnce({ locked: false });
     mocks.readAndPrune
       .mockReturnValueOnce([])
@@ -410,7 +412,7 @@ describe('profile-aware service commands', () => {
     expect(mocks.adapter.install).not.toHaveBeenCalled();
     expect(mocks.adapter.start).not.toHaveBeenCalled();
     expect(errors.join('\n')).toContain('当前 app 已有 bridge 进程占用');
-    expect(errors.join('\n')).toContain('app=cli_codex');
+    expect(errors.join('\n')).not.toContain('cli_codex');
 
     exit.mockRestore();
   });

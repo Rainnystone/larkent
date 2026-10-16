@@ -8,6 +8,11 @@ interface PendingEntry {
 
 export type FlushHandler = (scope: string, batch: NormalizedMessage[]) => void;
 
+export interface PendingQueueSnapshot {
+  blocked: string[];
+  waiting: Array<{ scope: string; count: number }>;
+}
+
 /**
  * Per-scope debounce queue. `scope` is the session scope string (typically
  * `chatId` for p2p / regular group, `chatId:threadId` for topic groups).
@@ -54,12 +59,15 @@ export class PendingQueue {
     return entry.messages;
   }
 
-  cancelAll(): void {
+  cancelAll(): NormalizedMessage[] {
+    const dropped: NormalizedMessage[] = [];
     for (const entry of this.map.values()) {
       if (entry.timer) clearTimeout(entry.timer);
+      dropped.push(...entry.messages);
     }
     this.map.clear();
     this.blocked.clear();
+    return dropped;
   }
 
   /** Pause the debounce timer; pushed messages keep accumulating. */
@@ -72,6 +80,25 @@ export class PendingQueue {
       entry.timer = undefined;
     }
     log.info('queue', 'blocked', { scope, queued: entry?.messages.length ?? 0 });
+  }
+
+  snapshot(): PendingQueueSnapshot {
+    const waiting: Array<{ scope: string; count: number }> = [];
+    for (const [scope, entry] of this.map) {
+      if (entry.messages.length > 0) waiting.push({ scope, count: entry.messages.length });
+    }
+    return { blocked: [...this.blocked], waiting };
+  }
+
+  isBlocked(scope: string): boolean {
+    return this.blocked.has(scope);
+  }
+
+  waitingCount(scope?: string): number {
+    if (scope !== undefined) return this.map.get(scope)?.messages.length ?? 0;
+    let total = 0;
+    for (const entry of this.map.values()) total += entry.messages.length;
+    return total;
   }
 
   /** Resume the debounce timer; arms a fresh quiet window if anything queued. */

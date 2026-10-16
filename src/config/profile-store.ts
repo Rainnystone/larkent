@@ -84,6 +84,7 @@ type StoredProfileConfig = Pick<
   | 'agent'
   | 'agentKind'
   | 'mode'
+  | 'instance'
   | 'accounts'
   | 'secrets'
   | 'preferences'
@@ -95,6 +96,7 @@ type StoredProfileConfig = Pick<
   | 'comments'
   | 'meeting'
   | 'larkCli'
+  | 'reliability'
 >;
 
 type StoredRootConfig = Omit<RootConfig, 'preferences' | 'profiles'> & {
@@ -124,6 +126,7 @@ function serializeProfileConfig(profile: ProfileConfig): StoredProfileConfig {
     agent: profile.agent,
     agentKind: profile.agentKind,
     mode: profile.mode,
+    ...(profile.instance ? { instance: profile.instance } : {}),
     accounts: profile.accounts,
     ...(profile.secrets ? { secrets: profile.secrets } : {}),
     preferences: profile.preferences,
@@ -135,6 +138,7 @@ function serializeProfileConfig(profile: ProfileConfig): StoredProfileConfig {
     comments: {},
     meeting: profile.meeting,
     larkCli: profile.larkCli,
+    ...(profile.reliability ? { reliability: profile.reliability } : {}),
   };
 }
 
