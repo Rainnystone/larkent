@@ -166,9 +166,9 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
   wrapChannelOutbound(deps.channel, deps.outbound ?? new OutboundMessageIds(), {
     ...(deps.outboundTimeoutMs !== undefined ? { timeoutMs: deps.outboundTimeoutMs } : {}),
-    onOutcome: (outcome) => {
+    onResult: (result) => {
       if (stopped) return;
-      if (!outcome.ok && !isBusiness4xx(outcome.error)) {
+      if (!result.ok && !isBusiness4xx(result.error)) {
         goDown(lastEvidenceAt ?? downSince);
         return;
       }

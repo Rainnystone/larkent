@@ -135,16 +135,12 @@ export async function withOutboundTimeout<T>(
   }
 }
 
-export type OutboundOutcome =
-  | { ok: true }
-  | { ok: false; error: unknown };
-
 export function wrapChannelOutbound(
   channel: object,
   outbound: OutboundMessageIds,
   opts: {
     timeoutMs?: number;
-    onOutcome?: (outcome: OutboundOutcome) => void;
+    onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void;
   } = {},
 ): void {
   const timeoutMs = opts.timeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
@@ -160,11 +156,11 @@ export function wrapChannelOutbound(
       });
       return withOutboundTimeout(op, work, timeoutMs).then(
         (result) => {
-          opts.onOutcome?.({ ok: true });
+          opts.onResult?.({ ok: true });
           return result;
         },
         (error: unknown) => {
-          opts.onOutcome?.({ ok: false, error });
+          opts.onResult?.({ ok: false, error });
           throw error;
         },
       );

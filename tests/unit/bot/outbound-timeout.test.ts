@@ -41,8 +41,8 @@ describe('wrapChannelOutbound timeout', () => {
     };
     wrapChannelOutbound(channel, new OutboundMessageIds(), {
       timeoutMs: 15,
-      onOutcome: (outcome) => {
-        outcomes.push({ ok: outcome.ok });
+      onResult: (result) => {
+        outcomes.push({ ok: result.ok });
       },
     });
 
