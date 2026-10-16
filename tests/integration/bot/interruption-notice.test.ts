@@ -327,7 +327,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
   });
 
   it.each(['markdown', 'card'] as const)(
-    'posts a standalone %s reply when the final stream patch is a business 4xx',
+    'does not duplicate an already-streamed %s partial when the final patch is a business 4xx',
     async (replyMode) => {
       const streamed = 'STREAMED_ANSWER';
       const h = await harness({
@@ -344,14 +344,65 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       run.push({ type: 'done', terminationReason: 'interrupted' });
       run.close();
       run.releaseCleanup();
-      await waitFor(() => sentAnswers(h.channel, streamed).length >= 1);
       await waitFor(() => noticeSends(h.channel).length >= 1);
-      expect(sentAnswers(h.channel, streamed).length).toBeGreaterThanOrEqual(1);
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
       expect(h.journal.list().some((entry) => (
         entry.status === 'notice-delivered' || entry.notice?.messageId
       ))).toBe(true);
     },
   );
+
+  it.each(['markdown', 'card'] as const)(
+    'falls back immediately on a local %s final-patch error without duplicating the stream',
+    async (replyMode) => {
+      const streamed = 'STREAMED_ANSWER';
+      const h = await harness({
+        fakeTimers: false,
+        replyMode,
+        manual: true,
+      });
+      failStreamPatchesAfterFirst(h.channel, new Error('stream controller is closed'));
+      await h.channel.handlers.message?.(mention('om_run', SECRET));
+      await waitFor(() => h.manual.length === 1);
+      const run = h.manual[0]!;
+      run.push({ type: 'text', delta: streamed });
+      await waitFor(() => streamedAnswers(h.channel, streamed) >= 1);
+      run.push({ type: 'done', terminationReason: 'interrupted' });
+      run.close();
+      run.releaseCleanup();
+      await waitFor(() => noticeSends(h.channel).length >= 1);
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+      expect(h.journal.list().some((entry) => (
+        entry.status === 'notice-delivered' || entry.notice?.messageId
+      ))).toBe(true);
+    },
+  );
+
+  it.each([
+    { name: 'business 4xx', error: httpError(400) },
+    { name: 'local patch error', error: new Error('stream controller is closed') },
+  ])('posts only the unseen tail when a $name final patch leaves a partial stream on screen', async ({ error }) => {
+    const seen = 'SEEN_PARTIAL';
+    const unseen = 'UNSEEN_TAIL';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      manual: true,
+    });
+    failStreamPatchesAfterFirst(h.channel, error);
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.manual.length === 1);
+    const run = h.manual[0]!;
+    run.push({ type: 'text', delta: seen });
+    await waitFor(() => streamedAnswers(h.channel, seen) >= 1);
+    run.push({ type: 'text', delta: unseen });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await waitFor(() => sentAnswers(h.channel, unseen).length >= 1);
+    expect(sentAnswers(h.channel, seen)).toHaveLength(0);
+    expect(sentAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
+  });
 
   it('signs continue on a default profile with no reliability.notice key', async () => {
     const h = await harness({

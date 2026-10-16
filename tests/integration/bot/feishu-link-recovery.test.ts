@@ -198,7 +198,7 @@ describe('FeishuLink recovery through the bridge', () => {
 
 async function startHarness(opts: {
   now: () => number;
-  probe: () => Promise<boolean>;
+  probe: (signal?: AbortSignal) => Promise<boolean>;
   lastLiveAt: number;
   history: Record<string, unknown[]>;
   onRecovered?: (outage: { since: number; until: number }) => void;

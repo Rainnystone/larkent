@@ -8,6 +8,7 @@ import {
   FEISHU_LINK_SLEEP_MS,
   FEISHU_LINK_TICK_MS,
   createFeishuProbe,
+  isLinkFailureError,
   startFeishuLink,
   type Outage,
 } from '../../../src/bot/feishu-link';
@@ -282,6 +283,27 @@ describe('FeishuLink', () => {
     await expect(createFeishuProbe(probeChannel(new Error('ECONNRESET')))()).resolves.toBe(false);
   });
 
+  it('ignores a late getAppInfo after the probe is aborted', async () => {
+    let finish: ((info: { ownerId: string }) => void) | undefined;
+    const channel = probeChannel(new Error('unused'));
+    channel.getAppInfo = () => new Promise((resolve) => {
+      finish = resolve;
+    });
+    const ctrl = new AbortController();
+    const pending = createFeishuProbe(channel)(ctrl.signal);
+    ctrl.abort();
+    await expect(pending).resolves.toBe(false);
+    finish?.({ ownerId: 'ou_owner' });
+  });
+
+  it('classifies transport and 5xx as link outages and local patch errors as not', () => {
+    expect(isLinkFailureError(httpError(502))).toBe(true);
+    expect(isLinkFailureError(new OutboundTimeoutError('stream', 30_000))).toBe(true);
+    expect(isLinkFailureError(new Error('getaddrinfo EAI_AGAIN open.feishu.cn'))).toBe(true);
+    expect(isLinkFailureError(httpError(400))).toBe(false);
+    expect(isLinkFailureError(new Error('stream controller is closed'))).toBe(false);
+  });
+
   it('does not treat a slow but successful probe as host sleep', async () => {
     const recovered = await hangSilentProbe({
       onHang: (clock) => {
@@ -321,6 +343,53 @@ describe('FeishuLink', () => {
     recovered.clock.mono += FEISHU_LINK_TICK_MS;
     await recovered.link.tick();
     expect(sleep.mock.calls.some((call) => call[0] === 'link' && call[1] === 'sleep')).toBe(false);
+  });
+
+  it('aborts a hung getAppInfo at the probe timeout so a late success cannot take the link up', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let now = 1_700_000_000_000;
+    let hang = false;
+    let finish: ((info: { ownerId: string }) => void) | undefined;
+    const signals: AbortSignal[] = [];
+    const app = {
+      getAppInfo: () => {
+        if (!hang) return Promise.resolve({ ownerId: 'ou_owner' });
+        return new Promise<{ ownerId: string }>((resolve) => {
+          finish = resolve;
+        });
+      },
+    } as unknown as LarkChannel;
+    const inner = createFeishuProbe(app);
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: (signal) => {
+        if (signal) signals.push(signal);
+        return inner(signal);
+      },
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+
+    hang = true;
+    let probing: Promise<void> | undefined;
+    const silentUntil = now + FEISHU_LINK_SILENT_PROBE_MS;
+    while (now < silentUntil) {
+      now += FEISHU_LINK_TICK_MS;
+      probing = link.tick();
+      if (now < silentUntil) await probing;
+    }
+    expect(link.isDown()).toBe(false);
+    await vi.advanceTimersByTimeAsync(FEISHU_LINK_PROBE_TIMEOUT_MS);
+    await probing;
+    expect(link.isDown()).toBe(true);
+    expect(signals.at(-1)?.aborted).toBe(true);
+
+    finish?.({ ownerId: 'ou_owner' });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(link.isDown()).toBe(true);
   });
 
   it('bounds a hung probe with the probe timer without waiting for the next tick', async () => {

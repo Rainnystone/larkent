@@ -107,7 +107,8 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { createFeishuProbe, isBusiness4xx, startFeishuLink } from './feishu-link';
+import { createFeishuProbe, isLinkFailureError, startFeishuLink } from './feishu-link';
+import { unseenStreamFallback } from './stream-fallback';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
 import {
   isJournalResourceType,
@@ -248,7 +249,7 @@ export interface StartChannelDeps {
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
   now?: () => number;
-  probe?: () => Promise<boolean>;
+  probe?: (signal?: AbortSignal) => Promise<boolean>;
   onRecovered?: (outage: Outage) => void;
 }
 
@@ -1679,6 +1680,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       let producerStarted = false;
       let producerRendered = false;
       let lastStreamPatch: StreamPatchStatus | undefined;
+      let lastStreamedText: string | undefined;
       let cardCtrl:
         | { update(next: object | ((current: object) => object)): Promise<void> }
         | undefined;
@@ -1693,8 +1695,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
                 if (progress.abandoned()) return;
                 cardCtrl = ctrl;
                 try {
-                  await ctrl.update(renderCard(filterForPrefs(latestState), cardRenderOptions));
+                  const visible = filterForPrefs(latestState);
+                  await ctrl.update(renderCard(visible, cardRenderOptions));
                   lastStreamPatch = { ok: true };
+                  lastStreamedText = visibleStreamText(visible);
                 } catch (err) {
                   lastStreamPatch = { ok: false, err };
                   throw err;
@@ -1718,8 +1722,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
           if (cardCtrl) {
             try {
-              await cardCtrl.update(renderCard(filterForPrefs(state), cardRenderOptions));
+              const visible = filterForPrefs(state);
+              await cardCtrl.update(renderCard(visible, cardRenderOptions));
               lastStreamPatch = { ok: true };
+              lastStreamedText = visibleStreamText(visible);
             } catch (err) {
               lastStreamPatch = { ok: false, err };
               log.fail('stream', err, { mode: replyMode, step: 'render' });
@@ -1761,6 +1767,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           progress,
           throwIfStreamPatchFailed(streamPatch),
         ),
+        streamedBody: lastStreamedText,
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1775,6 +1782,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       let producerStarted = false;
       let producerRendered = false;
       let lastStreamPatch: StreamPatchStatus | undefined;
+      let lastStreamedText: string | undefined;
       let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
         channel.stream(
@@ -1785,8 +1793,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               if (progress.abandoned()) return;
               markdownCtrl = ctrl;
               try {
-                await ctrl.setContent(renderText(filterForPrefs(latestState)));
+                const visible = filterForPrefs(latestState);
+                await ctrl.setContent(renderText(visible));
                 lastStreamPatch = { ok: true };
+                lastStreamedText = visibleStreamText(visible);
               } catch (err) {
                 lastStreamPatch = { ok: false, err };
                 throw err;
@@ -1809,8 +1819,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
           if (markdownCtrl) {
             try {
-              await markdownCtrl.setContent(renderText(filterForPrefs(state)));
+              const visible = filterForPrefs(state);
+              await markdownCtrl.setContent(renderText(visible));
               lastStreamPatch = { ok: true };
+              lastStreamedText = visibleStreamText(visible);
             } catch (err) {
               lastStreamPatch = { ok: false, err };
               log.fail('stream', err, { mode: replyMode, step: 'render' });
@@ -1852,6 +1864,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           progress,
           throwIfStreamPatchFailed(streamPatch),
         ),
+        streamedBody: lastStreamedText,
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -2081,6 +2094,50 @@ function liveStreamFinalize(
   return report;
 }
 
+function visibleStreamText(state: RunState): string {
+  return renderText({ ...state, footer: null });
+}
+
+function remainderReplyState(source: RunState, unseen: string): RunState {
+  return {
+    ...source,
+    blocks: [{ kind: 'text', content: unseen, streaming: false }],
+    reasoning: { content: '', active: false },
+    footer: null,
+    terminal: 'done',
+    errorMsg: undefined,
+    finalText: undefined,
+  };
+}
+
+async function deliverUnseenStreamFallback(input: {
+  channel: LarkChannel;
+  chatId: string;
+  scope: string;
+  state: RunState;
+  skipFrom?: RunState;
+  streamedBody?: string;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+  sendOpts: { replyTo: string; replyInThread?: boolean };
+  cardRenderOptions: { signCallback?: (action: string) => string };
+  journal?: TurnJournal;
+  turnId?: string;
+  cliSelfSent?: CliSelfSendTracker;
+}): Promise<void> {
+  const unseen = unseenStreamFallback(renderText(input.state), input.streamedBody);
+  if (!unseen) {
+    if (input.journal && input.turnId) {
+      input.journal.noteStreamFinalized(input.turnId);
+      await input.journal.flush();
+    }
+    return;
+  }
+  const sent = await sendFinalReply({ ...input, state: remainderReplyState(input.state, unseen) });
+  if (input.journal && input.turnId && sent?.messageId) {
+    input.journal.noteReplyReceipt(input.turnId, sent.messageId);
+  }
+}
+
 async function deliverFinalReply(input: {
   channel: LarkChannel;
   chatId: string;
@@ -2088,6 +2145,8 @@ async function deliverFinalReply(input: {
   state: RunState;
   skipFrom?: RunState;
   finalizeStream?: () => Promise<void>;
+  /** Last successful stream patch, without live footer, for 4xx/local fallback. */
+  streamedBody?: string;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
@@ -2147,11 +2206,8 @@ async function deliverFinalReply(input: {
       }
     } catch (err) {
       log.fail('stream', err, { mode: input.replyMode, step: 'final-patch' });
-      if (!isBusiness4xx(err)) return;
-      const sent = await sendFinalReply(input);
-      if (input.journal && input.turnId && sent?.messageId) {
-        input.journal.noteReplyReceipt(input.turnId, sent.messageId);
-      }
+      if (isLinkFailureError(err)) return;
+      await deliverUnseenStreamFallback(input);
     }
   } else {
     const sent = await sendFinalReply(input);

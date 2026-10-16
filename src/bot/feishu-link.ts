@@ -2,7 +2,7 @@ import type { LarkChannel } from '@larksuite/channel';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { log } from '../core/logger';
-import { OutboundMessageIds, wrapChannelOutbound } from './self-message';
+import { OutboundMessageIds, OutboundTimeoutError, wrapChannelOutbound } from './self-message';
 
 export const FEISHU_LINK_TICK_MS = 15_000;
 export const FEISHU_LINK_SLEEP_MS = 30_000;
@@ -27,7 +27,7 @@ export interface FeishuLink {
 
 export interface FeishuLinkDeps {
   channel: LarkChannel;
-  probe: () => Promise<boolean>;
+  probe: (signal?: AbortSignal) => Promise<boolean>;
   watermark: { get(): number | undefined; set(at: number): void };
   now?: () => number;
   /** Awake event-loop time. Defaults to `performance.now`. */
@@ -37,16 +37,56 @@ export interface FeishuLinkDeps {
   outboundTimeoutMs?: number;
 }
 
-export function createFeishuProbe(channel: LarkChannel): () => Promise<boolean> {
-  return async () => {
+export function createFeishuProbe(
+  channel: LarkChannel,
+): (signal?: AbortSignal) => Promise<boolean> {
+  return async (signal) => {
+    if (signal?.aborted) return false;
     try {
-      await channel.getAppInfo();
-      return true;
+      await settleOrAbort(channel.getAppInfo(), signal);
+      return !signal?.aborted;
     } catch (err) {
+      if (signal?.aborted || isAbortError(err)) return false;
       // A 4xx means Feishu answered; credentials/quota are not a link outage.
       return isBusiness4xx(err);
     }
   };
+}
+
+function settleOrAbort<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+  if (!signal) return work;
+  if (signal.aborted) return Promise.reject(abortError());
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      cleanup();
+      reject(abortError());
+    };
+    const cleanup = (): void => {
+      signal.removeEventListener('abort', onAbort);
+    };
+    signal.addEventListener('abort', onAbort);
+    work.then(
+      (value) => {
+        cleanup();
+        if (signal.aborted) reject(abortError());
+        else resolve(value);
+      },
+      (err: unknown) => {
+        cleanup();
+        reject(err);
+      },
+    );
+  });
+}
+
+function abortError(): Error {
+  const err = new Error('probe aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError';
 }
 
 function httpStatus(error: unknown): number | undefined {
@@ -61,16 +101,51 @@ export function isBusiness4xx(error: unknown): boolean {
   return status !== undefined && status >= 400 && status < 500;
 }
 
+const LINK_ERRNO = new Set([
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'EPIPE',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+
+const LINK_MESSAGE = /EAI_AGAIN|ENOTFOUND|ECONNRESET|ETIMEDOUT|ECONNREFUSED|socket hang up|getaddrinfo|no HTTP response/i;
+
+/** Transport / 5xx / timeout — wait for recovery. Local and 4xx do not. */
+export function isLinkFailureError(error: unknown): boolean {
+  if (error instanceof OutboundTimeoutError) return true;
+  const status = httpStatus(error);
+  if (status !== undefined && status >= 500) return true;
+  const code = errnoCode(error);
+  if (code !== undefined && LINK_ERRNO.has(code)) return true;
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  return LINK_MESSAGE.test(message);
+}
+
+function errnoCode(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
+}
+
 async function raceProbe(
-  probe: () => Promise<boolean>,
+  probe: (signal?: AbortSignal) => Promise<boolean>,
   timeoutMs: number,
+  ctrl: AbortController,
 ): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      probe().catch(() => false),
+      probe(ctrl.signal)
+        .then((ok) => (ctrl.signal.aborted ? false : ok))
+        .catch(() => false),
       new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
+        timer = setTimeout(() => {
+          ctrl.abort();
+          resolve(false);
+        }, timeoutMs);
         timer.unref?.();
       }),
     ]);
@@ -91,6 +166,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let lastEvidenceAt: number | undefined;
   let probing = false;
   let probeSeq = 0;
+  let probeAbort: AbortController | undefined;
   let probeWallStart = 0;
   let probeMonoStart = 0;
   let wsDownTicks = 0;
@@ -160,6 +236,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       // Do not move lastTickAt while the probe is still in flight.
       if (noteSleepIfProbeSuspended()) return;
       if (probeWallElapsedMs() > FEISHU_LINK_PROBE_TIMEOUT_MS) {
+        probeAbort?.abort();
         probeSeq += 1;
         probing = false;
         goDown(lastEvidenceAt ?? downSince);
@@ -204,12 +281,15 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     probing = true;
     probeWallStart = now;
     probeMonoStart = monoFn();
+    const ctrl = new AbortController();
+    probeAbort = ctrl;
     let ok = false;
     try {
-      ok = await raceProbe(deps.probe, FEISHU_LINK_PROBE_TIMEOUT_MS);
+      ok = await raceProbe(deps.probe, FEISHU_LINK_PROBE_TIMEOUT_MS, ctrl);
     } catch {
       ok = false;
     } finally {
+      if (probeAbort === ctrl) probeAbort = undefined;
       if (seq !== probeSeq) return;
       probing = false;
       const suspended = noteSleepIfProbeSuspended();
@@ -259,6 +339,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     },
     stop() {
       stopped = true;
+      probeAbort?.abort();
       clearInterval(timer);
     },
     tick,
