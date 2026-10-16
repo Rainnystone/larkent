@@ -195,6 +195,21 @@ common run flow and outbox; runs surviving `/reconnect` and `/account` swaps; ex
 connect at startup; SDK upstream asks (proxy-aware keepalive probe, public `reconnect()`); the runner `timeouts`
 seam; command splitting / single preferences parser; e2e proxy cleanup (D1).
 
+## Delivery invariants
+
+Every delivery change must keep these true. They come from the 2026-10-16 failure-mode audit of the code branch (T11–T16).
+
+- **I1 At least one visible outcome.** Every accepted turn ends with a complete answer or a notice the user can see. A duplicate is acceptable; a loss is not.
+- **I2 Only the bridge's own awaited calls confirm delivery.** A delivery counts only when a call the bridge awaited returned a receipt (message id). The SDK's internal throttled stream writes never count, because they always resolve.
+- **I3 Everything terminal goes through the outbox.** Replies, notices and notice-card resolutions are staged before their first attempt. They leave the outbox only on a receipt, on a terminal "rejected" after their fallback, or when the user explicitly voids them.
+- **I4 One error classifier.** A single function sorts every Feishu error into exactly one of `link`, `rejected` or `local`. It looks through wrapper errors (`.cause`), is used by both FeishuLink and delivery, and never matches message text.
+- **I5 Only link errors take the link down.** A success or a rejection (4xx) is evidence that Feishu is reachable; a local error is evidence of nothing.
+- **I6 No attempts while down.** While the link is down, delivery stages and returns. Recovery delivers, and stops at the first link error.
+- **I7 Timeouts are per request.** Each REST call has its own timeout. No timeout spans a long-lived operation such as a whole stream.
+- **I8 Reply and notice are separate items.** Each has its own state and receipt; settling one never re-sends the other.
+- **I9 Recovery steps are independent and idempotent.** One step failing does not skip the others, and running a step twice is harmless.
+- **I10 Test doubles behave like the real SDK.** Fake stream `update`/`setContent` never reject, and fake errors are `LarkChannelError` with the HTTP error as `cause`.
+
 ## Testing Decisions
 
 - Good tests assert on what reaches the chat (replies, notices, card states, queue drained) through the recording Lark channel and fake clock/probe — never on log event names.
@@ -205,13 +220,19 @@ seam; command splitting / single preferences parser; e2e proxy cleanup (D1).
 
 ## Known limitations
 
-Recovery does not cover these; each is logged or declared rather than silent. Follow-ups: [T10](link-recovery/tickets/T10-review-followups.md).
+Recovery does not cover these; each is logged or declared rather than silent. Follow-ups: [T10](link-recovery/tickets/T10-review-followups.md), T11–T16.
 
-- **Outage longer than `lookbackMs`** (default 6 h): messages older than the window are not backfilled. At minimum a `backfill.window-truncated` log line; a one-time per-chat notice is proposed in T10.
+- **Outage longer than `lookbackMs`** (default 6 h, F29): messages older than the window are not backfilled. At minimum a `backfill.window-truncated` log line; a one-time per-chat notice is proposed in T10.
 - **Thread replies in normal groups**: the chat container returns only thread roots, so an @bot inside a thread reply is not backfilled (`backfill.topic-partial`).
 - **First-contact DM**: a DM chat with no prior session is not scanned.
 - **Ledger pruned or lost**: the processed ledger keeps ids for 2× lookback (12 h); if it is pruned or lost, a message can be answered a second time.
-- **Redelivered final reply**: a reply whose final send timed out but actually landed may appear twice (accepted, §4); a reply the agent already sent via CLI must not be redelivered (T10 item 2).
+- **Redelivered final reply** (F11): a reply whose final send timed out but actually landed may appear twice (accepted, §4; optional fix in T16); a reply the agent already sent via CLI must not be redelivered (T10 item 2).
+- **CLI answer during an outage** (audit F24): if the agent sent its answer via CLI during the outage, the echo was lost and the bridge's final send failed, the answer can be redelivered and appear twice. Accepted.
+- **Notice card resolution is not staged** (F15): if updating the card to 已继续 / 已放弃 fails, the old buttons stay; a later click answers 此继续已失效.
+- **Inbound works while REST is blackholed** (F18): an inbound WebSocket event counts as evidence, so the link can flap up and down on each inbound message while sends keep failing. Recovery still converges once REST returns.
+- **WebSocket permanently failed** (F23): the link stays down forever and nothing is delivered; the bridge only logs. Exiting on this is deferred (§10).
+- **Unstaged sends** (F27): policy rejections, group/forward hints, the CoT degraded notice and command replies are not staged and are lost if sent during an outage.
+- **Supersede or /new voids a staged answer** (F26, intended): when a newer turn supersedes, or `/new` resets the scope while a reply is still staged, the staged answer and its continuation are voided and never delivered. This is the current behaviour and is kept: the user has moved on.
 
 ## Out of Scope
 

@@ -20,11 +20,13 @@ Solution (user-visible contract); Testing Decisions
 - [ ] For each method × {card, markdown}: a message sent during the outage ends with exactly one reply or one notice and the queue drained.
 - [ ] kill -9 mid-run, restart: exactly one reply or notice, queue drained; an ordinary follow-up is answered alone (prior turn 已放弃).
 - [ ] No 保活重启 notice in any run.
+- [ ] A streamed run longer than 30 s on a healthy network causes no outage (no recovery logged, no run stopped).
+- [ ] Markdown and card: an outage that hits only the final stream update still ends with one full answer.
 - [ ] `pnpm ci:local` passes.
 
 ## Blocked by
 
-T0, T1, T2, T3, T4, T5, T6, T7, T8
+T0–T8, T11, T12, T13, T14, T15 (T16 optional, not required)
 
 ## Latency check (normal network)
 

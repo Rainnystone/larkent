@@ -1,0 +1,45 @@
+# T12: The stream result is the only delivery signal
+
+**Status:** ready-for-agent · Audit: D3 (F2, F3, F4, F25; original E2E A2)
+
+## Goal
+
+Delivery of a streamed answer is judged only by the `stream()` result the bridge awaited, never by the SDK's throttled writes (I2).
+- `awaitRenderAwareStream` returns `{confirmed, messageId} | {failed, err} | {none}` instead of throwing. `deliverFinalReply` uses it:
+  - confirmed: the stream message id becomes the reply receipt.
+  - failed + link: stays staged; the full answer is redelivered after recovery.
+  - failed + rejected/local: send the full answer now. It may duplicate the partial, which is accepted (I1).
+- Markdown final-flush failure must surface:
+  - **Preferred:** a `pnpm patch` of `@larksuite/channel` so the markdown `run()` rejects with the last error when streaming failed or the final flush failed (card mode already rejects).
+  - **Fallback if the patch is not viable:** a bridge-owned awaited final update. In card mode that is one `channel.updateCard(messageId, finalCard)`. In markdown mode it is bridge-owned CardKit (`createCard` + `updateCardById`, both wrapped).
+  - Record the choice in the ticket PR.
+- Record the stream message id at creation, so the bridge's own echo is never taken as a CLI self-send (F25).
+- SDK-faithful fake channel: `update`/`setContent` always resolve; only `stream()` rejects (card) or, with the patch, markdown `run()` (I10).
+
+## Spec sections
+
+Delivery invariants (I1, I2, I3, I10); §4 Outbox (streamed staging)
+
+## Acceptance (behaviour, failing first, against the SDK-faithful fake)
+
+- [ ] Markdown stream, final push fails with ENETUNREACH: the chat gets one full answer after recovery.
+- [ ] Card stream, short run, final patch fails: no 继续 notice for a completed turn; one full answer.
+- [ ] Card stream, final patch 400: the full answer is sent immediately, the notice is sent, and the journal shows delivered.
+- [ ] A card run longer than 30 s whose final patch fails is not marked delivered (was F4).
+- [ ] `pnpm ci:local` passes.
+
+## Files likely touched
+
+`src/bot/channel.ts` (`awaitRenderAwareStream`, `deliverFinalReply`, stream branches), `src/bot/self-message.ts` (record id at creation), `patches/@larksuite__channel*.patch` + `package.json` `pnpm.patchedDependencies` (if patched), test fake channel, `interruption-notice.test.ts`, `turn-journal.test.ts`
+
+## Delete
+
+- `stream-fallback.ts` and its tests
+- `deliverUnseenStreamFallback`, `remainderReplyState`, `streamedBody`, `lastStreamedText`, `visibleStreamText`, `StreamPatchStatus`, `throwIfStreamPatchFailed`, `liveStreamFinalize`, `lastStreamPatch`
+- `noteStreamFinalized` and `reply.streamFinalized` (the stream message id is the receipt)
+- All remainder/prefix logic
+- `failStreamPatchesAfterFirst` and the tests that depend on `update()` throwing or on top-level `{response:{status}}` errors (`interruption-notice.test.ts` ~329–461, `turn-journal.test.ts` ~148). Rewrite them against the new fake.
+
+## Blocked by
+
+T11
