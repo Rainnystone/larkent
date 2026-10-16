@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { WATERMARK_MARGIN_MS } from '../../../src/bot/backfill';
-import { createRecovery, reviewActiveRuns, type Outage } from '../../../src/bot/recovery';
+import { createRecovery, reviewActiveRuns, type Outage, type ReviewableRun } from '../../../src/bot/recovery';
 
 describe('Recovery', () => {
   it('redelivers, then scans the outage window, then reviews runs', async () => {
@@ -76,10 +76,10 @@ describe('Recovery', () => {
   });
 
   it('arms a 2-minute stall only for runs silent since before the outage', () => {
-    const silent = { lastEventAt: 900, interrupted: false, armStallDeadline: vi.fn() };
-    const live = { lastEventAt: 1_000, interrupted: false, armStallDeadline: vi.fn() };
-    const alreadyStopped = { lastEventAt: 100, interrupted: true, armStallDeadline: vi.fn() };
-    const notYetStreaming = { lastEventAt: 800, interrupted: false };
+    const silent: ReviewableRun = { lastEventAt: 900, interrupted: false, armStallDeadline: vi.fn() };
+    const live: ReviewableRun = { lastEventAt: 1_000, interrupted: false, armStallDeadline: vi.fn() };
+    const alreadyStopped: ReviewableRun = { lastEventAt: 100, interrupted: true, armStallDeadline: vi.fn() };
+    const notYetStreaming: ReviewableRun = { lastEventAt: 800, interrupted: false };
     reviewActiveRuns([silent, live, alreadyStopped, notYetStreaming], { since: 1_000, until: 5_000 });
     expect(silent.armStallDeadline).toHaveBeenCalledWith(2 * 60_000);
     expect(silent.stallDeadlineMs).toBe(2 * 60_000);
