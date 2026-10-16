@@ -270,8 +270,8 @@ describe('topic message quote handling', () => {
         },
       ],
     });
-    // Seed a session for the topic scope so it looks already-engaged.
-    h.sessions.set('oc_topic_chat:omt_existing', 'sess_existing', await realpath(h.tmp.workspace));
+    // Seed a session for this CLI on the topic scope so it looks already-engaged.
+    h.sessions.set('oc_topic_chat:omt_existing', 'sess_existing', await realpath(h.tmp.workspace), 'claude');
 
     await startTestBridge(h);
 
@@ -289,6 +289,67 @@ describe('topic message quote handling', () => {
     expect(h.channel.rawClient.im.v1.message.list).not.toHaveBeenCalled();
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).not.toContain('<topic_context>');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBe('sess_existing');
+  });
+
+  it('injects topic context on the first turn after a CLI switch instead of resuming the previous CLI', async () => {
+    // Codex then Claude on the same topic: resume is scoped per CLI, so Claude
+    // has no handle. Treat it as a fresh session and inject the thread the
+    // same way a new topic would — otherwise the first turn is blind.
+    const h = await createHarness({
+      chatMode: 'topic',
+      threadMessages: [
+        {
+          message_id: 'om_topic_root',
+          msg_type: 'text',
+          body: { content: JSON.stringify({ text: 'the real upstream question' }) },
+          sender: { id: 'ou_asker', sender_type: 'user' },
+          create_time: '1760000000000',
+          thread_id: 'omt_cli_switch',
+        },
+        {
+          message_id: 'om_switch_at',
+          msg_type: 'text',
+          body: { content: JSON.stringify({ text: '@Bridge 换 CLI 继续' }) },
+          sender: { id: 'ou_user', sender_type: 'user' },
+          create_time: '1760000001000',
+          thread_id: 'omt_cli_switch',
+        },
+      ],
+    });
+    h.sessions.set(
+      'oc_topic_chat:omt_cli_switch',
+      'sess_stale_codex',
+      await realpath(h.tmp.workspace),
+      'codex',
+    );
+
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(
+      message({
+        messageId: 'om_switch_at',
+        rootId: 'om_topic_root',
+        parentId: 'om_topic_root',
+        threadId: 'omt_cli_switch',
+        content: '@Bridge 换 CLI 继续',
+      }),
+    );
+    await waitFor(() => h.agent.runOptions.length === 1);
+
+    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          container_id_type: 'thread',
+          container_id: 'omt_cli_switch',
+        }),
+      }),
+    );
+    const prompt = h.agent.runOptions[0]?.prompt ?? '';
+    expect(prompt).toContain('<topic_context>');
+    expect(prompt).toContain('the real upstream question');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).not.toBe('sess_stale_codex');
   });
 
   it('does not open a progress stream when the agent produces no content', async () => {

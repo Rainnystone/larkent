@@ -1314,14 +1314,17 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     }
   }
 
-  // Topic upstream context. When the bot is pulled into a topic for the FIRST
-  // time (no session yet for this scope), the topic's earlier messages — the
-  // root question that may never have @-mentioned the bot, plus prior replies —
-  // live nowhere the agent can see them. Fetch them so it isn't blind to what
-  // the user is pointing at. An already-engaged topic keeps that history in its
-  // resumed session, so we skip the fetch there.
+  // Topic upstream context. When this CLI has no session for the topic scope,
+  // the thread's earlier messages — the root question that may never have
+  // @-mentioned the bot, plus prior replies — live nowhere the agent can see
+  // them. Fetch them so it isn't blind to what the user is pointing at. An
+  // already-engaged topic for this CLI keeps that history in its resumed
+  // session, so we skip the fetch there. Lookup is scoped per CLI: another
+  // CLI's handle on the same thread must not skip the fetch, because resume
+  // will not reuse that handle.
+  const agentKind = controls.profileConfig.agentKind;
   let topicContext: QuotedContext[] = [];
-  if (mode === 'topic' && threadId && !sessions.getRaw(scope)) {
+  if (mode === 'topic' && threadId && !sessions.getRaw(scope, agentKind)?.resumeHandle) {
     const exclude = new Set([...batchIds, ...quoteTargets]);
     topicContext = await fetchTopicContext(channel, threadId, {
       maxMessages: 40,
@@ -1343,7 +1346,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // for this scope (never on the first run) and the selection actually
   // changed. `requestedModel` (the `--model` value, or undefined for default)
   // is reused below to log requested-vs-actual against the init event.
-  const agentKind = controls.profileConfig.agentKind;
   const modelPref = controls.profileConfig.preferences.model;
   const modelSelection = normalizeModelSelection(agentKind, modelPref);
   const requestedModel = resolveModelArg(agentKind, modelPref);
