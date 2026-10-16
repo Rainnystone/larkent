@@ -110,33 +110,45 @@ export class OutboundTimeoutError extends Error {
   }
 }
 
-const TIMED_OUTBOUND_OPS = ['send', 'updateCard', 'updateCardById'] as const;
-const WRAPPED_OUTBOUND_OPS = ['send', 'stream', 'updateCard', 'updateCardById'] as const;
+const TIMED_CHANNEL_OPS = [
+  'send',
+  'updateCard',
+  'updateCardById',
+  'getChatMode',
+  'getAppInfo',
+  'listChats',
+  'fetchRawMessage',
+  'fetchMessage',
+] as const;
+const WRAPPED_CHANNEL_OPS = [...TIMED_CHANNEL_OPS, 'stream'] as const;
 
 export async function withOutboundTimeout<T>(
   op: string,
   work: Promise<T>,
   timeoutMs = OUTBOUND_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new OutboundTimeoutError(op, timeoutMs));
+    }, timeoutMs);
+  });
+  const settled = work.then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
   try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        const onAbort = (): void => {
-          ctrl.signal.removeEventListener('abort', onAbort);
-          reject(new OutboundTimeoutError(op, timeoutMs));
-        };
-        if (ctrl.signal.aborted) {
-          onAbort();
-          return;
-        }
-        ctrl.signal.addEventListener('abort', onAbort);
-      }),
+    const winner = await Promise.race([
+      settled,
+      timeout.then(
+        () => ({ ok: 'timeout' as const, error: new OutboundTimeoutError(op, timeoutMs) }),
+        (error: unknown) => ({ ok: 'timeout' as const, error }),
+      ),
     ]);
+    if (winner.ok === true) return winner.value;
+    throw winner.error;
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   }
 }
 
@@ -150,7 +162,7 @@ export function wrapChannelOutbound(
 ): void {
   const timeoutMs = opts.timeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
   const mutable = channel as Record<string, unknown>;
-  for (const op of WRAPPED_OUTBOUND_OPS) {
+  for (const op of WRAPPED_CHANNEL_OPS) {
     const current = mutable[op];
     if (typeof current !== 'function') continue;
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
@@ -162,7 +174,7 @@ export function wrapChannelOutbound(
         if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
         return result;
       });
-      const pending = isTimedOutboundOp(op) ? withOutboundTimeout(op, work, timeoutMs) : work;
+      const pending = isTimedChannelOp(op) ? withOutboundTimeout(op, work, timeoutMs) : work;
       return pending.then(
         (result) => {
           opts.onResult?.({ ok: true });
@@ -177,8 +189,8 @@ export function wrapChannelOutbound(
   }
 }
 
-function isTimedOutboundOp(op: (typeof WRAPPED_OUTBOUND_OPS)[number]): boolean {
-  return (TIMED_OUTBOUND_OPS as readonly string[]).includes(op);
+function isTimedChannelOp(op: (typeof WRAPPED_CHANNEL_OPS)[number]): boolean {
+  return (TIMED_CHANNEL_OPS as readonly string[]).includes(op);
 }
 
 function wrapStreamProducer(input: unknown, outbound: OutboundMessageIds): unknown {

@@ -258,6 +258,8 @@ export interface StartChannelDeps {
   now?: () => number;
   probe?: (signal?: AbortSignal) => Promise<boolean>;
   onRecovered?: (outage: Outage) => void;
+  /** Per-request REST/outbound deadline. Tests shorten it; production uses the default. */
+  outboundTimeoutMs?: number;
 }
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
@@ -670,13 +672,25 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     outboxSweep.schedule();
   };
 
-  let link = {
-    noteInbound(_at?: number) {},
-    tick: async () => {},
-    stop() {},
-    outageEpoch: () => 0,
-    isDown: () => false,
-  };
+  const started = startFeishuLink({
+    channel,
+    probe: deps.probe ?? createFeishuProbe(channel),
+    watermark: {
+      get: () => ledger?.getLiveAt(),
+      set: (at) => {
+        ledger?.touchLive(at);
+      },
+    },
+    outbound: outboundIds,
+    ...(deps.now ? { now: deps.now } : {}),
+    ...(deps.outboundTimeoutMs !== undefined ? { outboundTimeoutMs: deps.outboundTimeoutMs } : {}),
+    heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
+  });
+  started.onRecovered((outage) => {
+    deps.onRecovered?.(outage);
+    void trackConsumer(recover(outage), 'recovery');
+  });
+  const link = started;
 
   channel.on({
     message: async (msg) => {
@@ -846,6 +860,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   }
 
   await channel.connect();
+  await started.tick();
   const ownerRefresh = createOwnerRefreshController({
     controls,
     source: channel,
@@ -872,26 +887,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     procId: controls.processId,
   });
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
-
-  const started = startFeishuLink({
-    channel,
-    probe: deps.probe ?? createFeishuProbe(channel),
-    watermark: {
-      get: () => ledger?.getLiveAt(),
-      set: (at) => {
-        ledger?.touchLive(at);
-      },
-    },
-    outbound: outboundIds,
-    ...(deps.now ? { now: deps.now } : {}),
-    heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
-  });
-  started.onRecovered((outage) => {
-    deps.onRecovered?.(outage);
-    void trackConsumer(recover(outage), 'recovery');
-  });
-  link = started;
-  await started.tick();
 
   return {
     channel,
@@ -1046,6 +1041,9 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
     await intakeAcceptedOrGated(deps);
   } catch (err) {
     ledger?.release(msg.messageId);
+    if (classify(err) === 'link') {
+      ledger?.markScanIncomplete(messageCreateTime(msg) ?? Date.now());
+    }
     throw err;
   }
 }
@@ -1715,7 +1713,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           recordSession,
           async () => {},
           runContext,
-          streamReliability(controls.profileConfig, link),
+          streamReliability(controls.profileConfig, () => link),
         );
         await cotDone;
         if (cotPublisher.degradedReason) {
@@ -1795,7 +1793,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        streamReliability(controls.profileConfig, link),
+        streamReliability(controls.profileConfig, () => link),
       );
       const stream = await awaitRenderAwareStream({
         mode: replyMode,
@@ -1869,7 +1867,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        streamReliability(controls.profileConfig, link),
+        streamReliability(controls.profileConfig, () => link),
       );
       const stream = await awaitRenderAwareStream({
         mode: replyMode,
@@ -1913,7 +1911,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         recordSession,
         async () => {},
         runContext,
-        streamReliability(controls.profileConfig, link),
+        streamReliability(controls.profileConfig, () => link),
       );
       await deliverFinalReply({
         channel,
@@ -2762,9 +2760,10 @@ interface StreamReliability {
 
 function streamReliability(
   profile: { agentKind: string },
-  link?: { outageEpoch(): number; isDown(): boolean },
+  getLink?: () => { outageEpoch(): number; isDown(): boolean } | undefined,
 ): StreamReliability {
   const kind = profile.agentKind;
+  const link = getLink?.();
   const startedEpoch = link?.outageEpoch() ?? 0;
   const startedDown = link?.isDown() ?? false;
   return {
@@ -2773,7 +2772,7 @@ function streamReliability(
       ...NETWORK_TRANSIENT_SIGNATURES,
     ],
     agent: kind,
-    outageOverlapped: () => runOverlappedOutage(link, startedEpoch, startedDown),
+    outageOverlapped: () => runOverlappedOutage(getLink?.(), startedEpoch, startedDown),
   };
 }
 

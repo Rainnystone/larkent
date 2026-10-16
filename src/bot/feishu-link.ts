@@ -44,10 +44,13 @@ export interface FeishuLinkDeps {
 export function createFeishuProbe(
   channel: LarkChannel,
 ): (signal?: AbortSignal) => Promise<FeishuProbeResult> {
+  // Capture before wrapChannelOutbound so a late REST success after probe
+  // abort cannot take the link up through the outbound onResult classifier.
+  const getAppInfo = channel.getAppInfo.bind(channel);
   return async (signal) => {
     if (signal?.aborted) return false;
     try {
-      await settleOrAbort(channel.getAppInfo(), signal);
+      await settleOrAbort(getAppInfo(), signal);
       return !signal?.aborted;
     } catch (err) {
       if (signal?.aborted || isAbortError(err)) return false;
