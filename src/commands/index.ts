@@ -72,6 +72,7 @@ import type { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { evaluateRunPolicy } from '../policy/run-policy';
+import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
 import type { RunExecutor } from '../runtime/run-executor';
 import { RunRejected } from '../runtime/errors';
@@ -136,6 +137,7 @@ export interface CommandContext {
   agent: AgentAdapter;
   activeRuns: ActiveRuns;
   processPool?: ProcessPool;
+  pending?: Pick<PendingQueue, 'isBlocked' | 'waitingCount'>;
   runExecutor?: RunExecutor;
   controls: Controls;
   resumeHistoryProvider?: (input: ResumeHistoryInput) => Promise<ResumeHistoryEntry[]>;
@@ -767,6 +769,8 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     activeScopes: ctx.activeRuns.scopes().filter((scope) => !scope.startsWith('comment:')),
     activeCommentScopes: ctx.activeRuns.scopes().filter((scope) => scope.startsWith('comment:')),
     queue: ctx.processPool?.snapshot(),
+    chatBusy: ctx.pending?.isBlocked(ctx.scope) === true,
+    chatWaiting: ctx.pending?.waitingCount(ctx.scope) ?? 0,
     ownerState: formatOwnerState(ctx),
     scope: ctx.scope,
     chatMode: ctx.chatMode,

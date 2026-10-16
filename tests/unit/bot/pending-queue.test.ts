@@ -6,6 +6,22 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+describe('PendingQueue.snapshot', () => {
+  it('reports blocked scopes and waiting counts while a flush is held', () => {
+    vi.useFakeTimers();
+    const queue = new PendingQueue(600, () => {});
+    queue.push('oc_scope', msg('om_a'));
+    queue.block('oc_scope');
+    queue.push('oc_scope', msg('om_b'));
+    expect(queue.isBlocked('oc_scope')).toBe(true);
+    expect(queue.waitingCount('oc_scope')).toBe(2);
+    expect(queue.snapshot()).toEqual({
+      blocked: ['oc_scope'],
+      waiting: [{ scope: 'oc_scope', count: 2 }],
+    });
+  });
+});
+
 describe('PendingQueue.cancelAll', () => {
   it('returns unflushed messages so a disconnect can unrecord them', () => {
     vi.useFakeTimers();

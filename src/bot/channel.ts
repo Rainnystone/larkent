@@ -1124,6 +1124,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     }),
     runExecutor: executor,
     processPool: pool,
+    pending,
     controls,
   });
   if (handled) {

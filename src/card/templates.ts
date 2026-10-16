@@ -77,6 +77,10 @@ export interface StatusInfo {
   activeScopes?: string[];
   activeCommentScopes?: string[];
   queue?: { active: number; waiting: number; cap: number };
+  /** True when this scope's chat flush is blocked (run or hung outbound). */
+  chatBusy?: boolean;
+  /** Messages waiting in this scope's chat debounce queue. */
+  chatWaiting?: number;
   ownerState: string;
   /** Session scope (= chatId or chatId:threadId in topic groups). */
   scope: string;
@@ -106,7 +110,10 @@ export function statusCard(info: StatusInfo): object {
     `🤖 **agent**: ${escapeMd(info.agentName)}`,
     `🛡 **${escapeMd(info.runtimeAccess.label)}**: ${escapeMd(info.runtimeAccess.value)}`,
     ...(info.larkCliStatus ? [`🔐 **lark-cli**: ${info.larkCliStatus}`] : []),
-    `🏃 **active run**: ${info.activeRun ? 'yes' : 'no'}`,
+    `🏃 **active run**: ${info.activeRun || info.chatBusy ? 'yes' : 'no'}`,
+    ...(info.chatBusy || (info.chatWaiting ?? 0) > 0
+      ? [`📬 **chat queue**: ${info.chatBusy ? 'busy' : 'idle'}, ${info.chatWaiting ?? 0} waiting`]
+      : []),
     ...(info.activeScopes && info.activeScopes.length > 0
       ? [
           `🏃 **active scopes**: ${info.activeScopes.map((scope) => `\`${escapeCode(scope)}\``).join(', ')}`,

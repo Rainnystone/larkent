@@ -97,24 +97,59 @@ export function noteInboundSkipSelf(input: {
   return true;
 }
 
+export const OUTBOUND_REQUEST_TIMEOUT_MS = 30_000;
+
+export class OutboundTimeoutError extends Error {
+  constructor(readonly op: string, readonly timeoutMs: number) {
+    super(`outbound ${op} timed out after ${timeoutMs}ms`);
+    this.name = 'OutboundTimeoutError';
+  }
+}
+
+const OUTBOUND_OPS = ['send', 'stream', 'updateCard', 'updateCardById'] as const;
+
+export async function withOutboundTimeout<T>(
+  op: string,
+  work: Promise<T>,
+  timeoutMs = OUTBOUND_REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        const onAbort = (): void => {
+          ctrl.signal.removeEventListener('abort', onAbort);
+          reject(new OutboundTimeoutError(op, timeoutMs));
+        };
+        if (ctrl.signal.aborted) {
+          onAbort();
+          return;
+        }
+        ctrl.signal.addEventListener('abort', onAbort);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function wrapChannelOutbound(
-  channel: { send: (...args: never[]) => Promise<unknown>; stream: (...args: never[]) => Promise<unknown> },
+  channel: object,
   outbound: OutboundMessageIds,
+  opts: { timeoutMs?: number } = {},
 ): void {
-  const mutable = channel as unknown as {
-    send: (...args: unknown[]) => Promise<unknown>;
-    stream: (...args: unknown[]) => Promise<unknown>;
-  };
-  const origSend = mutable.send.bind(mutable);
-  const origStream = mutable.stream.bind(mutable);
-  mutable.send = (...args: unknown[]) =>
-    origSend(...args).then((result) => {
-      outbound.add(outboundMessageId(result));
-      return result;
-    });
-  mutable.stream = (...args: unknown[]) =>
-    origStream(...args).then((result) => {
-      outbound.add(outboundMessageId(result));
-      return result;
-    });
+  const timeoutMs = opts.timeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
+  const mutable = channel as Record<string, unknown>;
+  for (const op of OUTBOUND_OPS) {
+    const current = mutable[op];
+    if (typeof current !== 'function') continue;
+    const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
+    mutable[op] = (...args: unknown[]) =>
+      withOutboundTimeout(op, orig(...args), timeoutMs).then((result) => {
+        if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
+        return result;
+      });
+  }
 }
