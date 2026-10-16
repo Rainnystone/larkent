@@ -25,7 +25,7 @@ import {
 import { GROUP_MSG_SCOPE, hasGroupMsgScope } from '../bot/app-scope';
 import { requestScopeGrantLink } from '../bot/wizard';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
-import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
+import { formatLocalDateTime, helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
 import type { AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
   formatBackfillPreferences,
@@ -779,12 +779,17 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
 }
 
 function formatOwnerState(ctx: CommandContext): string {
-  const state = ctx.controls.ownerRefreshState;
-  const owner = ctx.controls.botOwnerId ? 'present' : 'missing';
+  const state =
+    ctx.controls.ownerRefreshState === 'ok'
+      ? '正常'
+      : ctx.controls.ownerRefreshState === 'failed'
+        ? '刷新失败'
+        : '未知';
+  const owner = ctx.controls.botOwnerId ? '已绑定' : '未绑定';
   const refreshed = ctx.controls.ownerRefreshedAt
-    ? ` refreshed=${new Date(ctx.controls.ownerRefreshedAt).toISOString()}`
+    ? ` 刷新于 ${formatLocalDateTime(ctx.controls.ownerRefreshedAt)}`
     : '';
-  return `${state} owner=${owner}${refreshed}`;
+  return `${state} · ${owner}${refreshed}`;
 }
 
 async function handleStop(args: string, ctx: CommandContext): Promise<void> {

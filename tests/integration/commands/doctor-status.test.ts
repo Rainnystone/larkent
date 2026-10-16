@@ -59,8 +59,8 @@ describe('/status and /doctor diagnostics', () => {
     expect(status).toContain('owner API');
     expect(status).toContain('profile');
     expect(status).toContain('claude');
-    expect(status).toContain('permission');
-    expect(status).toContain('plan');
+    expect(status).toContain('权限');
+    expect(status).toContain('计划模式');
     expect(status).not.toContain('bypassPermissions');
   });
 

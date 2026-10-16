@@ -88,6 +88,59 @@ export interface StatusInfo {
   chatMode: 'p2p' | 'group' | 'topic';
 }
 
+export function formatLocalDateTime(ms: number, now: Date = new Date(ms)): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+export function formatStatusRuntimeAccess(access: {
+  label: string;
+  value: string;
+}): { label: string; value: string } {
+  const label =
+    access.label === 'permission' ? '权限' : access.label === 'sandbox' ? '沙箱' : access.label;
+  return { label, value: formatStatusRuntimeAccessValue(access.value) };
+}
+
+function formatStatusRuntimeAccessValue(value: string): string {
+  const stripped = value
+    .replace(/\s*\([^)]*--[^)]*\)/g, '')
+    .replace(/\s*\([^)]*\s-p\)/g, '')
+    .trim();
+  switch (stripped) {
+    case 'force':
+    case 'bypassPermissions':
+    case 'always-proceed':
+    case 'auto':
+      return '自动批准';
+    case 'plan':
+      return '计划模式';
+    case 'acceptEdits':
+      return '允许编辑';
+    default:
+      return stripped;
+  }
+}
+
+export function formatLarkCliStatus(
+  status: NonNullable<StatusInfo['larkCliStatus']>,
+): string {
+  switch (status) {
+    case 'app':
+      return '应用身份';
+    case 'user-ready':
+      return '用户身份已就绪';
+    case 'user-missing':
+      return '用户身份未配置';
+    case 'check-failed':
+      return '检查失败';
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
+}
+
 export function statusCard(info: StatusInfo): object {
   const sessionLine = info.sessionId
     ? `\`${info.sessionId.slice(0, 8)}…\`${info.sessionStale ? ' ⚠️ 旧 cwd，下一条会新建' : ''}`
@@ -102,14 +155,15 @@ export function statusCard(info: StatusInfo): object {
   const queueLine = info.queue
     ? `${info.queue.active}/${info.queue.cap} active, ${info.queue.waiting} waiting`
     : 'unknown';
+  const access = formatStatusRuntimeAccess(info.runtimeAccess);
   const lines = [
     `🧭 **scope**: ${scopeLine}`,
     `🧩 **profile**: ${escapeMd(info.profileName)}`,
     `📁 **cwd**: ${cwdLine}`,
     `🔗 **session**: ${sessionLine}`,
     `🤖 **agent**: ${escapeMd(info.agentName)}`,
-    `🛡 **${escapeMd(info.runtimeAccess.label)}**: ${escapeMd(info.runtimeAccess.value)}`,
-    ...(info.larkCliStatus ? [`🔐 **lark-cli**: ${info.larkCliStatus}`] : []),
+    `🛡 **${escapeMd(access.label)}**: ${escapeMd(access.value)}`,
+    ...(info.larkCliStatus ? [`🔐 **lark-cli**: ${formatLarkCliStatus(info.larkCliStatus)}`] : []),
     `🏃 **active run**: ${info.activeRun || info.chatBusy ? 'yes' : 'no'}`,
     ...(info.chatBusy || (info.chatWaiting ?? 0) > 0
       ? [`📬 **chat queue**: ${info.chatBusy ? 'busy' : 'idle'}, ${info.chatWaiting ?? 0} waiting`]
