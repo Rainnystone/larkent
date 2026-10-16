@@ -254,7 +254,7 @@ class ManagedProfile {
     return currentControls;
   }
 
-  /** Connect-before-disconnect reconnect for this profile (e.g. after /account). */
+  /** `/reconnect` and `/account` only. Link failures must not call this. */
   private restart(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void> {
     if (this.stopOperation) return Promise.reject(new Error(`profile ${this.profile} is stopping`));
     if (this.stopped) return Promise.reject(new Error(`profile ${this.profile} is stopped`));

@@ -21,7 +21,6 @@ const STOP_REQUESTS = [
   { type: 'superseded', by: 'ws' },
   { type: 'superseded', by: 'resume' },
   { type: 'reconnect-command' },
-  { type: 'keepalive-restart' },
   { type: 'account-restart' },
   { type: 'shutdown-signal' },
   { type: 'exit-command' },
@@ -362,7 +361,6 @@ describe('stop request formatting', () => {
       'superseded:ws',
       'superseded:resume',
       'reconnect-command',
-      'keepalive-restart',
       'account-restart',
       'shutdown-signal',
       'exit-command',
@@ -383,7 +381,6 @@ function interruptedRetriable(reason: StopRequest): boolean {
     case 'account-restart':
       return false;
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'shutdown-signal':
     case 'bridge-idle-watchdog':
     case 'runner-timeout':

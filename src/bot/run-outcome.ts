@@ -10,7 +10,6 @@ export type StopRequest =
   | { type: 'user-stop' }
   | { type: 'superseded'; by: SupersedeBy }
   | { type: 'reconnect-command' }
-  | { type: 'keepalive-restart' }
   | { type: 'account-restart' }
   | { type: 'shutdown-signal' }
   | { type: 'exit-command' }
@@ -197,7 +196,6 @@ function interruptedRetriable(reason: StopRequest): boolean {
     case 'account-restart':
       return false;
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'shutdown-signal':
     case 'bridge-idle-watchdog':
     case 'runner-timeout':
@@ -226,7 +224,6 @@ export function formatStopRequest(reason: StopRequest): string {
       return `superseded:${reason.by}`;
     case 'user-stop':
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'account-restart':
     case 'shutdown-signal':
     case 'exit-command':
@@ -286,8 +283,6 @@ function describeStopRequest(reason: StopRequest): string {
       return '会话已切换';
     case 'reconnect-command':
       return '重连';
-    case 'keepalive-restart':
-      return '保活重启';
     case 'account-restart':
       return '账号切换';
     case 'shutdown-signal':
@@ -355,7 +350,6 @@ function interruptedCardTerminal(reason: StopRequest): Terminal {
     case 'user-stop':
     case 'superseded':
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'account-restart':
     case 'shutdown-signal':
     case 'exit-command':

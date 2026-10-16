@@ -94,8 +94,8 @@ export interface Controls {
   ownerRefreshedAt?: number;
   ownerRefreshError?: string;
   refreshOwner(channel?: LarkChannel): Promise<void>;
-  /** Restart the bridge in-process: disconnect WS, kill claude runs, reload
-   * config, reconnect with the new credentials. */
+  /** `/reconnect` and `/account` only: disconnect, reload config, reconnect.
+   * Link failures must not call this. */
   restart(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void>;
   /** Stop this whole process gracefully (disconnect + exit). Used by /exit
    * when the user targets the receiving process itself. */

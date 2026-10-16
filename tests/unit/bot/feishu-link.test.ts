@@ -95,6 +95,38 @@ describe('FeishuLink', () => {
     expect(recovered[0]!.until).toBe(now);
   });
 
+  it('stays down on a failed socket while the probe is healthy', async () => {
+    let now = 1_700_000_000_000;
+    let state: 'connected' | 'failed' = 'connected';
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    state = 'failed';
+    const stuckUntil = now + 60_000;
+    while (now < stuckUntil) {
+      now += FEISHU_LINK_TICK_MS;
+      await link.tick();
+    }
+    expect(link.isDown()).toBe(true);
+    expect(recovered).toHaveLength(0);
+
+    now += FEISHU_LINK_TICK_MS;
+    state = 'connected';
+    await link.tick();
+    expect(link.isDown()).toBe(false);
+    expect(recovered).toHaveLength(1);
+  });
+
   it('recovers a 20-second reconnect so a scan can run', async () => {
     let now = 1_700_000_000_000;
     let state: 'connected' | 'reconnecting' = 'connected';

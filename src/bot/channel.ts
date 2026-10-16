@@ -361,6 +361,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       // the last ping, SDK presumes connection dead and forces a reconnect.
       pingTimeout: 3,
     },
+    // Transport-only reconnect: the SDK watchdog force-reconnects a stuck
+    // WebSocket. The bridge never calls controls.restart for link problems.
+    keepalive: {
+      enabled: true,
+      onUnrecoverable: (err) => {
+        log.fail('ws', err, { kind: 'unrecoverable' });
+      },
+    },
     // 8s handshake timeout (replaces hardcoded 15s). Fast-fail + fast-retry
     // beats slow-fail in unstable networks. Channel 0.6.1+ uses
     // connectTimeoutMs for force-reconnect; keep both on the same budget.

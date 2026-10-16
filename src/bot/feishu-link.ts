@@ -129,15 +129,18 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     }
     lastTickAt = now;
 
-    const connected = wsConnected();
+    const status = deps.channel.getConnectionStatus();
+    const connected = status?.state === 'connected';
     if (!connected) {
       goDown(lastEvidenceAt ?? downSince);
       wsDownTicks += 1;
+      const state = status?.state ?? 'unknown';
       if (wsDownTicks === 1 || wsDownTicks % WS_DOWN_LOG_EVERY === 0) {
-        log.warn('link', 'ws-down', {
-          state: deps.channel.getConnectionStatus()?.state ?? 'unknown',
-          wsDownTicks,
-        });
+        if (state === 'failed') {
+          log.warn('link', 'unrecoverable', { state, wsDownTicks });
+        } else {
+          log.warn('link', 'ws-down', { state, wsDownTicks });
+        }
       }
     } else {
       wsDownTicks = 0;

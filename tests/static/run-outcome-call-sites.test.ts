@@ -24,7 +24,13 @@ describe('stop request call sites', () => {
     expect(commands).toContain("interrupt(meetingScopeId(picked.session.meetingId), { type: 'meeting' })");
 
     expect(meeting).toContain("interrupt(meetingScopeId(session.meetingId), { type: 'meeting' })");
-    expect(channel).not.toContain("restart({ stopReason: { type: 'keepalive-restart' } })");
+    expect(channel).toMatch(/keepalive:\s*\{[\s\S]*enabled:\s*true/);
+    expect(channel).toMatch(/onUnrecoverable/);
+    expect(channel).not.toContain('keepalive-restart');
+    expect(channel).not.toContain('保活重启');
+    expect(read('src/bot/run-outcome.ts')).not.toContain('keepalive-restart');
+    expect(read('src/bot/run-outcome.ts')).not.toContain('保活重启');
+    expect(read('src/runtime/supervisor.ts')).not.toContain('keepalive-restart');
     expect(channel).toContain("stopAll(opts?.stopReason ?? { type: 'shutdown-signal' })");
     expect(channel).toContain("requestStop(handle, { type: 'bridge-idle-watchdog' })");
     expect(channel).not.toMatch(/onConnectedTick:[\s\S]*recoverJournal\(\)/);
