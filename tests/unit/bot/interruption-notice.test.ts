@@ -86,6 +86,7 @@ describe('interruption notice decision', () => {
     expect(continueExtraInstruction(outcome)).not.toContain('原始输入');
     expect(continueExtraInstruction(outcome, '写两行短诗')).toContain('写两行短诗');
     expect(continueExtraInstruction(outcome, '  ')).not.toContain('原始输入');
+    expect(continueExtraInstruction(outcome)).not.toContain('写两行短诗');
   });
 
   it('treats 继续 / @bot 继续 as the continue prompt and other text as ordinary', () => {

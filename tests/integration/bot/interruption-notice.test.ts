@@ -149,6 +149,8 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
     await waitFor(() => h.agent.runOptions.length === 5);
     expect(h.agent.runOptions[4]?.prompt).toContain(CONTINUE_HINT);
+    expect(h.agent.runOptions[4]?.prompt).not.toContain(SECRET);
+    expect(h.agent.runOptions[4]?.prompt).not.toContain('原始输入');
     const cardsBeforeReset = noticeCards(h.channel).length;
     await h.channel.handlers.message?.(mention('om_after_reset', SECRET));
     await waitFor(() => noticeCards(h.channel).length > cardsBeforeReset);
@@ -295,6 +297,23 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('SAW FILE')));
     expect(h.channel.sent.find((item) => JSON.stringify(item.content).includes('SAW FILE'))?.options)
       .toMatchObject({ replyTo: 'om_notice' });
+  });
+
+  it('does not inject the interrupted turn input into an ordinary new message', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+        [{ type: 'text', delta: 'NEW' }, { type: 'final_text', content: 'NEW' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]?.prompt).toContain('请改另一个文件');
+    expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
+    expect(h.agent.runOptions[1]?.prompt).not.toContain(SECRET);
+    expect(h.agent.runOptions[1]?.prompt).not.toContain('原始输入');
   });
 
   it('starts the same continue request from @bot 继续 text', async () => {

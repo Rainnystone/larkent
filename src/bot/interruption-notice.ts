@@ -371,7 +371,7 @@ async function sendContinueNotice(
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     includeButtons: buttons,
-    continueHint: continueExtraInstruction(input.outcome, entry.userInput),
+    continueHint: continueExtraInstruction(input.outcome),
     deliveryId: randomUUID(),
   };
   if (!notice.deliveryId) notice = { ...notice, deliveryId: randomUUID() };

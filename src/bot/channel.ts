@@ -577,7 +577,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           authNotified: authNoticeAlreadyDelivered(journal),
         });
         if (result.delivered || result.pending) {
-          pendingHintByScope.set(entry.scope, continueExtraInstruction(outcome, entry.userInput));
+          pendingHintByScope.set(entry.scope, continueExtraInstruction(outcome));
         }
         return result.delivered;
       },
@@ -1415,6 +1415,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     extraInstructions.push(pendingHint);
     pendingHintByScope.delete(scope);
   }
+  const resumeInput = continueReq?.userInput?.trim();
+  if (resumeInput) extraInstructions.push(`原始输入：\n${resumeInput}`);
   if (modelSwitched) {
     extraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
@@ -2807,7 +2809,7 @@ async function sendTurnNotice(input: {
   if (plan.kind === 'continue' && (result.delivered || result.pending)) {
     input.notice.pendingHintByScope.set(
       input.scope,
-      continueExtraInstruction(input.outcome, input.journal.get(input.turnId)?.userInput),
+      continueExtraInstruction(input.outcome),
     );
   }
 }
