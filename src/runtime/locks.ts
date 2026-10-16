@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout as nativeSetTimeout } from 'node:timers';
@@ -198,6 +198,10 @@ async function acquireRuntimeLock(
     pid: process.pid,
     startedAt: new Date().toISOString(),
   };
+  // Persist pid on the lock target so a kill -9 leftover can be reclaimed
+  // even if the sidecar meta never landed or cannot be read.
+  await writeFile(meta.target, `${process.pid}\n`, { mode: 0o600 });
+  await chmod(meta.target, 0o600);
   const metaFile = runtimeLockMetaFile(meta.target);
   await writeFile(metaFile, `${JSON.stringify(fullMeta, null, 2)}\n`, {
     mode: 0o600,
@@ -224,8 +228,10 @@ async function lockWithDeadHolderTakeover(
       update: 10_000,
     });
   } catch (err) {
-    const holder = await readRuntimeLockMeta(meta.target);
-    if (!holder || holder.pid === process.pid || isProcessAlive(holder.pid)) {
+    const pid = await readLockHolderPid(meta.target);
+    // Unknown holder: do not steal — a live second instance may own the lock
+    // without a readable sidecar. Dead recorded pid: reclaim immediately.
+    if (pid === undefined || pid === process.pid || isProcessAlive(pid)) {
       throw err;
     }
     await stealDeadHolderLock(meta.target);
@@ -237,7 +243,27 @@ async function lockWithDeadHolderTakeover(
   }
 }
 
+async function readLockHolderPid(target: string): Promise<number | undefined> {
+  const holder = await readRuntimeLockMeta(target);
+  if (isUsablePid(holder?.pid)) return holder.pid;
+  try {
+    const raw = (await readFile(target, 'utf8')).trim();
+    const pid = Number(raw);
+    return isUsablePid(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isUsablePid(pid: number | undefined): pid is number {
+  return typeof pid === 'number' && Number.isInteger(pid) && pid > 0;
+}
+
 async function stealDeadHolderLock(target: string): Promise<void> {
+  // proper-lockfile.unlock from another process often leaves `${target}.lock`
+  // in place after kill -9. Force-remove that leftover so we do not wait
+  // for the 30s stale timer.
+  await rm(`${target}.lock`, { recursive: true, force: true }).catch(() => {});
   try {
     await lockfile.unlock(target, { realpath: false });
   } catch {

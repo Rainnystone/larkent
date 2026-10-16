@@ -1,9 +1,14 @@
-import { mkdir, readFile, rm, stat } from 'node:fs/promises';
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { resolveAppPaths } from '../../../src/config/app-paths';
-import { withProfileAndAppLocks } from '../../../src/runtime/locks';
+import {
+  acquireProfileRuntimeLock,
+  RuntimeLockConflictError,
+  runtimeLockMetaFile,
+  withProfileAndAppLocks,
+} from '../../../src/runtime/locks';
 
 const roots: string[] = [];
 
@@ -102,4 +107,55 @@ describe('runtime locks', () => {
       expect(true).toBe(true);
     });
   });
+
+  it('reclaims a leftover profile lock immediately when the holder pid is dead', async () => {
+    const root = await makeRoot();
+    const paths = resolveAppPaths({ rootDir: root, profile: 'claude' });
+    await writeLeftoverProfileLock(paths.profileLockFile, 2_147_483_647);
+
+    const started = Date.now();
+    const lock = await acquireProfileRuntimeLock(paths, 'claude');
+    expect(Date.now() - started).toBeLessThan(3_000);
+    await lock.release();
+  });
+
+  it('does not reclaim a leftover profile lock when the holder pid is still alive', async () => {
+    const root = await makeRoot();
+    const paths = resolveAppPaths({ rootDir: root, profile: 'claude' });
+    await writeLeftoverProfileLock(paths.profileLockFile, process.pid);
+
+    await expect(acquireProfileRuntimeLock(paths, 'claude')).rejects.toBeInstanceOf(
+      RuntimeLockConflictError,
+    );
+  });
+
+  it('does not reclaim a leftover profile lock when the holder pid is unknown', async () => {
+    const root = await makeRoot();
+    const paths = resolveAppPaths({ rootDir: root, profile: 'claude' });
+    await mkdir(dirname(paths.profileLockFile), { recursive: true });
+    await writeFile(paths.profileLockFile, '', { mode: 0o600 });
+    await mkdir(`${paths.profileLockFile}.lock`, { recursive: true });
+
+    await expect(acquireProfileRuntimeLock(paths, 'claude')).rejects.toBeInstanceOf(
+      RuntimeLockConflictError,
+    );
+  });
 });
+
+async function writeLeftoverProfileLock(target: string, pid: number): Promise<void> {
+  await mkdir(dirname(target), { recursive: true });
+  await writeFile(target, `${pid}\n`, { mode: 0o600 });
+  await mkdir(`${target}.lock`, { recursive: true });
+  await writeFile(
+    runtimeLockMetaFile(target),
+    `${JSON.stringify({
+      schemaVersion: 1,
+      kind: 'profile',
+      target,
+      profile: 'claude',
+      agentKind: 'claude',
+      pid,
+      startedAt: new Date().toISOString(),
+    }, null, 2)}\n`,
+  );
+}
