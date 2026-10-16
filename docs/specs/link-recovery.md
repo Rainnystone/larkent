@@ -83,7 +83,7 @@ User-visible contract after an outage of any cause:
 Interface (type shape from the architecture review):
 
 ```ts
-interface Outage { since: number; until: number }
+interface Outage { since: number; until: number; hostSuspended: boolean } // true if a tick gap (sleep/freeze) fell inside the outage
 interface FeishuLink {
   isDown(): boolean;
   outageEpoch(): number;                       // +1 on every up→down
@@ -100,7 +100,7 @@ startFeishuLink(deps: {
 ```
 
 - Starts **down** with `since` = persisted watermark; start and swap therefore recover.
-- **Down** on: WebSocket not `connected` at a tick; two ticks > 30 s apart (sleep/freeze; `since` = last tick); outbound timeout, no HTTP response, or 5xx; probe failure. Structural, never stderr/message text. Business 4xx keeps the link up.
+- **Down** on: WebSocket not `connected` at a tick; two ticks > 30 s apart (sleep/freeze; `since` = last tick; marks the outage `hostSuspended`); outbound timeout, no HTTP response, or 5xx; probe failure. Structural, never stderr/message text. Business 4xx keeps the link up.
 - **Up** when WebSocket connected **and** fresh evidence (probe ok, outbound ok, inbound event). Emits `recovered` exactly once.
 - Watermark advances only on evidence while up.
 - Probe: every tick while down; while up only after 60 s without evidence (catches REST blackhole behind a "connected" socket).
@@ -133,6 +133,7 @@ resend on connected ticks.
 - `runIdleTimeoutMinutes` defaults to **15**; **0** disables.
 - An open tool call pauses the watchdog for **at most 60 minutes**.
 - Run handles expose `lastEventAt`. `runs.review(outage)` gives any run silent since before `since` a 2-minute stall deadline, then requests stop with the bridge idle-watchdog reason; it ends through the normal outcome + notice path.
+- **Run review and host suspend** (user decision 2026-10-17): the review may give a deadline to, or stop, a silent run with an **open tool call** only if the host actually suspended or slept during the outage (`outage.hostSuspended`). A pure network/link outage with no host suspend never deadlines or stops such a run; the 60-minute tool-call cap still applies. Silent runs with no open tool call are reviewed as before.
 
 ### 6. Outcome / retriability
 

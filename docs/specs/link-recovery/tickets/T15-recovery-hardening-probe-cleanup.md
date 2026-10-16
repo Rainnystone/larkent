@@ -12,25 +12,29 @@
 - Cleanups in `channel.ts` (behaviour unchanged).
 - This is the last ticket that changes behaviour, so it also rewrites the outbox description in `CONTEXT.md` (~line 56). The new text describes: staged items with per-item state and receipts; the stream result as the delivery signal; the single classifier; no sends while down. Remove the remainder, 4xx/local-fallback and ECONNABORTED claims.
 
-**Run review is unchanged** (spec §5): any run silent since before `since` still gets the 2-minute deadline.
-- **Open product question for index li:** should run review apply only to real outages, i.e. skip runs with an open tool call unless the host actually suspended? The audit (D7 part 2, F21) recommends it.
-- Not implemented here unless decided. If adopted, add the test "a 20 s network outage does not stop a run inside a 10-minute tool call."
+**Run review only stops tool-call runs after a real host suspend** (D7 part 2, user decision 2026-10-17; fixes F21):
+- FeishuLink sets `Outage.hostSuspended = true` when a tick gap over 30 s (sleep, freeze or wall-clock jump) happened between `since` and `until`. A suspend during an in-flight probe is now caught by that same tick-gap check, because the probe early return is deleted. An outage from link evidence alone (WebSocket down, probe failed or timed out, outbound link error) has `hostSuspended = false`.
+- `runs.review(outage)`: a silent run with an open tool call gets the 2-minute deadline only when `outage.hostSuspended`. Otherwise it is left alone (the idle watchdog and the 60-minute tool-call cap still bound it). Silent runs without an open tool call are reviewed as before.
 
 ## Spec sections
 
-§3 Recovery; §2 FeishuLink (probe); §5 Liveness (unchanged); Delivery invariants (I9)
+§3 Recovery; §2 FeishuLink (probe); §5 Liveness (run review and host suspend); Delivery invariants (I9)
 
 ## Acceptance (behaviour, failing first)
 
 - [ ] Backfill throws → run review still runs, and the window is retried at the next recovery (messages from the window answered once).
 - [ ] Journal flush throws during redeliver → backfill and review still run, and staged items go out at the next recovery.
 - [ ] A host suspend during an in-flight probe → the gap is detected on the next tick, the late probe result is ignored, and recovery happens exactly once.
+- [ ] A 20 s network outage (WebSocket/probe down, no tick gap) does not stop or deadline a run inside a 10-minute tool call; the run finishes and its answer is delivered once.
+- [ ] A host suspend during an outage (tick gap > 30 s) still applies the 2-minute review deadline to a silent run with an open tool call, which ends through the normal outcome + notice path.
+- [ ] A suspend during an in-flight probe yields `hostSuspended = true`; an outage from a failed probe alone yields `false` (FeishuLink unit test with a fake clock).
+- [ ] A silent run with no open tool call is still reviewed after a network-only outage (unchanged).
 - [ ] `CONTEXT.md` outbox section matches the implemented behaviour.
 - [ ] `pnpm ci:local` passes.
 
 ## Files likely touched
 
-`src/bot/recovery.ts`, `src/bot/feishu-link.ts`, `src/bot/channel.ts`, `src/bot/interruption-notice.ts`, `CONTEXT.md`, recovery/link tests
+`src/bot/recovery.ts`, run review / liveness watchdog, `src/bot/feishu-link.ts`, `src/bot/channel.ts`, `src/bot/interruption-notice.ts`, `CONTEXT.md`, recovery/link tests
 
 ## Delete
 
