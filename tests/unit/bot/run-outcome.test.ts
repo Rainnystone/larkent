@@ -7,6 +7,7 @@ import {
   formatStopRequest,
   noteTerminalStop,
   requestStop,
+  runOverlappedOutage,
   shouldDeliverAgentEvent,
   type CliSignature,
   type RunOutcome,
@@ -152,7 +153,7 @@ describe('deriveRunOutcome', () => {
         exit: 1,
         terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
       },
-      expected: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: false },
+      expected: { kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false },
       terminal: 'error',
       formatted: 'failed:unclassified',
     },
@@ -202,7 +203,7 @@ describe('deriveRunOutcome', () => {
         terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
         exit: 1,
       },
-      expected: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: false },
+      expected: { kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false },
       terminal: 'error',
       formatted: 'failed:unclassified',
     },
@@ -268,6 +269,56 @@ describe('deriveRunOutcome', () => {
       expected: { kind: 'completed', retriable: false, needsHuman: false },
       terminal: 'done',
       formatted: 'completed',
+    },
+    {
+      name: 'unclassified overlapping an outage becomes transient-upstream',
+      input: {
+        exit: 1,
+        terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
+        outageOverlapped: true,
+      },
+      expected: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+      terminal: 'error',
+      formatted: 'failed:transient-upstream',
+    },
+    {
+      name: 'auth signature stays needs-human even when an outage overlapped',
+      input: {
+        exit: 1,
+        terminalEvent: { type: 'error' as const, message: 'auth', terminationReason: 'failed' as const },
+        stderrTail: "Your stored authentication is invalid. Please run 'agent login'.",
+        outageOverlapped: true,
+        signatures: [
+          {
+            pattern: /stored authentication is invalid/i,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+            userMessage: 'auth',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+      terminal: 'error',
+      formatted: 'failed:auth-required',
+    },
+    {
+      name: 'quota signature stays needs-human even when an outage overlapped',
+      input: {
+        exit: 1,
+        stderrTail: 'rate limit exceeded for this API key',
+        outageOverlapped: true,
+        signatures: [
+          {
+            pattern: /rate limit exceeded/i,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'quota', retriable: false, needsHuman: true },
+            userMessage: 'quota',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'failed', cause: 'quota', retriable: false, needsHuman: true },
+      terminal: 'error',
+      formatted: 'failed:quota',
     },
   ] as const)('$name', ({ input, expected, terminal, formatted }) => {
     const outcome = deriveRunOutcome(input);
@@ -348,6 +399,15 @@ describe('requestStop first-writer-wins', () => {
     expect(noteTerminalStop(prior, { type: 'done', terminationReason: 'interrupted' })).toBe(false);
     expect(prior.stopRequest).toEqual({ type: 'user-stop' });
     expect(noteTerminalStop({ interrupted: false }, { type: 'text', delta: 'x' })).toBe(false);
+  });
+});
+
+describe('runOverlappedOutage', () => {
+  it('is true only when the outage epoch changed', () => {
+    expect(runOverlappedOutage(undefined, 0)).toBe(false);
+    expect(runOverlappedOutage({ outageEpoch: () => 0 }, 0)).toBe(false);
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 0)).toBe(true);
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 1)).toBe(false);
   });
 });
 

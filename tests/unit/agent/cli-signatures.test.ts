@@ -95,6 +95,13 @@ describe('CLI stderr signature table', () => {
     })).toMatchObject({ kind: 'failed', cause: 'quota', needsHuman: true });
   });
 
+  it('uses network wording for transient-upstream when no signature matched', () => {
+    expect(cardUserMessage({ kind: 'failed', cause: 'transient-upstream' }, undefined))
+      .toBe('网络连接中断，可稍后继续');
+    expect(cardUserMessage({ kind: 'failed', cause: 'unclassified' }, undefined))
+      .toBe('agent 运行失败');
+  });
+
   it('uses the signature userMessage for partial outcomes', () => {
     const signature = descriptorFor('antigravity').stderrSignatures.find((item) => (
       item.classify.kind === 'partial'
@@ -170,7 +177,7 @@ describe('CLI stderr signature table', () => {
       signatures,
       terminalEvent: { type: 'error', message: stderrTail, terminationReason: 'failed' },
     });
-    expect(outcome).toEqual({ kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: false });
+    expect(outcome).toEqual({ kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false });
     expect(matchingSignature(signatures, stderrTail)).toBeUndefined();
 
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});

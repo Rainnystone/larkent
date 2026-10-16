@@ -75,7 +75,9 @@ export function cardUserMessage(
 ): string | undefined {
   if (outcome.kind === 'partial') return signature?.userMessage;
   if (outcome.kind !== 'failed') return undefined;
-  return signature?.userMessage ?? UNCLASSIFIED_USER_MESSAGE;
+  if (signature?.userMessage) return signature.userMessage;
+  if (outcome.cause === 'transient-upstream') return NETWORK_TRANSIENT_USER_MESSAGE;
+  return UNCLASSIFIED_USER_MESSAGE;
 }
 
 export function noteUnclassifiedStderr(input: {

@@ -66,9 +66,9 @@ describe('interruption notice decision', () => {
     expect(planInterruptionNotice({
       kind: 'failed',
       cause: 'unclassified',
-      retriable: false,
+      retriable: true,
       needsHuman: false,
-    })).toEqual({ kind: 'none' });
+    })).toEqual({ kind: 'continue' });
     expect(planInterruptionNotice({
       kind: 'completed',
       retriable: false,

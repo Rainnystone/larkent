@@ -64,6 +64,7 @@ import {
   formatStopRequest,
   noteTerminalStop,
   requestStop,
+  runOverlappedOutage,
   shouldDeliverAgentEvent,
   type RunOutcome,
   type StopRequest,
@@ -467,6 +468,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           noticeEnabled: reliability().notice,
           continuations,
           cliSelfSent,
+          link,
         });
       } finally {
         sessionWriter.release();
@@ -600,6 +602,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     noteInbound(_at?: number) {},
     tick: async () => {},
     stop() {},
+    outageEpoch: () => 0,
+    isDown: () => false,
   };
 
   channel.on({
@@ -1226,6 +1230,7 @@ interface RunBatchDeps {
   noticeAuth?: NoticeActionAuth;
   continuations: Continuations;
   cliSelfSent?: CliSelfSendTracker;
+  link?: { outageEpoch(): number };
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1251,6 +1256,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     noticeAuth,
     continuations,
     cliSelfSent,
+    link,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1633,7 +1639,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           recordSession,
           async () => {},
           runContext,
-          streamReliability(controls.profileConfig),
+          streamReliability(controls.profileConfig, link),
         );
         await cotDone;
         if (cotPublisher.degradedReason) {
@@ -1708,7 +1714,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        streamReliability(controls.profileConfig),
+        streamReliability(controls.profileConfig, link),
       );
       try {
         await awaitRenderAwareStream({
@@ -1784,7 +1790,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        streamReliability(controls.profileConfig),
+        streamReliability(controls.profileConfig, link),
       );
       try {
         await awaitRenderAwareStream({
@@ -1833,7 +1839,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         recordSession,
         async () => {},
         runContext,
-        streamReliability(controls.profileConfig),
+        streamReliability(controls.profileConfig, link),
       );
       await deliverFinalReply({
         channel,
@@ -2364,6 +2370,7 @@ async function processAgentStream(
           signatures,
           exit: handle.run.exit,
           signal: handle.run.signal,
+          outageOverlapped: reliability.outageOverlapped?.(),
         });
         const msg = cardUserMessage(early, matched);
         if (msg) state = { ...state, errorMsg: msg };
@@ -2397,6 +2404,7 @@ async function processAgentStream(
     signatures,
     exit: handle.run.exit,
     signal: handle.run.signal,
+    outageOverlapped: reliability.outageOverlapped?.(),
   });
   noteUnclassifiedStderr({
     outcome,
@@ -2472,16 +2480,22 @@ function applyOutcomeToState(
 interface StreamReliability {
   signatures?: readonly CliSignature[];
   agent?: string;
+  outageOverlapped?: () => boolean;
 }
 
-function streamReliability(profile: { agentKind: string }): StreamReliability {
+function streamReliability(
+  profile: { agentKind: string },
+  link?: { outageEpoch(): number },
+): StreamReliability {
   const kind = profile.agentKind;
+  const startedEpoch = link?.outageEpoch() ?? 0;
   return {
     signatures: [
       ...(isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : []),
       ...NETWORK_TRANSIENT_SIGNATURES,
     ],
     agent: kind,
+    outageOverlapped: () => runOverlappedOutage(link, startedEpoch),
   };
 }
 

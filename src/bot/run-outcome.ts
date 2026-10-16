@@ -39,6 +39,8 @@ export interface DeriveRunOutcomeInput {
   terminalEvent?: AgentEvent;
   stderrTail?: string;
   signatures?: readonly CliSignature[];
+  /** True when the Feishu link's outage epoch changed during the run. */
+  outageOverlapped?: boolean;
 }
 
 export interface StoppableHandle {
@@ -90,9 +92,21 @@ export function shouldDeliverAgentEvent(
 }
 
 export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
+  return applyOutageOverlap(deriveRunOutcomeShape(input), input);
+}
+
+export function runOverlappedOutage(
+  link: { outageEpoch(): number } | undefined,
+  startedEpoch: number,
+): boolean {
+  if (!link) return false;
+  return link.outageEpoch() !== startedEpoch;
+}
+
+function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
   const signed = matchCliSignature(input.stderrTail, input.signatures);
   if (signed && signatureApplies(signed.classify, input)) {
-    return signed.classify;
+    return applySignatureOverlay(signed.classify);
   }
   // agy prints `error: interrupted` and exits 1 on SIGTERM, which the runner
   // surfaces as a failed terminal. Keep an earlier user-stop (or other stop)
@@ -128,6 +142,23 @@ export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
     return failed('unclassified');
   }
   return completed();
+}
+
+/** Signatures pick card wording and `needsHuman`; retriable follows the cause. */
+function applySignatureOverlay(classify: RunOutcome): RunOutcome {
+  if (classify.kind !== 'failed') return classify;
+  if (classify.needsHuman) {
+    return { ...classify, retriable: false };
+  }
+  return failed(classify.cause);
+}
+
+function applyOutageOverlap(outcome: RunOutcome, input: DeriveRunOutcomeInput): RunOutcome {
+  if (outcome.kind !== 'failed') return outcome;
+  if (outcome.needsHuman) return outcome;
+  if (outcome.cause !== 'unclassified') return outcome;
+  if (input.outageOverlapped) return failed('transient-upstream');
+  return failed('unclassified');
 }
 
 function signatureApplies(
@@ -180,7 +211,7 @@ function failed(cause: FailedCause): RunOutcome {
     case 'killed-externally':
       return { kind: 'failed', cause, retriable: true, needsHuman: false };
     case 'unclassified':
-      return { kind: 'failed', cause, retriable: false, needsHuman: false };
+      return { kind: 'failed', cause, retriable: true, needsHuman: false };
     default: {
       const _exhaustive: never = cause;
       return _exhaustive;
