@@ -135,10 +135,19 @@ export async function withOutboundTimeout<T>(
   }
 }
 
+const inflightByUuid = new Map<string, Promise<unknown>>();
+
+export function outboundInFlight(uuid: string | undefined): boolean {
+  return Boolean(uuid && inflightByUuid.has(uuid));
+}
+
 export function wrapChannelOutbound(
   channel: object,
   outbound: OutboundMessageIds,
-  opts: { timeoutMs?: number } = {},
+  opts: {
+    timeoutMs?: number;
+    onSettled?: (uuid: string, result: unknown) => void;
+  } = {},
 ): void {
   const timeoutMs = opts.timeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
   const mutable = channel as Record<string, unknown>;
@@ -146,10 +155,27 @@ export function wrapChannelOutbound(
     const current = mutable[op];
     if (typeof current !== 'function') continue;
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
-    mutable[op] = (...args: unknown[]) =>
-      withOutboundTimeout(op, orig(...args), timeoutMs).then((result) => {
+    mutable[op] = (...args: unknown[]) => {
+      const uuid = outboundUuid(args);
+      const work = orig(...args).then((result) => {
         if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
+        if (uuid) opts.onSettled?.(uuid, result);
         return result;
       });
+      if (uuid) {
+        inflightByUuid.set(uuid, work);
+        void work.finally(() => {
+          if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
+        });
+      }
+      return withOutboundTimeout(op, work, timeoutMs);
+    };
   }
+}
+
+function outboundUuid(args: unknown[]): string | undefined {
+  const last = args.at(-1);
+  if (!last || typeof last !== 'object') return undefined;
+  const uuid = (last as { uuid?: unknown }).uuid;
+  return typeof uuid === 'string' && uuid ? uuid : undefined;
 }

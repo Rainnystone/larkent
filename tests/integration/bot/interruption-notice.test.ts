@@ -203,7 +203,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       return orig(...args);
     };
     await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending'));
+    await waitFor(() => fails === 0 && h.journal.list().some((entry) => entry.status === 'notice-pending'));
     await h.bridge.recoverMissed();
     await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
     const notices = h.channel.sent.filter((item) => isNoticeContent(item.content));
@@ -342,6 +342,63 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions.length).toBe(2);
     expect(JSON.stringify(h.channel.sent.slice(sentBefore))).toMatch(/失效/);
     expect(JSON.stringify(h.channel.sent)).not.toContain('SECOND');
+  });
+
+  it('sends one notice card when recover races a still-in-flight send', async () => {
+    const h = await harness({
+      fakeTimers: false,
+      events: [[{ type: 'done', terminationReason: 'interrupted' }]],
+    });
+    let release: (() => void) | undefined;
+    const orig = h.channel.send.bind(h.channel);
+    h.channel.send = async (...args: Parameters<typeof orig>) => {
+      const content = args[1] as { card?: unknown; markdown?: string };
+      if (isNoticeContent(content) && !release) {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      }
+      return orig(...args);
+    };
+    const started = h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => release !== undefined);
+    const recovering = h.bridge.recoverMissed();
+    await yieldIO();
+    release?.();
+    await started;
+    await recovering;
+    expect(h.channel.sent.filter((item) => isNoticeContent(item.content))).toHaveLength(1);
+    await h.bridge.recoverMissed();
+    expect(h.channel.sent.filter((item) => isNoticeContent(item.content))).toHaveLength(1);
+  });
+
+  it('does not post a second notice after a timed-out send later lands', async () => {
+    const h = await harness({
+      fakeTimers: false,
+      events: [[{ type: 'done', terminationReason: 'interrupted' }]],
+    });
+    const orig = h.channel.send.bind(h.channel);
+    let firstNotice = true;
+    h.channel.send = async (...args: Parameters<typeof orig>) => {
+      const content = args[1] as { card?: unknown; markdown?: string };
+      if (isNoticeContent(content) && firstNotice) {
+        firstNotice = false;
+        const landed = await orig(...args);
+        throw Object.assign(new Error('timeout of 30000ms exceeded'), { landed });
+      }
+      return orig(...args);
+    };
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending' && entry.notice?.deliveryId));
+    const entry = h.journal.list().find((item) => item.notice);
+    const landedId = h.channel.sent.find((item) => isNoticeContent(item.content))
+      ? (h.journal.get(entry!.turnId)?.notice?.messageId ?? 'om_late')
+      : 'om_late';
+    h.journal.noteDelivery(entry!.notice!.deliveryId!, landedId);
+    expect(h.journal.get(entry!.turnId)?.status).toBe('notice-delivered');
+    await h.bridge.recoverMissed();
+    expect(h.channel.sent.filter((item) => isNoticeContent(item.content)).length).toBeLessThanOrEqual(1);
+    expect(h.journal.get(entry!.turnId)?.status).toBe('notice-delivered');
   });
 });
 

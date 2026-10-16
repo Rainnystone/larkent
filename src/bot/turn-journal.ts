@@ -30,6 +30,8 @@ export interface TurnReply {
   replyTo: string;
   replyInThread?: boolean;
   replyMode: string;
+  deliveryId?: string;
+  messageId?: string;
 }
 
 export interface TurnNotice {
@@ -44,6 +46,7 @@ export interface TurnNotice {
   ownerDelivered?: boolean;
   continueHint?: string;
   messageId?: string;
+  deliveryId?: string;
 }
 
 export interface TurnJournalEntry {
@@ -126,6 +129,7 @@ export class TurnJournal {
   private persistenceDisabled = false;
   private recovering: Promise<{ orphans: number; resent: number }> | undefined;
   private readonly enqueuedThisProcess = new Set<string>();
+  private readonly deliveries = new Set<string>();
 
   constructor(path: string, opts: TurnJournalOptions = {}) {
     this.path = path;
@@ -235,6 +239,38 @@ export class TurnJournal {
     this.patch(turnId, { status: 'notice-delivered', noticeStatus: 'delivered' });
   }
 
+  isDelivering(key: string): boolean {
+    return this.deliveries.has(key);
+  }
+
+  async withDelivery<T>(key: string, fn: () => Promise<T>): Promise<T | undefined> {
+    if (this.deliveries.has(key)) return undefined;
+    this.deliveries.add(key);
+    try {
+      return await fn();
+    } finally {
+      this.deliveries.delete(key);
+    }
+  }
+
+  noteDelivery(deliveryId: string, messageId: string | undefined): void {
+    if (!deliveryId || !messageId?.trim()) return;
+    const entry = this.entries.find((item) => (
+      item.notice?.deliveryId === deliveryId || item.reply?.deliveryId === deliveryId
+    ));
+    if (!entry) return;
+    if (entry.notice?.deliveryId === deliveryId) {
+      this.patch(entry.turnId, {
+        notice: { ...entry.notice, messageId },
+        status: 'notice-delivered',
+        noticeStatus: 'delivered',
+      });
+    }
+    if (entry.reply?.deliveryId === deliveryId) {
+      this.patch(entry.turnId, { reply: { ...entry.reply, messageId } });
+    }
+  }
+
   voidScope(scope: string): void {
     let changed = false;
     for (const entry of this.entries) {
@@ -288,9 +324,36 @@ export class TurnJournal {
       const current = this.entries.find((item) => item.turnId === entry.turnId);
       if (!current || !isRecoverable(current.status)) continue;
 
-      if (current.status === 'notice-pending') {
-        if (opts.isActive?.(current.scope)) continue;
+      if (current.status === 'notice-pending' || current.status === 'completed-undelivered') {
+        if (current.status === 'notice-pending' && opts.isActive?.(current.scope)) continue;
+        if (current.reply?.messageId && current.status === 'completed-undelivered') {
+          this.markReplyDelivered(current.turnId);
+          continue;
+        }
+        if (current.reply && !current.reply.messageId && opts.resend) {
+          if (this.isDelivering(replyDeliveryKey(current.turnId))) continue;
+          try {
+            const ok = await opts.resend({ ...current });
+            if (ok && current.status === 'completed-undelivered') {
+              this.markReplyDelivered(current.turnId);
+              resent += 1;
+            } else if (ok) {
+              resent += 1;
+            }
+          } catch (error) {
+            log.warn('journal', 'resend-failed', {
+              turnId: current.turnId,
+              err: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+        if (current.status !== 'notice-pending') continue;
         if (!opts.resendNotice || current.noticeInvalidated) continue;
+        if (this.isDelivering(noticeDeliveryKey(current.turnId))) continue;
+        if (current.notice?.messageId) {
+          this.markNoticeDelivered(current.turnId);
+          continue;
+        }
         try {
           const ok = await opts.resendNotice({ ...current });
           if (ok) {
@@ -323,8 +386,9 @@ export class TurnJournal {
         continue;
       }
 
-      if (current.status === 'completed-undelivered' || (current.status === 'settled' && current.reply)) {
-        if (!opts.resend || !current.reply) continue;
+      if (current.status === 'settled' && current.reply) {
+        if (!opts.resend || current.reply.messageId) continue;
+        if (this.isDelivering(replyDeliveryKey(current.turnId))) continue;
         try {
           const ok = await opts.resend({ ...current });
           if (ok) {
@@ -554,6 +618,7 @@ function parseNotice(raw: unknown): TurnNotice | undefined {
     ...(raw.ownerDelivered === true ? { ownerDelivered: true } : {}),
     ...(typeof raw.continueHint === 'string' ? { continueHint: raw.continueHint } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
+    ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
   };
 }
 
@@ -587,6 +652,8 @@ function parseReply(raw: unknown): TurnReply | undefined {
     replyTo: raw.replyTo,
     replyMode: raw.replyMode,
     ...(raw.replyInThread === true ? { replyInThread: true } : {}),
+    ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
+    ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
   };
 }
 
@@ -692,6 +759,14 @@ function defaultSleep(ms: number): Promise<void> {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export function noticeDeliveryKey(turnId: string): string {
+  return `notice:${turnId}`;
+}
+
+export function replyDeliveryKey(turnId: string): string {
+  return `reply:${turnId}`;
 }
 
 export { readProcessStartMs, isProcessAlive };

@@ -1,9 +1,15 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { CallbackNonceStore } from '../card/callback-store';
 import { interruptionNoticeCard } from '../card/templates';
 import { log } from '../core/logger';
 import { describeRunOutcome, type RunOutcome } from './run-outcome';
-import type { TurnJournal, TurnJournalEntry, TurnNotice } from './turn-journal';
+import { outboundInFlight } from './self-message';
+import {
+  noticeDeliveryKey,
+  type TurnJournal,
+  type TurnJournalEntry,
+  type TurnNotice,
+} from './turn-journal';
 
 export const CONTINUE_HINT =
   '上一轮在哪里、因为什么被中断，请先核对已完成的步骤，避免重复执行有副作用的操作';
@@ -15,6 +21,20 @@ export type NoticeKind = 'none' | 'continue' | 'auth';
 export type NoticeAction = 'notice.continue' | 'notice.dismiss';
 export type NoticeResolution = 'continued' | 'dismissed';
 export type NoticeCardUpdater = (messageId: string, card: object) => Promise<void>;
+
+const liveNoticeSends = new Set<string>();
+
+export function isLiveNoticeSend(turnId: string): boolean {
+  return liveNoticeSends.has(turnId);
+}
+
+function beginLiveNoticeSend(turnId: string): void {
+  liveNoticeSends.add(turnId);
+}
+
+export function endLiveNoticeSend(turnId: string): void {
+  liveNoticeSends.delete(turnId);
+}
 
 export interface NoticePlan {
   kind: NoticeKind;
@@ -206,7 +226,7 @@ function signatureMatches(actual: string, expected: string): boolean {
 export type NoticeSender = (
   chatId: string,
   content: { markdown: string } | { card: object },
-  options?: { replyTo?: string; replyInThread?: boolean },
+  options?: { replyTo?: string; replyInThread?: boolean; uuid?: string },
 ) => Promise<{ messageId?: string }>;
 
 export function resolvedNoticeCard(resolution: NoticeResolution): object {
@@ -290,6 +310,30 @@ export async function resendPendingNotice(input: {
 }): Promise<boolean> {
   const notice = input.entry.notice;
   if (!notice || input.entry.noticeInvalidated) return false;
+  if (notice.messageId) return true;
+  if (
+    isLiveNoticeSend(input.entry.turnId)
+    || outboundInFlight(notice.deliveryId)
+    || input.journal?.isDelivering(noticeDeliveryKey(input.entry.turnId))
+  ) {
+    return false;
+  }
+  const key = noticeDeliveryKey(input.entry.turnId);
+  const sent = await (input.journal
+    ? input.journal.withDelivery(key, () => sendExistingNotice(input, notice))
+    : sendExistingNotice(input, notice));
+  return sent === true;
+}
+
+async function sendExistingNotice(
+  input: {
+    send: NoticeSender;
+    entry: TurnJournalEntry;
+    journal?: TurnJournal;
+    noticeAuth?: NoticeActionAuth;
+  },
+  notice: TurnNotice,
+): Promise<boolean> {
   if (notice.kind === 'auth') {
     return sendAuthPayload(input.send, input.entry, notice, input.journal);
   }
@@ -312,7 +356,7 @@ async function sendContinueNotice(
 ): Promise<{ delivered: boolean; pending: boolean }> {
   const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
   const buttons = noticeUsesButtons(input.consecutive) && Boolean(input.noticeAuth);
-  const notice: TurnNotice = existing ?? {
+  let notice: TurnNotice = existing ?? {
     kind: buttons ? 'continue' : 'plain',
     recipientChatId: entry.chatId,
     markdown: buildNoticeMarkdown({
@@ -325,14 +369,31 @@ async function sendContinueNotice(
     ...(entry.threadId ? { replyInThread: true } : {}),
     includeButtons: buttons,
     continueHint: continueExtraInstruction(input.outcome),
+    deliveryId: randomUUID(),
   };
+  if (!notice.deliveryId) notice = { ...notice, deliveryId: randomUUID() };
   if (!existing) {
     input.journal.markInterrupted(input.turnId, input.outcome, input.consecutive);
     input.journal.markNoticePending(input.turnId, notice);
+  } else if (!existing.deliveryId) {
+    input.journal.markNoticePending(input.turnId, notice);
   }
+  beginLiveNoticeSend(input.turnId);
   if (input.stageOnly) return { delivered: false, pending: true };
+  if (notice.messageId) {
+    input.journal.markNoticeDelivered(input.turnId);
+    endLiveNoticeSend(input.turnId);
+    return { delivered: true, pending: false };
+  }
+  if (outboundInFlight(notice.deliveryId) || input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
+    return { delivered: false, pending: true };
+  }
   try {
-    await postNotice(input.send, { ...entry, notice }, notice, input.noticeAuth, input.journal);
+    const sent = await input.journal.withDelivery(noticeDeliveryKey(input.turnId), async () => {
+      await postNotice(input.send, { ...entry, notice }, notice, input.noticeAuth, input.journal);
+      return true;
+    });
+    if (sent !== true) return { delivered: false, pending: true };
     input.journal.markNoticeDelivered(input.turnId);
     log.info('notice', 'sent', { turnId: input.turnId, kind: notice.kind, consecutive: input.consecutive });
     return { delivered: true, pending: false };
@@ -342,6 +403,8 @@ async function sendContinueNotice(
       err: error instanceof Error ? error.message : String(error),
     });
     return { delivered: false, pending: true };
+  } finally {
+    endLiveNoticeSend(input.turnId);
   }
 }
 
@@ -363,9 +426,17 @@ async function sendAuthNotice(
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     ...(input.ownerId ? { ownerChatId: input.ownerId } : {}),
+    deliveryId: randomUUID(),
   };
   if (!existing) input.journal.markNoticePending(input.turnId, notice);
   if (input.stageOnly) return { delivered: false, pending: true };
+  if (notice.messageId || (notice.initiatorDelivered && (!notice.ownerChatId || notice.ownerDelivered))) {
+    input.journal.markNoticeDelivered(input.turnId);
+    return { delivered: true, pending: false };
+  }
+  if (outboundInFlight(notice.deliveryId) || input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
+    return { delivered: false, pending: true };
+  }
   try {
     const ok = await sendAuthPayload(input.send, { ...entry, notice }, notice, input.journal);
     if (ok) {
@@ -438,13 +509,17 @@ async function postNotice(
     const result = await send(
       notice.recipientChatId,
       { card: interruptionNoticeCard({ body: notice.markdown, continueToken, dismissToken }) },
-      opts,
+      { ...opts, ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}) },
     );
     requireReceipt(result, 'notice-card');
     persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
     return;
   }
-  const result = await send(notice.recipientChatId, { markdown: notice.markdown }, opts);
+  const result = await send(
+    notice.recipientChatId,
+    { markdown: notice.markdown },
+    { ...opts, ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}) },
+  );
   requireReceipt(result, 'notice-text');
   persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
 }
@@ -463,12 +538,12 @@ function persistNoticeMessageId(
 function sendOpts(
   entry: TurnJournalEntry,
   notice: TurnNotice,
-): { replyTo?: string; replyInThread?: boolean } | undefined {
+): { replyTo?: string; replyInThread?: boolean; uuid?: string } {
   const replyTo = notice.replyTo ?? entry.messageIds.at(-1);
-  if (!replyTo && !notice.replyInThread && !entry.threadId) return undefined;
   return {
     ...(replyTo ? { replyTo } : {}),
     ...(notice.replyInThread || entry.threadId ? { replyInThread: true } : {}),
+    ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}),
   };
 }
 

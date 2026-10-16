@@ -33,6 +33,7 @@ import {
   authNoticeAlreadyDelivered,
   continueExtraInstruction,
   deliverInterruptionNotice,
+  endLiveNoticeSend,
   isContinuePrompt,
   latestContinueNotice,
   planInterruptionNotice,
@@ -46,6 +47,8 @@ import {
   OutboundMessageIds,
   isSelfSender,
   noteInboundSkipSelf,
+  outboundMessageId,
+  outboundInFlight,
   senderTypeFromRaw,
   wrapChannelOutbound,
 } from './self-message';
@@ -113,6 +116,7 @@ import {
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import {
   isJournalResourceType,
+  replyDeliveryKey,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnJournalResource,
@@ -378,7 +382,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const channel = createLarkChannel(opts);
   const outboundIds = new OutboundMessageIds();
   const cliSelfSent = new CliSelfSendTracker();
-  wrapChannelOutbound(channel, outboundIds);
+  wrapChannelOutbound(channel, outboundIds, {
+    onSettled: (uuid, result) => {
+      journal?.noteDelivery(uuid, outboundMessageId(result));
+    },
+  });
   const media = new MediaCache(channel, deps.appPaths?.mediaDir);
 
   // Pending → run handoff: while a run is active on a chat, block its pending
@@ -2083,13 +2091,16 @@ async function deliverFinalReply(input: {
   const willNotice = Boolean(
     input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
   );
-  if (input.journal && input.turnId && !skip && !willNotice) {
-    input.journal.markCompletedUndelivered(input.turnId, {
-      markdown: body,
-      replyTo: input.sendOpts.replyTo,
-      replyMode: input.replyMode,
-      ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
-    });
+  const reply = {
+    markdown: body,
+    replyTo: input.sendOpts.replyTo,
+    replyMode: input.replyMode,
+    ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+    ...(input.turnId ? { deliveryId: replyDeliveryKey(input.turnId) } : {}),
+  };
+  if (input.journal && input.turnId && !skip) {
+    if (willNotice) input.journal.update(input.turnId, { reply });
+    else input.journal.markCompletedUndelivered(input.turnId, reply);
   }
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
@@ -2102,30 +2113,43 @@ async function deliverFinalReply(input: {
       stageOnly: true,
     });
   }
-  if (input.journal) await input.journal.flush();
-  if (!input.alreadyStreamed) await sendFinalReply(input);
-  input.cliSelfSent?.consume(input.scope);
-  if (input.journal && input.turnId && !willNotice) input.journal.markReplyDelivered(input.turnId);
-  if (willNotice && input.notice && input.journal && input.turnId && outcome) {
-    await sendTurnNotice({
-      channel: input.channel,
-      journal: input.journal,
-      turnId: input.turnId,
-      scope: input.scope,
-      outcome,
-      notice: input.notice,
-    });
+  try {
+    if (input.journal) await input.journal.flush();
+    if (!input.alreadyStreamed) {
+      const sent = await sendFinalReply({ ...input, deliveryId: reply.deliveryId });
+      if (input.journal && input.turnId && sent?.messageId) {
+        input.journal.update(input.turnId, { reply: { ...reply, messageId: sent.messageId } });
+      }
+    }
+    input.cliSelfSent?.consume(input.scope);
+    if (input.journal && input.turnId && !willNotice) input.journal.markReplyDelivered(input.turnId);
+    if (willNotice && input.notice && input.journal && input.turnId && outcome) {
+      await sendTurnNotice({
+        channel: input.channel,
+        journal: input.journal,
+        turnId: input.turnId,
+        scope: input.scope,
+        outcome,
+        notice: input.notice,
+      });
+    }
+  } finally {
+    if (input.turnId) endLiveNoticeSend(input.turnId);
   }
 }
 
 async function resendJournalReply(channel: LarkChannel, entry: TurnJournalEntry): Promise<boolean> {
   if (!entry.reply?.markdown.trim()) return false;
+  if (entry.reply.messageId) return true;
+  const deliveryId = entry.reply.deliveryId ?? replyDeliveryKey(entry.turnId);
+  if (outboundInFlight(deliveryId)) return false;
   const result = await channel.send(
     entry.chatId,
     { markdown: entry.reply.markdown },
     {
       replyTo: entry.reply.replyTo,
       ...(entry.reply.replyInThread ? { replyInThread: true } : {}),
+      uuid: deliveryId,
     },
   );
   requireMessageReceipt(result, 'journal-resend');
@@ -2148,7 +2172,8 @@ async function sendFinalReply(input: {
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
   cliSelfSent?: CliSelfSendTracker;
-}): Promise<void> {
+  deliveryId?: string;
+}): Promise<{ messageId?: string } | undefined> {
   if (
     shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
     || (input.cliSelfSent?.has(input.scope) === true && (input.skipFrom ?? input.state).terminal === 'done')
@@ -2159,7 +2184,7 @@ async function sendFinalReply(input: {
       mode: input.replyMode,
     });
     reportMetric(OUTBOUND_SKIP_CLI_SENT_METRIC, 1);
-    return;
+    return undefined;
   }
 
   const body = renderText(input.state);
@@ -2169,36 +2194,48 @@ async function sendFinalReply(input: {
   // rather than post an empty card that renders as "(no content)".
   if (!body.trim()) {
     log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
-    return;
+    return undefined;
   }
+
+  const sendOpts = {
+    ...input.sendOpts,
+    ...(input.deliveryId ? { uuid: input.deliveryId } : {}),
+  };
 
   if (input.replyMode === 'card') {
     const result = await input.channel.send(
       input.chatId,
       { card: renderCard(input.state, input.cardRenderOptions) },
-      input.sendOpts,
+      sendOpts,
     );
     requireMessageReceipt(result, 'card');
     log.info('outbound', 'sent', outboundLogFields(input, 'card', body, result));
-  } else if (input.replyMode === 'markdown') {
+    return result;
+  }
+  if (input.replyMode === 'markdown') {
     if (body.trim()) {
       const result = await input.channel.send(
         input.chatId,
         { markdown: body },
-        input.sendOpts,
+        sendOpts,
       );
       requireMessageReceipt(result, 'markdown');
       log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
+      return result;
     }
-  } else if (body.trim()) {
+    return undefined;
+  }
+  if (body.trim()) {
     const result = await input.channel.send(
       input.chatId,
       { markdown: body },
-      input.sendOpts,
+      sendOpts,
     );
     requireMessageReceipt(result, 'text');
     log.info('outbound', 'sent', outboundLogFields(input, 'text', body, result));
+    return result;
   }
+  return undefined;
 }
 
 function requireMessageReceipt(result: { messageId?: string }, type: string): void {

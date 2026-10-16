@@ -369,6 +369,60 @@ describe('TurnJournal', () => {
     expect(journal.get('live-notice')?.status).toBe('notice-pending');
   });
 
+  it('resends a pending terminal reply together with a notice-pending turn', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'both' }));
+    journal.update('both', {
+      reply: { markdown: 'error card', replyTo: 'om_1', replyMode: 'card', deliveryId: 'reply:both' },
+    });
+    journal.markNoticePending('both', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice',
+      deliveryId: 'notice-uuid',
+    });
+    const resend = vi.fn(async () => true);
+    const resendNotice = vi.fn(async () => true);
+    await journal.recover({ enabled: true, resend, resendNotice });
+    expect(resend).toHaveBeenCalledTimes(1);
+    expect(resendNotice).toHaveBeenCalledTimes(1);
+    expect(journal.get('both')?.status).toBe('notice-delivered');
+    await journal.recover({ enabled: true, resend, resendNotice });
+    expect(resend).toHaveBeenCalledTimes(1);
+    expect(resendNotice).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not resend a notice that is already in-flight or already has a message id', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'inflight' }));
+    journal.markNoticePending('inflight', {
+      kind: 'continue',
+      recipientChatId: 'oc_group',
+      markdown: 'notice',
+    });
+    const resendNotice = vi.fn(async () => true);
+    const held = journal.withDelivery('notice:inflight', async () => {
+      await journal.recover({ enabled: true, resendNotice });
+      expect(resendNotice).not.toHaveBeenCalled();
+    });
+    await held;
+    journal.noteDelivery('notice-uuid', 'om_landed');
+    journal.update('inflight', {
+      notice: {
+        kind: 'continue',
+        recipientChatId: 'oc_group',
+        markdown: 'notice',
+        deliveryId: 'notice-uuid',
+        messageId: 'om_landed',
+      },
+    });
+    await journal.recover({ enabled: true, resendNotice });
+    expect(resendNotice).not.toHaveBeenCalled();
+    expect(journal.get('inflight')?.status).toBe('notice-delivered');
+  });
+
   it('does not mark a queued in-flight start interrupted before a pid is journaled', async () => {
     const { journal } = await fixture();
     await journal.load();
