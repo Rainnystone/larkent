@@ -18,6 +18,7 @@ Delivery invariants (I3, I6, I8); §4 Outbox
 
 ## Acceptance (behaviour, failing first)
 
+- [ ] Every redelivery attempt reuses the item's `deliveryId` and runs the T16 read-back first: a reply whose earlier send landed but was not confirmed is marked sent, with no second message.
 - [ ] J2: reply redelivered, notice fails, second recovery → the chat holds exactly one answer.
 - [ ] J1: abandoned offer with a staged reply → the reply is delivered once; the entry is terminal and prunable.
 - [ ] J3: an entry that is settled with a reply is sent once per pass, not twice.
@@ -37,7 +38,7 @@ Delivery invariants (I3, I6, I8); §4 Outbox
 - `replyAlreadyVisible`'s three-way OR (replaced by the single receipt)
 - `recover()` / `recoverOwned` / `recovering` (no callers in `src`)
 - The `mark*` aliases
-- `deliveryId`, unless T16 is adopted (then T16 keeps it)
+- (`deliveryId` is **kept**; it is the Feishu uuid and the read-back key from T16.)
 
 ## Blocked by
 

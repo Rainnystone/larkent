@@ -15,12 +15,12 @@ Spec: [../../link-recovery.md](../../link-recovery.md) (see *Delivery invariants
 | [T8](T8-stall-check-after-recovery.md) | Stall check after recovery | T1, T4 | done (code track) |
 | [T10](T10-review-followups.md) | Review follow-ups (fix alongside code review) | T0–T8 | done |
 | [T11](T11-one-classifier-stream-untimed.md) | One error classifier; stream outside the outbound timeout | T10 | ready |
-| [T12](T12-stream-result-is-delivery-signal.md) | Stream result is the only delivery signal (SDK-faithful fake, markdown flush patch) | T11 | ready |
+| [T16](T16-feishu-uuid-idempotency.md) | Exactly-once delivery: Feishu uuid, same-card recovery, read-back | T11 | ready |
+| [T12](T12-stream-result-is-delivery-signal.md) | Stream result is the only delivery signal; same-card recovery | T16 | ready |
 | [T13](T13-per-item-outbox-and-gating.md) | Per-item reply/notice state; no sends while down | T12 | ready |
 | [T14](T14-link-before-connect.md) | Link and outbound wrapper before connect | T13 | ready |
 | [T15](T15-recovery-hardening-probe-cleanup.md) | Recovery hardening, suspend-only tool-call review, simpler probe, channel cleanups, CONTEXT.md | T14 | ready |
-| [T16](T16-feishu-uuid-idempotency.md) | (Optional) Feishu uuid idempotency | T15 | optional |
-| [T9](T9-e2e-disconnect-then-recover.md) | E2E round 4: disconnect then recover | T0–T8, T11–T15 | blocked (last) |
+| [T9](T9-e2e-disconnect-then-recover.md) | E2E round 4: disconnect then recover | T0–T8, T11–T16 | blocked (last) |
 
 ## Blocking graph
 
@@ -31,12 +31,12 @@ T0 ──► T1 ──► T2 ──► T3
   │      └──► T8 ◄── T4 ◄── T0
   ├──► T4
   └──► T6
-T10 ──► T11 ──► T12 ──► T13 ──► T14 ──► T15 ──► (T16 optional)
-all (T0–T8, T11–T15) ──► T9
+T10 ──► T11 ──► T16 ──► T12 ──► T13 ──► T14 ──► T15
+all (T0–T8, T11–T16) ──► T9
 ```
 
 - T0 blocks all.
 - T1 blocks T2, T7, T8. T2 blocks T3, T5. T4 blocks T8.
-- T11–T15 are strictly sequential (audit order: D2+D1, D3, D4+D5, D6, D7). T16 is optional and last.
-- T0–T8 and T11–T15 block T9; T9 runs last.
+- Strict sequence: T11 → T16 → T12 → T13 → T14 → T15. T16 is mandatory (exactly-once, I1, user decision 2026-10-17); it comes before T12/T13 because both build on its uuid sender, same-card patch and read-back.
+- T0–T8 and T11–T16 block T9; T9 runs last.
 - After T0, T1, T4 and T6 can start in parallel.

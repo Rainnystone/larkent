@@ -17,7 +17,7 @@ Solution (user-visible contract); Testing Decisions
 ## Acceptance
 
 - [ ] Failing scenario first against pre-change code (or recorded round-3 failure) for at least one method.
-- [ ] For each method × {card, markdown}: a message sent during the outage ends with exactly one reply or one notice and the queue drained.
+- [ ] For each method × {card, markdown}: a message sent during the outage ends with exactly one complete answer (or one notice) — no duplicate, no loss — and the queue drained.
 - [ ] kill -9 mid-run, restart: exactly one reply or notice, queue drained; an ordinary follow-up is answered alone (prior turn 已放弃).
 - [ ] No 保活重启 notice in any run.
 - [ ] A streamed run longer than 30 s on a healthy network causes no outage (no recovery logged, no run stopped).
@@ -26,7 +26,7 @@ Solution (user-visible contract); Testing Decisions
 
 ## Blocked by
 
-T0–T8, T11, T12, T13, T14, T15 (T16 optional, not required)
+T0–T8, T11–T16
 
 ## Latency check (normal network)
 
