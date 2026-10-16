@@ -88,7 +88,7 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     expect(answerSends(h.channel)).toHaveLength(0);
   });
 
-  it('re-patches a card 400 final flush and uuid-sends only if that patch is rejected too', async () => {
+  it('stays staged when recovery patch is 400, then patches the same card without a uuid-send', async () => {
     const h = await harness({ replyMode: 'card' });
     h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
     const origUpdate = h.channel.updateCard.bind(h.channel);
@@ -103,13 +103,25 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
 
     await h.channel.handlers.message?.(mention('om_400', 'please answer'));
     await waitFor(() => h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_400')
-      && (entry.status === 'reply-delivered' || answerSends(h.channel).length >= 1)
+      entry.messageIds.includes('om_400') && entry.status === 'completed-undelivered'
     )));
-    expect(answerSends(h.channel)).toHaveLength(1);
-    expect(JSON.stringify(answerSends(h.channel)[0]?.content)).toContain(ANSWER);
+    const streamId = h.channel.streams[0]?.messageId;
+    expect(streamId).toBeTruthy();
+    expect(answerSends(h.channel)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
     expect(h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_400') && entry.status === 'completed-undelivered'
+    ))).toBe(true);
+    expect(answerSends(h.channel)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_400') && entry.status === 'reply-delivered'
+    )));
+    expect(answerSends(h.channel)).toHaveLength(0);
+    expect(h.channel.updatedCards.some((row) => (
+      row.messageId === streamId && JSON.stringify(row.card).includes(ANSWER)
     ))).toBe(true);
     expect(h.channel.streams.length).toBe(1);
   });

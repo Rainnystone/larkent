@@ -71,9 +71,7 @@ export async function redeliverStagedReply(input: {
       const kind = classify(err);
       switch (kind) {
         case 'link':
-          throw err;
         case 'rejected':
-          break;
         case 'local':
           throw err;
         default: {

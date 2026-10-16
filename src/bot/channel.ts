@@ -111,7 +111,7 @@ import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { classify } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
-import { recoveryAnswerCard, redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
+import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
   replyDeliveryKey,
@@ -2170,9 +2170,7 @@ async function settleStreamDelivery(input: {
         input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
         await input.journal.flush();
       }
-      if (input.dedicatedFinal) {
-        return classify(input.stream.err) === 'link' ? 'wait' : sendOrWait(input);
-      }
+      if (input.stream.messageId) return 'wait';
       {
         const kind = classify(input.stream.err);
         switch (kind) {
@@ -2180,27 +2178,6 @@ async function settleStreamDelivery(input: {
             return 'wait';
           case 'rejected':
           case 'local':
-            if (input.stream.messageId) {
-              try {
-                await input.channel.updateCard(input.stream.messageId, recoveryAnswerCard(input.body));
-                return 'done';
-              } catch (err) {
-                log.fail('stream', err, { mode: input.replyMode, step: 'same-card-patch' });
-                const patchKind = classify(err);
-                switch (patchKind) {
-                  case 'link':
-                    return 'wait';
-                  case 'rejected':
-                    return sendOrWait(input);
-                  case 'local':
-                    return 'wait';
-                  default: {
-                    const _exhaustive: never = patchKind;
-                    throw _exhaustive;
-                  }
-                }
-              }
-            }
             return sendOrWait(input);
           default: {
             const _exhaustive: never = kind;

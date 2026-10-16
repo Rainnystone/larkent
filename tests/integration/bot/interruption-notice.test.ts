@@ -345,6 +345,13 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       run.push({ type: 'done', terminationReason: 'interrupted' });
       run.close();
       run.releaseCleanup();
+      await waitFor(() => h.journal.list().some((entry) => (
+        entry.messageIds.includes('om_run')
+        && (entry.status === 'completed-undelivered' || entry.status === 'notice-pending')
+      )));
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+
+      await h.bridge.recoverMissed();
       await waitFor(() => noticeSends(h.channel).length >= 1);
       expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
       expect(patchedAnswers(h.channel, streamed).length).toBeGreaterThanOrEqual(1);
@@ -355,7 +362,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
   );
 
   it.each(['markdown', 'card'] as const)(
-    'patches the same card immediately on a local %s final-stream error without duplicating the stream',
+    'a local %s final-stream error stays staged and recovers by patching the same card',
     async (replyMode) => {
       const streamed = 'STREAMED_ANSWER';
       const h = await harness({
@@ -372,6 +379,13 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       run.push({ type: 'done', terminationReason: 'interrupted' });
       run.close();
       run.releaseCleanup();
+      await waitFor(() => h.journal.list().some((entry) => (
+        entry.messageIds.includes('om_run')
+        && (entry.status === 'completed-undelivered' || entry.status === 'notice-pending')
+      )));
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+
+      await h.bridge.recoverMissed();
       await waitFor(() => noticeSends(h.channel).length >= 1);
       expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
       expect(patchedAnswers(h.channel, streamed).length).toBeGreaterThanOrEqual(1);
@@ -402,6 +416,12 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     run.push({ type: 'done', terminationReason: 'normal' });
     run.close();
     run.releaseCleanup();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && entry.status === 'completed-undelivered'
+    )));
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
     await waitFor(() => patchedAnswers(h.channel, unseen).length >= 1);
     expect(sentAnswers(h.channel, seen)).toHaveLength(0);
     expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
@@ -462,6 +482,12 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     run.push({ type: 'done', terminationReason: 'normal' });
     run.close();
     run.releaseCleanup();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && entry.status === 'completed-undelivered'
+    )));
+    expect(sentAnswers(h.channel, answer)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
     await waitFor(() => patchedAnswers(h.channel, answer).length >= 1);
     expect(sentAnswers(h.channel, answer)).toHaveLength(0);
   });
