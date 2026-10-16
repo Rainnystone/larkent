@@ -155,7 +155,10 @@ export function wrapChannelOutbound(
     if (typeof current !== 'function') continue;
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
     mutable[op] = (...args: unknown[]) => {
-      const work = orig(...args).then((result) => {
+      const callArgs = op === 'stream'
+        ? [args[0], wrapStreamProducer(args[1], outbound), ...args.slice(2)]
+        : args;
+      const work = orig(...callArgs).then((result) => {
         if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
         return result;
       });
@@ -176,4 +179,39 @@ export function wrapChannelOutbound(
 
 function isTimedOutboundOp(op: (typeof WRAPPED_OUTBOUND_OPS)[number]): boolean {
   return (TIMED_OUTBOUND_OPS as readonly string[]).includes(op);
+}
+
+function wrapStreamProducer(input: unknown, outbound: OutboundMessageIds): unknown {
+  if (!input || typeof input !== 'object') return input;
+  const rec = input as Record<string, unknown>;
+  if (rec.card && typeof rec.card === 'object' && rec.card !== null) {
+    const card = rec.card as {
+      initial?: unknown;
+      producer?: (ctrl: { messageId?: string }) => Promise<void> | void;
+    };
+    if (typeof card.producer === 'function') {
+      const producer = card.producer;
+      return {
+        ...rec,
+        card: {
+          ...card,
+          producer: async (ctrl: { messageId?: string }) => {
+            outbound.add(ctrl.messageId);
+            return producer(ctrl);
+          },
+        },
+      };
+    }
+  }
+  if (typeof rec.markdown === 'function') {
+    const markdown = rec.markdown as (ctrl: { messageId?: string }) => Promise<void> | void;
+    return {
+      ...rec,
+      markdown: async (ctrl: { messageId?: string }) => {
+        outbound.add(ctrl.messageId);
+        return markdown(ctrl);
+      },
+    };
+  }
+  return input;
 }

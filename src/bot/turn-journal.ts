@@ -32,7 +32,8 @@ export interface TurnReply {
   replyMode: string;
   deliveryId?: string;
   messageId?: string;
-  streamFinalized?: boolean;
+  /** True when the receipt is an interactive card (stream create or card send). */
+  interactive?: boolean;
 }
 
 export type ContinuationStatus =
@@ -234,6 +235,7 @@ export class TurnJournal {
     replyMode?: string;
     deliveryId?: string;
     messageId?: string;
+    interactive?: boolean;
   }): void {
     this.patch(turnId, {
       status: 'completed-undelivered',
@@ -244,6 +246,7 @@ export class TurnJournal {
         ...(reply.replyInThread ? { replyInThread: true } : {}),
         deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
         ...(reply.messageId ? { messageId: reply.messageId } : {}),
+        ...(reply.interactive === true ? { interactive: true } : {}),
       },
     });
   }
@@ -253,16 +256,19 @@ export class TurnJournal {
     this.patch(turnId, { status: 'reply-delivered' });
   }
 
-  noteReplyReceipt(turnId: string, messageId: string): void {
+  noteReplyReceipt(turnId: string, messageId: string, interactive?: boolean): void {
     const entry = this.entries.find((item) => item.turnId === turnId);
     if (!entry?.reply || !messageId.trim()) return;
-    this.patch(turnId, { reply: { ...entry.reply, messageId } });
-  }
-
-  noteStreamFinalized(turnId: string): void {
-    const entry = this.entries.find((item) => item.turnId === turnId);
-    if (!entry?.reply) return;
-    this.patch(turnId, { reply: { ...entry.reply, streamFinalized: true } });
+    const { interactive: previousInteractive, ...rest } = entry.reply;
+    const keepInteractive = interactive === true
+      || (interactive !== false && previousInteractive === true);
+    this.patch(turnId, {
+      reply: {
+        ...rest,
+        messageId,
+        ...(keepInteractive ? { interactive: true } : {}),
+      },
+    });
   }
 
   noteCliAlreadySent(turnId: string): void {
@@ -779,7 +785,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
     ...(raw.replyInThread === true ? { replyInThread: true } : {}),
     ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
-    ...(raw.streamFinalized === true ? { streamFinalized: true } : {}),
+    ...(raw.interactive === true ? { interactive: true } : {}),
   };
 }
 
@@ -821,7 +827,7 @@ function isIncomplete(status: TurnJournalStatus): boolean {
 }
 
 function replyAlreadyVisible(entry: TurnJournalEntry): boolean {
-  return Boolean(entry.reply?.streamFinalized || entry.cliAlreadySent);
+  return Boolean(entry.cliAlreadySent);
 }
 
 function isStagedDelivery(entry: TurnJournalEntry): boolean {

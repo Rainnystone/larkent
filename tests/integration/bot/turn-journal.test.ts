@@ -151,32 +151,41 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     )));
   });
 
-  it.each(['markdown', 'card'] as const)(
-    'stages a rejected %s final patch and recovery delivers that reply once',
-    async (replyMode) => {
+  it('a rejected final patch stays staged in both markdown and card mode, then is recovered by patching the same card', async () => {
+    for (const replyMode of ['markdown', 'card'] as const) {
       const h = await harness({ fakeTimers: false, replyMode });
-      rejectFinalStreamPatch(h.channel, ANSWER);
+      h.channel.streamErrors.finish = sdkShapedSendError(
+        'unknown',
+        axiosErrno('EAI_AGAIN', 'getaddrinfo EAI_AGAIN open.feishu.cn'),
+      );
 
       await h.channel.handlers.message?.(mention('om_run', 'please answer'));
       await waitFor(() => h.journal.list().some((entry) => (
         entry.messageIds.includes('om_run') && entry.status === 'completed-undelivered'
       )));
       const staged = h.journal.list().find((entry) => entry.messageIds.includes('om_run'));
+      const streamId = h.channel.streams[0]?.messageId;
+      expect(streamId).toBeTruthy();
       expect(staged?.reply?.markdown).toContain(ANSWER);
       expect(staged?.reply?.replyTo).toBe('om_run');
+      expect(staged?.reply?.messageId).toBe(streamId);
       expect(answerSends(h.channel)).toHaveLength(0);
 
       await h.bridge.recoverMissed();
       await waitFor(() => h.journal.list().some((entry) => (
         entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
       )));
-      expect(answerSends(h.channel)).toHaveLength(1);
-      expect(answerSends(h.channel)[0]?.options).toMatchObject({ replyTo: 'om_run' });
+      expect(answerSends(h.channel)).toHaveLength(0);
+      expect(h.channel.updatedCards.some((row) => (
+        row.messageId === streamId && JSON.stringify(row.card).includes(ANSWER)
+      ))).toBe(true);
+      const delivered = h.journal.list().find((entry) => entry.messageIds.includes('om_run'));
+      expect(delivered?.reply?.messageId).toBe(streamId);
 
       await h.bridge.recoverMissed();
-      expect(answerSends(h.channel)).toHaveLength(1);
-    },
-  );
+      expect(answerSends(h.channel)).toHaveLength(0);
+    }
+  });
 
   it('does not mark an in-flight run interrupted on WebSocket reconnected', async () => {
     let release!: () => void;
@@ -294,72 +303,6 @@ function profile(workspace: string, replyMode: 'text' | 'card' | 'markdown' = 't
 
 function answerSends(channel: ReturnType<typeof createRecordingLarkChannel>) {
   return channel.sent.filter((item) => JSON.stringify(item.content).includes(ANSWER));
-}
-
-function rejectFinalStreamPatch(
-  channel: ReturnType<typeof createRecordingLarkChannel>,
-  sentinel: string,
-): void {
-  const orig = channel.stream.bind(channel);
-  channel.stream = async (chatId, input, options) => {
-    const seen = { value: false };
-    return orig(chatId, wrapStreamInput(input, sentinel, seen), options);
-  };
-}
-
-function wrapStreamInput(input: unknown, sentinel: string, seen: { value: boolean }): unknown {
-  if (!isRecord(input)) return input;
-  if (isRecord(input.card) && typeof input.card.producer === 'function') {
-    const producer = input.card.producer as (ctrl: {
-      update(card: unknown): Promise<void>;
-    }) => Promise<void>;
-    return {
-      ...input,
-      card: {
-        ...input.card,
-        producer: async (ctrl: { update(card: unknown): Promise<void> }) => {
-          await producer({
-            update: async (card: unknown) => {
-              await rejectIfRepeatSentinel(JSON.stringify(card), sentinel, seen);
-              await ctrl.update(card);
-            },
-          });
-        },
-      },
-    };
-  }
-  if (typeof input.markdown === 'function') {
-    const markdown = input.markdown as (ctrl: {
-      setContent(markdown: string): Promise<void>;
-    }) => Promise<void>;
-    return {
-      ...input,
-      markdown: async (ctrl: { setContent(markdown: string): Promise<void> }) => {
-        await markdown({
-          setContent: async (content: string) => {
-            await rejectIfRepeatSentinel(content, sentinel, seen);
-            await ctrl.setContent(content);
-          },
-        });
-      },
-    };
-  }
-  return input;
-}
-
-async function rejectIfRepeatSentinel(
-  payload: string,
-  sentinel: string,
-  seen: { value: boolean },
-): Promise<void> {
-  if (payload.includes(sentinel) && seen.value) {
-    throw axiosErrno('EAI_AGAIN', 'getaddrinfo EAI_AGAIN open.feishu.cn');
-  }
-  if (payload.includes(sentinel)) seen.value = true;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
 }
 
 function mention(messageId: string, content: string): NormalizedMessage {

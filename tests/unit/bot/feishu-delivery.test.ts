@@ -159,6 +159,30 @@ describe('redeliverStagedReply', () => {
     expect(channel.updatedCards).toHaveLength(0);
   });
 
+  it('patches a markdown stream receipt because it is an interactive card', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    const streamId = 'om_md_stream';
+    await channel.updateCard(streamId, recoveryAnswerCard('partial'));
+    const result = await redeliverStagedReply({
+      channel,
+      entry: staged({
+        turnId: 'md-stream',
+        deliveryId: 'reply:md-stream',
+        markdown: 'FULL ANSWER',
+        replyMode: 'markdown',
+        messageId: streamId,
+        interactive: true,
+      }),
+      botAppId: APP,
+      now: () => 1_760_000_000_000,
+    });
+
+    expect(result.delivered).toBe(true);
+    expect(result.messageId).toBe(streamId);
+    expect(channel.sent).toHaveLength(0);
+    expect(JSON.stringify(channel.updatedCards.at(-1)?.card)).toContain('FULL ANSWER');
+  });
+
   it('finds a landed reply by parent_id + app id + create_time after the uuid window', async () => {
     const channel = createFakeChannel({ botAppId: APP, now: () => 1_760_000_001_000 });
     await channel.send(CHAT, { markdown: 'LANDED' }, {
@@ -277,6 +301,7 @@ function staged(input: {
   markdown: string;
   replyMode?: string;
   messageId?: string;
+  interactive?: boolean;
   createdAt?: number;
 }): TurnJournalEntry {
   const createdAt = input.createdAt ?? 1_760_000_000_000;
@@ -294,6 +319,7 @@ function staged(input: {
       replyMode: input.replyMode ?? 'text',
       deliveryId: input.deliveryId,
       ...(input.messageId ? { messageId: input.messageId } : {}),
+      ...(input.interactive === true ? { interactive: true } : {}),
     },
     createdAt,
     updatedAt: createdAt,

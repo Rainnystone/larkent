@@ -54,6 +54,76 @@ describe('wrapChannelOutbound timeout', () => {
     expect(outcomes).toEqual([{ ok: false }]);
   });
 
+  it('records a stream messageId at create so the live echo is not a CLI self-send', async () => {
+    const outbound = new OutboundMessageIds();
+    let duringProducer = false;
+    const channel = {
+      stream: async (
+        _chatId: string,
+        input: {
+          card?: {
+            initial: object;
+            producer: (ctrl: { messageId: string; update: (card: unknown) => Promise<void> }) => Promise<void>;
+          };
+        },
+      ) => {
+        const ctrl = {
+          messageId: 'om_live_stream',
+          update: async () => {},
+        };
+        await input.card?.producer(ctrl);
+        return { messageId: 'om_live_stream' };
+      },
+    };
+    wrapChannelOutbound(channel, outbound, { timeoutMs: 200 });
+
+    const pending = channel.stream('oc', {
+      card: {
+        initial: {},
+        producer: async (ctrl) => {
+          duringProducer = outbound.has(ctrl.messageId);
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        },
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(duringProducer).toBe(true);
+    await expect(pending).resolves.toEqual({ messageId: 'om_live_stream' });
+    expect(outbound.has('om_live_stream')).toBe(true);
+  });
+
+  it('records a markdown stream messageId at create so the live echo is not a CLI self-send', async () => {
+    const outbound = new OutboundMessageIds();
+    let duringProducer = false;
+    const channel = {
+      stream: async (
+        _chatId: string,
+        input: {
+          markdown?: (ctrl: { messageId: string; setContent: (text: string) => Promise<void> }) => Promise<void>;
+        },
+      ) => {
+        const ctrl = {
+          messageId: 'om_live_md',
+          setContent: async () => {},
+        };
+        await input.markdown?.(ctrl);
+        return { messageId: 'om_live_md' };
+      },
+    };
+    wrapChannelOutbound(channel, outbound, { timeoutMs: 200 });
+
+    const pending = channel.stream('oc', {
+      markdown: async (ctrl) => {
+        duringProducer = outbound.has(ctrl.messageId);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(duringProducer).toBe(true);
+    await expect(pending).resolves.toEqual({ messageId: 'om_live_md' });
+    expect(outbound.has('om_live_md')).toBe(true);
+  });
+
   it('does not time out a stream that lasts longer than the outbound request budget', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const channel = {

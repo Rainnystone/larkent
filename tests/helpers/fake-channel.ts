@@ -8,6 +8,7 @@ export interface FakeChannelStream {
   chatId: string;
   input: unknown;
   options: unknown;
+  messageId: string;
   cardUpdates: unknown[];
   markdownContents: string[];
 }
@@ -59,7 +60,13 @@ export interface FakeChannel {
   updateCard(messageId: string, cardJson: unknown): Promise<void>;
   readonly updatedCards: Array<{ messageId: string; card: unknown }>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
-  stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
+  stream(chatId: string, input: unknown, options?: unknown): Promise<{ messageId: string }>;
+  /**
+   * SDK-faithful stream faults: `update`/`setContent` always resolve.
+   * `open` rejects before a message exists; `finish` rejects after create
+   * (the `stream()` result is the delivery signal).
+   */
+  readonly streamErrors: { open?: unknown; finish?: unknown };
   getConnectionStatus(): { state: 'connected' | 'reconnecting' | 'failed'; reconnectAttempts: number };
   getAppInfo(): Promise<{ ownerId: string }>;
 }
@@ -90,6 +97,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
   let nextCard = 1;
   let nextMessage = 1;
 
+  const streamErrors: { open?: unknown; finish?: unknown } = {};
   const land = (input: {
     chatId: string;
     content: unknown;
@@ -97,6 +105,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
     uuid?: string;
     parentId?: string;
     msgType: string;
+    trackSent?: boolean;
   }): { message_id: string; body: { content: string } } => {
     const echo = stringifyContent(input.content);
     if (input.uuid) {
@@ -119,7 +128,9 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
     chat.push(stored);
     byId.set(messageId, stored);
     if (input.uuid) byUuid.set(input.uuid, stored);
-    sent.push({ chatId: input.chatId, content: input.content, options: input.options });
+    if (input.trackSent !== false) {
+      sent.push({ chatId: input.chatId, content: input.content, options: input.options });
+    }
     return { message_id: messageId, body: { content: stringifyContent(input.content) } };
   };
 
@@ -144,6 +155,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
   return {
     sent,
     streams,
+    streamErrors,
     updatedCards,
     rawThreadIds,
     async fetchRawMessage(messageId: string): Promise<Array<{ thread_id?: string }>> {
@@ -233,31 +245,70 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
     async getAppInfo() {
       return { ownerId: 'ou_owner' };
     },
-    async stream(chatId: string, input: unknown, options?: unknown): Promise<void> {
+    async stream(chatId: string, input: unknown, options?: unknown): Promise<{ messageId: string }> {
       const record: FakeChannelStream = {
         chatId,
         input,
         options,
+        messageId: '',
         cardUpdates: [],
         markdownContents: [],
       };
       streams.push(record);
 
-      if (isCardStreamInput(input)) {
-        await input.card.producer({
-          update: async (card: unknown): Promise<void> => {
-            record.cardUpdates.push(card);
-          },
-        });
+      const openErr = streamErrors.open;
+      if (openErr !== undefined) {
+        streamErrors.open = undefined;
+        throw openErr;
       }
 
-      if (isMarkdownStreamInput(input)) {
-        await input.markdown({
-          setContent: async (markdown: string): Promise<void> => {
-            record.markdownContents.push(markdown);
-          },
-        });
+      const initial = isCardStreamInput(input)
+        ? { card: input.card.initial }
+        : { card: { schema: '2.0', body: { elements: [] } } };
+      const landed = land({
+        chatId,
+        content: initial,
+        options,
+        uuid: outboundUuid(options),
+        parentId: outboundReplyTo(options),
+        msgType: 'interactive',
+        trackSent: false,
+      });
+      record.messageId = landed.message_id;
+
+      const ctrl = {
+        get messageId(): string {
+          return landed.message_id;
+        },
+        update: async (card: unknown): Promise<void> => {
+          record.cardUpdates.push(card);
+          const stored = byId.get(landed.message_id);
+          if (stored) stored.content = { card };
+        },
+        setContent: async (markdown: string): Promise<void> => {
+          record.markdownContents.push(markdown);
+          const stored = byId.get(landed.message_id);
+          if (stored) {
+            stored.content = {
+              card: { schema: '2.0', body: { elements: [{ tag: 'markdown', content: markdown }] } },
+            };
+          }
+        },
+      };
+
+      if (isCardStreamInput(input)) {
+        await input.card.producer(ctrl);
       }
+      if (isMarkdownStreamInput(input)) {
+        await input.markdown(ctrl);
+      }
+
+      const finishErr = streamErrors.finish;
+      if (finishErr !== undefined) {
+        streamErrors.finish = undefined;
+        throw finishErr;
+      }
+      return { messageId: landed.message_id };
     },
   };
 
@@ -356,10 +407,12 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 interface FakeCardController {
+  readonly messageId: string;
   update(card: unknown): Promise<void>;
 }
 
 interface FakeMarkdownController {
+  readonly messageId: string;
   setContent(markdown: string): Promise<void>;
 }
 

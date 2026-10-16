@@ -12,7 +12,35 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		});
  		this._messageId = id;
  	}
-@@ -4267,6 +4268,13 @@ var MarkdownStreamController = class {
+@@ -4131,6 +4132,7 @@ var MarkdownStreamControllerImpl = class {
+ 	* still runs on a best-effort basis.
+ 	*/
+ 	streamingFailed = false;
++	_lastError;
+ 	/** messageIds of every rollover card created after the head. */
+ 	rolloverMessageIds = [];
+ 	maxChars;
+@@ -4186,6 +4188,7 @@ var MarkdownStreamControllerImpl = class {
+ 				await this.pushSnapshot();
+ 			} catch (e) {
+ 				this.streamingFailed = true;
++				this._lastError = e;
+ 				this.sender.logger.warn?.("[stream] update failed", e);
+ 			}
+ 		});
+@@ -4237,8 +4240,11 @@ var MarkdownStreamControllerImpl = class {
+ 		try {
+ 			await this.sender.finishStreamingCard(this.cardId, ++this.sequence, truncateSummary(this.content || DEFAULT_EMPTY));
+ 		} catch (e) {
++			this.streamingFailed = true;
++			this._lastError = e;
+ 			this.sender.logger.warn?.("[stream] finishStreamingCard failed", e);
+ 		}
++		if (this.streamingFailed) throw this._lastError ?? new Error("markdown stream failed");
+ 	}
+ 	async failTerminal(_err) {
+ 		this.throttle.dispose();
+@@ -4267,6 +4273,13 @@ var MarkdownStreamController = class {
  //#endregion
  //#region src/outbound/sender.ts
  const DEFAULT_CHUNK_LIMIT = 3500;
@@ -26,7 +54,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  var OutboundSender = class {
  	client;
  	config;
-@@ -4316,7 +4324,8 @@ var OutboundSender = class {
+@@ -4316,7 +4329,8 @@ var OutboundSender = class {
  				msgType: "post",
  				content: post,
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -36,7 +64,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  			});
  			ids.push(id);
  		}
-@@ -4332,7 +4341,8 @@ var OutboundSender = class {
+@@ -4332,7 +4346,8 @@ var OutboundSender = class {
  				msgType: "text",
  				content: { text: chunks[i] },
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -46,7 +74,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  			});
  			ids.push(id);
  		}
-@@ -4345,7 +4355,8 @@ var OutboundSender = class {
+@@ -4345,7 +4360,8 @@ var OutboundSender = class {
  			msgType: "post",
  			content: post,
  			replyTo: opts.replyTo,
@@ -56,7 +84,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	convertMarkdown(md, mentions) {
-@@ -4364,7 +4375,8 @@ var OutboundSender = class {
+@@ -4364,7 +4380,8 @@ var OutboundSender = class {
  			msgType: "image",
  			content: { image_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -66,7 +94,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	async sendFile(to, idType, input, opts) {
-@@ -4379,7 +4391,8 @@ var OutboundSender = class {
+@@ -4379,7 +4396,8 @@ var OutboundSender = class {
  			msgType: "file",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -76,7 +104,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	async sendAudio(to, idType, input, opts) {
-@@ -4394,7 +4407,8 @@ var OutboundSender = class {
+@@ -4394,7 +4412,8 @@ var OutboundSender = class {
  			msgType: "audio",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -86,7 +114,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	async sendVideo(to, idType, input, opts) {
-@@ -4410,7 +4424,8 @@ var OutboundSender = class {
+@@ -4410,7 +4429,8 @@ var OutboundSender = class {
  			msgType: "media",
  			content,
  			replyTo: opts.replyTo,
@@ -96,7 +124,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	async sendCard(to, idType, card, opts) {
-@@ -4420,7 +4435,8 @@ var OutboundSender = class {
+@@ -4420,7 +4440,8 @@ var OutboundSender = class {
  			msgType: "interactive",
  			content: card,
  			replyTo: opts.replyTo,
@@ -106,7 +134,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	async sendShareChat(to, idType, chatId, opts) {
-@@ -4430,7 +4446,8 @@ var OutboundSender = class {
+@@ -4430,7 +4451,8 @@ var OutboundSender = class {
  			msgType: "share_chat",
  			content: { chat_id: chatId },
  			replyTo: opts.replyTo,
@@ -116,7 +144,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	async sendShareUser(to, idType, userId, opts) {
-@@ -4440,7 +4457,8 @@ var OutboundSender = class {
+@@ -4440,7 +4462,8 @@ var OutboundSender = class {
  			msgType: "share_user",
  			content: { user_id: userId },
  			replyTo: opts.replyTo,
@@ -126,7 +154,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	async sendSticker(to, idType, fileKey, opts) {
-@@ -4450,7 +4468,8 @@ var OutboundSender = class {
+@@ -4450,7 +4473,8 @@ var OutboundSender = class {
  			msgType: "sticker",
  			content: { file_key: fileKey },
  			replyTo: opts.replyTo,
@@ -136,7 +164,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  		}) };
  	}
  	/**
-@@ -4486,14 +4505,17 @@ var OutboundSender = class {
+@@ -4486,14 +4510,17 @@ var OutboundSender = class {
  			msg_type: args.msgType,
  			content: JSON.stringify(args.content)
  		};
@@ -159,7 +187,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..0bb34260f85f50e8650490bf90f40040
  			})).data?.message_id;
  			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
  			return id;
-@@ -4543,7 +4565,8 @@ var OutboundSender = class {
+@@ -4543,7 +4570,8 @@ var OutboundSender = class {
  				data: { card_id: cardId }
  			},
  			replyTo: opts.replyTo,
@@ -217,7 +245,35 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		});
  		this._messageId = id;
  	}
-@@ -4240,6 +4241,13 @@ var MarkdownStreamController = class {
+@@ -4104,6 +4105,7 @@ var MarkdownStreamControllerImpl = class {
+ 	* still runs on a best-effort basis.
+ 	*/
+ 	streamingFailed = false;
++	_lastError;
+ 	/** messageIds of every rollover card created after the head. */
+ 	rolloverMessageIds = [];
+ 	maxChars;
+@@ -4159,6 +4161,7 @@ var MarkdownStreamControllerImpl = class {
+ 				await this.pushSnapshot();
+ 			} catch (e) {
+ 				this.streamingFailed = true;
++				this._lastError = e;
+ 				this.sender.logger.warn?.("[stream] update failed", e);
+ 			}
+ 		});
+@@ -4210,8 +4213,11 @@ var MarkdownStreamControllerImpl = class {
+ 		try {
+ 			await this.sender.finishStreamingCard(this.cardId, ++this.sequence, truncateSummary(this.content || DEFAULT_EMPTY));
+ 		} catch (e) {
++			this.streamingFailed = true;
++			this._lastError = e;
+ 			this.sender.logger.warn?.("[stream] finishStreamingCard failed", e);
+ 		}
++		if (this.streamingFailed) throw this._lastError ?? new Error("markdown stream failed");
+ 	}
+ 	async failTerminal(_err) {
+ 		this.throttle.dispose();
+@@ -4240,6 +4246,13 @@ var MarkdownStreamController = class {
  //#endregion
  //#region src/outbound/sender.ts
  const DEFAULT_CHUNK_LIMIT = 3500;
@@ -231,7 +287,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  var OutboundSender = class {
  	client;
  	config;
-@@ -4289,7 +4297,8 @@ var OutboundSender = class {
+@@ -4289,7 +4302,8 @@ var OutboundSender = class {
  				msgType: "post",
  				content: post,
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -241,7 +297,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  			});
  			ids.push(id);
  		}
-@@ -4305,7 +4314,8 @@ var OutboundSender = class {
+@@ -4305,7 +4319,8 @@ var OutboundSender = class {
  				msgType: "text",
  				content: { text: chunks[i] },
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -251,7 +307,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  			});
  			ids.push(id);
  		}
-@@ -4318,7 +4328,8 @@ var OutboundSender = class {
+@@ -4318,7 +4333,8 @@ var OutboundSender = class {
  			msgType: "post",
  			content: post,
  			replyTo: opts.replyTo,
@@ -261,7 +317,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	convertMarkdown(md, mentions) {
-@@ -4337,7 +4348,8 @@ var OutboundSender = class {
+@@ -4337,7 +4353,8 @@ var OutboundSender = class {
  			msgType: "image",
  			content: { image_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -271,7 +327,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	async sendFile(to, idType, input, opts) {
-@@ -4352,7 +4364,8 @@ var OutboundSender = class {
+@@ -4352,7 +4369,8 @@ var OutboundSender = class {
  			msgType: "file",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -281,7 +337,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	async sendAudio(to, idType, input, opts) {
-@@ -4367,7 +4380,8 @@ var OutboundSender = class {
+@@ -4367,7 +4385,8 @@ var OutboundSender = class {
  			msgType: "audio",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -291,7 +347,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	async sendVideo(to, idType, input, opts) {
-@@ -4383,7 +4397,8 @@ var OutboundSender = class {
+@@ -4383,7 +4402,8 @@ var OutboundSender = class {
  			msgType: "media",
  			content,
  			replyTo: opts.replyTo,
@@ -301,7 +357,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	async sendCard(to, idType, card, opts) {
-@@ -4393,7 +4408,8 @@ var OutboundSender = class {
+@@ -4393,7 +4413,8 @@ var OutboundSender = class {
  			msgType: "interactive",
  			content: card,
  			replyTo: opts.replyTo,
@@ -311,7 +367,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	async sendShareChat(to, idType, chatId, opts) {
-@@ -4403,7 +4419,8 @@ var OutboundSender = class {
+@@ -4403,7 +4424,8 @@ var OutboundSender = class {
  			msgType: "share_chat",
  			content: { chat_id: chatId },
  			replyTo: opts.replyTo,
@@ -321,7 +377,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	async sendShareUser(to, idType, userId, opts) {
-@@ -4413,7 +4430,8 @@ var OutboundSender = class {
+@@ -4413,7 +4435,8 @@ var OutboundSender = class {
  			msgType: "share_user",
  			content: { user_id: userId },
  			replyTo: opts.replyTo,
@@ -331,7 +387,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	async sendSticker(to, idType, fileKey, opts) {
-@@ -4423,7 +4441,8 @@ var OutboundSender = class {
+@@ -4423,7 +4446,8 @@ var OutboundSender = class {
  			msgType: "sticker",
  			content: { file_key: fileKey },
  			replyTo: opts.replyTo,
@@ -341,7 +397,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  		}) };
  	}
  	/**
-@@ -4459,14 +4478,17 @@ var OutboundSender = class {
+@@ -4459,14 +4483,17 @@ var OutboundSender = class {
  			msg_type: args.msgType,
  			content: JSON.stringify(args.content)
  		};
@@ -364,7 +420,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..452c6587042e8674560a547e3dd4f886
  			})).data?.message_id;
  			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
  			return id;
-@@ -4516,7 +4538,8 @@ var OutboundSender = class {
+@@ -4516,7 +4543,8 @@ var OutboundSender = class {
  				data: { card_id: cardId }
  			},
  			replyTo: opts.replyTo,

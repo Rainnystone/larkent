@@ -82,20 +82,29 @@ export function createRecordingLarkChannel(options: {
   };
 
   inner.stream = async (chatId, input, options) => {
-    await origStream(chatId, input, options);
-    const record = inner.streams.at(-1);
     const inputKind = isCardStreamInput(input)
       ? 'card'
       : isMarkdownStreamInput(input)
         ? 'markdown'
         : 'other';
-    callLog.push({
-      op: 'stream',
-      chatId,
-      inputKind,
-      cardUpdates: record?.cardUpdates ?? [],
-      markdownContents: record?.markdownContents ?? [],
-    });
+    const note = (): void => {
+      const record = inner.streams.at(-1);
+      callLog.push({
+        op: 'stream',
+        chatId,
+        inputKind,
+        cardUpdates: record?.cardUpdates ?? [],
+        markdownContents: record?.markdownContents ?? [],
+      });
+    };
+    try {
+      const result = await origStream(chatId, input, options);
+      note();
+      return result;
+    } catch (err) {
+      note();
+      throw err;
+    }
   };
 
   const channel: RecordingLarkChannel = {

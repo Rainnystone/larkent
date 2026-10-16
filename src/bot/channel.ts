@@ -44,6 +44,7 @@ import {
   OutboundMessageIds,
   isSelfSender,
   noteInboundSkipSelf,
+  outboundMessageId,
   senderTypeFromRaw,
 } from './self-message';
 import {
@@ -109,9 +110,8 @@ import {
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { classify } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
-import { unseenStreamFallback } from './stream-fallback';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
-import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
+import { recoveryAnswerCard, redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
   replyDeliveryKey,
@@ -1689,10 +1689,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
       let producerRendered = false;
-      let lastStreamPatch: StreamPatchStatus | undefined;
-      let lastStreamedText: string | undefined;
       let cardCtrl:
-        | { update(next: object | ((current: object) => object)): Promise<void> }
+        | { messageId?: string; update(next: object | ((current: object) => object)): Promise<void> }
         | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
         channel.stream(
@@ -1702,17 +1700,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               initial: renderCard(initialState, cardRenderOptions),
               producer: async (ctrl) => {
                 producerStarted = true;
+                progress.noteMessageId(ctrl.messageId);
                 if (progress.abandoned()) return;
                 cardCtrl = ctrl;
-                try {
-                  const visible = filterForPrefs(latestState);
-                  await ctrl.update(renderCard(visible, cardRenderOptions));
-                  lastStreamPatch = { ok: true };
-                  lastStreamedText = visibleStreamText(visible);
-                } catch (err) {
-                  lastStreamPatch = { ok: false, err };
-                  throw err;
-                }
+                const visible = filterForPrefs(latestState);
+                await ctrl.update(renderCard(visible, cardRenderOptions));
                 producerRendered = true;
                 await renderDone;
               },
@@ -1734,10 +1726,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             try {
               const visible = filterForPrefs(state);
               await cardCtrl.update(renderCard(visible, cardRenderOptions));
-              lastStreamPatch = { ok: true };
-              lastStreamedText = visibleStreamText(visible);
             } catch (err) {
-              lastStreamPatch = { ok: false, err };
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
           }
@@ -1745,39 +1734,25 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         runContext,
         streamReliability(controls.profileConfig, link),
       );
-      try {
-        await awaitRenderAwareStream({
-          mode: replyMode,
-          progress,
-          renderDone,
-          producerStarted: () => producerStarted,
-          producerRendered: () => producerRendered,
-          fallback: async () => {
-            // Stream-deltas finalize through deliverFinalReply after the stream
-            // settles, including the no-progress-stream and abandoned paths.
-          },
-        });
-      } catch (err) {
-        if (!finalAnswerOnly) throw err;
-        log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
-      }
+      const stream = await awaitRenderAwareStream({
+        mode: replyMode,
+        progress,
+        renderDone,
+        producerStarted: () => producerStarted,
+        producerRendered: () => producerRendered,
+      });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       const terminalState = finalAnswerOnly
         ? finalReplyState(progress, filterForPrefs(latestState))
         : filterForPrefs(latestState);
-      const streamPatch = lastStreamPatch;
       await deliverFinalReply({
         channel,
         chatId,
         scope,
         state: terminalState,
         skipFrom: latestState,
-        finalizeStream: liveStreamFinalize(
-          finalAnswerOnly,
-          progress,
-          throwIfStreamPatchFailed(streamPatch),
-        ),
-        streamedBody: lastStreamedText,
+        stream,
+        dedicatedFinal: finalAnswerOnly,
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1791,26 +1766,18 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
       let producerRendered = false;
-      let lastStreamPatch: StreamPatchStatus | undefined;
-      let lastStreamedText: string | undefined;
-      let markdownCtrl: { setContent(markdown: string): Promise<void> } | undefined;
+      let markdownCtrl: { messageId?: string; setContent(markdown: string): Promise<void> } | undefined;
       const progress = createLazyProgressStream(scope, replyMode, () =>
         channel.stream(
           chatId,
           {
             markdown: async (ctrl) => {
               producerStarted = true;
+              progress.noteMessageId(ctrl.messageId);
               if (progress.abandoned()) return;
               markdownCtrl = ctrl;
-              try {
-                const visible = filterForPrefs(latestState);
-                await ctrl.setContent(renderText(visible));
-                lastStreamPatch = { ok: true };
-                lastStreamedText = visibleStreamText(visible);
-              } catch (err) {
-                lastStreamPatch = { ok: false, err };
-                throw err;
-              }
+              const visible = filterForPrefs(latestState);
+              await ctrl.setContent(renderText(visible));
               producerRendered = true;
               await renderDone;
             },
@@ -1831,10 +1798,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             try {
               const visible = filterForPrefs(state);
               await markdownCtrl.setContent(renderText(visible));
-              lastStreamPatch = { ok: true };
-              lastStreamedText = visibleStreamText(visible);
             } catch (err) {
-              lastStreamPatch = { ok: false, err };
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
           }
@@ -1842,39 +1806,25 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         runContext,
         streamReliability(controls.profileConfig, link),
       );
-      try {
-        await awaitRenderAwareStream({
-          mode: replyMode,
-          progress,
-          renderDone,
-          producerStarted: () => producerStarted,
-          producerRendered: () => producerRendered,
-          fallback: async () => {
-            // Stream-deltas finalize through deliverFinalReply after the stream
-            // settles, including the no-progress-stream and abandoned paths.
-          },
-        });
-      } catch (err) {
-        if (!finalAnswerOnly) throw err;
-        log.fail('stream', err, { mode: replyMode, step: 'progress-stream' });
-      }
+      const stream = await awaitRenderAwareStream({
+        mode: replyMode,
+        progress,
+        renderDone,
+        producerStarted: () => producerStarted,
+        producerRendered: () => producerRendered,
+      });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       const terminalState = finalAnswerOnly
         ? finalReplyState(progress, filterForPrefs(latestState))
         : filterForPrefs(latestState);
-      const streamPatch = lastStreamPatch;
       await deliverFinalReply({
         channel,
         chatId,
         scope,
         state: terminalState,
         skipFrom: latestState,
-        finalizeStream: liveStreamFinalize(
-          finalAnswerOnly,
-          progress,
-          throwIfStreamPatchFailed(streamPatch),
-        ),
-        streamedBody: lastStreamedText,
+        stream,
+        dedicatedFinal: finalAnswerOnly,
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1924,6 +1874,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   }
 }
 
+type StreamDelivery =
+  | { kind: 'confirmed'; messageId: string }
+  | { kind: 'failed'; err: unknown; messageId?: string }
+  | { kind: 'none' };
+
 interface LazyProgressStream {
   /**
    * Mirrors the underlying `channel.stream(...)` promise, and stays pending
@@ -1939,6 +1894,8 @@ interface LazyProgressStream {
    */
   abandoned(): boolean;
   abandon(): void;
+  messageId(): string | undefined;
+  noteMessageId(id: string | undefined): void;
 }
 
 /**
@@ -1958,6 +1915,7 @@ function createLazyProgressStream(
 ): LazyProgressStream {
   let stream: Promise<unknown> | undefined;
   let givenUp = false;
+  let createdId: string | undefined;
   let settle!: (result: Promise<unknown>) => void;
   const settled = new Promise<unknown>((resolve, reject) => {
     settle = (result) => {
@@ -1977,6 +1935,10 @@ function createLazyProgressStream(
     abandon: () => {
       givenUp = true;
     },
+    messageId: () => createdId,
+    noteMessageId: (id) => {
+      if (id) createdId = id;
+    },
   };
 }
 
@@ -1988,8 +1950,8 @@ function createLazyProgressStream(
  *
  * Terminal states don't count either. By then the stream has nothing left to
  * stream, and whatever the run produced goes out as a normal reply
- * (`sendFinalReply`, or the stream fallback) instead of a card that would be
- * created only to be finished a moment later.
+ * (`sendFinalReply`) instead of a card that would be created only to be
+ * finished a moment later.
  *
  * `state` must already be `filterForPrefs`-projected, and emptiness is measured
  * with `renderText` in both reply modes so it matches the rule
@@ -2077,105 +2039,14 @@ async function recallStreamedMessage(
   }
 }
 
-type StreamPatchStatus = { ok: true } | { ok: false; err: unknown };
-
-function throwIfStreamPatchFailed(status: StreamPatchStatus | undefined): () => Promise<void> {
-  return async () => {
-    if (status === undefined) throw new Error('final stream patch missing');
-    switch (status.ok) {
-      case true:
-        return;
-      case false:
-        throw status.err;
-      default: {
-        const _exhaustive: never = status;
-        throw _exhaustive;
-      }
-    }
-  };
-}
-
-function liveStreamFinalize(
-  finalAnswerOnly: boolean,
-  progress: LazyProgressStream,
-  report: () => Promise<void>,
-): (() => Promise<void>) | undefined {
-  if (finalAnswerOnly || !progress.opened() || progress.abandoned()) return undefined;
-  return report;
-}
-
-function visibleStreamText(state: RunState): string {
-  return renderText({ ...state, footer: null });
-}
-
-function remainderReplyState(source: RunState, unseen: string): RunState {
-  return {
-    ...source,
-    blocks: [{ kind: 'text', content: unseen, streaming: false }],
-    reasoning: { content: '', active: false },
-    footer: null,
-    terminal: 'done',
-    errorMsg: undefined,
-    finalText: undefined,
-  };
-}
-
-async function fallbackUnlessLink(
-  err: unknown,
-  input: Parameters<typeof deliverUnseenStreamFallback>[0],
-): Promise<'wait' | 'fallback-done'> {
-  const kind = classify(err);
-  switch (kind) {
-    case 'link':
-      return 'wait';
-    case 'rejected':
-    case 'local':
-      await deliverUnseenStreamFallback(input);
-      return 'fallback-done';
-    default: {
-      const _exhaustive: never = kind;
-      return _exhaustive;
-    }
-  }
-}
-
-async function deliverUnseenStreamFallback(input: {
-  channel: LarkChannel;
-  chatId: string;
-  scope: string;
-  state: RunState;
-  skipFrom?: RunState;
-  streamedBody?: string;
-  replyMode: ReturnType<typeof getMessageReplyMode>;
-  sendOpts: { replyTo: string; replyInThread?: boolean };
-  cardRenderOptions: { signCallback?: (action: string) => string };
-  journal?: TurnJournal;
-  turnId?: string;
-  cliSelfSent?: CliSelfSendTracker;
-}): Promise<void> {
-  const unseen = unseenStreamFallback(renderText(input.state), input.streamedBody);
-  if (!unseen) {
-    if (input.journal && input.turnId) {
-      input.journal.noteStreamFinalized(input.turnId);
-      await input.journal.flush();
-    }
-    return;
-  }
-  const sent = await sendFinalReply({ ...input, state: remainderReplyState(input.state, unseen) });
-  if (input.journal && input.turnId && sent?.messageId) {
-    input.journal.noteReplyReceipt(input.turnId, sent.messageId);
-  }
-}
-
 async function deliverFinalReply(input: {
   channel: LarkChannel;
   chatId: string;
   scope: string;
   state: RunState;
   skipFrom?: RunState;
-  finalizeStream?: () => Promise<void>;
-  /** Last successful stream patch, without live footer, for 4xx/local fallback. */
-  streamedBody?: string;
+  stream?: StreamDelivery;
+  dedicatedFinal?: boolean;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   cardRenderOptions: { signCallback?: (action: string) => string };
@@ -2195,12 +2066,12 @@ async function deliverFinalReply(input: {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
   const body = renderText(input.state);
+  const visibleBody = body.trim() ? body : renderText(input.skipFrom ?? input.state);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
     && (input.skipFrom ?? input.state).terminal === 'done';
-  const skip = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId)
-    || cliSent
-    || !body.trim();
-  if (input.journal && input.turnId && (shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent)) {
+  const skipCli = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent;
+  const skip = skipCli || !visibleBody.trim();
+  if (input.journal && input.turnId && skipCli) {
     input.journal.noteCliAlreadySent(input.turnId);
   }
   const outcome = input.handle.outcome;
@@ -2210,12 +2081,15 @@ async function deliverFinalReply(input: {
   const deliveryId = input.turnId
     ? input.journal?.get(input.turnId)?.reply?.deliveryId ?? replyDeliveryKey(input.turnId)
     : undefined;
+  const stream = input.stream ?? { kind: 'none' as const };
+  const streamMessageId = stream.kind === 'none' ? undefined : stream.messageId;
   const reply = {
-    markdown: body,
+    markdown: visibleBody,
     replyTo: input.sendOpts.replyTo,
     replyMode: input.replyMode,
     ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
     ...(deliveryId ? { deliveryId } : {}),
+    ...(streamMessageId ? { messageId: streamMessageId, interactive: true as const } : {}),
   };
   if (input.journal && input.turnId && !skip) {
     input.journal.stageReply(input.turnId, reply);
@@ -2230,27 +2104,32 @@ async function deliverFinalReply(input: {
     });
   }
   if (input.journal) await input.journal.flush();
-  if (input.finalizeStream && !skip) {
-    try {
-      await input.finalizeStream();
-      if (input.journal && input.turnId) {
-        input.journal.noteStreamFinalized(input.turnId);
-        await input.journal.flush();
-      }
-    } catch (err) {
-      log.fail('stream', err, { mode: input.replyMode, step: 'final-patch' });
-      if (await fallbackUnlessLink(err, input) === 'wait') return;
-    }
+  const dedicatedFinal = input.dedicatedFinal === true && Boolean(body.trim());
+  if (skipCli) {
+    log.info('outbound', 'skip-cli-already-sent', {
+      scope: input.scope,
+      chatId: input.chatId,
+      mode: input.replyMode,
+    });
+    reportMetric(OUTBOUND_SKIP_CLI_SENT_METRIC, 1);
+  } else if (skip && stream.kind === 'none') {
+    log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
   } else {
-    try {
-      const sent = await sendFinalReply({ ...input, deliveryId });
-      if (input.journal && input.turnId && sent?.messageId) {
-        input.journal.noteReplyReceipt(input.turnId, sent.messageId);
-      }
-    } catch (err) {
-      log.fail('outbound', err, { mode: input.replyMode, step: 'final-send' });
-      if (await fallbackUnlessLink(err, input) === 'wait') return;
-    }
+    const settled = await settleStreamDelivery({
+      stream,
+      channel: input.channel,
+      body: visibleBody,
+      send: () => sendFinalReply({
+        ...input,
+        deliveryId,
+        state: body.trim() ? input.state : (input.skipFrom ?? input.state),
+      }),
+      journal: input.journal,
+      turnId: input.turnId,
+      replyMode: input.replyMode,
+      dedicatedFinal,
+    });
+    if (settled === 'wait') return;
   }
   input.cliSelfSent?.consume(input.scope);
   if (input.journal && input.turnId && !willNotice) input.journal.replyDelivered(input.turnId);
@@ -2264,6 +2143,119 @@ async function deliverFinalReply(input: {
       notice: input.notice,
     });
   }
+}
+
+async function settleStreamDelivery(input: {
+  stream: StreamDelivery;
+  channel: LarkChannel;
+  body: string;
+  send: () => Promise<{ messageId?: string } | undefined>;
+  journal?: TurnJournal;
+  turnId?: string;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+  dedicatedFinal: boolean;
+}): Promise<'done' | 'wait'> {
+  switch (input.stream.kind) {
+    case 'confirmed':
+      if (input.stream.messageId && input.journal && input.turnId) {
+        input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
+        await input.journal.flush();
+      }
+      return input.dedicatedFinal ? sendOrWait(input) : 'done';
+    case 'none':
+      return sendOrWait(input);
+    case 'failed':
+      log.fail('stream', input.stream.err, { mode: input.replyMode, step: 'final-patch' });
+      if (input.stream.messageId && input.journal && input.turnId) {
+        input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
+        await input.journal.flush();
+      }
+      if (input.dedicatedFinal) {
+        return classify(input.stream.err) === 'link' ? 'wait' : sendOrWait(input);
+      }
+      {
+        const kind = classify(input.stream.err);
+        switch (kind) {
+          case 'link':
+            return 'wait';
+          case 'rejected':
+          case 'local':
+            if (input.stream.messageId) {
+              try {
+                await input.channel.updateCard(input.stream.messageId, recoveryAnswerCard(input.body));
+                return 'done';
+              } catch (err) {
+                log.fail('stream', err, { mode: input.replyMode, step: 'same-card-patch' });
+                const patchKind = classify(err);
+                switch (patchKind) {
+                  case 'link':
+                    return 'wait';
+                  case 'rejected':
+                    return sendOrWait(input);
+                  case 'local':
+                    return 'wait';
+                  default: {
+                    const _exhaustive: never = patchKind;
+                    throw _exhaustive;
+                  }
+                }
+              }
+            }
+            return sendOrWait(input);
+          default: {
+            const _exhaustive: never = kind;
+            throw _exhaustive;
+          }
+        }
+      }
+    default: {
+      const _exhaustive: never = input.stream;
+      throw _exhaustive;
+    }
+  }
+}
+
+async function sendOrWait(input: {
+  send: () => Promise<{ messageId?: string } | undefined>;
+  journal?: TurnJournal;
+  turnId?: string;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+}): Promise<'done' | 'wait'> {
+  try {
+    return await recordSend(input);
+  } catch (err) {
+    log.fail('outbound', err, { mode: input.replyMode, step: 'final-send' });
+    const kind = classify(err);
+    switch (kind) {
+      case 'link':
+        return 'wait';
+      case 'rejected':
+      case 'local':
+        try {
+          return await recordSend(input);
+        } catch (retryErr) {
+          log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
+          return classify(retryErr) === 'link' ? 'wait' : 'done';
+        }
+      default: {
+        const _exhaustive: never = kind;
+        throw _exhaustive;
+      }
+    }
+  }
+}
+
+async function recordSend(input: {
+  send: () => Promise<{ messageId?: string } | undefined>;
+  journal?: TurnJournal;
+  turnId?: string;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+}): Promise<'done'> {
+  const sent = await input.send();
+  if (input.journal && input.turnId && sent?.messageId) {
+    input.journal.noteReplyReceipt(input.turnId, sent.messageId, input.replyMode === 'card');
+  }
+  return 'done';
 }
 
 async function resendJournalReply(input: {
@@ -2288,7 +2280,13 @@ async function resendJournalReply(input: {
     botAppId: input.botAppId,
     ...(input.now ? { now: input.now } : {}),
   });
-  if (result.messageId) input.journal.noteReplyReceipt(entry.turnId, result.messageId);
+  if (result.messageId) {
+    input.journal.noteReplyReceipt(
+      entry.turnId,
+      result.messageId,
+      result.messageId === entry.reply?.messageId,
+    );
+  }
   if (result.delivered) {
     log.info('outbound', 'journal-resend', {
       scope: entry.scope,
@@ -2692,10 +2690,9 @@ async function awaitRenderAwareStream(input: {
   renderDone: Promise<RunState>;
   producerStarted: () => boolean;
   producerRendered: () => boolean;
-  fallback: (state: RunState) => Promise<void>;
-}): Promise<void> {
+}): Promise<StreamDelivery> {
   const streamResult = input.progress.settled.then(
-    () => ({ kind: 'stream' as const, ok: true as const }),
+    (result) => ({ kind: 'stream' as const, ok: true as const, result }),
     (err) => ({ kind: 'stream' as const, ok: false as const, err }),
   );
   const renderResult = input.renderDone.then(
@@ -2705,12 +2702,10 @@ async function awaitRenderAwareStream(input: {
   const first = await Promise.race([streamResult, renderResult]);
   if (!first.ok) {
     if (first.kind === 'stream') {
-      log.fail('stream', first.err, { mode: input.mode, step: 'stream' });
       const rendered = await renderResult;
       if (!rendered.ok) throw rendered.err;
       if (!input.producerRendered()) input.progress.abandon();
-      await runFallbackReply(input.mode, rendered.state, input.fallback);
-      return;
+      return failedStream(first.err, input.progress);
     }
     throw first.err;
   }
@@ -2718,7 +2713,7 @@ async function awaitRenderAwareStream(input: {
   if (first.kind === 'stream') {
     const rendered = await renderResult;
     if (!rendered.ok) throw rendered.err;
-    return;
+    return confirmedStream(first.result, input.progress);
   }
 
   // Nothing durable ever showed up, so no progress message was opened at all
@@ -2726,14 +2721,13 @@ async function awaitRenderAwareStream(input: {
   // to reach the user as a standalone reply.
   if (!input.progress.opened()) {
     log.info('outbound', 'progress-stream-skipped', { mode: input.mode });
-    await runFallbackReply(input.mode, first.state, input.fallback);
-    return;
+    return { kind: 'none' };
   }
 
   // The run ended before the stream did. A producer that hasn't started yet is
   // usually just a card still being created (two API round trips), so give the
   // stream its grace window rather than replying immediately — an immediate
-  // fallback would post the same answer twice once the stream catches up.
+  // send would post the same answer twice once the stream catches up.
   const terminal = await Promise.race([
     streamResult,
     delay(STREAM_TERMINAL_GRACE_MS).then(() => undefined),
@@ -2745,43 +2739,34 @@ async function awaitRenderAwareStream(input: {
         mode: input.mode,
         graceMs: STREAM_TERMINAL_GRACE_MS,
       });
-      void streamResult.then((result) => {
-        if (!result.ok) {
-          log.fail('stream', result.err, { mode: input.mode, step: 'stream-terminal-late' });
-        }
-      });
-      return;
+      const waited = await streamResult;
+      if (!waited.ok) return failedStream(waited.err, input.progress);
+      return confirmedStream(waited.result, input.progress);
     }
     // Still nothing on screen after the grace window: give up on the stream and
     // reply without it. `abandon()` keeps a late producer from rendering the
     // same answer again; the empty message it leaves is recalled in cleanup.
     input.progress.abandon();
     log.warn('stream', 'producer-not-started-before-agent-terminal', { mode: input.mode });
-    await runFallbackReply(input.mode, first.state, input.fallback);
-    return;
+    return { kind: 'none' };
   }
 
   if (!terminal.ok) {
-    // A stream that failed before producing anything delivered nothing, so the
-    // reply still has to go out; one that failed later already showed its
-    // content and the error is the caller's to handle.
-    if (input.producerRendered()) throw terminal.err;
-    input.progress.abandon();
-    log.fail('stream', terminal.err, { mode: input.mode, step: 'stream' });
-    await runFallbackReply(input.mode, first.state, input.fallback);
+    if (!input.producerRendered()) input.progress.abandon();
+    return failedStream(terminal.err, input.progress);
   }
+  return confirmedStream(terminal.result, input.progress);
 }
 
-async function runFallbackReply(
-  mode: 'card' | 'markdown',
-  state: RunState,
-  fallback: (state: RunState) => Promise<void>,
-): Promise<void> {
-  try {
-    await fallback(state);
-  } catch (err) {
-    log.fail('stream', err, { mode, step: 'fallback' });
-  }
+function confirmedStream(result: unknown, progress: LazyProgressStream): StreamDelivery {
+  const messageId = outboundMessageId(result) ?? progress.messageId() ?? '';
+  if (messageId) progress.noteMessageId(messageId);
+  return { kind: 'confirmed', messageId };
+}
+
+function failedStream(err: unknown, progress: LazyProgressStream): StreamDelivery {
+  const messageId = progress.messageId();
+  return messageId ? { kind: 'failed', err, messageId } : { kind: 'failed', err };
 }
 
 function scheduleWorkingReactionCleanup(

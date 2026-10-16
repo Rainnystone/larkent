@@ -1,4 +1,5 @@
-import type { TurnJournalEntry } from './turn-journal';
+import type { TurnJournalEntry, TurnReply } from './turn-journal';
+import { classify } from './feishu-error';
 
 export const FEISHU_UUID_WINDOW_MS = 60 * 60 * 1000;
 export const FEISHU_LIST_VISIBILITY_LAG_MS = 2_000;
@@ -59,14 +60,29 @@ export async function redeliverStagedReply(input: {
 }): Promise<{ delivered: boolean; messageId?: string }> {
   const reply = input.entry.reply;
   if (!reply?.markdown.trim()) return { delivered: false };
-  if (input.entry.cliAlreadySent || reply.streamFinalized) {
+  if (input.entry.cliAlreadySent) {
     return { delivered: true, ...(reply.messageId ? { messageId: reply.messageId } : {}) };
   }
-  if (reply.messageId && cardReplyMode(reply.replyMode)) {
-    await patchSameCard(input.channel, reply.messageId, reply.markdown);
-    return { delivered: true, messageId: reply.messageId };
-  }
-  if (reply.messageId) {
+  if (reply.messageId && isInteractiveReceipt(reply)) {
+    try {
+      await patchSameCard(input.channel, reply.messageId, reply.markdown);
+      return { delivered: true, messageId: reply.messageId };
+    } catch (err) {
+      const kind = classify(err);
+      switch (kind) {
+        case 'link':
+          throw err;
+        case 'rejected':
+          break;
+        case 'local':
+          throw err;
+        default: {
+          const _exhaustive: never = kind;
+          throw _exhaustive;
+        }
+      }
+    }
+  } else if (reply.messageId) {
     return { delivered: true, messageId: reply.messageId };
   }
 
@@ -186,8 +202,8 @@ function listedKind(item: Record<string, unknown>, messageId: string): ReadBackM
   return { kind: 'text', messageId };
 }
 
-function cardReplyMode(replyMode: string): boolean {
-  return replyMode === 'card';
+function isInteractiveReceipt(reply: TurnReply): boolean {
+  return reply.replyMode === 'card' || reply.interactive === true;
 }
 
 function createTimeMs(raw: unknown): number {

@@ -215,6 +215,38 @@ describe('static architecture contracts', () => {
     );
   });
 
+  it('does not keep leftover stream remainder or streamFinalized delivery signals', () => {
+    const forbidden = [
+      /\bdeliverUnseenStreamFallback\b/,
+      /\bremainderReplyState\b/,
+      /\bstreamedBody\b/,
+      /\blastStreamedText\b/,
+      /\bvisibleStreamText\b/,
+      /\bStreamPatchStatus\b/,
+      /\bthrowIfStreamPatchFailed\b/,
+      /\bliveStreamFinalize\b/,
+      /\blastStreamPatch\b/,
+      /\bnoteStreamFinalized\b/,
+      /\bstreamFinalized\b/,
+      /\bunseenStreamFallback\b/,
+      /\bfailStreamPatchesAfterFirst\b/,
+    ];
+    const files = [
+      ...collectTsFiles('src'),
+      ...collectTsFiles('tests').filter((file) => file !== 'tests/static/contracts.test.ts'),
+    ];
+    const stray: string[] = [];
+    for (const file of files) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(existsSync(join(root, 'src/bot/stream-fallback.ts'))).toBe(false);
+    expect(existsSync(join(root, 'tests/unit/bot/stream-fallback.test.ts'))).toBe(false);
+  });
+
   it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
     const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
     const webFiles = collectTsFiles('web/src');

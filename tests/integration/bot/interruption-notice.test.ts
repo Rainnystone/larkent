@@ -11,6 +11,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter, type FakeAgentEvents } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { axiosErrno, axiosHttpError, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -327,7 +328,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
   });
 
   it.each(['markdown', 'card'] as const)(
-    'does not duplicate an already-streamed %s partial when the final patch is a business 4xx',
+    'does not duplicate an already-streamed %s partial when the final stream is a business 4xx',
     async (replyMode) => {
       const streamed = 'STREAMED_ANSWER';
       const h = await harness({
@@ -335,7 +336,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
         replyMode,
         manual: true,
       });
-      failStreamPatchesAfterFirst(h.channel, httpError(400));
+      h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
       await h.channel.handlers.message?.(mention('om_run', SECRET));
       await waitFor(() => h.manual.length === 1);
       const run = h.manual[0]!;
@@ -346,6 +347,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       run.releaseCleanup();
       await waitFor(() => noticeSends(h.channel).length >= 1);
       expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+      expect(patchedAnswers(h.channel, streamed).length).toBeGreaterThanOrEqual(1);
       expect(h.journal.list().some((entry) => (
         entry.status === 'notice-delivered' || entry.notice?.messageId
       ))).toBe(true);
@@ -353,7 +355,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
   );
 
   it.each(['markdown', 'card'] as const)(
-    'falls back immediately on a local %s final-patch error without duplicating the stream',
+    'patches the same card immediately on a local %s final-stream error without duplicating the stream',
     async (replyMode) => {
       const streamed = 'STREAMED_ANSWER';
       const h = await harness({
@@ -361,7 +363,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
         replyMode,
         manual: true,
       });
-      failStreamPatchesAfterFirst(h.channel, new Error('stream controller is closed'));
+      h.channel.streamErrors.finish = new Error('stream controller is closed');
       await h.channel.handlers.message?.(mention('om_run', SECRET));
       await waitFor(() => h.manual.length === 1);
       const run = h.manual[0]!;
@@ -372,6 +374,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       run.releaseCleanup();
       await waitFor(() => noticeSends(h.channel).length >= 1);
       expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+      expect(patchedAnswers(h.channel, streamed).length).toBeGreaterThanOrEqual(1);
       expect(h.journal.list().some((entry) => (
         entry.status === 'notice-delivered' || entry.notice?.messageId
       ))).toBe(true);
@@ -379,9 +382,9 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
   );
 
   it.each([
-    { name: 'business 4xx', error: httpError(400) },
-    { name: 'local patch error', error: new Error('stream controller is closed') },
-  ])('posts only the unseen tail when a $name final patch leaves a partial stream on screen', async ({ error }) => {
+    { name: 'business 4xx', error: sdkShapedSendError('unknown', axiosHttpError(400)) },
+    { name: 'local stream error', error: new Error('stream controller is closed') },
+  ])('patches the same card with the full answer when a $name final stream fails after a partial stream', async ({ error }) => {
     const seen = 'SEEN_PARTIAL';
     const unseen = 'UNSEEN_TAIL';
     const h = await harness({
@@ -389,7 +392,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       replyMode: 'markdown',
       manual: true,
     });
-    failStreamPatchesAfterFirst(h.channel, error);
+    h.channel.streamErrors.finish = error;
     await h.channel.handlers.message?.(mention('om_run', SECRET));
     await waitFor(() => h.manual.length === 1);
     const run = h.manual[0]!;
@@ -399,12 +402,14 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     run.push({ type: 'done', terminationReason: 'normal' });
     run.close();
     run.releaseCleanup();
-    await waitFor(() => sentAnswers(h.channel, unseen).length >= 1);
+    await waitFor(() => patchedAnswers(h.channel, unseen).length >= 1);
     expect(sentAnswers(h.channel, seen)).toHaveLength(0);
-    expect(sentAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+    expect(patchedAnswers(h.channel, seen).length).toBeGreaterThanOrEqual(1);
+    expect(patchedAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('waits for recovery when a final stream patch is ECONNABORTED instead of tail-sending', async () => {
+  it('waits for recovery when a final stream is ECONNABORTED instead of sending a new message', async () => {
     const seen = 'SEEN_PARTIAL';
     const unseen = 'UNSEEN_TAIL';
     const h = await harness({
@@ -412,9 +417,9 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       replyMode: 'markdown',
       manual: true,
     });
-    failStreamPatchesAfterFirst(
-      h.channel,
-      Object.assign(new Error('timeout of 30000ms exceeded'), { code: 'ECONNABORTED' }),
+    h.channel.streamErrors.finish = sdkShapedSendError(
+      'unknown',
+      axiosErrno('ECONNABORTED', 'timeout of 30000ms exceeded'),
     );
     await h.channel.handlers.message?.(mention('om_run', SECRET));
     await waitFor(() => h.manual.length === 1);
@@ -434,10 +439,11 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     await waitFor(() => h.journal.list().some((entry) => (
       entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
     )));
-    expect(sentAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+    expect(patchedAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
   });
 
-  it('sends the full final answer when a tool_result header icon changed and the final patch is a 4xx', async () => {
+  it('same-card patches the full final answer when a tool_result header icon changed and the final stream is a 4xx', async () => {
     const answer = 'FINAL_AFTER_TOOL';
     const h = await harness({
       fakeTimers: false,
@@ -445,7 +451,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       manual: true,
       showToolCalls: true,
     });
-    failStreamPatchesAfterFirst(h.channel, httpError(400));
+    h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
     await h.channel.handlers.message?.(mention('om_run', SECRET));
     await waitFor(() => h.manual.length === 1);
     const run = h.manual[0]!;
@@ -456,8 +462,8 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     run.push({ type: 'done', terminationReason: 'normal' });
     run.close();
     run.releaseCleanup();
-    await waitFor(() => sentAnswers(h.channel, answer).length >= 1);
-    expect(sentAnswers(h.channel, answer).length).toBeGreaterThanOrEqual(1);
+    await waitFor(() => patchedAnswers(h.channel, answer).length >= 1);
+    expect(sentAnswers(h.channel, answer)).toHaveLength(0);
   });
 
   it('signs continue on a default profile with no reliability.notice key', async () => {
@@ -784,17 +790,21 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     });
     const orig = h.channel.send.bind(h.channel);
     let firstNotice = true;
+    let noticeLanded = false;
     h.channel.send = async (...args: Parameters<typeof orig>) => {
       const content = args[1] as { card?: unknown; markdown?: string };
       if (isNoticeContent(content) && firstNotice) {
         firstNotice = false;
         const landed = await orig(...args);
+        noticeLanded = true;
         throw Object.assign(new Error('timeout of 30000ms exceeded'), { landed });
       }
       return orig(...args);
     };
-    await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => h.journal.list().some((item) => item.notice));
+    void h.channel.handlers.message?.(mention('om_run', SECRET));
+    // Intake returns after debounce enqueue; wait until the live send has
+    // actually landed (and then thrown) before recording the durable receipt.
+    await waitFor(() => noticeLanded);
     const entry = h.journal.list().find((item) => item.notice);
     expect(entry?.notice).toBeTruthy();
     const notices = (): unknown[] =>
@@ -1066,67 +1076,6 @@ function failNoticeSends(
   };
 }
 
-function failStreamPatchesAfterFirst(
-  channel: ReturnType<typeof createRecordingLarkChannel>,
-  error: Error,
-): void {
-  const orig = channel.stream.bind(channel);
-  channel.stream = async (chatId, input, options) => {
-    let patches = 0;
-    const failAfterFirst = async (): Promise<void> => {
-      patches += 1;
-      if (patches > 1) throw error;
-    };
-    if (isCardStreamInput(input)) {
-      const producer = input.card.producer;
-      return orig(chatId, {
-        card: {
-          ...input.card,
-          producer: async (ctrl: { update(card: unknown): Promise<void> }) => producer({
-            update: async (card) => {
-              await failAfterFirst();
-              return ctrl.update(card);
-            },
-          }),
-        },
-      }, options);
-    }
-    if (isMarkdownStreamInput(input)) {
-      const markdown = input.markdown;
-      return orig(chatId, {
-        markdown: async (ctrl: { setContent(markdown: string): Promise<void> }) => markdown({
-          setContent: async (content) => {
-            await failAfterFirst();
-            return ctrl.setContent(content);
-          },
-        }),
-      }, options);
-    }
-    return orig(chatId, input, options);
-  };
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function isCardStreamInput(value: unknown): value is {
-  card: { initial: unknown; producer(ctrl: { update(card: unknown): Promise<void> }): Promise<void> | void };
-} {
-  if (!isRecord(value) || !isRecord(value.card)) return false;
-  return typeof value.card.producer === 'function';
-}
-
-function isMarkdownStreamInput(value: unknown): value is {
-  markdown(ctrl: { setContent(markdown: string): Promise<void> }): Promise<void> | void;
-} {
-  return isRecord(value) && typeof value.markdown === 'function';
-}
-
-function httpError(status: number): Error {
-  return Object.assign(new Error(`HTTP ${status}`), { response: { status } });
-}
-
 function mention(
   messageId: string,
   content: string,
@@ -1189,6 +1138,13 @@ function sentAnswers(
   sentinel: string,
 ) {
   return channel.sent.filter((item) => JSON.stringify(item.content).includes(sentinel));
+}
+
+function patchedAnswers(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+  sentinel: string,
+) {
+  return channel.updatedCards.filter((row) => JSON.stringify(row.card).includes(sentinel));
 }
 
 function noticeSends(channel: ReturnType<typeof createRecordingLarkChannel>) {

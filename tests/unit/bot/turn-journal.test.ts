@@ -423,7 +423,7 @@ describe('TurnJournal', () => {
     expect(journal.get('cli')?.status).toBe('reply-delivered');
   });
 
-  it('does not resend a stream-finalized reply after a journal reload', async () => {
+  it('retries a pending notice after reload when the stream receipt is already recorded', async () => {
     const { file, journal } = await fixture();
     await journal.load();
     journal.enqueue(queued({ turnId: 'streamed' }));
@@ -431,8 +431,9 @@ describe('TurnJournal', () => {
       markdown: 'STREAMED_ANSWER',
       replyTo: 'om_1',
       replyMode: 'markdown',
+      messageId: 'om_stream',
+      interactive: true,
     });
-    journal.noteStreamFinalized('streamed');
     journal.markNoticePending('streamed', {
       kind: 'continue',
       recipientChatId: 'oc_group',
@@ -445,12 +446,14 @@ describe('TurnJournal', () => {
     const resend = vi.fn(async () => true);
     const resendNotice = vi.fn(async () => true);
     await reloaded.recover({ resend, resendNotice });
-    expect(resend).not.toHaveBeenCalled();
+    expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
     expect(reloaded.get('streamed')?.status).toBe('notice-delivered');
+    expect(reloaded.get('streamed')?.reply?.messageId).toBe('om_stream');
+    expect(reloaded.get('streamed')?.reply?.interactive).toBe(true);
   });
 
-  it('does not resend a stream-finalized reply when retrying a notice', async () => {
+  it('retries a pending notice when the stream receipt is already recorded', async () => {
     const { journal } = await fixture();
     await journal.load();
     journal.enqueue(queued({ turnId: 'streamed' }));
@@ -458,8 +461,9 @@ describe('TurnJournal', () => {
       markdown: 'STREAMED_ANSWER',
       replyTo: 'om_1',
       replyMode: 'card',
+      messageId: 'om_stream',
+      interactive: true,
     });
-    journal.noteStreamFinalized('streamed');
     journal.markNoticePending('streamed', {
       kind: 'continue',
       recipientChatId: 'oc_group',
@@ -468,7 +472,7 @@ describe('TurnJournal', () => {
     const resend = vi.fn(async () => true);
     const resendNotice = vi.fn(async () => true);
     await journal.recover({ resend, resendNotice });
-    expect(resend).not.toHaveBeenCalled();
+    expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(1);
     expect(journal.get('streamed')?.status).toBe('notice-delivered');
   });
