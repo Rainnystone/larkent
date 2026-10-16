@@ -262,6 +262,76 @@ export function formatRunOutcome(outcome: RunOutcome): string {
   }
 }
 
+/** User-facing Chinese reason. Logs keep {@link formatRunOutcome}. */
+export function describeRunOutcome(outcome: RunOutcome): string {
+  switch (outcome.kind) {
+    case 'completed':
+      return '已完成';
+    case 'partial':
+      return '输出不完整';
+    case 'interrupted':
+      return describeStopRequest(outcome.reason);
+    case 'failed':
+      return describeFailedCause(outcome.cause);
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function describeStopRequest(reason: StopRequest): string {
+  switch (reason.type) {
+    case 'user-stop':
+      return '用户停止';
+    case 'superseded':
+      return '会话已切换';
+    case 'reconnect-command':
+      return '重连';
+    case 'keepalive-restart':
+      return '保活重启';
+    case 'account-restart':
+      return '账号切换';
+    case 'shutdown-signal':
+      return '进程退出';
+    case 'exit-command':
+      return '退出命令';
+    case 'bridge-idle-watchdog':
+      return '空闲超时';
+    case 'runner-timeout':
+      return '运行超时';
+    case 'meeting':
+      return '会议占用';
+    case 'subscriber-abandoned':
+      return '订阅已结束';
+    case 'external-signal':
+      return '外部信号中断';
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+function describeFailedCause(cause: FailedCause): string {
+  switch (cause) {
+    case 'transient-upstream':
+      return '上游网络中断';
+    case 'auth-required':
+      return '登录已失效';
+    case 'quota':
+      return '额度不足';
+    case 'killed-externally':
+      return '进程被外部终止';
+    case 'unclassified':
+      return '出错';
+    default: {
+      const _exhaustive: never = cause;
+      return _exhaustive;
+    }
+  }
+}
+
 export function cardTerminalFromOutcome(outcome: RunOutcome): Terminal {
   switch (outcome.kind) {
     case 'completed':

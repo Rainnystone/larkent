@@ -14,7 +14,7 @@ import type { RunOutcome } from '../../../src/bot/run-outcome';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 function interrupted(
-  type: 'external-signal' | 'keepalive-restart' | 'user-stop' | 'superseded',
+  type: 'external-signal' | 'keepalive-restart' | 'user-stop' | 'superseded' | 'bridge-idle-watchdog' | 'runner-timeout',
   by: 'new' | 'cd' = 'new',
 ): RunOutcome {
   if (type === 'superseded') {
@@ -101,6 +101,33 @@ describe('interruption notice decision', () => {
       requireBotMention: false,
       outcome: interrupted('external-signal'),
     })).not.toContain('@bot');
+  });
+
+  it('shows Chinese reasons on notice cards instead of internal outcome codes', () => {
+    const idle = buildNoticeMarkdown({
+      initiatorId: 'ou_init',
+      requireBotMention: true,
+      outcome: interrupted('bridge-idle-watchdog'),
+    });
+    expect(idle).toContain('空闲超时');
+    expect(idle).not.toMatch(/interrupted:|failed:/);
+    const transient = buildNoticeMarkdown({
+      initiatorId: 'ou_init',
+      requireBotMention: false,
+      outcome: {
+        kind: 'failed',
+        cause: 'transient-upstream',
+        retriable: true,
+        needsHuman: false,
+      },
+    });
+    expect(transient).toContain('上游网络中断');
+    expect(transient).not.toMatch(/interrupted:|failed:/);
+  });
+
+  it('plans a continue notice after timeout so the timeout card plus notice is two messages by design', () => {
+    expect(planInterruptionNotice(interrupted('runner-timeout'))).toEqual({ kind: 'continue' });
+    expect(planInterruptionNotice(interrupted('bridge-idle-watchdog'))).toEqual({ kind: 'continue' });
   });
 });
 

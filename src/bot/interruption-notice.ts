@@ -2,7 +2,7 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CallbackNonceStore } from '../card/callback-store';
 import { interruptionNoticeCard } from '../card/templates';
 import { log } from '../core/logger';
-import { formatRunOutcome, type RunOutcome } from './run-outcome';
+import { describeRunOutcome, type RunOutcome } from './run-outcome';
 import type { TurnJournal, TurnJournalEntry, TurnNotice } from './turn-journal';
 
 export const CONTINUE_HINT =
@@ -60,7 +60,7 @@ export function buildNoticeMarkdown(input: {
   includeButtons?: boolean;
 }): string {
   const mention = `<at id="${input.initiatorId}"></at>`;
-  const reason = formatRunOutcome(input.outcome);
+  const reason = describeRunOutcome(input.outcome);
   const buttons = input.includeButtons !== false;
   const continuePhrase = input.requireBotMention ? '@bot 继续' : '继续';
   const actionLine = buttons
@@ -78,7 +78,7 @@ export function buildAuthOwnerMarkdown(): string {
 }
 
 export function continueExtraInstruction(outcome: RunOutcome): string {
-  return `上一轮因为「${formatRunOutcome(outcome)}」被中断。${CONTINUE_HINT}。`;
+  return `上一轮因为「${describeRunOutcome(outcome)}」被中断。${CONTINUE_HINT}。`;
 }
 
 export interface NoticeSignInput {

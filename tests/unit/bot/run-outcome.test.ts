@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   cardTerminalFromOutcome,
   deriveRunOutcome,
+  describeRunOutcome,
   formatRunOutcome,
   formatStopRequest,
   noteTerminalStop,
@@ -286,6 +287,37 @@ describe('deriveRunOutcome', () => {
     };
     expect(outcome).toEqual(expected);
     expect(formatRunOutcome(outcome)).toBe(`interrupted:${formatStopRequest(stopRequest)}`);
+  });
+
+  it('maps user-facing notices to Chinese without internal codes', () => {
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'bridge-idle-watchdog' },
+      retriable: true,
+      needsHuman: false,
+    })).toBe('空闲超时');
+    expect(describeRunOutcome({
+      kind: 'failed',
+      cause: 'transient-upstream',
+      retriable: true,
+      needsHuman: false,
+    })).toBe('上游网络中断');
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'runner-timeout' },
+      retriable: true,
+      needsHuman: false,
+    })).toBe('运行超时');
+    for (const stopRequest of STOP_REQUESTS) {
+      const text = describeRunOutcome({
+        kind: 'interrupted',
+        reason: stopRequest,
+        retriable: true,
+        needsHuman: false,
+      });
+      expect(text).not.toMatch(/interrupted:|failed:/);
+      expect(text.length).toBeGreaterThan(0);
+    }
   });
 });
 
