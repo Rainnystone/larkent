@@ -23,12 +23,28 @@ export async function decideShimAction(input: {
   return { action: 'exec', target: input.target, args: input.argv };
 }
 
+export function serializeShimDecision(decision: ShimDecision): string {
+  return `${JSON.stringify(decision)}\n`;
+}
+
+export function parseShimDecision(text: string): ShimDecision {
+  const parsed: unknown = JSON.parse(text);
+  if (!isShimDecision(parsed)) throw new Error('invalid shim decision');
+  return parsed;
+}
+
+function isShimDecision(value: unknown): value is ShimDecision {
+  if (!value || typeof value !== 'object') return false;
+  const rec = value as Record<string, unknown>;
+  if (typeof rec.target !== 'string' || !Array.isArray(rec.args) || !rec.args.every((item) => typeof item === 'string')) {
+    return false;
+  }
+  if (rec.action === 'exec') return true;
+  return rec.action === 'fault' && typeof rec.mode === 'string';
+}
+
 function writeDecisionFile(path: string, decision: ShimDecision): void {
-  const lines =
-    decision.action === 'exec'
-      ? ['EXEC', decision.target, ...decision.args]
-      : ['FAULT', decision.mode, decision.target, ...decision.args];
-  writeFileSync(path, `${lines.join('\n')}\n`, { mode: 0o600 });
+  writeFileSync(path, serializeShimDecision(decision), { mode: 0o600 });
 }
 
 const decisionFlag = process.argv.indexOf('--decision-file');
