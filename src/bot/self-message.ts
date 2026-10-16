@@ -164,9 +164,17 @@ export function wrapChannelOutbound(
       });
       if (uuid) {
         inflightByUuid.set(uuid, work);
-        void work.finally(() => {
-          if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
-        });
+        // Two-branch then: finally() would spawn a second rejected promise
+        // that the caller never sees, and Node would treat a normal send
+        // failure as an unhandledRejection.
+        void work.then(
+          () => {
+            if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
+          },
+          () => {
+            if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
+          },
+        );
       }
       return withOutboundTimeout(op, work, timeoutMs);
     };

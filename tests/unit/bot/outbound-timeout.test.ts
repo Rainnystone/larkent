@@ -60,6 +60,28 @@ describe('wrapChannelOutbound timeout', () => {
     expect(settled).toEqual([{ uuid: 'notice-1', messageId: 'om_late' }]);
   });
 
+  it('does not emit unhandledRejection when a uuid-tagged send fails', async () => {
+    const rejections: unknown[] = [];
+    const onUnhandled = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      const channel = {
+        send: async (_chat: string, _content: unknown, _opts?: { uuid?: string }) => {
+          throw new Error('econnreset');
+        },
+      };
+      wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 200 });
+      await expect(channel.send('oc', { markdown: 'hi' }, { uuid: 'd1' })).rejects.toThrow('econnreset');
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(rejections).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
   it('strips the in-process delivery uuid before calling the SDK send', async () => {
     let seen: unknown;
     const channel = {
