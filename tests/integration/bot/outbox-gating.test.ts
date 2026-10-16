@@ -91,7 +91,12 @@ describe('per-item outbox gating', { timeout: 20_000 }, () => {
   });
 
   it('makes zero send calls while the link is down at turn end, then exactly one after recovery', async () => {
-    const h = await harness({ replyMode: 'text' });
+    const recovered: Array<{ since: number; until: number }> = [];
+    const h = await harness({
+      replyMode: 'text',
+      onRecovered: (outage) => recovered.push(outage),
+    });
+    recovered.length = 0;
     h.channel.connectionState = 'reconnecting';
     await h.bridge.tickLink();
 
@@ -100,6 +105,7 @@ describe('per-item outbox gating', { timeout: 20_000 }, () => {
       entry.messageIds.includes('om_down') && entry.reply?.state === 'staged'
     )));
     expect(answerSends(h.channel)).toHaveLength(0);
+    expect(recovered).toHaveLength(0);
 
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
@@ -108,6 +114,7 @@ describe('per-item outbox gating', { timeout: 20_000 }, () => {
     )));
     expect(answerSends(h.channel)).toHaveLength(1);
     expect(JSON.stringify(answerSends(h.channel)[0]?.content)).toContain(ANSWER);
+    expect(recovered).toHaveLength(1);
   });
 
   it('falls back to one plain-text send when a non-stream final 400 is rejected, without recovery', async () => {

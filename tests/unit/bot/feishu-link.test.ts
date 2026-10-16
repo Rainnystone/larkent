@@ -195,6 +195,33 @@ describe('FeishuLink', () => {
     expect(link.isDown()).toBe(false);
   });
 
+  it('does not go up on inbound while the WebSocket is reconnecting', async () => {
+    let now = 1_700_000_000_000;
+    let state: 'connected' | 'reconnecting' = 'connected';
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += 1_000;
+    state = 'reconnecting';
+    await link.tick();
+    expect(link.isDown()).toBe(true);
+
+    now += 1_000;
+    link.noteInbound(now);
+    expect(link.isDown()).toBe(true);
+    expect(recovered).toHaveLength(0);
+  });
+
   it('takes the link down on OutboundTimeoutError and keeps it up on a rejected 4xx', async () => {
     let now = 1_700_000_000_000;
     let mode: 'ok' | '4xx' | 'hang' = 'ok';

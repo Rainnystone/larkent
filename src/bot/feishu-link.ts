@@ -337,7 +337,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     },
     noteInbound(at) {
       if (stopped) return;
-      noteEvidence(at ?? nowFn(), true);
+      noteEvidence(at ?? nowFn(), wsConnected());
     },
     stop() {
       stopped = true;
