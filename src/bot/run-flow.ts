@@ -40,6 +40,10 @@ export interface StartRunFlowInput {
   forceResumeHandle?: string | null;
   /** When set, `forceResumeHandle` is ignored unless it matches the current policy. */
   forceResumeFingerprint?: string;
+  /** Agent-task fires use the cwd snapshot captured at creation, not the auto: scope workspace. */
+  cwdOverride?: string;
+  /** Automation fires skip the process pool and reconnect pause (ADR-011). */
+  bypassPool?: boolean;
   observability?: {
     profile: string;
     agent: string;
@@ -109,7 +113,10 @@ export function resolveRunResumeHandle(input: ResolveRunResumeHandleInput): stri
 
 export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFlowResult> {
   const requestedCwd =
-    input.workspaces.cwdFor(input.scopeId) ?? input.profileConfig.workspaces.default ?? '';
+    input.cwdOverride
+    ?? input.workspaces.cwdFor(input.scopeId)
+    ?? input.profileConfig.workspaces.default
+    ?? '';
   const workspace = await resolveWorkingDirectory(requestedCwd);
   if (!workspace.ok) {
     return {
@@ -193,6 +200,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
               .filter((path): path is string => Boolean(path))
           : undefined,
       stopGraceMs: input.stopGraceMs,
+      ...(input.bypassPool ? { bypassPool: true } : {}),
       observability: input.observability,
     });
   } catch (err) {

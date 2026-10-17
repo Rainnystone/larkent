@@ -27,6 +27,31 @@ export async function scopeFor(
   return chatId;
 }
 
+export function automationRunScope(id: number, fireAt: number): string {
+  return `auto:${id}:${fireAt}`;
+}
+
+export function isAutomationScope(scope: string): boolean {
+  return scope.startsWith('auto:');
+}
+
+export function isAutomationRunScope(scope: string): boolean {
+  return /^auto:\d+:\d+$/.test(scope);
+}
+
+/** Result post root message id → `auto:<id>:<fireAt>` for thread follow-ups. */
+export function automationFollowUpScope(
+  candidates: readonly (string | undefined)[],
+  resultPosts: ReadonlyMap<string, string>,
+): string | undefined {
+  for (const id of candidates) {
+    if (!id) continue;
+    const scope = resultPosts.get(id);
+    if (scope) return scope;
+  }
+  return undefined;
+}
+
 /** Convenience overload from a NormalizedMessage. */
 export async function scopeForMessage(
   channel: LarkChannel,

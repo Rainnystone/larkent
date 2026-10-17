@@ -22,6 +22,8 @@ export interface AutomationDeliveryDeps {
   now?: () => number;
   deliver?: (entry: TurnJournalEntry) => Promise<boolean>;
   onUndelivered?: () => void;
+  agentTasks?: () => boolean;
+  runAgentFire?: (fire: FireSend) => void | Promise<void>;
 }
 
 export function fireTurnId(fireKey: string): string {
@@ -36,11 +38,11 @@ export function missedTurnId(id: number, missedFires: readonly number[]): string
 export function formatReminderText(fire: Pick<FireSend, 'name' | 'taskText' | 'catchUp' | 'timezone' | 'fireAt'>): string {
   const base = `⏰ ${fire.name}：${fire.taskText}`;
   if (!fire.catchUp) return base;
-  return `${base}（补跑，原定 ${formatHm(fire.timezone, fire.fireAt)}）`;
+  return `${base}（补跑，原定 ${formatScheduledHm(fire.timezone, fire.fireAt)}）`;
 }
 
 export function formatMissedNoticeText(notice: Pick<MissedNotify, 'name' | 'timezone' | 'missedFires'>): string {
-  const times = notice.missedFires.map((fireAt) => `原定 ${formatHm(notice.timezone, fireAt)}`);
+  const times = notice.missedFires.map((fireAt) => `原定 ${formatScheduledHm(notice.timezone, fireAt)}`);
   return [`已错过：${notice.name}`, ...times].join('\n');
 }
 
@@ -60,15 +62,17 @@ export function createAutomationDelivery(deps: AutomationDeliveryDeps): {
       send: (fire) => {
         switch (fire.taskType) {
           case 'reminder':
-            return deliverMarkdown({
+            return deliverAutomationMarkdown({
               ...deps,
               journal,
               turnId: fireTurnId(fire.fireKey),
               chatId: fire.chatId,
               markdown: formatReminderText(fire),
+              scope: `auto:${fireTurnId(fire.fireKey)}`,
             });
           case 'agent':
-            return;
+            if (deps.agentTasks && !deps.agentTasks()) return;
+            return deps.runAgentFire?.(fire);
           default: {
             const _exhaustive: never = fire.taskType;
             throw _exhaustive;
@@ -79,29 +83,31 @@ export function createAutomationDelivery(deps: AutomationDeliveryDeps): {
     notifier: {
       notify: (notice) => {
         if (notice.missedFires.length === 0) return;
-        return deliverMarkdown({
+        return deliverAutomationMarkdown({
           ...deps,
           journal,
           turnId: missedTurnId(notice.id, notice.missedFires),
           chatId: notice.chatId,
           markdown: formatMissedNoticeText(notice),
+          scope: `auto:${missedTurnId(notice.id, notice.missedFires)}`,
         });
       },
     },
   };
 }
 
-function formatHm(timeZone: string, utcMs: number): string {
+export function formatScheduledHm(timeZone: string, utcMs: number): string {
   const parts = zonedParts(timeZone, utcMs);
   const pad = (value: number): string => String(value).padStart(2, '0');
   return `${pad(parts.hour)}:${pad(parts.minute)}`;
 }
 
-async function deliverMarkdown(input: AutomationDeliveryDeps & {
+export async function deliverAutomationMarkdown(input: AutomationDeliveryDeps & {
   journal: TurnJournal;
   turnId: string;
   chatId: string;
   markdown: string;
+  scope?: string;
 }): Promise<void> {
   const existing = input.journal.get(input.turnId);
   if (existing && replyState(existing) === 'sent') return;
@@ -109,7 +115,7 @@ async function deliverMarkdown(input: AutomationDeliveryDeps & {
     const actor = input.botOpenId();
     input.journal.enqueue({
       turnId: input.turnId,
-      scope: `auto:${input.turnId}`,
+      scope: input.scope ?? `auto:${input.turnId}`,
       chatId: input.chatId,
       messageIds: [],
       senderId: actor,

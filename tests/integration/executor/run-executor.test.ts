@@ -109,6 +109,34 @@ describe('RunExecutor', () => {
     expect(h.agent.runs).toHaveLength(0);
   });
 
+  it('starts a bypassPool fire while the pool is full and while new runs are paused', async () => {
+    const agent = new GatedAgent({ events: [
+      [{ type: 'done', terminationReason: 'normal' }],
+      [{ type: 'done', terminationReason: 'normal' }],
+    ] });
+    const h = await createHarness({ agent, poolCap: 1 });
+    const first = await h.executor.submit({
+      scopeId: 'scope-human',
+      policy: policy(h.tmp.workspace),
+    });
+    expect(h.pool.snapshot()).toMatchObject({ active: 1, cap: 1 });
+    const resume = h.activeRuns.pauseNewRuns('reconnect');
+    try {
+      const fire = await h.executor.submit({
+        scopeId: 'auto:1:1000',
+        policy: policy(h.tmp.workspace),
+        bypassPool: true,
+      });
+      expect(h.agent.runs).toHaveLength(2);
+      expect(h.pool.snapshot()).toMatchObject({ active: 1, waiting: 0 });
+      agent.releaseFirst();
+      await collect(first.subscribe());
+      await collect(fire.subscribe());
+    } finally {
+      resume();
+    }
+  });
+
   it('rejects new submissions while reconnect is draining active runs', async () => {
     const h = await createHarness({ events: [] });
     const resume = h.activeRuns.pauseNewRuns('reconnect');

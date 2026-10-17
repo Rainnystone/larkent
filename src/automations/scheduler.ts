@@ -27,6 +27,8 @@ export interface FireSend {
   taskText: string;
   timezone: string;
   chatId: string;
+  createdBy: string;
+  cwd?: string;
 }
 
 export interface MissedNotify {
@@ -348,6 +350,8 @@ class Scheduler implements AutomationScheduler {
       taskText: item.taskText,
       timezone: item.timezone,
       chatId: item.chatId,
+      createdBy: item.createdBy,
+      ...(item.cwd ? { cwd: item.cwd } : {}),
     };
     void Promise.resolve(this.sender.send(payload)).then(
       () => {},

@@ -127,13 +127,19 @@ import {
 import { AutoActionAuth } from '../automations/action-auth';
 import { BoardActionAuth } from '../automations/board-auth';
 import { createAutomationBoard, type AutomationBoard } from '../automations/board';
-import { createAutomationDelivery } from '../automations/delivery';
+import {
+  formatAgentFailureNotice,
+  runAutomationAgentFire,
+  automationScopeForReply,
+} from '../automations/agent-run';
+import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
 import {
   createAutomationScheduler,
   type AutomationScheduler,
 } from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
+import { isAutomationRunScope, isAutomationScope } from './scope';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
@@ -312,6 +318,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     pool,
     activeRuns,
     stderrSignatures: () => streamReliability(controls.profileConfig).signatures,
+    ...(deps.now ? { now: deps.now } : {}),
     onSpawn: (input) => {
       journal?.noteSpawn({
         scope: input.scopeId,
@@ -552,6 +559,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         automations: deps.automations,
         autoAuth,
         automationsScheduler: automationsCtl.scheduler,
+        journal,
         ...(deps.now ? { now: deps.now } : {}),
         onAutomationConfirmed,
       }),
@@ -612,6 +620,38 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         retriable: true,
         needsHuman: false,
       };
+      if (isAutomationScope(entry.scope)) {
+        if (entry.cliAlreadySent || replyState(entry) === 'sent') return true;
+        if (isAutomationRunScope(entry.scope) && !owned.get(entry.turnId)?.reply) {
+          owned.stageReply(entry.turnId, {
+            markdown: formatAgentFailureNotice(outcome),
+            replyTo: '',
+            replyMode: 'text',
+            deliveryId: replyDeliveryKey(entry.turnId),
+          });
+          await owned.flush();
+          log.info('auto', 'result', {
+            turnId: entry.turnId,
+            scope: entry.scope,
+            outcome: formatRunOutcome(outcome),
+          });
+        }
+        const latest = owned.get(entry.turnId) ?? entry;
+        if (!latest.reply) return true;
+        if (link.isDown()) return false;
+        const delivered = await resendJournalReply({
+          channel,
+          journal: owned,
+          entry: latest,
+          botAppId: cfg.accounts.app.id,
+          now: deps.now,
+        });
+        if (delivered) {
+          owned.replyDelivered(entry.turnId);
+          await owned.flush();
+        }
+        return delivered;
+      }
       if (planInterruptionNotice(outcome).kind === 'continue') {
         continuations.offer(entry.turnId, outcome);
       }
@@ -778,25 +818,41 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
       ...(deps.now ? { now: deps.now } : {}),
     });
+    const automationOutbox: AutomationDeliveryDeps = {
+      journal,
+      channel,
+      botAppId: cfg.accounts.app.id,
+      botOpenId: () => channel.botIdentity?.openId ?? '',
+      isLinkDown: () => closing || started.isDown(),
+      ...(deps.now ? { now: deps.now } : {}),
+      ...(journal ? {
+        deliver: (entry) => resendJournalReply({
+          channel,
+          journal,
+          entry,
+          botAppId: cfg.accounts.app.id,
+          now: deps.now,
+        }),
+      } : {}),
+      onUndelivered: () => outboxSweep.schedule(),
+    };
     automationsCtl.scheduler = createAutomationScheduler({
       store: deps.automations,
       ...createAutomationDelivery({
-        journal,
-        channel,
-        botAppId: cfg.accounts.app.id,
-        botOpenId: () => channel.botIdentity?.openId ?? '',
-        isLinkDown: () => closing || started.isDown(),
-        ...(deps.now ? { now: deps.now } : {}),
-        ...(journal ? {
-          deliver: (entry) => resendJournalReply({
-            channel,
-            journal,
-            entry,
-            botAppId: cfg.accounts.app.id,
-            now: deps.now,
-          }),
-        } : {}),
-        onUndelivered: () => outboxSweep.schedule(),
+        ...automationOutbox,
+        agentTasks: () => controls.profileConfig.automations.agentTasks,
+        runAgentFire: (fire) => trackConsumer(runAutomationAgentFire(fire, {
+          ...automationOutbox,
+          executor,
+          sessions,
+          ...(sessionCatalog ? { sessionCatalog } : {}),
+          workspaces,
+          profile: controls.profile,
+          profileConfig: controls.profileConfig,
+          cfg: controls.cfg,
+          ...(controls.botOwnerId ? { botOwnerId: controls.botOwnerId } : {}),
+          ownerRefreshState: controls.ownerRefreshState,
+        }), 'auto'),
       }),
       botDisplayName: () => channel.botIdentity?.name ?? 'bot',
       ...(deps.now ? { now: deps.now } : {}),
@@ -1164,6 +1220,7 @@ interface IntakeDeps {
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
   automationsScheduler?: AutomationScheduler;
+  journal?: TurnJournal;
   now?: () => number;
   onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
@@ -1214,6 +1271,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     automations,
     autoAuth,
     automationsScheduler,
+    journal,
     now,
     onAutomationConfirmed,
   } = deps;
@@ -1255,9 +1313,10 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
       threadId,
     });
   }
-  const scope = chatMode === 'topic' && threadId
-    ? `${msg.chatId}:${threadId}`
-    : msg.chatId;
+  const scope = automationScopeForReply(journal, emsg)
+    ?? (chatMode === 'topic' && threadId
+      ? `${msg.chatId}:${threadId}`
+      : msg.chatId);
   log.info('intake', 'enter', {
     scope,
     chatType: msg.chatType,
@@ -1664,7 +1723,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     source: 'im',
     chatId,
     actorId: firstMsg.senderId,
-    ...(threadId ? { threadId } : {}),
+    ...(threadId && !isAutomationRunScope(scope) ? { threadId } : {}),
   };
   const turnId = journal ? randomUUID() : undefined;
   if (journal && turnId) {
@@ -1748,7 +1807,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   }
   const handle = execution.handle;
   const eventStream = execution.subscribe();
-  const noticeCtx = journal
+  const noticeCtx = journal && !isAutomationRunScope(scope)
     ? {
         enabled: true as const,
         auth: noticeAuth,
