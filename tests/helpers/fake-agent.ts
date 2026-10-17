@@ -17,6 +17,7 @@ class FakeRun implements FakeAgentRun {
   readonly opts: AgentRunOptions;
   readonly events: AsyncIterable<AgentEvent>;
   readonly waitForExitResult: boolean;
+  readonly stderrSnapshot?: string;
   #stopped = false;
   #waitForExitCalls = 0;
   #hold: Promise<void> | undefined;
@@ -28,10 +29,12 @@ class FakeRun implements FakeAgentRun {
     events: readonly AgentEvent[],
     waitForExitResult: boolean,
     hold?: Promise<void>,
+    stderr?: string,
   ) {
     this.runId = opts.runId;
     this.opts = opts;
     this.waitForExitResult = waitForExitResult;
+    this.stderrSnapshot = stderr;
     this.#hold = hold;
     this.#stoppedAt = new Promise<void>((resolve) => {
       this.#markStopped = resolve;
@@ -81,6 +84,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   #eventRuns: AgentEvent[][];
   #waitForExitResults: boolean[];
   #hold: Promise<void> | undefined;
+  #stderr: string | undefined;
 
   constructor(options: {
     id?: string;
@@ -90,6 +94,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     waitForExit?: boolean | readonly boolean[];
     /** Keep the event stream open until this settles so pending can accumulate. */
     hold?: Promise<void>;
+    stderr?: string;
   } = {}) {
     this.id = options.id ?? 'fake-agent';
     this.displayName = options.displayName ?? 'Fake Agent';
@@ -97,6 +102,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     this.#eventRuns = normalizeEventRuns(options.events ?? []);
     this.#waitForExitResults = normalizeWaitForExitResults(options.waitForExit);
     this.#hold = options.hold;
+    this.#stderr = options.stderr;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -111,7 +117,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     this.runOptions.push(opts);
     const events = this.#eventRuns.shift() ?? [];
     const waitForExitResult = this.#waitForExitResults.shift() ?? true;
-    const run = new FakeRun(opts, events, waitForExitResult, this.#hold);
+    const run = new FakeRun(opts, events, waitForExitResult, this.#hold, this.#stderr);
     this.runs.push(run);
     return run;
   }

@@ -1,7 +1,14 @@
 import { capabilityForProfile } from '../agent/capability';
+import {
+  cardUserMessage,
+  matchCliSignature,
+  type CliSignature,
+} from '../agent/cli-signatures';
+import { descriptorFor } from '../agent/registry';
 import { buildAgentPrompt } from '../agent/prompt';
 import type { AgentEvent } from '../agent/types';
 import { noteRunEvent, type RunHandle } from '../bot/active-runs';
+import { appendOutcomeNotice, finalReplyFor } from '../bot/cot';
 import { createIdleWatchdog } from '../bot/idle-watchdog';
 import { recordRunSessionEvent, startRunFlow } from '../bot/run-flow';
 import {
@@ -51,6 +58,7 @@ import type { FireSend } from './scheduler';
 import type { AutomationsStore } from './store';
 
 export const AGENT_RESULT_FOOTER = '在本消息话题里追问';
+export const AGENT_EMPTY_RESULT = '任务已完成，agent 没有给出文字结果。';
 export const CATCH_UP_PROMPT_MARKER = '本次为补跑，原定 ';
 
 export function formatCatchUpPromptHint(timezone: string, fireAt: number): string {
@@ -256,6 +264,9 @@ async function runAutomationAgentFireBody(
     recordSession,
     chatId: fire.chatId,
     scope,
+    signatures: descriptorFor(runtime.profileConfig.agentKind).stderrSignatures.filter(
+      (signature) => signature.classify.kind === 'partial',
+    ),
   });
   const outcome = flow.execution.handle.outcome;
   if (policyGuard && runtime.automations) {
@@ -287,14 +298,19 @@ async function runAutomationAgentFireBody(
   if (outcome?.kind === 'interrupted' || outcome?.kind === 'failed') {
     body = formatAgentFailureBody(outcome);
   } else {
+    const replied = finalReplyFor(state, {
+      replyMode: descriptorFor(runtime.profileConfig.agentKind).replyMode,
+      streamed: false,
+    });
     const visible: RunState = {
-      ...state,
-      blocks: state.blocks.filter((block) => block.kind !== 'tool'),
+      ...replied,
+      blocks: replied.blocks.filter((block) => block.kind !== 'tool'),
     };
     body = renderText(visible).trim();
     if (!body && outcome && outcome.kind !== 'completed' && outcome.kind !== 'partial') {
       body = formatAgentFailureBody(outcome);
     } else {
+      if (!body) body = AGENT_EMPTY_RESULT;
       setStatus('ok');
     }
   }
@@ -369,6 +385,7 @@ async function drainFireRun(input: {
   recordSession: (event: AgentEvent) => void;
   chatId: string;
   scope: string;
+  signatures: readonly CliSignature[];
 }): Promise<{ state: RunState; policyGuard?: PolicyGuardReason }> {
   let state = seedRunState({ currentChatId: input.chatId });
   let lastTerminal: AgentEvent | undefined;
@@ -408,19 +425,24 @@ async function drainFireRun(input: {
     watchdog.dispose();
   }
 
+  const stderrTail = input.handle.run.stderrSnapshot
+    ?? (lastTerminal?.type === 'error' ? lastTerminal.message : undefined);
+  const matched = matchCliSignature(stderrTail, input.signatures);
   const outcome = deriveRunOutcome({
     stopRequest: input.handle.stopRequest,
     terminalEvent: lastTerminal,
     exit: input.handle.run.exit,
     signal: input.handle.run.signal,
-    stderrTail: input.handle.run.stderrSnapshot
-      ?? (lastTerminal?.type === 'error' ? lastTerminal.message : undefined),
+    stderrTail,
+    signatures: input.signatures,
   });
+  const userMessage = outcome.kind === 'partial' ? cardUserMessage(outcome, matched) : undefined;
   if (
     state.terminal === 'running'
     || cardTerminalFromOutcome(outcome) !== state.terminal
+    || userMessage !== undefined
   ) {
-    state = applyFireOutcome(state, outcome, watchdog.armedDelayMs());
+    state = applyFireOutcome(state, outcome, watchdog.armedDelayMs(), userMessage);
   }
   input.handle.outcome = outcome;
   if (input.handle.interrupted) await input.handle.run.stop();
@@ -431,6 +453,7 @@ function applyFireOutcome(
   state: RunState,
   outcome: RunOutcome,
   idleTimeoutMs: number | undefined,
+  userMessage?: string,
 ): RunState {
   const terminal = cardTerminalFromOutcome(outcome);
   switch (terminal) {
@@ -443,7 +466,7 @@ function applyFireOutcome(
     case 'error':
       return { ...state, terminal: 'error', footer: null };
     case 'done':
-      return finalizeIfRunning(state);
+      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
     case 'running':
       return state;
     default: {

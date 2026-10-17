@@ -40,6 +40,7 @@ const hourly: Extract<Schedule, { kind: 'interval' }> = {
   endAt: HOURLY_END,
 };
 const FOOTER = '在本消息话题里追问';
+const GROK_ANSWER = 'AG4 完成，群数=1';
 const TASK = '汇总昨天的 issue';
 const FIRE_ONE = 'FIRE_ONE_RESULT';
 const FIRE_TWO = 'FIRE_TWO_RESULT';
@@ -54,6 +55,135 @@ afterEach(async () => {
 });
 
 describe('automation agent-task run', { timeout: 20_000 }, () => {
+  it('posts a final-answer result from final_text when the run has no text deltas', async () => {
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      agentKind: 'grok',
+      events: [grokFinalRun(GROK_ANSWER, 'sess-grok')],
+    });
+
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    const post = resultBodies(h.channel)[0] ?? '';
+    expect(post).toBe(`${GROK_ANSWER}\n\n${FOOTER}`);
+    expect(post.split(GROK_ANSWER)).toHaveLength(2);
+  });
+
+  it('uses the same final-answer body for a text reply and an automation result', async () => {
+    const h = await harness({
+      nowMs: t0,
+      seed: agentInput({ nextFireAt: t0 + HOUR }),
+      agentKind: 'grok',
+      messageReply: 'text',
+      cotMessages: 'off',
+      events: [
+        grokFinalRun(GROK_ANSWER, 'sess-human'),
+        grokFinalRun(GROK_ANSWER, 'sess-fire'),
+      ],
+    });
+
+    await h.channel.handlers.message?.(mention('om_human', '请汇总群数'));
+    await waitFor(() => bodies(h.channel).some((body) => body.includes(GROK_ANSWER) && !body.includes(FOOTER)));
+
+    h.setNow(t0 + HOUR);
+    await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));
+    await waitFor(() => resultBodies(h.channel).length === 1);
+
+    const human = bodies(h.channel).find((body) => body.includes(GROK_ANSWER) && !body.includes(FOOTER));
+    expect(resultBodies(h.channel)).toEqual([`${human}\n\n${FOOTER}`]);
+  });
+
+  it('keeps a partial-output warning with the final answer on both reply paths', async () => {
+    const warning = '输出不完整（打印超时），可稍后继续';
+    const h = await harness({
+      nowMs: t0,
+      seed: agentInput({ nextFireAt: t0 + HOUR }),
+      agentKind: 'antigravity',
+      messageReply: 'text',
+      cotMessages: 'off',
+      stderr: 'print timeout after 30s returning partial output',
+      events: [
+        grokFinalRun(GROK_ANSWER, 'sess-human'),
+        grokFinalRun(GROK_ANSWER, 'sess-fire'),
+      ],
+    });
+
+    await h.channel.handlers.message?.(mention('om_human', '请汇总群数'));
+    await waitFor(() => bodies(h.channel).some((body) => body.includes(warning) && !body.includes(FOOTER)));
+
+    h.setNow(t0 + HOUR);
+    await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));
+    await waitFor(() => resultBodies(h.channel).some((body) => body.includes(warning)));
+
+    const human = bodies(h.channel).find((body) => body.includes(warning) && !body.includes(FOOTER));
+    expect(human).toBe(`${GROK_ANSWER}\n\n${warning}`);
+    expect(resultBodies(h.channel)).toEqual([`${human}\n\n${FOOTER}`]);
+  });
+
+  it('keeps a final answer when stderr matches a failure signature', async () => {
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      agentKind: 'grok',
+      stderr: 'unauthorized: invalid API key',
+      events: [grokFinalRun(GROK_ANSWER, 'sess-auth')],
+    });
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    expect(resultBodies(h.channel)).toEqual([`${GROK_ANSWER}\n\n${FOOTER}`]);
+    await waitFor(async () => (await readStatus(h.statusPath)).items[0]?.lastStatus === 'ok');
+  });
+
+  it('keeps a stream-deltas result as the text blocks', async () => {
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      events: [textRun(FIRE_ONE, 'sess-claude')],
+    });
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    expect(resultBodies(h.channel)).toEqual([`${FIRE_ONE}\n\n${FOOTER}`]);
+  });
+
+  it('puts the catch-up line between the final answer and the footer', async () => {
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      linkDown: true,
+      agentKind: 'grok',
+      events: [grokFinalRun(GROK_ANSWER, 'sess-catch')],
+    });
+    await h.bridge.tickLink();
+    h.setNow(t0 + 61_000);
+    h.channel.connectionState = 'connected';
+    await h.bridge.tickLink();
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    expect(resultBodies(h.channel)).toEqual([
+      `${GROK_ANSWER}\n\n（补跑，原定 12:00）\n\n${FOOTER}`,
+    ]);
+  });
+
+  it('posts an explicit empty-result line instead of a footer-only post', async () => {
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      events: [[
+        { type: 'system', resumeHandle: 'sess-empty' },
+        {
+          type: 'tool_use',
+          id: 'tool-empty',
+          name: 'Bash',
+          input: { command: 'true' },
+        },
+        { type: 'tool_result', id: 'tool-empty', output: '', isError: false },
+        { type: 'done', terminationReason: 'normal' },
+      ]],
+    });
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    await waitFor(async () => (await readStatus(h.statusPath)).items[0]?.lastStatus === 'ok');
+    expect(resultBodies(h.channel)).toEqual([
+      `任务已完成，agent 没有给出文字结果。\n\n${FOOTER}`,
+    ]);
+  });
+
   it('posts one result via Outbox with footer, no stream/CoT, status ok, and empty automations log', async () => {
     const h = await harness({
       nowMs: t0,
@@ -444,6 +574,8 @@ async function harness(opts: {
   maxConcurrentRuns?: number;
   messageReply?: 'card' | 'text';
   cotMessages?: 'off' | 'detailed';
+  agentKind?: 'claude' | 'grok' | 'antigravity';
+  stderr?: string;
   tmp?: Awaited<ReturnType<typeof createTmpProfile>>;
   store?: AutomationsStore;
   reuseCleanup?: boolean;
@@ -468,7 +600,7 @@ async function harness(opts: {
   const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
   await journal.load();
   const cfg = createDefaultProfileConfig({
-    agentKind: 'claude',
+    agentKind: opts.agentKind ?? 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: [USER], allowedChats: [CHAT] },
     preferences: {
@@ -491,6 +623,7 @@ async function harness(opts: {
     id: 'claude',
     events: opts.events ?? [],
     ...(opts.hold ? { hold: opts.hold } : {}),
+    ...(opts.stderr ? { stderr: opts.stderr } : {}),
   });
   const channel = createRecordingLarkChannel({
     chats: [{ id: CHAT, name: 'G' }],
@@ -557,6 +690,26 @@ function agentInput(overrides: Partial<Parameters<AutomationsStore['create']>[0]
     taskText: TASK,
     ...overrides,
   };
+}
+
+function grokFinalRun(answer: string, resumeHandle: string): AgentEvent[] {
+  return [
+    { type: 'system', resumeHandle },
+    {
+      type: 'tool_use',
+      id: 'tool-ag4',
+      name: 'Bash',
+      input: { command: 'printf group-count' },
+    },
+    {
+      type: 'tool_result',
+      id: 'tool-ag4',
+      output: '1',
+      isError: false,
+    },
+    { type: 'final_text', content: answer },
+    { type: 'done', terminationReason: 'normal' },
+  ];
 }
 
 function textRun(text: string, resumeHandle: string): AgentEvent[] {

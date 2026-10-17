@@ -166,7 +166,9 @@ import {
   consumeCotEvents,
   CotClient,
   CotPublisher,
+  appendOutcomeNotice,
   finalAnswerOnlyState,
+  finalReplyFor,
 } from './cot';
 
 const DEBOUNCE_MS = 600;
@@ -2120,9 +2122,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         timeoutMs: outboundTimeoutMs,
       });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
-        ? finalReplyState(progress, filterForPrefs(latestState))
-        : filterForPrefs(latestState);
+        ? finalReplyState(progress, visible)
+        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
       await deliverFinalReply({
         channel,
         chatId,
@@ -2196,9 +2199,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         timeoutMs: outboundTimeoutMs,
       });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
-        ? finalReplyState(progress, filterForPrefs(latestState))
-        : filterForPrefs(latestState);
+        ? finalReplyState(progress, visible)
+        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
       await deliverFinalReply({
         channel,
         chatId,
@@ -2237,9 +2241,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         channel,
         chatId,
         scope,
-        state: finalAnswerOnly
-          ? finalAnswerOnlyState(filterForPrefs(finalState))
-          : filterForPrefs(finalState),
+        state: finalReplyFor(filterForPrefs(finalState), {
+          replyMode: finalAnswerOnly ? 'final-answer' : 'stream-deltas',
+          streamed: false,
+        }),
         skipFrom: finalState,
         replyMode,
         sendOpts,
@@ -2366,17 +2371,10 @@ function shouldOpenProgressStream(state: RunState): boolean {
  * Terminal notices are dropped for the same reason — the stream rendered them.
  */
 function finalReplyState(progress: LazyProgressStream, state: RunState): RunState {
-  if (!progress.opened() || progress.abandoned()) return finalAnswerOnlyState(state);
-  return {
-    ...state,
-    blocks: state.finalText
-      ? [{ kind: 'text', content: state.finalText, streaming: false }]
-      : [],
-    reasoning: { content: '', active: false },
-    footer: null,
-    terminal: 'done',
-    errorMsg: undefined,
-  };
+  return finalReplyFor(state, {
+    replyMode: 'final-answer',
+    streamed: progress.opened() && !progress.abandoned(),
+  });
 }
 
 /**
@@ -3106,14 +3104,8 @@ function applyOutcomeToState(
         footer: null,
         ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
       };
-    case 'done': {
-      const next = finalizeIfRunning(state);
-      if (!userMessage) return next;
-      return {
-        ...next,
-        blocks: [...next.blocks, { kind: 'text' as const, content: userMessage, streaming: false, notice: true }],
-      };
-    }
+    case 'done':
+      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
     case 'running':
       return state;
     default: {
