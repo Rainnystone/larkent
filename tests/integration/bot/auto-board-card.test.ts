@@ -441,7 +441,7 @@ function latestBoard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
 
 function messageIdFromSend(
   h: { channel: ReturnType<typeof createRecordingLarkChannel> },
-  send: { chatId: string; content: unknown },
+  send: ReturnType<typeof createRecordingLarkChannel>['sent'][number],
 ): string {
   const index = h.channel.sent.indexOf(send);
   return `om_fake_${index + 1}`;
