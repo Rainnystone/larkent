@@ -1,6 +1,7 @@
 import { capabilityForProfile } from '../agent/capability';
 import type { AgentEvent } from '../agent/types';
 import { noteRunEvent, type RunHandle } from '../bot/active-runs';
+import { createIdleWatchdog } from '../bot/idle-watchdog';
 import { recordRunSessionEvent, startRunFlow } from '../bot/run-flow';
 import {
   cardTerminalFromOutcome,
@@ -49,9 +50,10 @@ import type { FireSend } from './scheduler';
 import type { AutomationsStore } from './store';
 
 export const AGENT_RESULT_FOOTER = '在本消息话题里追问';
+export const CATCH_UP_PROMPT_MARKER = '本次为补跑，原定 ';
 
 export function formatCatchUpPromptHint(timezone: string, fireAt: number): string {
-  return `本次为补跑，原定 ${formatScheduledHm(timezone, fireAt)}。请按原定任务执行。`;
+  return `${CATCH_UP_PROMPT_MARKER}${formatScheduledHm(timezone, fireAt)}。请按原定任务执行。`;
 }
 
 export function formatAgentResultPost(input: {
@@ -68,12 +70,15 @@ export function formatAgentResultPost(input: {
   return lines.join('\n\n');
 }
 
-export function formatAgentFailureNotice(outcome: RunOutcome): string {
+export function formatAgentFailureNotice(
+  outcome: RunOutcome,
+  meta?: { catchUp?: boolean; timezone?: string; fireAt?: number },
+): string {
   return formatAgentResultPost({
     body: formatAgentFailureBody(outcome),
-    catchUp: false,
-    timezone: 'UTC',
-    fireAt: 0,
+    catchUp: meta?.catchUp === true,
+    timezone: meta?.timezone ?? 'UTC',
+    fireAt: meta?.fireAt ?? 0,
   });
 }
 
@@ -112,11 +117,28 @@ export interface AgentFireRuntime extends AutomationDeliveryDeps {
   ownerRefreshState: OwnerRefreshState;
   automations?: AutomationsStore;
   pauseItem?: (id: number) => Promise<boolean>;
+  botDisplayName?: () => string;
+  onFireSettled?: () => void | Promise<void>;
 }
 
 export async function runAutomationAgentFire(
   fire: FireSend,
   runtime: AgentFireRuntime,
+): Promise<void> {
+  let status: 'ok' | 'failed' = 'failed';
+  try {
+    await runAutomationAgentFireBody(fire, runtime, (next) => {
+      status = next;
+    });
+  } finally {
+    await persistFireStatus(runtime, fire.id, status);
+  }
+}
+
+async function runAutomationAgentFireBody(
+  fire: FireSend,
+  runtime: AgentFireRuntime,
+  setStatus: (status: 'ok' | 'failed') => void,
 ): Promise<void> {
   const turnId = fireTurnId(fire.fireKey);
   const scope = automationRunScope(fire.id, fire.fireAt);
@@ -128,6 +150,9 @@ export async function runAutomationAgentFire(
   }
   runtime.workspaces.setCwd(scope, cwd);
 
+  const prompt = fire.catchUp
+    ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt)}\n\n${fire.taskText}`
+    : fire.taskText;
   const journal = runtime.journal;
   if (journal && !journal.get(turnId)) {
     const actor = runtime.botOpenId();
@@ -140,14 +165,11 @@ export async function runAutomationAgentFire(
       initiatorId: actor,
       initiatorType: 'bot',
       status: 'queued',
-      userInput: fire.taskText,
+      userInput: prompt,
     });
     await journal.flush();
   }
 
-  const prompt = fire.catchUp
-    ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt)}\n\n${fire.taskText}`
-    : fire.taskText;
   const access = canUseGroup(
     runtime.profileConfig,
     {
@@ -215,6 +237,7 @@ export async function runAutomationAgentFire(
     idleTimeoutMs: getRunIdleTimeoutMs(runtime.cfg),
     recordSession,
     chatId: fire.chatId,
+    scope,
   });
   const outcome = flow.execution.handle.outcome;
   if (policyGuard && runtime.automations) {
@@ -238,6 +261,7 @@ export async function runAutomationAgentFire(
       chatId: fire.chatId,
       mode: 'text',
     });
+    setStatus('ok');
     return;
   }
 
@@ -252,9 +276,27 @@ export async function runAutomationAgentFire(
     body = renderText(visible).trim();
     if (!body && outcome && outcome.kind !== 'completed' && outcome.kind !== 'partial') {
       body = formatAgentFailureBody(outcome);
+    } else {
+      setStatus('ok');
     }
   }
   await postFireMarkdown(runtime, fire, turnId, scope, body);
+}
+
+async function persistFireStatus(
+  runtime: AgentFireRuntime,
+  id: number,
+  status: 'ok' | 'failed',
+): Promise<void> {
+  const store = runtime.automations;
+  if (!store) return;
+  try {
+    if (!await store.settleFire(id, status)) return;
+    await store.writeStatus(runtime.botDisplayName?.() ?? 'bot');
+    await runtime.onFireSettled?.();
+  } catch (error) {
+    log.fail('auto', error, { event: 'settle' });
+  }
 }
 
 async function postFireMarkdown(
@@ -308,31 +350,22 @@ async function drainFireRun(input: {
   idleTimeoutMs: number | undefined;
   recordSession: (event: AgentEvent) => void;
   chatId: string;
+  scope: string;
 }): Promise<{ state: RunState; policyGuard?: PolicyGuardReason }> {
   let state = seedRunState({ currentChatId: input.chatId });
   let lastTerminal: AgentEvent | undefined;
-  let timer: NodeJS.Timeout | undefined;
-  const clearIdleTimer = (): void => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-  };
-  const armIdleWatchdog = (): void => {
-    clearIdleTimer();
-    if (!input.idleTimeoutMs) return;
-    timer = setTimeout(() => {
-      requestStop(input.handle, { type: 'bridge-idle-watchdog' });
-      log.warn('agent', 'idle-timeout', { idleTimeoutMs: input.idleTimeoutMs });
-      void input.handle.run.stop().catch(() => {});
-    }, input.idleTimeoutMs);
-  };
-  armIdleWatchdog();
   let policyGuard: PolicyGuardReason | undefined;
+  const watchdog = createIdleWatchdog({
+    handle: input.handle,
+    idleTimeoutMs: input.idleTimeoutMs,
+    scope: input.scope,
+  });
   try {
     for await (const event of input.events) {
       noteRunEvent(input.handle);
       if (event.type === 'system') {
         input.recordSession(event);
-        if (!input.handle.interrupted) armIdleWatchdog();
+        if (!input.handle.interrupted) watchdog.arm();
         continue;
       }
       if (!shouldDeliverAgentEvent(input.handle, event)) continue;
@@ -345,7 +378,7 @@ async function drainFireRun(input: {
           break;
         }
       }
-      armIdleWatchdog();
+      watchdog.noteDelivered(event);
       if (event.type === 'done' || event.type === 'error') {
         lastTerminal = event;
         noteTerminalStop(input.handle, event);
@@ -354,7 +387,7 @@ async function drainFireRun(input: {
       if (state.terminal !== 'running') break;
     }
   } finally {
-    clearIdleTimer();
+    watchdog.dispose();
   }
 
   const outcome = deriveRunOutcome({
@@ -369,7 +402,7 @@ async function drainFireRun(input: {
     state.terminal === 'running'
     || cardTerminalFromOutcome(outcome) !== state.terminal
   ) {
-    state = applyFireOutcome(state, outcome, input.idleTimeoutMs);
+    state = applyFireOutcome(state, outcome, watchdog.armedDelayMs());
   }
   input.handle.outcome = outcome;
   if (input.handle.interrupted) await input.handle.run.stop();

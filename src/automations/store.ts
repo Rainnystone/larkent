@@ -449,6 +449,29 @@ export class AutomationsStore {
     return true;
   }
 
+  /**
+   * Persist a terminal fire result. `failed` only from `running` (reap/crash).
+   * `ok` may overwrite a raced reap `failed` from the still-live run.
+   * Successful one-shots (`nextFireAt === 0`) are removed.
+   */
+  async settleFire(id: number, status: 'ok' | 'failed'): Promise<boolean> {
+    this.assertMutable();
+    const index = this.items.findIndex((entry) => entry.id === id);
+    const item = this.items[index];
+    if (!item) return false;
+    if (status === 'ok') {
+      if (item.lastStatus !== 'running' && item.lastStatus !== 'failed') return false;
+    } else if (item.lastStatus !== 'running') {
+      return false;
+    }
+    item.lastStatus = status;
+    if (status === 'ok' && item.nextFireAt === 0) {
+      this.items.splice(index, 1);
+    }
+    await this.persistNow();
+    return true;
+  }
+
   private async loadDocument(): Promise<void> {
     await this.queue.flush().catch(() => {});
     try {

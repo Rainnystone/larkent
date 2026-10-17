@@ -422,6 +422,56 @@ describe('automation scheduler', () => {
     }
   });
 
+  it('keeps lastStatus running when link-recovered fires before start in the same process', async () => {
+    const fireAt = t0;
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness(fireAt, { send: () => hold });
+    await h.store.create(reminderInput({
+      taskType: 'agent',
+      cwd: h.dir,
+      schedule: hourly,
+      startAt: t0,
+      endAt: t0 + 365 * 24 * HOUR,
+      nextFireAt: fireAt,
+    }));
+
+    await h.scheduler.onLinkRecovered();
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toHaveLength(1);
+    expect(h.store.get(1)?.lastStatus).toBe('running');
+    expect(await readStatus(h.statusPath)).toMatchObject({
+      items: [expect.objectContaining({ lastStatus: 'running', lastFireAt: fireAt })],
+    });
+    release();
+  });
+
+  it('marks a crash between started persist and settle as lastStatus failed, not ok', async () => {
+    const fireAt = t0;
+    const first = await harness(fireAt);
+    await first.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: fireAt - 20 * 60_000,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+    }));
+    await expect(first.store.markStarted(formatFireKey(1, fireAt))).resolves.toBe('started');
+    expect(first.store.get(1)?.lastStatus).toBe('running');
+    first.scheduler.stop();
+
+    const restarted = await reopen(first.dir, fireAt + 60_000);
+    await restarted.scheduler.start();
+    await restarted.scheduler.idle();
+    expect(restarted.fires).toEqual([]);
+    expect(restarted.store.get(1)?.lastStatus).toBe('failed');
+    expect(await readStatus(restarted.statusPath)).toMatchObject({
+      items: [expect.objectContaining({ lastStatus: 'failed', lastFireAt: fireAt })],
+    });
+  });
+
   it('does not resend after a kill between started persist and the sender call', async () => {
     const fireAt = t0;
     const first = await harness(fireAt + 60_000);

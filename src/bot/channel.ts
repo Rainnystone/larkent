@@ -66,7 +66,6 @@ import {
   formatRunOutcome,
   formatStopRequest,
   noteTerminalStop,
-  requestStop,
   runOverlappedOutage,
   shouldDeliverAgentEvent,
   type RunOutcome,
@@ -128,6 +127,7 @@ import { AutoActionAuth } from '../automations/action-auth';
 import { BoardActionAuth } from '../automations/board-auth';
 import { createAutomationBoard, type AutomationBoard } from '../automations/board';
 import {
+  CATCH_UP_PROMPT_MARKER,
   formatAgentFailureNotice,
   runAutomationAgentFire,
   automationScopeForReply,
@@ -149,7 +149,8 @@ import {
 } from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
-import { isAutomationRunScope, isAutomationScope } from './scope';
+import { createIdleWatchdog } from './idle-watchdog';
+import { isAutomationRunScope, isAutomationScope, parseAutomationRunScope } from './scope';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
@@ -639,8 +640,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       if (isAutomationScope(entry.scope)) {
         if (entry.cliAlreadySent || replyState(entry) === 'sent') return true;
         if (isAutomationRunScope(entry.scope) && !owned.get(entry.turnId)?.reply) {
+          const parsed = parseAutomationRunScope(entry.scope);
+          const item = parsed ? deps.automations?.get(parsed.id) : undefined;
           owned.stageReply(entry.turnId, {
-            markdown: formatAgentFailureNotice(outcome),
+            markdown: formatAgentFailureNotice(outcome, {
+              catchUp: typeof entry.userInput === 'string'
+                && entry.userInput.includes(CATCH_UP_PROMPT_MARKER),
+              timezone: item?.timezone ?? 'UTC',
+              fireAt: parsed?.fireAt ?? 0,
+            }),
             replyTo: '',
             replyMode: 'text',
             deliveryId: replyDeliveryKey(entry.turnId),
@@ -872,6 +880,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           ownerRefreshState: controls.ownerRefreshState,
           automations,
           pauseItem: (id) => automationsCtl.scheduler?.pause(id) ?? automations.pause(id),
+          botDisplayName: () => channel.botIdentity?.name ?? 'bot',
+          onFireSettled: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
         }), 'auto'),
       }),
       botDisplayName: () => channel.botIdentity?.name ?? 'bot',
@@ -2917,55 +2927,8 @@ async function processAgentStream(
   // Idle watchdog: silence for `idleTimeoutMs` is treated as "presumed hung".
   // An open tool call pauses that bound (a long `lark-cli` OAuth can be
   // quiet for a while) but the pause itself is capped at 60 minutes.
-  //
-  // The watchdog re-arms when:
-  //  - a tool_result drains the in-flight set to zero, OR
-  //  - any event arrives (configured idle when quiet, 60 min while a tool is open).
-  // Recovery can replace that delay with a 2-minute stall for runs already
-  // silent before the outage (`stallDeadlineMs` / `armStallDeadline`).
-  const TOOL_IDLE_PAUSE_CAP_MS = 60 * 60_000;
-  let timer: NodeJS.Timeout | undefined;
-  let armedDelayMs = idleTimeoutMs;
-  let stallTimerArmed = false;
-  const inFlightTools = new Set<string>();
-  const clearIdleTimer = (): void => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-  };
-  const armIdleTimer = (delayMs: number): void => {
-    clearIdleTimer();
-    delete handle.stallDeadlineMs;
-    armedDelayMs = delayMs;
-    timer = setTimeout(() => {
-      requestStop(handle, { type: 'bridge-idle-watchdog' });
-      log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs: delayMs });
-      void handle.run.stop().catch(() => {
-        /* stop errors are non-fatal */
-      });
-    }, delayMs);
-  };
-  const armIdleWatchdog = (): void => {
-    delete handle.stallDeadlineMs;
-    delete handle.stallArmedAt;
-    stallTimerArmed = false;
-    if (!idleTimeoutMs) {
-      clearIdleTimer();
-      return;
-    }
-    const delayMs = inFlightTools.size > 0 ? TOOL_IDLE_PAUSE_CAP_MS : idleTimeoutMs;
-    armIdleTimer(delayMs);
-  };
-  handle.armStallDeadline = (delayMs: number): void => {
-    if (stallTimerArmed) return;
-    stallTimerArmed = true;
-    handle.stallArmedAt = Date.now();
-    armIdleTimer(delayMs);
-  };
-  if (handle.stallDeadlineMs !== undefined) {
-    handle.armStallDeadline(handle.stallDeadlineMs);
-  } else {
-    armIdleWatchdog();
-  }
+  // Shared with agent-task fires via createIdleWatchdog.
+  const watchdog = createIdleWatchdog({ handle, idleTimeoutMs, scope });
 
   try {
     for await (const evt of events) {
@@ -2973,7 +2936,7 @@ async function processAgentStream(
       // A stopped run can still deliver its final resume handle before cleanup.
       // Keep draining owned events while suppressing further UI updates.
       if (evt.type === 'system') {
-        if (!handle.interrupted) armIdleWatchdog();
+        if (!handle.interrupted) watchdog.arm();
         recordSession(evt);
         continue;
       }
@@ -2982,19 +2945,7 @@ async function processAgentStream(
       // Track tool flight before re-arming the idle timer so the arm step
       // sees the correct set size. tool_use opens a window; tool_result
       // closes it. Other event types are bookkept after the if/else.
-      if (evt.type === 'tool_use') {
-        inFlightTools.add(evt.id);
-        handle.hasOpenToolCall = true;
-        log.info('agent', 'tool-in-flight', {
-          tool: evt.name,
-          inFlight: inFlightTools.size,
-        });
-      } else if (evt.type === 'tool_result') {
-        inFlightTools.delete(evt.id);
-        handle.hasOpenToolCall = inFlightTools.size > 0;
-        log.info('agent', 'tool-done', { inFlight: inFlightTools.size });
-      }
-      armIdleWatchdog();
+      watchdog.noteDelivered(evt);
 
       if (evt.type === 'usage') {
         const { costUsd, inputTokens, outputTokens } = evt;
@@ -3044,11 +2995,7 @@ async function processAgentStream(
       if (state.terminal !== 'running') break;
     }
   } finally {
-    clearIdleTimer();
-    delete handle.armStallDeadline;
-    delete handle.stallDeadlineMs;
-    delete handle.stallArmedAt;
-    delete handle.hasOpenToolCall;
+    watchdog.dispose();
   }
 
   // If state already reached a terminal event (done/error/etc.) before the
@@ -3079,7 +3026,7 @@ async function processAgentStream(
     || cardTerminalFromOutcome(outcome) !== state.terminal
     || userMessage !== undefined
   ) {
-    state = applyOutcomeToState(state, outcome, armedDelayMs, userMessage);
+    state = applyOutcomeToState(state, outcome, watchdog.armedDelayMs(), userMessage);
   }
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };

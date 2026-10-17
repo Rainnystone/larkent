@@ -62,6 +62,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     });
 
     await waitFor(() => resultBodies(h.channel).length === 1);
+    await waitFor(async () => (await readStatus(h.statusPath)).items[0]?.lastStatus === 'ok');
 
     expect(resultBodies(h.channel)).toEqual([`${FIRE_ONE}\n\n${FOOTER}`]);
     expect(outboxSends(h.channel)).toHaveLength(1);
@@ -228,6 +229,40 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(resultBodies(restarted.channel).join('\n')).toMatch(/已中断|进程退出|运行失败/);
     expect(continuationBodies(restarted.channel)).toEqual([]);
     expect(JSON.stringify(restarted.channel.sent)).not.toContain('notice.continue');
+    await waitFor(async () => (await readStatus(restarted.statusPath)).items[0]?.lastStatus === 'failed');
+    expect(await readStatus(restarted.statusPath)).toMatchObject({
+      items: [expect.objectContaining({ id: 1, lastFireAt: t0, lastStatus: 'failed', missed: 0 })],
+    });
+  });
+
+  it('shows lastStatus running while the fire is in flight, then ok after the result post', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      events: [[{ type: 'system', resumeHandle: 'sess-fire' }, { type: 'text', delta: FIRE_ONE }]],
+      hold,
+    });
+    await waitFor(() => h.agent.runs.length === 1);
+    await waitFor(async () => (await readStatus(h.statusPath)).items[0]?.lastStatus === 'running');
+    expect(await readStatus(h.statusPath)).toMatchObject({
+      items: [expect.objectContaining({
+        id: 1,
+        lastFireAt: t0,
+        lastStatus: 'running',
+        nextFireAt: t0 + HOUR,
+      })],
+    });
+
+    release();
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    await waitFor(async () => (await readStatus(h.statusPath)).items[0]?.lastStatus === 'ok');
+    expect(await readStatus(h.statusPath)).toMatchObject({
+      items: [expect.objectContaining({ lastStatus: 'ok', lastFireAt: t0 })],
+    });
   });
 
   it.each(['group', 'topic'] as const)(
@@ -293,6 +328,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
         result: 'catch-up',
       }),
     ]);
+    await waitFor(async () => (await readStatus(h.statusPath)).items[0]?.lastStatus === 'ok');
     expect(await readStatus(h.statusPath)).toMatchObject({
       v: 1,
       items: [expect.objectContaining({
@@ -310,6 +346,56 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(outboxSends(h.channel)).toHaveLength(sentAfterCatchUp);
     expect(resultBodies(h.channel)).toHaveLength(1);
     await expect(h.store.readLog()).resolves.toHaveLength(1);
+  });
+
+  it('catch-up failure notice still says 补跑, writes one log entry, and lastStatus is failed', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const first = await harness({
+      nowMs: t0,
+      seed: true,
+      linkDown: true,
+      events: [[{ type: 'system', resumeHandle: 'sess-fire' }]],
+      hold,
+    });
+    await first.bridge.tickLink();
+    first.setNow(t0 + 60_000);
+    first.channel.connectionState = 'connected';
+    await first.bridge.tickLink();
+    await waitFor(() => first.agent.runs.length === 1);
+    await waitFor(async () => (await readStatus(first.statusPath)).items[0]?.lastStatus === 'running');
+
+    await first.bridge.disconnect();
+    release();
+
+    const staged = first.journal.list().find((entry) => entry.turnId.startsWith('af:'));
+    expect(staged?.reply?.markdown ?? '').toMatch(/已中断|进程退出|运行失败/);
+    expect(staged?.reply?.markdown ?? '').toContain('（补跑，原定 12:00）');
+    expect(staged?.reply?.markdown ?? '').toContain(FOOTER);
+
+    const restarted = await harness({
+      nowMs: t0 + 60_000,
+      tmp: first.tmp,
+      store: first.store,
+      reuseCleanup: true,
+      events: [],
+    });
+    await waitFor(() => resultBodies(restarted.channel).length === 1);
+    expect(resultBodies(restarted.channel).join('\n')).toContain('（补跑，原定 12:00）');
+    expect(resultBodies(restarted.channel).join('\n')).toMatch(/已中断|进程退出|运行失败/);
+    expect(continuationBodies(restarted.channel)).toEqual([]);
+    expect(await restarted.store.readLog()).toEqual([
+      expect.objectContaining({
+        id: 1,
+        taskType: 'agent',
+        scheduledAt: t0,
+        triggerSource: 'link-recovered',
+        result: 'catch-up',
+      }),
+    ]);
+    await waitFor(async () => (await readStatus(restarted.statusPath)).items[0]?.lastStatus === 'failed');
   });
 
   it('skips the bridge result post when the agent already IM-sent to the group', async () => {
@@ -570,10 +656,10 @@ async function readStatus(path: string) {
   };
 }
 
-async function waitFor(predicate: () => boolean) {
+async function waitFor(predicate: () => boolean | Promise<boolean>) {
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
     await yieldIO();
   }

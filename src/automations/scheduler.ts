@@ -97,6 +97,8 @@ class Scheduler implements AutomationScheduler {
   private readonly wakeDir?: string;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
+  /** Crash leftovers are settled once, before the first fire in this process. */
+  private orphansAbandoned = false;
   private fireTimer: unknown;
   private expireTimer: unknown;
   private wakeWatch?: WakeWatch;
@@ -118,6 +120,7 @@ class Scheduler implements AutomationScheduler {
   start(): Promise<void> {
     this.closed = false;
     return this.enqueue(async () => {
+      await this.abandonOrphansOnce();
       await this.catchUp('startup');
       await this.handleDue();
       await this.writeStatus();
@@ -140,6 +143,7 @@ class Scheduler implements AutomationScheduler {
   onLinkRecovered(): Promise<void> {
     return this.enqueue(async () => {
       if (this.closed) return;
+      await this.abandonOrphansOnce();
       await this.catchUp('link-recovered');
       await this.handleDue();
     });
@@ -162,6 +166,7 @@ class Scheduler implements AutomationScheduler {
       if (this.closed) return;
       const parsed = parseFireKey(fireKey);
       if (!parsed) return;
+      await this.abandonOrphansOnce();
       await this.catchUp('wake');
       await this.handleDue();
     });
@@ -170,6 +175,7 @@ class Scheduler implements AutomationScheduler {
   nudge(): Promise<void> {
     return this.enqueue(async () => {
       if (this.closed || !this.enabled()) return;
+      await this.abandonOrphansOnce();
       await this.handleDue();
     });
   }
@@ -219,6 +225,22 @@ class Scheduler implements AutomationScheduler {
     return run;
   }
 
+  /** Process boot only: a prior run that died after markStarted cannot still be live. */
+  private async abandonOrphansOnce(): Promise<void> {
+    if (this.orphansAbandoned) return;
+    this.orphansAbandoned = true;
+    await this.abandonOrphanRunning();
+  }
+
+  private async abandonOrphanRunning(): Promise<void> {
+    let changed = false;
+    for (const item of this.store.list()) {
+      if (item.lastStatus !== 'running') continue;
+      if (await this.store.settleFire(item.id, 'failed')) changed = true;
+    }
+    if (changed) await this.writeStatus();
+  }
+
   private async catchUp(source: AutomationTriggerSource): Promise<void> {
     if (!this.enabled()) return;
     for (const item of this.store.list()) {
@@ -236,15 +258,17 @@ class Scheduler implements AutomationScheduler {
     const schedule = readSchedule(item.schedule);
     if (!schedule) return;
     const next = nextFireAfter(schedule, item.lastFireAt);
-    if (schedule.kind === 'one-shot' || next === 0) {
-      await this.store.setNextFireAt(item.id, 0, item.lastStatus === 'running' ? 'ok' : item.lastStatus);
-      await this.store.delete(item.id);
+    const ended = schedule.kind === 'one-shot' || next === 0;
+    if (item.lastStatus === 'running') {
+      await this.store.setNextFireAt(item.id, ended ? 0 : next);
+      await this.writeStatus();
+      return;
+    }
+    if (ended) {
+      await this.store.setNextFireAt(item.id, 0, item.lastStatus);
+      if (item.lastStatus !== 'failed') await this.store.delete(item.id);
     } else {
-      await this.store.setNextFireAt(
-        item.id,
-        next,
-        item.lastStatus === 'running' ? 'ok' : item.lastStatus,
-      );
+      await this.store.setNextFireAt(item.id, next, item.lastStatus);
     }
     await this.writeStatus();
   }
@@ -344,11 +368,25 @@ class Scheduler implements AutomationScheduler {
     const next = catchUp
       ? (nextAfterFire === now ? now : nextFireAfter(schedule, now))
       : nextAfterFire;
-    if (schedule.kind === 'one-shot' || next === 0) {
-      await this.store.setNextFireAt(item.id, 0, 'ok');
-      await this.store.delete(item.id);
-    } else {
-      await this.store.setNextFireAt(item.id, next, 'ok');
+    const ended = schedule.kind === 'one-shot' || next === 0;
+    switch (item.taskType) {
+      case 'agent':
+        // Stay `running` until the agent (or reap) settles ok/failed. Keep
+        // one-shots on the board so a mid-run death cannot look like success.
+        await this.store.setNextFireAt(item.id, ended ? 0 : next);
+        break;
+      case 'reminder':
+        if (ended) {
+          await this.store.setNextFireAt(item.id, 0, 'ok');
+          await this.store.delete(item.id);
+        } else {
+          await this.store.setNextFireAt(item.id, next, 'ok');
+        }
+        break;
+      default: {
+        const _exhaustive: never = item.taskType;
+        throw _exhaustive;
+      }
     }
     if (catchUp) {
       await this.store.recordLog({
@@ -385,6 +423,15 @@ class Scheduler implements AutomationScheduler {
           return;
         }
         log.fail('auto', error, { event: catchUp ? 'catch-up' : 'fire' });
+        if (item.taskType !== 'agent') return;
+        void this.store.settleFire(item.id, 'failed').then(
+          (changed) => {
+            if (changed) return this.writeStatus();
+          },
+          (settleError) => {
+            log.fail('auto', settleError, { event: 'settle' });
+          },
+        );
       },
     );
   }
@@ -424,6 +471,7 @@ class Scheduler implements AutomationScheduler {
     const now = this.now();
     let changed = false;
     for (const item of this.store.list()) {
+      if (item.lastStatus === 'running') continue;
       const schedule = readSchedule(item.schedule);
       if (schedule?.kind === 'one-shot') {
         if (item.nextFireAt !== 0 || item.lastStatus !== 'missed') continue;
@@ -446,6 +494,7 @@ class Scheduler implements AutomationScheduler {
   }
 
   private expiryAt(item: AutomationItem): number {
+    if (item.lastStatus === 'running') return 0;
     const schedule = readSchedule(item.schedule);
     if (schedule?.kind === 'one-shot') {
       if (item.nextFireAt !== 0 || item.lastStatus !== 'missed') return 0;

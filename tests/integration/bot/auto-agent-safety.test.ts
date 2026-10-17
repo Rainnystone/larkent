@@ -150,7 +150,9 @@ describe('automation agent-task safety whitelist', { timeout: 20_000 }, () => {
       || outboxBodies(h.channel).some((body) => body.includes(FIRE_ONE) || body.includes(FOOTER)),
     );
     const status = await waitForStatus(h, (snapshot) =>
-      snapshot.items[0]?.lastFireAt === t0 && snapshot.items[0]?.paused === false,
+      snapshot.items[0]?.lastFireAt === t0
+      && snapshot.items[0]?.paused === false
+      && snapshot.items[0]?.lastStatus === 'ok',
     );
     expect(status.items[0]).toEqual(expect.objectContaining({
       id: 1,
