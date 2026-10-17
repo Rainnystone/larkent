@@ -20,6 +20,9 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A9](A9-agent-safety-whitelist.md) | Agent-task safety: per-run bot-only identity, whitelist, `policy-guard` | A8 | ready |
 | [A10](A10-backfill-skip-non-chat-scopes.md) | Backfill skips `auto:`/`meeting:` scopes (F20) | — | ready |
 | [A11](A11-e2e-bot-arena.md) | E2E in Bot Arena (controller) | A0a–A10 | ready-for-human |
+| [A13](A13-cards-schema2.md) | **Blocker:** automation cards in CardKit schema 2.0; card-create failure visible, no silent draft | — | ready-for-agent |
+| [A14](A14-agent-result-body.md) | Agent result post uses the shared final-reply extraction (`finalText`) | — | ready-for-agent |
+| [A15](A15-notice-wording-and-trigger-source.md) | Cross-day 原定 labels, accurate `triggerSource`, no 追问 footer on interrupted/policy-guard notices | A14 | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -28,6 +31,7 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 - **After A0c + A0d:** A1', A2, A4; then A5 after A4, A7 after A4, A6 after A2.
 - **After A1' + A2:** A8 → A9.
 - **Last:** A11.
+- **From the first A11 run (2026-10-18):** A13 and A14 now (in parallel), A15 after A14; then rerun the A11 scenarios each ticket lists.
 
 Reminders ship after A0a–A1', A2, A4, A5, A7. Agent tasks (`automations.agentTasks`, default off) ship after A8–A9.
 
@@ -55,4 +59,7 @@ graph LR
   A8 --> A9
   A10
   A1p & A5 & A6 & A7 & A9 & A10 --> A11
+  A11 -.finds.-> A13
+  A11 -.finds.-> A14
+  A14 --> A15
 ```
