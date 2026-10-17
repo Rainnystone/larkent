@@ -345,6 +345,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ...(deps.now ? { now: deps.now } : {}),
       })
     : undefined;
+  let refreshAutomations: (() => Promise<void>) | undefined;
+  const onAutomationConfirmed = (item: AutomationItem) => {
+    deps.onAutomationConfirmed?.(item);
+    void refreshAutomations?.();
+  };
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model
   // switch can inject a one-time "model changed" note into the next (resumed)
@@ -540,7 +545,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         automations: deps.automations,
         autoAuth,
         ...(deps.now ? { now: deps.now } : {}),
-        onAutomationConfirmed: deps.onAutomationConfirmed,
+        onAutomationConfirmed,
       }),
     ).catch((err) => {
       log.fail('intake', err);
@@ -780,6 +785,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           enabled: () => controls.profileConfig.automations.enabled,
         })
       : undefined;
+  if (automationsScheduler) {
+    refreshAutomations = () => automationsScheduler.nudge();
+  }
   started.onRecovered((outage) => {
     deps.onRecovered?.(outage);
     void trackConsumer(recover(outage), 'recovery');
@@ -836,7 +844,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           autoAuth,
           automations: deps.automations,
           ...(deps.now ? { now: deps.now } : {}),
-          onAutomationConfirmed: deps.onAutomationConfirmed,
+          onAutomationConfirmed,
           continuations,
           onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
             if (action !== 'notice.continue') return;
