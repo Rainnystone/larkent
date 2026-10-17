@@ -14,7 +14,11 @@ import {
   type FireSend,
   type MissedNotify,
 } from '../../../src/automations/scheduler';
-import { AutomationsStore, type CreateAutomationInput } from '../../../src/automations/store';
+import {
+  AutomationsStore,
+  type AutomationsStatusSnapshot,
+  type CreateAutomationInput,
+} from '../../../src/automations/store';
 import { log } from '../../../src/core/logger';
 import * as atomicWrite from '../../../src/platform/atomic-write';
 import { axiosLike, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
@@ -857,7 +861,7 @@ describe('automation scheduler', () => {
     const item = h.store.get(1);
     const rendered = automationBoardCard({
       items: item ? [item] : [],
-      status,
+      status: status as AutomationsStatusSnapshot,
       auth: new BoardActionAuth({ secret: 'board-secret', now: () => h.clock.now() }),
     }) as { elements: Array<{ content?: string; text?: { content?: string } }> };
     const lines = rendered.elements.map((element) => element.text?.content ?? element.content ?? '');
