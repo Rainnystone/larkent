@@ -63,6 +63,7 @@ interface FakeLarkChannel {
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
   getConnectionStatus(): { state: 'connected'; reconnectAttempts: number };
+  getAppInfo(): Promise<{ ownerId: string }>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
   addReaction(messageId: string, emojiType: string): Promise<string>;
@@ -125,8 +126,6 @@ describe('markdown stream startup failures', () => {
     const streamFailure = deferred<void>();
     let streamProducerStarted = false;
     const h = await createHarness({
-      // The first run has to stream something, or no progress stream is opened
-      // at all and there is no late failure to log.
       events: [
         [
           { type: 'text', delta: 'progress update' },
@@ -152,16 +151,8 @@ describe('markdown stream startup failures', () => {
     const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
     await startTestBridge(h);
 
-    await h.channel.handlers.message?.(message('om_first', 'first'));
+    void h.channel.handlers.message?.(message('om_first', 'first'));
     await waitFor(() => streamProducerStarted);
-    await waitFor(
-      () => h.channel.rawClient.im.v1.messageReaction.delete.mock.calls.length > 0,
-      4500,
-    );
-
-    await h.channel.handlers.message?.(message('om_second', 'second'));
-    await waitFor(() => h.agent.runOptions.length === 2);
-
     streamFailure.reject(new Error('late stream failed'));
 
     await waitFor(() =>
@@ -169,10 +160,14 @@ describe('markdown stream startup failures', () => {
         call[0] === 'stream' &&
         call[1] instanceof Error &&
         call[1].message === 'late stream failed' &&
-        (call[2] as { step?: string } | undefined)?.step === 'stream-terminal-late',
+        (call[2] as { step?: string } | undefined)?.step === 'final-patch',
       ),
+      10_000,
     );
-  }, 10_000);
+
+    await h.channel.handlers.message?.(message('om_second', 'second'));
+    await waitFor(() => h.agent.runOptions.length === 2);
+  }, 15_000);
 
   it('sends one dedicated non-streaming final reply after progress completes', async () => {
     const visibleProgress: string[] = [];
@@ -557,7 +552,7 @@ describe('markdown stream startup failures', () => {
           call[0] === 'stream' &&
           call[1] instanceof Error &&
           call[1].message === 'progress stream failed' &&
-          (call[2] as { step?: string } | undefined)?.step === 'progress-stream',
+          (call[2] as { step?: string } | undefined)?.step === 'final-patch',
       ),
     ).toBe(true);
   });
@@ -776,6 +771,9 @@ function createFakeLarkChannel(harnessOptions: {
     },
     getConnectionStatus() {
       return { state: 'connected', reconnectAttempts: 0 };
+    },
+    async getAppInfo() {
+      return { ownerId: 'ou_owner' };
     },
     async send(chatId, content, options) {
       sent.push({ chatId, content, options });

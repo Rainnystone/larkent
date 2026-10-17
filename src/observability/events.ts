@@ -14,12 +14,9 @@ export type RequiredObservabilityEvent = (typeof REQUIRED_OBSERVABILITY_EVENTS)[
 
 export const REQUIRED_BACKFILL_EVENTS = [
   'backfill.trigger',
-  'backfill.skip-short-gap',
-  'backfill.forced',
   'pending.handoff',
   'backfill.skip-disabled',
   'backfill.skip-no-identity',
-  'backfill.watermark-initialized',
   'backfill.chats',
   'backfill.chats-truncated',
   'backfill.chat-scanned',

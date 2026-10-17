@@ -17,7 +17,8 @@ export interface RecordingLarkChannel extends FakeChannel {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
-  getConnectionStatus(): { state: 'connected'; reconnectAttempts: number };
+  connectionState: 'connected' | 'reconnecting' | 'failed';
+  getConnectionStatus(): { state: 'connected' | 'reconnecting' | 'failed'; reconnectAttempts: number };
   listChats(): Promise<Array<{ id: string; name: string }>>;
   getAppInfo(): Promise<{ ownerId: string }>;
   addReaction(messageId: string, emojiType: string): Promise<string>;
@@ -81,20 +82,29 @@ export function createRecordingLarkChannel(options: {
   };
 
   inner.stream = async (chatId, input, options) => {
-    await origStream(chatId, input, options);
-    const record = inner.streams.at(-1);
     const inputKind = isCardStreamInput(input)
       ? 'card'
       : isMarkdownStreamInput(input)
         ? 'markdown'
         : 'other';
-    callLog.push({
-      op: 'stream',
-      chatId,
-      inputKind,
-      cardUpdates: record?.cardUpdates ?? [],
-      markdownContents: record?.markdownContents ?? [],
-    });
+    const note = (): void => {
+      const record = inner.streams.at(-1);
+      callLog.push({
+        op: 'stream',
+        chatId,
+        inputKind,
+        cardUpdates: record?.cardUpdates ?? [],
+        markdownContents: record?.markdownContents ?? [],
+      });
+    };
+    try {
+      const result = await origStream(chatId, input, options);
+      note();
+      return result;
+    } catch (err) {
+      note();
+      throw err;
+    }
   };
 
   const channel: RecordingLarkChannel = {
@@ -119,8 +129,9 @@ export function createRecordingLarkChannel(options: {
     async getChatMode() {
       return options.chatMode ?? 'group';
     },
+    connectionState: 'connected',
     getConnectionStatus() {
-      return { state: 'connected', reconnectAttempts: 0 };
+      return { state: channel.connectionState, reconnectAttempts: 0 };
     },
     async listChats() {
       listChatsCalls += 1;

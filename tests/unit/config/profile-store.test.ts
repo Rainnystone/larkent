@@ -254,11 +254,58 @@ describe('profile store canonical serialization', () => {
     });
   });
 
-  it('persists explicit reliability flags across save→load round-trip', async () => {
+  it('drops the six legacy reliability flags on load and does not write them back', async () => {
     const root = await tmpRoot();
     const configPath = join(root, 'config.json');
     const profile = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
-    profile.reliability = { notice: true, journal: false, lostMessage: false };
+    await saveRootConfig({
+      schemaVersion: 3,
+      activeProfile: 'claude',
+      preferences: {},
+      profiles: { claude: profile },
+    }, configPath);
+
+    const onDisk = JSON.parse(await readFile(configPath, 'utf8')) as {
+      profiles: { claude: { reliability?: Record<string, unknown> } };
+    };
+    onDisk.profiles.claude.reliability = {
+      notice: true,
+      lostMessage: false,
+      shortGapScan: true,
+      runOutcome: false,
+      cliSignatures: false,
+      journal: false,
+      journalRecover: false,
+    };
+    await writeFile(configPath, `${JSON.stringify(onDisk, null, 2)}\n`);
+
+    const loaded = await loadRootConfig(configPath);
+    expect(loaded?.profiles.claude?.reliability).toBeUndefined();
+
+    await saveRootConfig(loaded!, configPath);
+    const saved = JSON.parse(await readFile(configPath, 'utf8')) as {
+      profiles: { claude: { reliability?: Record<string, unknown> } };
+    };
+    expect(saved.profiles.claude.reliability).toBeUndefined();
+    const serialized = JSON.stringify(saved);
+    for (const key of [
+      'notice',
+      'lostMessage',
+      'shortGapScan',
+      'runOutcome',
+      'cliSignatures',
+      'journal',
+      'journalRecover',
+    ]) {
+      expect(serialized).not.toContain(`"${key}"`);
+    }
+  });
+
+  it('does not persist reliability.notice across save→load round-trip', async () => {
+    const root = await tmpRoot();
+    const configPath = join(root, 'config.json');
+    const profile = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
+    profile.reliability = { notice: true };
 
     await saveRootConfig({
       schemaVersion: 3,
@@ -268,18 +315,10 @@ describe('profile store canonical serialization', () => {
     }, configPath);
 
     const saved = JSON.parse(await readFile(configPath, 'utf8'));
-    expect(saved.profiles.claude.reliability).toEqual({
-      notice: true,
-      journal: false,
-      lostMessage: false,
-    });
+    expect(saved.profiles.claude.reliability).toBeUndefined();
 
     const loaded = await loadRootConfig(configPath);
-    expect(loaded?.profiles.claude?.reliability).toEqual({
-      notice: true,
-      journal: false,
-      lostMessage: false,
-    });
+    expect(loaded?.profiles.claude?.reliability).toBeUndefined();
   });
 
   it('marks newly created roots as already evaluated for permission default migration', () => {

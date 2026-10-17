@@ -40,12 +40,14 @@ pnpm e2e:scenario -- cursor-stall-notice
 pnpm e2e:scenario -- host-sleep-cli-self-send [--freeze-ms 8000]
 ```
 
-`down` reads the pid file and refuses to signal a process whose cmdline is
-not the test instance.
+`down`, `ws-freeze`, and `kill-cli` read the pid file, refuse a process whose
+cmdline is not the test instance, and fail loudly if that process is already
+dead.
 
-`e2e:up` sets `HTTPS_PROXY` only on the test-bridge child. Node `fetch`
-(`keepalive` `httpProbe`) does not use that proxy — that mismatch is a
-reserved scene, not a bug to "fix" in the harness.
+`e2e:up` sets `HTTPS_PROXY` only on the test-bridge child. FeishuLink's
+authenticated probe uses the same SDK HTTP client as replies (`respectProxyEnv`
++ `httpTimeoutMs`), so a `proxy blackhole --host open.feishu.cn` is visible to
+the link.
 
 `eai_again` as a start mode advertises an unresolvable proxy host. After
 `e2e:up` the proxy is already bound; `e2e:fault proxy eai_again` then
@@ -68,11 +70,14 @@ One-shot per matching run id unless `:sticky` / `--sticky`.
 sends an @ message, then restores. Put the redacted conclusion (WS redelivery
 vs backfill) in the docs-track delivery note. Do not commit ids or tokens.
 
-`host-sleep-cli-self-send` SIGSTOPs the test bridge mid-run (host-sleep
-stand-in), resumes, then records whether a CLI self-send skipped the extra
-final reply (`skip-cli-already-sent` / intake skip-self) and whether Cursor
-`connection`/`retry` logged as `stream-reconnect`. Use `--real-cli` when the
-CLI itself posts to the group.
+`host-sleep-cli-self-send` SIGSTOPs the test bridge mid-run. That is a
+**process freeze, not OS sleep** (S7): on Linux `hostSuspended` must stay
+false unless `/proc/uptime` vs monotonic actually grew, so runs are not
+sleep-reviewed. Real-sleep acceptance is a manual lid-close on the user's
+Mac (`kern.waketime` / `kern.sleeptime`). The scenario still records whether
+a CLI self-send skipped the extra final reply (`skip-cli-already-sent` /
+intake skip-self) and whether Cursor `connection`/`retry` logged as
+`stream-reconnect`. Use `--real-cli` when the CLI itself posts to the group.
 
 ## Safety
 

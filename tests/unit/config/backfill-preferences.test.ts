@@ -47,7 +47,6 @@ describe('preferences.backfill', () => {
       enabled: true,
       dryRun: false,
       lookbackMs: 6 * 60 * 60 * 1000,
-      minGapMs: 60 * 1000,
       maxChats: 50,
       maxRawPerChat: 200,
       maxMentionsPerChat: 20,
@@ -73,7 +72,6 @@ describe('preferences.backfill', () => {
       enabled: 'yes',
       dryRun: 1,
       lookbackMs: -1,
-      minGapMs: 0,
       maxChats: Number.NaN,
       maxRawPerChat: '200',
       maxMentionsPerChat: Number.POSITIVE_INFINITY,
@@ -88,7 +86,6 @@ describe('preferences.backfill', () => {
       { event: 'backfill-invalid', field: 'enabled', value: 'yes' },
       { event: 'backfill-invalid', field: 'dryRun', value: 1 },
       { event: 'backfill-invalid', field: 'lookbackMs', value: -1 },
-      { event: 'backfill-invalid', field: 'minGapMs', value: 0 },
       { event: 'backfill-invalid', field: 'maxChats', value: Number.NaN },
       { event: 'backfill-invalid', field: 'maxRawPerChat', value: '200' },
       { event: 'backfill-invalid', field: 'maxMentionsPerChat', value: Number.POSITIVE_INFINITY },
@@ -102,7 +99,6 @@ describe('preferences.backfill', () => {
   it('rejects positive fractions that would floor to zero', () => {
     const { value, warnings } = warningsOf({
       lookbackMs: 0.5,
-      minGapMs: 0.9,
       maxChats: 0.5,
       maxRawPerChat: 0.2,
       maxMentionsPerChat: 0.5,
@@ -110,7 +106,6 @@ describe('preferences.backfill', () => {
     expect(value).toEqual(DEFAULT_BACKFILL_PREFERENCES);
     expect(warnings).toEqual([
       { event: 'backfill-invalid', field: 'lookbackMs', value: 0.5 },
-      { event: 'backfill-invalid', field: 'minGapMs', value: 0.9 },
       { event: 'backfill-invalid', field: 'maxChats', value: 0.5 },
       { event: 'backfill-invalid', field: 'maxRawPerChat', value: 0.2 },
       { event: 'backfill-invalid', field: 'maxMentionsPerChat', value: 0.5 },
@@ -147,7 +142,7 @@ describe('preferences.backfill', () => {
 
   it('formats the effective block on one line for /doctor', () => {
     expect(formatBackfillPreferences(DEFAULT_BACKFILL_PREFERENCES)).toBe(
-      'enabled=true dryRun=false lookbackMs=21600000 minGapMs=60000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
+      'enabled=true dryRun=false lookbackMs=21600000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
     );
     expect(
       formatBackfillPreferences({
@@ -157,7 +152,7 @@ describe('preferences.backfill', () => {
         chats: ['oc_a', 'oc_b'],
       }),
     ).toBe(
-      'enabled=false dryRun=true lookbackMs=21600000 minGapMs=60000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=oc_a,oc_b',
+      'enabled=false dryRun=true lookbackMs=21600000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=oc_a,oc_b',
     );
   });
 
@@ -239,6 +234,37 @@ describe('preferences.backfill', () => {
       dryRun: true,
       chats: ['oc_one'],
     });
+  });
+
+  it('drops leftover minGapMs on load and does not write it back', async () => {
+    const rootDir = await mkdtemp(join(tmpdir(), 'bridge-backfill-mingap-'));
+    roots.push(rootDir);
+    const configPath = join(rootDir, 'config.json');
+    const profile = normalizeProfileConfig({
+      schemaVersion: 3,
+      agent: { kind: 'claude' },
+      accounts: { app },
+      preferences: { backfill: { minGapMs: 15_000, dryRun: true } },
+    });
+    expect(profile.preferences.backfill).not.toHaveProperty('minGapMs');
+    expect(profile.preferences.backfill).toEqual({
+      ...DEFAULT_BACKFILL_PREFERENCES,
+      dryRun: true,
+    });
+
+    await saveRootConfig(
+      {
+        schemaVersion: 3,
+        activeProfile: 'claude',
+        preferences: {},
+        profiles: { claude: profile },
+      },
+      configPath,
+    );
+    const saved = JSON.parse(await readFile(configPath, 'utf8')) as {
+      profiles: { claude: { preferences: { backfill: Record<string, unknown> } } };
+    };
+    expect(saved.profiles.claude.preferences.backfill).not.toHaveProperty('minGapMs');
   });
 
   it('logs normalize warnings when a profile is loaded', () => {

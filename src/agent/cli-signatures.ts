@@ -72,12 +72,12 @@ export function matchCliSignature(
 export function cardUserMessage(
   outcome: { kind: string; cause?: string },
   signature: CliSignature | undefined,
-  enabled: boolean,
 ): string | undefined {
-  if (!enabled) return undefined;
   if (outcome.kind === 'partial') return signature?.userMessage;
   if (outcome.kind !== 'failed') return undefined;
-  return signature?.userMessage ?? UNCLASSIFIED_USER_MESSAGE;
+  if (signature?.userMessage) return signature.userMessage;
+  if (outcome.cause === 'transient-upstream') return NETWORK_TRANSIENT_USER_MESSAGE;
+  return UNCLASSIFIED_USER_MESSAGE;
 }
 
 export function noteUnclassifiedStderr(input: {

@@ -11,16 +11,21 @@ export interface HostSleepCliSelfSendResult {
   skipCliAlreadySent: boolean;
   duplicateFinal: boolean;
   streamReconnectSeen: boolean;
+  /** S7: SIGSTOP freeze is not OS sleep; must stay false on Linux. */
+  hostSuspended: boolean;
   note: string;
 }
 
 /**
- * Host-sleep / reconnect mid-run with a CLI self-send. Freeze the test
- * bridge (SIGSTOP) while a turn is in flight, resume, then count whether
- * the bridge skipped its final reply after a self-sent inbound (own app,
- * not in outbound) and whether Cursor `connection`/`retry` was logged as
- * stream-reconnect instead of unknown_event. Live Feishu evidence belongs
- * in the docs-track delivery note — this records redacted counts only.
+ * Process-freeze stand-in (SIGSTOP), not a real host sleep. Freeze the test
+ * bridge while a turn is in flight, resume, then count whether the bridge
+ * skipped its final reply after a self-sent inbound (own app, not in
+ * outbound) and whether Cursor `connection`/`retry` was logged as
+ * stream-reconnect instead of unknown_event.
+ *
+ * S7: a freeze must not set `hostSuspended` / review runs on Linux unless
+ * `/proc/uptime` vs monotonic actually grew (it will not for SIGSTOP).
+ * Real-sleep acceptance is a manual lid-close on the user's Mac.
  */
 export async function runHostSleepCliSelfSend(opts: {
   configPath?: string;
@@ -47,13 +52,20 @@ export async function runHostSleepCliSelfSend(opts: {
   const logText = await readLogsSince(config.dataRoot, logOffsets);
   const skipCliAlreadySent = /skip-cli-already-sent|cli-self-send/.test(logText);
   const streamReconnectSeen = sawStreamReconnect(logText);
+  const hostSuspended = sawHostSleepClassification(logText);
   return {
     skipCliAlreadySent,
     duplicateFinal: finals.length > 1,
     streamReconnectSeen,
-    note: skipCliAlreadySent
-      ? `skip-cli-already-sent or intake skip-self seen; tester finals=${finals.length}; stream-reconnect=${streamReconnectSeen}`
-      : `no skip-cli-already-sent in logs; tester finals=${finals.length}; inspect WS redelivery vs CLI self-send (no ids).`,
+    hostSuspended,
+    note: [
+      skipCliAlreadySent
+        ? `skip-cli-already-sent or intake skip-self seen; tester finals=${finals.length}; stream-reconnect=${streamReconnectSeen}`
+        : `no skip-cli-already-sent in logs; tester finals=${finals.length}; inspect WS redelivery vs CLI self-send (no ids).`,
+      hostSuspended
+        ? 'S7: logs classified this freeze as hostSuspended (unexpected for SIGSTOP on Linux).'
+        : 'S7: freeze was not classified as host sleep; runs were not sleep-reviewed.',
+    ].join(' '),
   };
 }
 
@@ -113,6 +125,26 @@ export async function readLogsSince(dataRoot: string, offsets: LogOffsets): Prom
 /** True when Cursor connection/retry logged as stream-reconnect, not unknown_event on the same record. */
 export function sawStreamReconnect(logText: string): boolean {
   return /stream-reconnect/.test(logText) && !sawUnknownConnectionOnSameRecord(logText);
+}
+
+/** S7: real OS sleep evidence, not a process freeze. */
+export function sawHostSleepClassification(logText: string): boolean {
+  return logText.split(/\r?\n/).some((line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return false;
+    try {
+      const rec = JSON.parse(trimmed) as {
+        phase?: string;
+        event?: string;
+        hostSuspended?: unknown;
+      };
+      if (rec.phase !== 'link') return false;
+      if (rec.event === 'sleep') return true;
+      return rec.event === 'recovered' && rec.hostSuspended === true;
+    } catch {
+      return /\[link\.sleep\]/.test(trimmed);
+    }
+  });
 }
 
 export function sawUnknownConnectionOnSameRecord(logText: string): boolean {

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
+import type { AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
 import { CONTINUE_HINT } from '../../../src/bot/interruption-notice';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
@@ -10,6 +11,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter, type FakeAgentEvents } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { axiosErrno, axiosHttpError, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -148,7 +150,9 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
 
     await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
     await waitFor(() => h.agent.runOptions.length === 5);
-    expect(h.agent.runOptions[4]?.prompt).toContain(CONTINUE_HINT);
+    expect(h.agent.runOptions[4]?.prompt).toContain('已放弃');
+    expect(h.agent.runOptions[4]?.prompt).toContain('不得继续或重做');
+    expect(h.agent.runOptions[4]?.prompt).not.toContain(CONTINUE_HINT);
     expect(h.agent.runOptions[4]?.prompt).not.toContain(SECRET);
     expect(h.agent.runOptions[4]?.prompt).not.toContain('原始输入');
     const cardsBeforeReset = noticeCards(h.channel).length;
@@ -189,6 +193,61 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(noticeSends(h.channel)[0]?.options).toMatchObject({ replyInThread: true });
   });
 
+  it('retries a failed notice via the outbox sweep while the link stays up and delivers it once', async () => {
+    const h = await harness({
+      fakeTimers: false,
+      events: [[{ type: 'done', terminationReason: 'interrupted' }]],
+    });
+    failNoticeSends(h.channel, { remaining: 1 });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
+    expect(noticeSends(h.channel)).toHaveLength(1);
+    expect(h.channel.getConnectionStatus().state).toBe('connected');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(noticeSends(h.channel)).toHaveLength(1);
+  });
+
+  it('does not hot-loop a persistently failing notice in the live sweep', async () => {
+    const h = await harness({
+      fakeTimers: false,
+      events: [[{ type: 'done', terminationReason: 'interrupted' }]],
+    });
+    const fails = { remaining: 12 };
+    failNoticeSends(h.channel, fails);
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending'));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(h.journal.list().some((entry) => entry.status === 'notice-pending')).toBe(true);
+    expect(fails.remaining).toBeGreaterThan(4);
+    fails.remaining = 0;
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
+    expect(noticeSends(h.channel)).toHaveLength(1);
+  });
+
+  it('does not re-patch a reply with a receipt after its notice completes', async () => {
+    const streamed = 'STREAMED_ANSWER';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      events: [[{ type: 'text', delta: streamed }, { type: 'done', terminationReason: 'interrupted' }]],
+    });
+    failNoticeSends(h.channel, { remaining: 1 });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && Boolean(entry.reply?.messageId)
+    )));
+    const streamId = h.channel.streams[0]?.messageId;
+    expect(streamId).toBeTruthy();
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
+    const patchesWhenNoticeLanded = h.channel.updatedCards.filter((row) => row.messageId === streamId).length;
+    await yieldIO();
+    await h.bridge.recoverMissed();
+    expect(h.channel.updatedCards.filter((row) => row.messageId === streamId)).toHaveLength(patchesWhenNoticeLanded);
+    expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+    expect(noticeSends(h.channel)).toHaveLength(1);
+  });
+
   it('resends a failed notice exactly once after recoverMissed', async () => {
     const h = await harness({
       fakeTimers: false,
@@ -205,7 +264,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       return orig(...args);
     };
     await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => fails === 0 && h.journal.list().some((entry) => entry.status === 'notice-pending'));
+    await waitFor(() => fails === 0);
     await h.bridge.recoverMissed();
     await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
     const notices = h.channel.sent.filter((item) => isNoticeContent(item.content));
@@ -246,17 +305,269 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions[2]?.prompt).toContain('try a new task');
   });
 
-  it('does not send a notice when the flag is off', async () => {
+  it.each(['markdown', 'card'] as const)(
+    'does not re-post a streamed %s answer when only the notice send failed',
+    async (replyMode) => {
+      const streamed = 'STREAMED_ANSWER';
+      const h = await harness({
+        fakeTimers: false,
+        replyMode,
+        events: [[{ type: 'text', delta: streamed }, { type: 'done', terminationReason: 'interrupted' }]],
+      });
+      let noticeFails = 1;
+      const orig = h.channel.send.bind(h.channel);
+      h.channel.send = async (...args: Parameters<typeof orig>) => {
+        const content = args[1] as { card?: unknown; markdown?: string };
+        if (isNoticeContent(content) && noticeFails > 0) {
+          noticeFails -= 1;
+          throw new Error('sdk timeout');
+        }
+        return orig(...args);
+      };
+      await h.channel.handlers.message?.(mention('om_run', SECRET));
+      await waitFor(() => noticeFails === 0 && noticePendingOrDelivered(h.journal));
+      expect(streamedAnswers(h.channel, streamed)).toBeGreaterThanOrEqual(1);
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+
+      await h.bridge.recoverMissed();
+      await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+      expect(noticeSends(h.channel)).toHaveLength(1);
+    },
+  );
+
+  it('does not re-post a streamed answer after restart while the notice is still pending', async () => {
+    const streamed = 'STREAMED_ANSWER';
     const h = await harness({
-      notice: false,
+      fakeTimers: false,
+      replyMode: 'markdown',
+      events: [[{ type: 'text', delta: streamed }, { type: 'done', terminationReason: 'interrupted' }]],
+    });
+    failNoticeSends(h.channel, { remaining: 1 });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticePendingOrDelivered(h.journal));
+    expect(streamedAnswers(h.channel, streamed)).toBeGreaterThanOrEqual(1);
+    expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
       events: [[{ type: 'done', terminationReason: 'interrupted' }]],
     });
-    await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => h.agent.runs.length === 1);
-    await waitFor(() => h.journal.list().some((entry) => (
-      entry.status === 'reply-delivered' || entry.status === 'interrupted' || entry.status === 'settled'
+    await waitFor(() => restarted.journal.list().some((entry) => (
+      entry.status === 'notice-delivered' || noticeSends(restarted.channel).length > 0
     )));
-    expect(noticeSends(h.channel)).toEqual([]);
+    expect(sentAnswers(restarted.channel, streamed)).toHaveLength(0);
+    expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+  });
+
+  it('does not re-post a streamed answer across repeated recoveries while the notice is still pending', async () => {
+    const streamed = 'STREAMED_ANSWER';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      events: [[{ type: 'text', delta: streamed }, { type: 'done', terminationReason: 'interrupted' }]],
+    });
+    failNoticeSends(h.channel, { remaining: Number.POSITIVE_INFINITY });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending'));
+    const visible = streamedAnswers(h.channel, streamed);
+    expect(visible).toBeGreaterThanOrEqual(1);
+    expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
+    await h.bridge.recoverMissed();
+    expect(h.journal.list().some((entry) => entry.status === 'notice-pending')).toBe(true);
+    expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+    expect(streamedAnswers(h.channel, streamed)).toBe(visible);
+  });
+
+  it.each(['markdown', 'card'] as const)(
+    'does not duplicate an already-streamed %s partial when the final stream is a business 4xx',
+    async (replyMode) => {
+      const streamed = 'STREAMED_ANSWER';
+      const h = await harness({
+        fakeTimers: false,
+        replyMode,
+        manual: true,
+      });
+      h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
+      await h.channel.handlers.message?.(mention('om_run', SECRET));
+      await waitFor(() => h.manual.length === 1);
+      const run = h.manual[0]!;
+      run.push({ type: 'text', delta: streamed });
+      await waitFor(() => streamedAnswers(h.channel, streamed) >= 1);
+      run.push({ type: 'done', terminationReason: 'interrupted' });
+      run.close();
+      run.releaseCleanup();
+      await waitFor(() => (
+        patchedAnswers(h.channel, streamed).length >= 1
+        || noticeSends(h.channel).length >= 1
+        || h.journal.list().some((entry) => (
+          entry.messageIds.includes('om_run')
+          && (entry.status === 'reply-delivered' || entry.status === 'notice-delivered')
+        ))
+      ));
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+
+      await h.bridge.recoverMissed();
+      await waitFor(() => noticeSends(h.channel).length >= 1);
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+      expect(patchedAnswers(h.channel, streamed).length).toBeGreaterThanOrEqual(1);
+      expect(h.journal.list().some((entry) => (
+        entry.status === 'notice-delivered' || entry.notice?.messageId
+      ))).toBe(true);
+    },
+  );
+
+  it.each(['markdown', 'card'] as const)(
+    'a local %s final-stream error is swept onto the same card without a uuid-send',
+    async (replyMode) => {
+      const streamed = 'STREAMED_ANSWER';
+      const h = await harness({
+        fakeTimers: false,
+        replyMode,
+        manual: true,
+      });
+      h.channel.streamErrors.finish = new Error('stream controller is closed');
+      await h.channel.handlers.message?.(mention('om_run', SECRET));
+      await waitFor(() => h.manual.length === 1);
+      const run = h.manual[0]!;
+      run.push({ type: 'text', delta: streamed });
+      await waitFor(() => streamedAnswers(h.channel, streamed) >= 1);
+      run.push({ type: 'done', terminationReason: 'interrupted' });
+      run.close();
+      run.releaseCleanup();
+      await waitFor(() => (
+        patchedAnswers(h.channel, streamed).length >= 1
+        || noticeSends(h.channel).length >= 1
+        || h.journal.list().some((entry) => (
+          entry.messageIds.includes('om_run')
+          && (entry.status === 'reply-delivered' || entry.status === 'notice-delivered')
+        ))
+      ));
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+
+      await h.bridge.recoverMissed();
+      await waitFor(() => noticeSends(h.channel).length >= 1);
+      expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+      expect(patchedAnswers(h.channel, streamed).length).toBeGreaterThanOrEqual(1);
+      expect(h.journal.list().some((entry) => (
+        entry.status === 'notice-delivered' || entry.notice?.messageId
+      ))).toBe(true);
+    },
+  );
+
+  it.each([
+    { name: 'business 4xx', error: sdkShapedSendError('unknown', axiosHttpError(400)) },
+    { name: 'local stream error', error: new Error('stream controller is closed') },
+  ])('patches the same card with the full answer when a $name final stream fails after a partial stream', async ({ error }) => {
+    const seen = 'SEEN_PARTIAL';
+    const unseen = 'UNSEEN_TAIL';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      manual: true,
+    });
+    h.channel.streamErrors.finish = error;
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.manual.length === 1);
+    const run = h.manual[0]!;
+    run.push({ type: 'text', delta: seen });
+    await waitFor(() => streamedAnswers(h.channel, seen) >= 1);
+    run.push({ type: 'text', delta: unseen });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await waitFor(() => patchedAnswers(h.channel, unseen).length >= 1);
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
+    expect(sentAnswers(h.channel, seen)).toHaveLength(0);
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+    expect(patchedAnswers(h.channel, seen).length).toBeGreaterThanOrEqual(1);
+    expect(patchedAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('waits for recovery when a final stream is ECONNABORTED instead of sending a new message', async () => {
+    const seen = 'SEEN_PARTIAL';
+    const unseen = 'UNSEEN_TAIL';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      manual: true,
+    });
+    h.channel.streamErrors.finish = sdkShapedSendError(
+      'unknown',
+      axiosErrno('ECONNABORTED', 'timeout of 30000ms exceeded'),
+    );
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.manual.length === 1);
+    const run = h.manual[0]!;
+    run.push({ type: 'text', delta: seen });
+    await waitFor(() => streamedAnswers(h.channel, seen) >= 1);
+    run.push({ type: 'text', delta: unseen });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && entry.status === 'completed-undelivered'
+    )));
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+
+    await h.bridge.tickLink();
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
+    )));
+    expect(sentAnswers(h.channel, unseen)).toHaveLength(0);
+    expect(patchedAnswers(h.channel, unseen).length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('same-card patches the full final answer when a tool_result header icon changed and the final stream is a 4xx', async () => {
+    const answer = 'FINAL_AFTER_TOOL';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      manual: true,
+      showToolCalls: true,
+    });
+    h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.manual.length === 1);
+    const run = h.manual[0]!;
+    run.push({ type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'git status' } });
+    await waitFor(() => streamedAnswers(h.channel, '⏳') >= 1);
+    run.push({ type: 'tool_result', id: 'tool-1', output: 'ok', isError: false });
+    run.push({ type: 'text', delta: answer });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await waitFor(() => patchedAnswers(h.channel, answer).length >= 1);
+    expect(sentAnswers(h.channel, answer)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
+    expect(sentAnswers(h.channel, answer)).toHaveLength(0);
+  });
+
+  it('signs continue on a default profile with no reliability.notice key', async () => {
+    const h = await harness({
+      notice: 'omit',
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+        [{ type: 'text', delta: 'CONTINUED' }, { type: 'final_text', content: 'CONTINUED' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.channel.handlers.cardAction?.(cardClick(USER, token));
+    await waitFor(() => h.agent.runOptions.length === 2);
+    await waitFor(() => resolvedCards(h.channel).some((card) => JSON.stringify(card).includes('已继续')));
+    const sentBefore = h.channel.sent.length;
+    await h.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(JSON.stringify(h.channel.sent.slice(sentBefore))).toMatch(/此继续已失效/);
   });
 
   it('stages a notice before a failed final reply so recover can resend it', async () => {
@@ -299,7 +610,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       .toMatchObject({ replyTo: 'om_notice' });
   });
 
-  it('does not inject the interrupted turn input into an ordinary new message', async () => {
+  it('abandons the interrupted turn on an ordinary follow-up and rejects a later continue click', async () => {
     const h = await harness({
       events: [
         [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
@@ -308,12 +619,49 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     });
     await h.channel.handlers.message?.(mention('om_run', SECRET));
     await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
     await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
     await waitFor(() => h.agent.runOptions.length === 2);
-    expect(h.agent.runOptions[1]?.prompt).toContain('请改另一个文件');
-    expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
-    expect(h.agent.runOptions[1]?.prompt).not.toContain(SECRET);
-    expect(h.agent.runOptions[1]?.prompt).not.toContain('原始输入');
+    const prompt = h.agent.runOptions[1]?.prompt ?? '';
+    expect(prompt).toContain('请改另一个文件');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).toContain('不得继续或重做');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    expect(prompt).not.toContain('原始输入');
+    await waitFor(() => resolvedCards(h.channel).some((card) => JSON.stringify(card).includes('已放弃')));
+    expect(JSON.stringify(resolvedCards(h.channel).at(-1))).toContain('已放弃');
+    expect(JSON.stringify(resolvedCards(h.channel).at(-1))).not.toContain('notice.continue');
+
+    const sentBefore = h.channel.sent.length;
+    await h.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(h.agent.runOptions.length).toBe(2);
+    expect(JSON.stringify(h.channel.sent.slice(sentBefore))).toMatch(/此继续已失效/);
+  });
+
+  it('abandons the interrupted turn after 暂不 so a new message is not continued', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+        [{ type: 'text', delta: 'NEW' }, { type: 'final_text', content: 'NEW' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const card = noticeCards(h.channel)[0]!;
+    await h.channel.handlers.cardAction?.(dismissClick(USER, dismissToken(card)));
+    await waitFor(() => resolvedCards(h.channel).some((item) => JSON.stringify(item).includes('已忽略')));
+    await h.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
+    await waitFor(() => h.agent.runOptions.length === 2);
+    const prompt = h.agent.runOptions[1]?.prompt ?? '';
+    expect(prompt).toContain('请改另一个文件');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).toContain('不得继续或重做');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    expect(JSON.stringify(resolvedCards(h.channel).at(-1))).toContain('已忽略');
+    expect(JSON.stringify(resolvedCards(h.channel))).not.toContain('已放弃');
   });
 
   it('starts the same continue request from @bot 继续 text', async () => {
@@ -363,6 +711,129 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(JSON.stringify(h.channel.sent)).not.toContain('SECOND');
   });
 
+  it('keeps abandon, stale click, and one-shot continue after a bridge restart', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      events: [
+        [{ type: 'text', delta: 'NEW' }, { type: 'final_text', content: 'NEW' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await restarted.channel.handlers.message?.(mention('om_ordinary', '请改另一个文件'));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    const prompt = restarted.agent.runOptions[0]?.prompt ?? '';
+    expect(prompt).toContain('请改另一个文件');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    await waitFor(() => resolvedCards(restarted.channel).some((card) => JSON.stringify(card).includes('已放弃')));
+
+    const sentBefore = restarted.channel.sent.length;
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(restarted.agent.runOptions.length).toBe(1);
+    expect(JSON.stringify(restarted.channel.sent.slice(sentBefore))).toMatch(/此继续已失效/);
+  });
+
+  it('resumes from a continue click exactly once after a bridge restart', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      events: [
+        [{ type: 'text', delta: 'CONTINUED' }, { type: 'final_text', content: 'CONTINUED' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    expect(restarted.agent.runOptions[0]?.resumeHandle).toBe('sess-1');
+    expect(restarted.agent.runOptions[0]?.prompt).toContain(CONTINUE_HINT);
+    expect(restarted.agent.runOptions[0]?.prompt).toContain(SECRET);
+    await waitFor(() => resolvedCards(restarted.channel).some((card) => JSON.stringify(card).includes('已继续')));
+
+    const sentBefore = restarted.channel.sent.length;
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(restarted.agent.runOptions.length).toBe(1);
+    expect(JSON.stringify(restarted.channel.sent.slice(sentBefore))).toMatch(/失效/);
+  });
+
+  it('resumes from typed 继续 exactly once after a bridge restart', async () => {
+    const h = await harness({
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-1' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    const token = continueToken(noticeCards(h.channel)[0]!);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      events: [
+        [{ type: 'text', delta: 'CONTINUED' }, { type: 'final_text', content: 'CONTINUED' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-1' }],
+      ],
+    });
+    await restarted.channel.handlers.message?.(mention('om_cont', '@_user_1 继续'));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    expect(restarted.agent.runOptions[0]?.resumeHandle).toBe('sess-1');
+    expect(restarted.agent.runOptions[0]?.prompt).toContain(CONTINUE_HINT);
+    await waitFor(() => resolvedCards(restarted.channel).some((card) => JSON.stringify(card).includes('已继续')));
+
+    const sentBefore = restarted.channel.sent.length;
+    await restarted.channel.handlers.cardAction?.(cardClick(USER, token));
+    await yieldIO();
+    expect(restarted.agent.runOptions.length).toBe(1);
+    expect(JSON.stringify(restarted.channel.sent.slice(sentBefore))).toMatch(/失效/);
+  });
+
+  it('kimi kill-9 restart then an ordinary message answers only the new request', async () => {
+    const h = await harness({
+      agentKind: 'kimi',
+      events: [
+        [{ type: 'system', resumeHandle: 'sess-kimi' }, { type: 'done', terminationReason: 'interrupted' }],
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => noticeCards(h.channel).length === 1);
+    await h.journal.flush();
+    await h.bridge.disconnect();
+
+    const restarted = await reopen(h, {
+      agentKind: 'kimi',
+      events: [
+        [{ type: 'text', delta: 'ONLY NEW' }, { type: 'final_text', content: 'ONLY NEW' }, { type: 'done', terminationReason: 'normal', resumeHandle: 'sess-kimi' }],
+      ],
+    });
+    await restarted.channel.handlers.message?.(mention('om_after_kill', '换一个任务'));
+    await waitFor(() => restarted.agent.runOptions.length === 1);
+    const prompt = restarted.agent.runOptions[0]?.prompt ?? '';
+    expect(prompt).toContain('换一个任务');
+    expect(prompt).toContain('已放弃');
+    expect(prompt).toContain('不得继续或重做');
+    expect(prompt).not.toContain(CONTINUE_HINT);
+    expect(prompt).not.toContain(SECRET);
+    await waitFor(() => restarted.channel.sent.some((item) => JSON.stringify(item.content).includes('ONLY NEW')));
+  });
+
   it('sends one notice card when recover races a still-in-flight send', async () => {
     const h = await harness({
       fakeTimers: false,
@@ -386,9 +857,14 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     release?.();
     await started;
     await recovering;
-    expect(h.channel.sent.filter((item) => isNoticeContent(item.content))).toHaveLength(1);
+    const notices = () => h.channel.sent.filter((item) => isNoticeContent(item.content));
+    // The journal delivery lock is gone. A recover that races the live send
+    // may post a duplicate; spec §4 prefers that over a lost notice.
+    expect(notices().length).toBeGreaterThanOrEqual(1);
+    expect(notices().length).toBeLessThanOrEqual(2);
+    const afterRace = notices().length;
     await h.bridge.recoverMissed();
-    expect(h.channel.sent.filter((item) => isNoticeContent(item.content))).toHaveLength(1);
+    expect(notices()).toHaveLength(afterRace);
   });
 
   it('does not post a second notice after a timed-out send later lands', async () => {
@@ -398,28 +874,31 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     });
     const orig = h.channel.send.bind(h.channel);
     let firstNotice = true;
+    let noticeLanded = false;
     h.channel.send = async (...args: Parameters<typeof orig>) => {
       const content = args[1] as { card?: unknown; markdown?: string };
       if (isNoticeContent(content) && firstNotice) {
         firstNotice = false;
         const landed = await orig(...args);
+        noticeLanded = true;
         throw Object.assign(new Error('timeout of 30000ms exceeded'), { landed });
       }
       return orig(...args);
     };
-    await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => h.journal.list().some((item) => item.notice?.deliveryId));
+    void h.channel.handlers.message?.(mention('om_run', SECRET));
+    // Intake returns after debounce enqueue; wait until the live send has
+    // actually landed (and then thrown) before recording the durable receipt.
+    await waitFor(() => noticeLanded);
     const entry = h.journal.list().find((item) => item.notice);
-    expect(entry?.notice?.deliveryId).toBeTruthy();
+    expect(entry?.notice).toBeTruthy();
     const notices = (): unknown[] =>
       h.channel.sent.filter((item) => isNoticeContent(item.content));
     const beforeRecover = notices().length;
-    // Timeout after the SDK send can still land: wrap/onSettled persists the
-    // receipt. Do not require notice-pending — that races the settle path.
-    if (entry?.status === 'notice-pending' && entry.notice?.deliveryId) {
-      h.journal.noteDelivery(entry.notice.deliveryId, entry.notice.messageId ?? 'om_late');
+    // Durable receipt on the staged notice is what stops a second post.
+    // In-process late-land tracking is gone with the delivery lock.
+    if (entry?.status === 'notice-pending' && entry.notice) {
+      h.journal.recordNotice(entry.turnId, { ...entry.notice, messageId: 'om_late' });
     }
-    expect(h.journal.get(entry!.turnId)?.status).toBe('notice-delivered');
     await h.bridge.recoverMissed();
     expect(notices()).toHaveLength(beforeRecover);
     expect(notices().length).toBeLessThanOrEqual(1);
@@ -429,12 +908,15 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
 
 async function harness(opts: {
   events?: FakeAgentEvents;
-  notice?: boolean;
+  notice?: boolean | 'omit';
   fence?: boolean;
   topic?: boolean;
   owner?: boolean;
-  agentKind?: 'claude' | 'cursor';
+  agentKind?: 'claude' | 'cursor' | 'kimi';
   fakeTimers?: boolean;
+  replyMode?: 'text' | 'card' | 'markdown';
+  manual?: boolean;
+  showToolCalls?: boolean;
 } = {}) {
   const tmp = await createTmpProfile('notice-channel-');
   const mediaDir = join(tmp.profile, 'media');
@@ -445,10 +927,13 @@ async function harness(opts: {
   const cfg = profile(tmp.workspace, opts);
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
-  const agent = new FakeAgentAdapter({
-    id: opts.agentKind ?? 'claude',
-    events: opts.events ?? [[{ type: 'done', terminationReason: 'interrupted' }]],
-  });
+  const agent = opts.manual
+    ? new StreamingFakeAgent(opts.agentKind ?? 'claude')
+    : new FakeAgentAdapter({
+      id: opts.agentKind ?? 'claude',
+      displayName: opts.agentKind === 'kimi' ? 'Kimi Code' : undefined,
+      events: opts.events ?? [[{ type: 'done', terminationReason: 'interrupted' }]],
+    });
   const channel = createRecordingLarkChannel({
     chats: [{ id: CHAT, name: 'G' }],
     chatMode: opts.topic ? 'topic' : 'group',
@@ -461,6 +946,7 @@ async function harness(opts: {
     sessions,
     workspaces,
     journal,
+    probe: async () => true,
     appPaths: { mediaDir, secretsFile: join(tmp.profile, 'secrets.enc'), keystoreSaltFile: join(tmp.profile, '.keystore.salt') },
     controls: {
       profile: 'test',
@@ -479,13 +965,86 @@ async function harness(opts: {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
   }
   cleanups.push(async () => {
+    if (agent instanceof StreamingFakeAgent) {
+      for (const run of agent.manual) run.releaseCleanup();
+    }
     await bridge.disconnect().catch(() => {});
     await tmp.cleanup();
   });
-  return { channel, bridge, agent, journal, workspace: tmp.workspace, sessions };
+  return {
+    channel,
+    bridge,
+    agent,
+    manual: agent instanceof StreamingFakeAgent ? agent.manual : [],
+    journal,
+    workspace: tmp.workspace,
+    sessions,
+    workspaces,
+    cfg,
+    tmp,
+    owner: OWNER,
+  };
 }
 
-function profile(workspace: string, opts: { notice?: boolean; fence?: boolean; agentKind?: 'claude' | 'cursor' }) {
+async function reopen(
+  h: Awaited<ReturnType<typeof harness>>,
+  opts: {
+    events?: FakeAgentEvents;
+    agentKind?: 'claude' | 'cursor' | 'kimi';
+  } = {},
+) {
+  const journal = new TurnJournal(h.journal.getFilePath());
+  await journal.load();
+  const agent = new FakeAgentAdapter({
+    id: opts.agentKind ?? 'claude',
+    displayName: opts.agentKind === 'kimi' ? 'Kimi Code' : undefined,
+    events: opts.events ?? [[{ type: 'text', delta: 'ok' }, { type: 'final_text', content: 'ok' }, { type: 'done', terminationReason: 'normal' }]],
+  });
+  const channel = createRecordingLarkChannel({
+    chats: [{ id: CHAT, name: 'G' }],
+    chatMode: 'group',
+    botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
+  });
+  sdk.channel = channel;
+  const mediaDir = join(h.tmp.profile, 'media');
+  const bridge = await startChannel({
+    cfg: h.cfg,
+    agent,
+    sessions: h.sessions,
+    workspaces: h.workspaces,
+    journal,
+    probe: async () => true,
+    appPaths: {
+      mediaDir,
+      secretsFile: join(h.tmp.profile, 'secrets.enc'),
+      keystoreSaltFile: join(h.tmp.profile, '.keystore.salt'),
+    },
+    controls: {
+      profile: 'test',
+      profileConfig: h.cfg,
+      cfg: h.cfg,
+      botOwnerId: OWNER,
+      ownerRefreshState: 'ok',
+      async refreshOwner() {},
+      async restart() {},
+      async exit() {},
+      configPath: join(h.tmp.root, 'config.json'),
+      processId: 'test-notice-restart',
+    },
+  });
+  cleanups.push(async () => {
+    await bridge.disconnect().catch(() => {});
+  });
+  return { ...h, channel, bridge, agent, journal };
+}
+
+function profile(workspace: string, opts: {
+  notice?: boolean | 'omit';
+  fence?: boolean;
+  agentKind?: 'claude' | 'cursor' | 'kimi';
+  replyMode?: 'text' | 'card' | 'markdown';
+  showToolCalls?: boolean;
+}) {
   const cfg = createDefaultProfileConfig({
     agentKind: opts.agentKind ?? 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
@@ -496,17 +1055,111 @@ function profile(workspace: string, opts: { notice?: boolean; fence?: boolean; a
       ...(opts.fence ? { fence: { enabled: true } } : {}),
     },
     preferences: {
-      messageReply: 'text',
+      messageReply: opts.replyMode ?? 'text',
       messageReplyMigrated: true,
       cotMessages: 'off',
       requireMentionInGroup: true,
+      ...(opts.showToolCalls === true ? { showToolCalls: true } : {}),
     },
-    reliability: {
-      notice: opts.notice !== false,
-    },
+    ...(opts.notice === 'omit'
+      ? {}
+      : { reliability: { notice: opts.notice !== false } }),
   });
   cfg.workspaces.default = workspace;
   return cfg;
+}
+
+class StreamingFakeAgent extends FakeAgentAdapter {
+  readonly manual: ReturnType<typeof manualRun>[] = [];
+  constructor(id: string) {
+    super({
+      id,
+      displayName: id === 'kimi' ? 'Kimi Code' : undefined,
+    });
+  }
+
+  override run(opts: AgentRunOptions): AgentRun {
+    const recorded = super.run(opts);
+    const next = manualRun(recorded);
+    this.manual.push(next);
+    return next.run;
+  }
+}
+
+function manualRun(recorded: AgentRun) {
+  const queue: AgentEvent[] = [];
+  let notify: (() => void) | undefined;
+  let closed = false;
+  let cleaned = false;
+  let release!: () => void;
+  const cleanup = new Promise<void>((resolve) => {
+    release = () => {
+      cleaned = true;
+      resolve();
+    };
+  });
+  const run: AgentRun = {
+    runId: recorded.runId,
+    events: (async function* () {
+      for (;;) {
+        const event = queue.shift();
+        if (event) {
+          yield event;
+          continue;
+        }
+        if (closed) return;
+        await new Promise<void>((resolve) => {
+          notify = resolve;
+        });
+      }
+    })(),
+    stop: async () => {
+      await recorded.stop();
+      release();
+      await cleanup;
+    },
+    waitForExit: async (timeoutMs) => {
+      if (cleaned) return true;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          cleanup.then(() => true),
+          new Promise<false>((resolve) => {
+            timer = setTimeout(() => resolve(false), timeoutMs);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    },
+  };
+  return {
+    run,
+    close: () => {
+      closed = true;
+      notify?.();
+    },
+    releaseCleanup: release,
+    push: (event: AgentEvent) => {
+      queue.push(event);
+      notify?.();
+    },
+  };
+}
+
+function failNoticeSends(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+  opts: { remaining: number },
+): void {
+  const orig = channel.send.bind(channel);
+  channel.send = async (...args: Parameters<typeof orig>) => {
+    const content = args[1] as { card?: unknown; markdown?: string };
+    if (isNoticeContent(content) && opts.remaining > 0) {
+      opts.remaining -= 1;
+      throw new Error('sdk timeout');
+    }
+    return orig(...args);
+  };
 }
 
 function mention(
@@ -542,9 +1195,48 @@ function cardClick(operatorId: string, token: string): CardActionEvent {
   } as unknown as CardActionEvent;
 }
 
+function dismissClick(operatorId: string, token: string): CardActionEvent {
+  return {
+    action: { value: { cmd: 'notice.dismiss', notice_token: token } },
+    chatId: CHAT,
+    messageId: 'om_notice',
+    operator: { openId: operatorId, name: 'Op' },
+  } as unknown as CardActionEvent;
+}
+
 function isNoticeContent(content: unknown): boolean {
   const json = JSON.stringify(content);
   return json.includes('notice.continue') || json.includes('中断通知') || json.includes(CONTINUE_HINT);
+}
+
+function streamedAnswers(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+  sentinel: string,
+): number {
+  return channel.streams.filter((stream) => (
+    JSON.stringify(stream.cardUpdates).includes(sentinel)
+    || stream.markdownContents.some((content) => content.includes(sentinel))
+  )).length;
+}
+
+function sentAnswers(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+  sentinel: string,
+) {
+  return channel.sent.filter((item) => JSON.stringify(item.content).includes(sentinel));
+}
+
+function patchedAnswers(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+  sentinel: string,
+) {
+  return channel.updatedCards.filter((row) => JSON.stringify(row.card).includes(sentinel));
+}
+
+function noticePendingOrDelivered(journal: TurnJournal): boolean {
+  return journal.list().some((entry) => (
+    entry.status === 'notice-pending' || entry.status === 'notice-delivered'
+  ));
 }
 
 function noticeSends(channel: ReturnType<typeof createRecordingLarkChannel>) {
@@ -566,9 +1258,17 @@ function resolvedCards(channel: ReturnType<typeof createRecordingLarkChannel>) {
 }
 
 function continueToken(send: { content: unknown }): string {
+  return noticeToken(send, 'notice.continue');
+}
+
+function dismissToken(send: { content: unknown }): string {
+  return noticeToken(send, 'notice.dismiss');
+}
+
+function noticeToken(send: { content: unknown }, cmd: 'notice.continue' | 'notice.dismiss'): string {
   const json = JSON.stringify(send.content);
-  const match = json.match(/"notice_token":"([^"]+)"/);
-  if (!match?.[1]) throw new Error(`missing notice token in ${json}`);
+  const match = json.match(new RegExp(`"cmd":"${cmd}","notice_token":"([^"]+)"`));
+  if (!match?.[1]) throw new Error(`missing ${cmd} token in ${json}`);
   return match[1];
 }
 

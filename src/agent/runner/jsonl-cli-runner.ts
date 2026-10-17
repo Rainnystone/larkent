@@ -106,6 +106,14 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const stderr = new BoundedStderr();
   let runtimeError: Error | null = null;
   let stderrBuffer = '';
+  const classifyStderrLine = (line: string): void => {
+    if (line.trim()) log.warn('agent', 'stderr', { line });
+    if (isWindowsCommandNotFoundLine(line)) {
+      runtimeError = new Error(`failed to spawn ${input.spawnName}: ${line.trim()}`);
+      child.stdout.destroy();
+      child.kill();
+    }
+  };
   child.stderr.on('data', (chunk: Buffer) => {
     stderr.push(chunk);
     stderrBuffer += chunk.toString('utf8');
@@ -116,15 +124,18 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     while (nl !== -1) {
       const line = stderrBuffer.slice(0, nl);
       stderrBuffer = stderrBuffer.slice(nl + 1);
-      if (line.trim()) log.warn('agent', 'stderr', { line });
-      if (isWindowsCommandNotFoundLine(line)) {
-        runtimeError = new Error(`failed to spawn ${input.spawnName}: ${line.trim()}`);
-        child.stdout.destroy();
-        child.kill();
-      }
+      classifyStderrLine(line);
       nl = stderrBuffer.indexOf('\n');
     }
   });
+  const flushStderrTail = (): void => {
+    if (!stderrBuffer) return;
+    const line = stderrBuffer;
+    stderrBuffer = '';
+    classifyStderrLine(line);
+  };
+  child.stderr.on('end', flushStderrTail);
+  child.stderr.on('close', flushStderrTail);
 
   let stopReason: JsonlFinishReason | undefined;
   let abortHandler: (() => void) | undefined;
@@ -457,6 +468,7 @@ async function* iterateEvents(input: {
 }): AsyncGenerator<AgentEvent> {
   let terminalSeen = false;
   let failed = false;
+  let producedStdout = false;
   function* emit(events: Iterable<AgentEvent>): Generator<AgentEvent> {
     for (const event of events) {
       if (event.type === 'done' || event.type === 'error') {
@@ -482,6 +494,7 @@ async function* iterateEvents(input: {
     for (;;) {
       let line = input.stdout.nextLine();
       while (line !== undefined) {
+        producedStdout = true;
         yield* emit(input.translator.translate(line));
         line = input.stdout.nextLine();
       }
@@ -539,6 +552,13 @@ async function* iterateEvents(input: {
     }
     if (input.missingTerminalOnSuccess && !terminal) {
       yield* emit(input.translator.fail(input.missingTerminalOnSuccess));
+      return;
+    }
+    // Kimi has no terminal JSONL line (`successFinish: 'normal'`). A missing
+    // Windows CLI can still get a pid (cross-spawn → cmd.exe) and exit 0 with
+    // empty stdout; that must be an error, not a silent empty success.
+    if (input.successFinish !== undefined && !terminal && !producedStdout) {
+      yield* emit(input.translator.fail(`${input.spawnName} exited without producing output`));
       return;
     }
     yield* emit(input.translator.finish(input.successFinish));

@@ -39,7 +39,6 @@ const STDOUT_INFO_ALLOWLIST = new Set<string>([
   'cot.created',
   'cot.completed',
   'outbound.sent',
-  'outbound.markdown-stream-fallback',
   'outbound.journal-resend',
   'card.final',
   'journal.recovered',
@@ -366,9 +365,6 @@ function formatStdout(
   }
   if (phase === 'cot' && event === 'completed') {
     return `  ◇ cot completed cot=${shortId(fields.cotId)} reason=${fields.reason ?? '-'}`;
-  }
-  if (phase === 'outbound' && event === 'markdown-stream-fallback') {
-    return `  ⚠ markdown stream fallback: ${fields.err ?? ''}`;
   }
   if (phase === 'outbound' && event === 'sent') {
     const scope = shortId(fields.scope);

@@ -46,4 +46,11 @@ describe('platform spawn env', () => {
     expect(claudeSource).not.toContain('shell: true');
     expect(codexSource).not.toContain('shell: true');
   });
+
+  it('spawns a missing Windows path without wrapping cmd.exe', async () => {
+    const source = await readFile(new URL('../../../src/platform/spawn.ts', import.meta.url), 'utf8');
+    expect(source).toContain('missingWindowsPathSkipsCmdWrap');
+    expect(source).toContain("from 'node:child_process'");
+    expect(source).toContain('cmd.exe');
+  });
 });

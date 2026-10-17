@@ -10,7 +10,7 @@ import {
   readPidFile,
   readProcessCmdline,
   writePidFile,
-  PidFileError,
+  type TestBridgePidFile,
 } from './pidfile';
 import {
   readProxyState,
@@ -139,18 +139,13 @@ export async function up(opts: UpOptions): Promise<RunningBridge> {
 
 export async function down(dataRoot: string): Promise<void> {
   assertPosix();
-  const file = await readPidFile(pidFilePath(dataRoot));
-  let cmdline: string;
+  let file: TestBridgePidFile;
   try {
-    cmdline = readProcessCmdline(file.pid);
+    file = await requireLiveBridge(dataRoot);
   } catch (err) {
-    if (err instanceof PidFileError) {
-      await stopDetachedProxy(dataRoot);
-      return;
-    }
+    await stopDetachedProxy(dataRoot);
     throw err;
   }
-  assertTestInstanceCmdline(cmdline, file.rootDir);
   await signalPid(file.pid, 'SIGTERM');
   const exited = await waitForPidExit(file.pid, 8_000);
   if (!exited) await signalPid(file.pid, 'SIGKILL');
@@ -183,7 +178,7 @@ export async function killCli(
   variant: 'child-only' | 'process-group',
 ): Promise<void> {
   assertPosix();
-  const file = await readPidFile(pidFilePath(dataRoot));
+  const file = await requireLiveBridge(dataRoot);
   const children = listChildPids(file.pid);
   if (variant === 'process-group') {
     try {
@@ -200,8 +195,15 @@ export async function killCli(
 
 export async function freezeBridge(dataRoot: string, frozen: boolean): Promise<void> {
   assertPosix();
-  const file = await readPidFile(pidFilePath(dataRoot));
+  const file = await requireLiveBridge(dataRoot);
   await signalPid(file.pid, frozen ? 'SIGSTOP' : 'SIGCONT');
+}
+
+async function requireLiveBridge(dataRoot: string): Promise<TestBridgePidFile> {
+  const file = await readPidFile(pidFilePath(dataRoot));
+  const cmdline = readProcessCmdline(file.pid);
+  assertTestInstanceCmdline(cmdline, file.rootDir);
+  return file;
 }
 
 function assertPosix(): void {

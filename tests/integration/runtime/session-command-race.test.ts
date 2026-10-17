@@ -256,6 +256,7 @@ it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished w
         await rendererRelease.promise;
       }
     } });
+    return { messageId: 'om_stream' };
   });
   try {
     await send(h.channel);

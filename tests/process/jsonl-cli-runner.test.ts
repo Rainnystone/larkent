@@ -270,6 +270,34 @@ describe('runner settlement boundaries', () => {
     expect(run.signal).toBe('SIGTERM');
   });
 
+  it('does not treat successFinish + empty stdout + exit 0 as success', async () => {
+    const f = fixture({
+      successFinish: 'normal',
+      spawnName: 'kimi',
+      translator: wrapParsedTranslator(new KimiJsonlTranslator(), 'kimi'),
+    });
+    const run = f.start();
+    const events = collect(run.events);
+    f.exit();
+    expectSpawnError(await events, 'kimi');
+  });
+
+  it('classifies a late spawn error on an empty successFinish run as failure, not done', async () => {
+    const f = fixture({
+      successFinish: 'normal',
+      spawnName: 'kimi',
+      translator: wrapParsedTranslator(new KimiJsonlTranslator(), 'kimi'),
+    });
+    const run = f.start();
+    const events = collect(run.events);
+    f.child.stdout.end();
+    f.child.stderr.end();
+    f.child.exitCode = 0;
+    f.child.emit('exit', 0, null);
+    f.child.emit('error', Object.assign(new Error('spawn kimi ENOENT'), { code: 'ENOENT' }));
+    expectSpawnError(await events, 'kimi');
+  });
+
   it('classifies a SIGKILL with no JSONL terminal as a failed event, not success', async () => {
     const f = fixture();
     const run = f.start();
@@ -364,6 +392,16 @@ async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]>
   const out: AgentEvent[] = [];
   for await (const event of events) out.push(event);
   return out;
+}
+
+function expectSpawnError(events: AgentEvent[], spawnName: string): void {
+  expect(events).toHaveLength(1);
+  expect(events[0]?.type).toBe('error');
+  expect((events[0] as { message?: string }).message).toMatch(
+    new RegExp(
+      `failed to spawn ${spawnName}|spawn returned no pid|${spawnName} exited with code|${spawnName} runtime error|exited without producing output`,
+    ),
+  );
 }
 
 describe('wrapParsedTranslator', () => {
@@ -936,35 +974,30 @@ setInterval(() => {}, 1000);
   });
 
   it('surfaces spawn errors as stream error events', async () => {
-    let run: ReturnType<ClaudeAdapter['run']>;
-    if (process.platform === 'win32') {
-      const fake = await createFakeClaude({
-        lines: [],
-        stderr: 'missing command\n',
-        exitCode: 1,
-      });
-      cleanup.push(fake.dir);
-      run = new ClaudeAdapter({ binary: fake.path }).run({
-        runId: 'run-missing',
-        prompt: 'hi',
-        cwd: fake.dir,
-      });
-    } else {
-      const missing = join(tmpdir(), `missing-claude-${Date.now()}`);
-      run = new ClaudeAdapter({ binary: missing }).run({
-        runId: 'run-missing',
-        prompt: 'hi',
-        cwd: tmpdir(),
-      });
-    }
+    const missing = join(tmpdir(), `missing-claude-${Date.now()}`);
+    const run = new ClaudeAdapter({ binary: missing }).run({
+      runId: 'run-missing',
+      prompt: 'hi',
+      cwd: tmpdir(),
+    });
 
-    const events = await collect(run.events);
+    expectSpawnError(await collect(run.events), 'claude');
+  });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]?.type).toBe('error');
-    expect((events[0] as { message?: string }).message).toMatch(
-      /failed to spawn claude|spawn returned no pid|claude exited with code/,
-    );
+  it('surfaces a non-zero CLI exit as a stream error event', async () => {
+    const fake = await createFakeClaude({
+      lines: [],
+      stderr: 'missing command\n',
+      exitCode: 1,
+    });
+    cleanup.push(fake.dir);
+    const run = new ClaudeAdapter({ binary: fake.path }).run({
+      runId: 'run-exit-1',
+      prompt: 'hi',
+      cwd: fake.dir,
+    });
+
+    expectSpawnError(await collect(run.events), 'claude');
   });
 
   it('waits for post-done process exit before stop fallback is needed', async () => {
@@ -1413,35 +1446,30 @@ describe('CodexAdapter process contract', () => {
   });
 
   it('surfaces spawn errors as stream error events', async () => {
-    let run: ReturnType<CodexAdapter['run']>;
-    if (process.platform === 'win32') {
-      const fake = await createFakeCodex({
-        lines: [],
-        stderr: 'missing command\n',
-        exitCode: 1,
-      });
-      cleanup.push(fake.dir);
-      run = new CodexAdapter({ binary: fake.path, profileStateDir: fake.dir }).run({
-        runId: 'run-missing',
-        prompt: 'hi',
-        cwd: await realpath(fake.dir),
-      });
-    } else {
-      const missing = join(tmpdir(), `missing-codex-${Date.now()}`);
-      run = new CodexAdapter({ binary: missing, profileStateDir: tmpdir() }).run({
-        runId: 'run-missing',
-        prompt: 'hi',
-        cwd: tmpdir(),
-      });
-    }
+    const missing = join(tmpdir(), `missing-codex-${Date.now()}`);
+    const run = new CodexAdapter({ binary: missing, profileStateDir: tmpdir() }).run({
+      runId: 'run-missing',
+      prompt: 'hi',
+      cwd: tmpdir(),
+    });
 
-    const events = await collect(run.events);
+    expectSpawnError(await collect(run.events), 'codex');
+  });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]?.type).toBe('error');
-    expect((events[0] as { message?: string }).message).toMatch(
-      /failed to spawn codex|spawn returned no pid|codex exited with code/,
-    );
+  it('surfaces a non-zero CLI exit as a stream error event', async () => {
+    const fake = await createFakeCodex({
+      lines: [],
+      stderr: 'missing command\n',
+      exitCode: 1,
+    });
+    cleanup.push(fake.dir);
+    const run = new CodexAdapter({ binary: fake.path, profileStateDir: fake.dir }).run({
+      runId: 'run-exit-1',
+      prompt: 'hi',
+      cwd: await realpath(fake.dir),
+    });
+
+    expectSpawnError(await collect(run.events), 'codex');
   });
 
   it('reports interrupted termination when stopped before a Codex terminal event', async () => {
@@ -1740,13 +1768,23 @@ describe('KimiAdapter process contract', () => {
       cwd: tmpdir(),
     });
 
-    const events = await collect(run.events);
+    expectSpawnError(await collect(run.events), 'kimi');
+  });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]?.type).toBe('error');
-    expect((events[0] as { message?: string }).message).toMatch(
-      /failed to spawn kimi|spawn returned no pid|kimi exited with code/,
-    );
+  it('surfaces a non-zero CLI exit as a stream error event', async () => {
+    const fake = await createFakeKimi({
+      lines: [],
+      stderr: 'missing command\n',
+      exitCode: 1,
+    });
+    cleanup.push(fake.dir);
+    const run = new KimiAdapter({ binary: fake.path }).run({
+      runId: 'run-exit-1',
+      prompt: 'hi',
+      cwd: fake.dir,
+    });
+
+    expectSpawnError(await collect(run.events), 'kimi');
   });
 
   it('stop() interrupts a hung run and reports done(interrupted)', async () => {
@@ -2058,13 +2096,23 @@ describe('GrokAdapter process contract', () => {
       cwd: tmpdir(),
     });
 
-    const events = await collect(run.events);
+    expectSpawnError(await collect(run.events), 'grok');
+  });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]?.type).toBe('error');
-    expect((events[0] as { message?: string }).message).toMatch(
-      /failed to spawn grok|spawn returned no pid|grok exited with code/,
-    );
+  it('surfaces a non-zero CLI exit as a stream error event', async () => {
+    const fake = await createFakeGrok({
+      lines: [],
+      stderr: 'missing command\n',
+      exitCode: 1,
+    });
+    cleanup.push(fake.dir);
+    const run = new GrokAdapter({ binary: fake.path }).run({
+      runId: 'run-exit-1',
+      prompt: 'hi',
+      cwd: fake.dir,
+    });
+
+    expectSpawnError(await collect(run.events), 'grok');
   });
 
   it('stop() interrupts a hung run and reports done(interrupted)', async () => {
@@ -2379,13 +2427,23 @@ describe('CursorAdapter process contract', () => {
       cwd: tmpdir(),
     });
 
-    const events = await collect(run.events);
+    expectSpawnError(await collect(run.events), 'cursor');
+  });
 
-    expect(events).toHaveLength(1);
-    expect(events[0]?.type).toBe('error');
-    expect((events[0] as { message?: string }).message).toMatch(
-      /failed to spawn cursor|spawn returned no pid|cursor exited with code/,
-    );
+  it('surfaces a non-zero CLI exit as a stream error event', async () => {
+    const fake = await createFakeCursor({
+      lines: [],
+      stderr: 'missing command\n',
+      exitCode: 1,
+    });
+    cleanup.push(fake.dir);
+    const run = new CursorAdapter({ binary: fake.path }).run({
+      runId: 'run-exit-1',
+      prompt: 'hi',
+      cwd: fake.dir,
+    });
+
+    expectSpawnError(await collect(run.events), 'cursor');
   });
 
   it('stop() interrupts a hung run and reports done(interrupted)', async () => {

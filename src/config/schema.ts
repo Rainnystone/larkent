@@ -81,8 +81,6 @@ export interface BackfillPreferences {
   dryRun: boolean;
   /** Hard cap on the scan window, milliseconds. Default 6 h. */
   lookbackMs: number;
-  /** Skip scans for gaps shorter than this, milliseconds. Default 60 s. */
-  minGapMs: number;
   maxChats: number;
   maxRawPerChat: number;
   maxMentionsPerChat: number;
@@ -99,7 +97,6 @@ export const DEFAULT_BACKFILL_PREFERENCES: BackfillPreferences = {
   enabled: true,
   dryRun: false,
   lookbackMs: 6 * 60 * 60 * 1000,
-  minGapMs: 60 * 1000,
   maxChats: 50,
   maxRawPerChat: 200,
   maxMentionsPerChat: 20,
@@ -165,10 +162,10 @@ export interface AppPreferences {
    */
   maxConcurrentRuns?: number;
   /**
-   * Global default idle-timeout for claude runs, in minutes. When set,
-   * if claude emits no stream event for this long the bridge kills the
-   * run as presumed-hung. Undefined / 0 = no timeout (the default — runs
-   * can hang indefinitely). Per-scope `/timeout` overrides this.
+   * Global default idle-timeout for runs, in minutes. If the agent emits
+   * no stream event for this long the bridge kills the run as presumed-hung.
+   * Unset defaults to 15. `0` disables the watchdog. Per-scope `/timeout`
+   * overrides this.
    */
   runIdleTimeoutMinutes?: number;
   /**
@@ -297,12 +294,6 @@ export function getRequireMentionInGroup(cfg: AppConfig): boolean {
 }
 
 /**
- * Resolve the global default idle-timeout in ms. Returns `undefined` when
- * disabled (the default). Clamps to [1, 120] minutes when set so a typo
- * can't lock the bot into a 1-second kill loop or wait forever to a number
- * the user didn't really mean.
- */
-/**
  * Grace period before SIGKILL fallback when stopping a claude subprocess.
  * Returns ms. Defaults to 5000 (5 seconds). Clamps to [100, 30000] so a
  * typo can't either make stop() effectively SIGKILL-immediate or hang for
@@ -314,9 +305,21 @@ export function getAgentStopGraceMs(cfg: AppConfig): number {
   return Math.min(30_000, Math.max(100, Math.floor(raw)));
 }
 
+/** Unset `runIdleTimeoutMinutes` uses this bound. `0` disables. */
+export const DEFAULT_RUN_IDLE_TIMEOUT_MINUTES = 15;
+
+/**
+ * Resolve the global idle-timeout in ms. Unset defaults to 15 minutes.
+ * Returns `undefined` when explicitly disabled (`0`). Clamps a positive
+ * value to [1, 120] minutes so a typo can't lock the bot into a 1-second
+ * kill loop.
+ */
 export function getRunIdleTimeoutMs(cfg: AppConfig): number | undefined {
   const raw = cfg.preferences?.runIdleTimeoutMinutes;
-  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw <= 0) return undefined;
+  if (raw === 0) return undefined;
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) {
+    return DEFAULT_RUN_IDLE_TIMEOUT_MINUTES * 60_000;
+  }
   const clamped = Math.min(Math.max(Math.floor(raw), 1), 120);
   return clamped * 60_000;
 }
@@ -340,12 +343,6 @@ export function normalizeBackfillPreferences(
       input.lookbackMs,
       DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
       'lookbackMs',
-      warn,
-    ),
-    minGapMs: positiveIntOr(
-      input.minGapMs,
-      DEFAULT_BACKFILL_PREFERENCES.minGapMs,
-      'minGapMs',
       warn,
     ),
     maxChats: positiveIntOr(
@@ -385,7 +382,6 @@ export function isDefaultBackfillPreferences(value: BackfillPreferences): boolea
     value.enabled === DEFAULT_BACKFILL_PREFERENCES.enabled &&
     value.dryRun === DEFAULT_BACKFILL_PREFERENCES.dryRun &&
     value.lookbackMs === DEFAULT_BACKFILL_PREFERENCES.lookbackMs &&
-    value.minGapMs === DEFAULT_BACKFILL_PREFERENCES.minGapMs &&
     value.maxChats === DEFAULT_BACKFILL_PREFERENCES.maxChats &&
     value.maxRawPerChat === DEFAULT_BACKFILL_PREFERENCES.maxRawPerChat &&
     value.maxMentionsPerChat === DEFAULT_BACKFILL_PREFERENCES.maxMentionsPerChat &&
@@ -399,7 +395,6 @@ export function formatBackfillPreferences(prefs: BackfillPreferences): string {
     `enabled=${prefs.enabled}`,
     `dryRun=${prefs.dryRun}`,
     `lookbackMs=${prefs.lookbackMs}`,
-    `minGapMs=${prefs.minGapMs}`,
     `maxChats=${prefs.maxChats}`,
     `maxRawPerChat=${prefs.maxRawPerChat}`,
     `maxMentionsPerChat=${prefs.maxMentionsPerChat}`,

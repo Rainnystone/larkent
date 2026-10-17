@@ -129,8 +129,21 @@ describe('README runtime contract', () => {
   it('documents self-heal recovery and a generic staged rollout', async () => {
     const operations = await readFile(new URL('../../../docs/operations.md', import.meta.url), 'utf8');
 
-    expect(operations).toContain('keepalive.wake-up` or `ws.reconnected');
+    expect(operations).toContain('link.sleep` or `link.recovered');
     expect(operations).toContain('enable on one profile, watch one recovery cycle, then the others');
+  });
+
+  it('describes the outbox as staged per-item delivery without remainder or ECONNABORTED special cases', async () => {
+    const context = await readFile(new URL('../../../CONTEXT.md', import.meta.url), 'utf8');
+    const outbox = context.split('\n').find((line) => line.startsWith('- **outbox**:'));
+    expect(outbox).toBeDefined();
+    expect(outbox).toContain('per-item state and receipts');
+    expect(outbox).toContain('stream()');
+    expect(outbox).toContain('classify');
+    expect(outbox).toContain('While the link is down');
+    expect(outbox).not.toMatch(/remainder/i);
+    expect(outbox).not.toContain('ECONNABORTED');
+    expect(outbox).not.toMatch(/plain-text fallback/);
   });
 
   it('documents canonical permissions instead of recommending legacy sandbox config', async () => {

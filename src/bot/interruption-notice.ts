@@ -1,11 +1,12 @@
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CallbackNonceStore } from '../card/callback-store';
 import { interruptionNoticeCard } from '../card/templates';
 import { log } from '../core/logger';
 import { describeRunOutcome, type RunOutcome } from './run-outcome';
-import { outboundInFlight } from './self-message';
+import { withDeliveryUuid } from './feishu-delivery';
 import {
   noticeDeliveryKey,
+  noticeOwnerDeliveryKey,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnNotice,
@@ -13,28 +14,16 @@ import {
 
 export const CONTINUE_HINT =
   '上一轮在哪里、因为什么被中断，请先核对已完成的步骤，避免重复执行有副作用的操作';
+export const ABANDON_HINT =
+  '现已放弃。不得继续或重做上一轮未完成的工作，只处理用户现在这条新消息';
 export const NOTICE_MAX_BUTTON_STREAK = 3;
 export const NOTICE_TTL_MS = 24 * 60 * 60 * 1000;
 export const NOTICE_RESTART_GAP_MS = 500;
 
 export type NoticeKind = 'none' | 'continue' | 'auth';
 export type NoticeAction = 'notice.continue' | 'notice.dismiss';
-export type NoticeResolution = 'continued' | 'dismissed';
+export type NoticeResolution = 'continued' | 'dismissed' | 'abandoned';
 export type NoticeCardUpdater = (messageId: string, card: object) => Promise<void>;
-
-const liveNoticeSends = new Set<string>();
-
-export function isLiveNoticeSend(turnId: string): boolean {
-  return liveNoticeSends.has(turnId);
-}
-
-function beginLiveNoticeSend(turnId: string): void {
-  liveNoticeSends.add(turnId);
-}
-
-export function endLiveNoticeSend(turnId: string): void {
-  liveNoticeSends.delete(turnId);
-}
 
 export interface NoticePlan {
   kind: NoticeKind;
@@ -80,19 +69,21 @@ export function buildNoticeMarkdown(input: {
   requireBotMention: boolean;
   outcome: RunOutcome;
   includeButtons?: boolean;
+  mentionInitiator?: boolean;
 }): string {
-  const mention = `<at id="${input.initiatorId}"></at>`;
+  const mention = input.mentionInitiator === false ? '' : `<at id="${input.initiatorId}"></at> `;
   const reason = describeRunOutcome(input.outcome);
   const buttons = input.includeButtons !== false;
   const continuePhrase = input.requireBotMention ? '@bot 继续' : '继续';
   const actionLine = buttons
     ? `点「继续 / 暂不」，或 ${continuePhrase}。`
     : `或 ${continuePhrase}。`;
-  return `${mention} 上一轮未完成（${reason}）。${CONTINUE_HINT}。${actionLine}`;
+  return `${mention}上一轮未完成（${reason}）。${CONTINUE_HINT}。${actionLine}`;
 }
 
-export function buildAuthInitiatorMarkdown(initiatorId: string): string {
-  return `<at id="${initiatorId}"></at> CLI 登录已失效，需要重新登录后再试。这次不能继续，新的消息仍会照常处理。`;
+export function buildAuthInitiatorMarkdown(initiatorId: string, mentionInitiator = true): string {
+  const mention = mentionInitiator ? `<at id="${initiatorId}"></at> ` : '';
+  return `${mention}CLI 登录已失效，需要重新登录后再试。这次不能继续，新的消息仍会照常处理。`;
 }
 
 export function buildAuthOwnerMarkdown(): string {
@@ -104,6 +95,10 @@ export function continueExtraInstruction(outcome: RunOutcome, userInput?: string
   const trimmed = userInput?.trim();
   if (!trimmed) return base;
   return `${base}\n原始输入：\n${trimmed}`;
+}
+
+export function abandonExtraInstruction(outcome: RunOutcome): string {
+  return `上一轮因为「${describeRunOutcome(outcome)}」被中断，${ABANDON_HINT}。`;
 }
 
 export interface NoticeSignInput {
@@ -238,6 +233,8 @@ export function resolvedNoticeCard(resolution: NoticeResolution): object {
       return interruptionNoticeCard({ body: '已继续' });
     case 'dismissed':
       return interruptionNoticeCard({ body: '已忽略' });
+    case 'abandoned':
+      return interruptionNoticeCard({ body: '已放弃' });
     default: {
       const _exhaustive: never = resolution;
       return _exhaustive;
@@ -265,15 +262,6 @@ export async function resolveInterruptionNotice(input: {
   }
 }
 
-export function latestContinueNotice(journal: TurnJournal, scope: string): TurnJournalEntry | undefined {
-  return [...journal.list()].reverse().find((entry) => (
-    entry.scope === scope
-    && !entry.noticeInvalidated
-    && (entry.notice?.kind === 'continue' || entry.notice?.kind === 'plain')
-    && (entry.status === 'notice-delivered' || entry.status === 'notice-pending')
-  ));
-}
-
 export function authNoticeAlreadyDelivered(journal: TurnJournal): boolean {
   return journal.list().some((entry) => (
     entry.notice?.kind === 'auth' && (entry.status === 'notice-delivered' || entry.notice.initiatorDelivered)
@@ -290,19 +278,33 @@ export async function deliverInterruptionNotice(input: {
   requireBotMention: boolean;
   ownerId?: string;
   authNotified: boolean;
-  stageOnly?: boolean;
 }): Promise<{ delivered: boolean; pending: boolean }> {
-  const entry = input.journal.get(input.turnId);
+  const entry = stageInterruptionNotice(input);
   if (!entry) return { delivered: false, pending: false };
   const plan = planInterruptionNotice(input.outcome);
-  if (plan.kind === 'none') return { delivered: false, pending: false };
-  if (plan.kind === 'auth') {
-    if (input.authNotified || authNoticeAlreadyDelivered(input.journal)) {
-      return { delivered: false, pending: false };
-    }
-    return sendAuthNotice(input, entry);
-  }
+  if (plan.kind === 'auth') return sendAuthNotice(input, entry);
   return sendContinueNotice(input, entry);
+}
+
+export function stageInterruptionNotice(input: {
+  journal: TurnJournal;
+  turnId: string;
+  outcome: RunOutcome;
+  noticeAuth?: NoticeActionAuth;
+  consecutive: number;
+  requireBotMention: boolean;
+  ownerId?: string;
+  authNotified: boolean;
+}): TurnJournalEntry | undefined {
+  const entry = input.journal.get(input.turnId);
+  if (!entry) return undefined;
+  const plan = planInterruptionNotice(input.outcome);
+  if (plan.kind === 'none') return undefined;
+  if (plan.kind === 'auth') {
+    if (input.authNotified || authNoticeAlreadyDelivered(input.journal)) return undefined;
+    return stageAuthNotice(input, entry);
+  }
+  return stageContinueNotice(input, entry);
 }
 
 export async function resendPendingNotice(input: {
@@ -314,18 +316,7 @@ export async function resendPendingNotice(input: {
   const notice = input.entry.notice;
   if (!notice || input.entry.noticeInvalidated) return false;
   if (notice.messageId) return true;
-  if (
-    isLiveNoticeSend(input.entry.turnId)
-    || outboundInFlight(notice.deliveryId)
-    || input.journal?.isDelivering(noticeDeliveryKey(input.entry.turnId))
-  ) {
-    return false;
-  }
-  const key = noticeDeliveryKey(input.entry.turnId);
-  const sent = await (input.journal
-    ? input.journal.withDelivery(key, () => sendExistingNotice(input, notice))
-    : sendExistingNotice(input, notice));
-  return sent === true;
+  return sendExistingNotice(input, notice);
 }
 
 async function sendExistingNotice(
@@ -344,19 +335,17 @@ async function sendExistingNotice(
   return true;
 }
 
-async function sendContinueNotice(
+function stageContinueNotice(
   input: {
-    send: NoticeSender;
     journal: TurnJournal;
     turnId: string;
     outcome: RunOutcome;
     noticeAuth?: NoticeActionAuth;
     consecutive: number;
     requireBotMention: boolean;
-    stageOnly?: boolean;
   },
   entry: TurnJournalEntry,
-): Promise<{ delivered: boolean; pending: boolean }> {
+): TurnJournalEntry {
   const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
   const buttons = noticeUsesButtons(input.consecutive) && Boolean(input.noticeAuth);
   let notice: TurnNotice = existing ?? {
@@ -367,37 +356,45 @@ async function sendContinueNotice(
       requireBotMention: input.requireBotMention,
       outcome: input.outcome,
       includeButtons: buttons,
+      mentionInitiator: entry.initiatorType !== 'bot',
     }),
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     includeButtons: buttons,
-    continueHint: continueExtraInstruction(input.outcome),
-    deliveryId: randomUUID(),
+    deliveryId: noticeDeliveryKey(input.turnId),
   };
-  if (!notice.deliveryId) notice = { ...notice, deliveryId: randomUUID() };
+  if (!notice.deliveryId) notice = { ...notice, deliveryId: noticeDeliveryKey(input.turnId) };
   if (!existing) {
     input.journal.markInterrupted(input.turnId, input.outcome, input.consecutive);
-    input.journal.markNoticePending(input.turnId, notice);
+    input.journal.stageNotice(input.turnId, notice);
   } else if (!existing.deliveryId) {
-    input.journal.markNoticePending(input.turnId, notice);
+    input.journal.stageNotice(input.turnId, notice);
   }
-  beginLiveNoticeSend(input.turnId);
-  if (input.stageOnly) return { delivered: false, pending: true };
+  return input.journal.get(input.turnId) ?? { ...entry, notice };
+}
+
+async function sendContinueNotice(
+  input: {
+    send: NoticeSender;
+    journal: TurnJournal;
+    turnId: string;
+    outcome: RunOutcome;
+    noticeAuth?: NoticeActionAuth;
+    consecutive: number;
+    requireBotMention: boolean;
+  },
+  entry: TurnJournalEntry,
+): Promise<{ delivered: boolean; pending: boolean }> {
+  const staged = stageContinueNotice(input, entry);
+  const notice = staged.notice;
+  if (!notice) return { delivered: false, pending: false };
   if (notice.messageId) {
-    input.journal.markNoticeDelivered(input.turnId);
-    endLiveNoticeSend(input.turnId);
+    input.journal.noticeDelivered(input.turnId);
     return { delivered: true, pending: false };
   }
-  if (outboundInFlight(notice.deliveryId) || input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
-    return { delivered: false, pending: true };
-  }
   try {
-    const sent = await input.journal.withDelivery(noticeDeliveryKey(input.turnId), async () => {
-      await postNotice(input.send, { ...entry, notice }, notice, input.noticeAuth, input.journal);
-      return true;
-    });
-    if (sent !== true) return { delivered: false, pending: true };
-    input.journal.markNoticeDelivered(input.turnId);
+    await postNotice(input.send, { ...staged, notice }, notice, input.noticeAuth, input.journal);
+    input.journal.noticeDelivered(input.turnId);
     log.info('notice', 'sent', { turnId: input.turnId, kind: notice.kind, consecutive: input.consecutive });
     return { delivered: true, pending: false };
   } catch (error) {
@@ -406,9 +403,32 @@ async function sendContinueNotice(
       err: error instanceof Error ? error.message : String(error),
     });
     return { delivered: false, pending: true };
-  } finally {
-    endLiveNoticeSend(input.turnId);
   }
+}
+
+function stageAuthNotice(
+  input: {
+    journal: TurnJournal;
+    turnId: string;
+    ownerId?: string;
+  },
+  entry: TurnJournalEntry,
+): TurnJournalEntry {
+  const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
+  const notice: TurnNotice = existing ?? {
+    kind: 'auth',
+    recipientChatId: entry.chatId,
+    markdown: buildAuthInitiatorMarkdown(
+      entry.initiatorId || entry.senderId,
+      entry.initiatorType !== 'bot',
+    ),
+    replyTo: entry.messageIds.at(-1),
+    ...(entry.threadId ? { replyInThread: true } : {}),
+    ...(input.ownerId ? { ownerChatId: input.ownerId } : {}),
+    deliveryId: noticeDeliveryKey(input.turnId),
+  };
+  if (!existing) input.journal.stageNotice(input.turnId, notice);
+  return input.journal.get(input.turnId) ?? { ...entry, notice };
 }
 
 async function sendAuthNotice(
@@ -417,33 +437,20 @@ async function sendAuthNotice(
     journal: TurnJournal;
     turnId: string;
     ownerId?: string;
-    stageOnly?: boolean;
   },
   entry: TurnJournalEntry,
 ): Promise<{ delivered: boolean; pending: boolean }> {
-  const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
-  const notice: TurnNotice = existing ?? {
-    kind: 'auth',
-    recipientChatId: entry.chatId,
-    markdown: buildAuthInitiatorMarkdown(entry.initiatorId || entry.senderId),
-    replyTo: entry.messageIds.at(-1),
-    ...(entry.threadId ? { replyInThread: true } : {}),
-    ...(input.ownerId ? { ownerChatId: input.ownerId } : {}),
-    deliveryId: randomUUID(),
-  };
-  if (!existing) input.journal.markNoticePending(input.turnId, notice);
-  if (input.stageOnly) return { delivered: false, pending: true };
+  const staged = stageAuthNotice(input, entry);
+  const notice = staged.notice;
+  if (!notice) return { delivered: false, pending: false };
   if (notice.messageId || (notice.initiatorDelivered && (!notice.ownerChatId || notice.ownerDelivered))) {
-    input.journal.markNoticeDelivered(input.turnId);
+    input.journal.noticeDelivered(input.turnId);
     return { delivered: true, pending: false };
   }
-  if (outboundInFlight(notice.deliveryId) || input.journal.isDelivering(noticeDeliveryKey(input.turnId))) {
-    return { delivered: false, pending: true };
-  }
   try {
-    const ok = await sendAuthPayload(input.send, { ...entry, notice }, notice, input.journal);
+    const ok = await sendAuthPayload(input.send, { ...staged, notice }, notice, input.journal);
     if (ok) {
-      input.journal.markNoticeDelivered(input.turnId);
+      input.journal.noticeDelivered(input.turnId);
       log.info('notice', 'sent', { turnId: input.turnId, kind: 'auth' });
       return { delivered: true, pending: false };
     }
@@ -466,20 +473,28 @@ async function sendAuthPayload(
   const next: TurnNotice = { ...notice };
   try {
     if (!next.initiatorDelivered) {
-      const result = await send(next.recipientChatId, { markdown: next.markdown }, sendOpts(entry, next));
+      const result = await send(
+        next.recipientChatId,
+        { markdown: next.markdown },
+        sendOpts(entry, next),
+      );
       requireReceipt(result, 'auth-initiator');
       next.initiatorDelivered = true;
-      journal?.update(entry.turnId, { notice: next });
+      journal?.recordNotice(entry.turnId, next);
     }
     if (next.ownerChatId && !next.ownerDelivered) {
-      const result = await send(next.ownerChatId, { markdown: buildAuthOwnerMarkdown() });
+      const result = await send(
+        next.ownerChatId,
+        { markdown: buildAuthOwnerMarkdown() },
+        withDeliveryUuid({}, noticeOwnerDeliveryKey(entry.turnId)),
+      );
       requireReceipt(result, 'auth-owner');
       next.ownerDelivered = true;
-      journal?.update(entry.turnId, { notice: next });
+      journal?.recordNotice(entry.turnId, next);
     }
     return Boolean(next.initiatorDelivered && (!next.ownerChatId || next.ownerDelivered));
   } catch (error) {
-    journal?.update(entry.turnId, { notice: next });
+    journal?.recordNotice(entry.turnId, next);
     throw error;
   }
 }
@@ -512,7 +527,7 @@ async function postNotice(
     const result = await send(
       notice.recipientChatId,
       { card: interruptionNoticeCard({ body: notice.markdown, continueToken, dismissToken }) },
-      { ...opts, ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}) },
+      opts,
     );
     requireReceipt(result, 'notice-card');
     persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
@@ -521,7 +536,7 @@ async function postNotice(
   const result = await send(
     notice.recipientChatId,
     { markdown: notice.markdown },
-    { ...opts, ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}) },
+    opts,
   );
   requireReceipt(result, 'notice-text');
   persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
@@ -535,7 +550,8 @@ function persistNoticeMessageId(
 ): void {
   if (!journal || !messageId?.trim()) return;
   const current = journal.get(turnId)?.notice ?? notice;
-  journal.update(turnId, { notice: { ...current, messageId } });
+  journal.recordNotice(turnId, { ...current, messageId });
+  journal.noteNonAnswerId(turnId, messageId);
 }
 
 function sendOpts(
@@ -543,11 +559,10 @@ function sendOpts(
   notice: TurnNotice,
 ): { replyTo?: string; replyInThread?: boolean; uuid?: string } {
   const replyTo = notice.replyTo ?? entry.messageIds.at(-1);
-  return {
+  return withDeliveryUuid({
     ...(replyTo ? { replyTo } : {}),
     ...(notice.replyInThread || entry.threadId ? { replyInThread: true } : {}),
-    ...(notice.deliveryId ? { uuid: notice.deliveryId } : {}),
-  };
+  }, notice.deliveryId ?? noticeDeliveryKey(entry.turnId));
 }
 
 function requireReceipt(result: { messageId?: string }, type: string): void {

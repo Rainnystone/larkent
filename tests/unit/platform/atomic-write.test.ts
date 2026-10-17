@@ -79,7 +79,27 @@ describe('atomic write retry', () => {
     expect((await readdir(root)).filter((name) => name.includes('.tmp-'))).toEqual([]);
   });
 
-  it('flushes the temp file before rename on the win32 path', async () => {
+  it.skipIf(process.platform === 'win32')('flushes the temp file before rename on POSIX', async () => {
+    const root = await tmpRoot();
+    const file = join(root, 'durable.json');
+    const probe = await open(join(root, 'probe'), 'w');
+    const handleProto = Object.getPrototypeOf(probe) as { sync: () => Promise<void> };
+    await probe.close();
+    const syncSpy = vi.spyOn(handleProto, 'sync');
+    try {
+      await writeFileAtomic(file, 'payload\n', {
+        rename: async (from, to, fallbackRename) => {
+          expect(syncSpy).toHaveBeenCalledTimes(1);
+          await fallbackRename(from, to);
+        },
+      });
+      await expect(readFile(file, 'utf8')).resolves.toBe('payload\n');
+    } finally {
+      syncSpy.mockRestore();
+    }
+  });
+
+  it('closes the Windows temp handle without fsync so AV cannot pin it across rename', async () => {
     const root = await tmpRoot();
     const file = join(root, 'durable.json');
     const probe = await open(join(root, 'probe'), 'w');
@@ -87,21 +107,48 @@ describe('atomic write retry', () => {
     await probe.close();
     const realPlatform = process.platform;
     const syncSpy = vi.spyOn(handleProto, 'sync');
-    let syncedBeforeRename = false;
     Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
     try {
       await writeFileAtomic(file, 'payload\n', {
         rename: async (from, to, fallbackRename) => {
-          syncedBeforeRename = syncSpy.mock.calls.length > 0;
+          expect(syncSpy).not.toHaveBeenCalled();
           await fallbackRename(from, to);
         },
       });
-      expect(syncedBeforeRename).toBe(true);
-      // Windows cannot fsync directory handles, so only the file is synced.
-      expect(syncSpy).toHaveBeenCalledTimes(1);
+      expect(syncSpy).not.toHaveBeenCalled();
       await expect(readFile(file, 'utf8')).resolves.toBe('payload\n');
     } finally {
       syncSpy.mockRestore();
+      Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
+    }
+  });
+
+  it('keeps two sequential Windows startup persists inside 2s when AV returns EPERM until the last attempt', async () => {
+    // Supervisor start-stop: missing sessions persist, later store fails, repaired
+    // retry persists workspaces. Linear 40ms*attempt backoff is 2.6s per write and
+    // the 5s test dies mid-retry with no errno — same shape as Windows CI.
+    const root = await tmpRoot();
+    const realPlatform = process.platform;
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+    try {
+      const started = Date.now();
+      for (const name of ['sessions.json', 'workspaces.json']) {
+        let attempts = 0;
+        await writeFileAtomic(join(root, name), '{}\n', {
+          rename: async (from, to, fallbackRename) => {
+            attempts++;
+            if (attempts < 12) {
+              const err = new Error('locked') as NodeJS.ErrnoException;
+              err.code = 'EPERM';
+              throw err;
+            }
+            await fallbackRename(from, to);
+          },
+        });
+        expect(attempts).toBe(12);
+      }
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
       Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
     }
   });

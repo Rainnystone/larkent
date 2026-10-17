@@ -51,15 +51,19 @@ export function outboundMessageId(result: unknown): string | undefined {
 }
 
 export class CliSelfSendTracker {
-  private readonly active = new Set<string>();
-  private readonly sent = new Set<string>();
+  private readonly active = new Map<string, string | undefined>();
+  private readonly sent = new Map<string, string | undefined>();
 
-  begin(scope: string): void {
-    this.active.add(scope);
+  begin(scope: string, turnId?: string): void {
+    this.active.set(scope, turnId);
   }
 
   has(scope: string): boolean {
     return this.sent.has(scope);
+  }
+
+  turnIdFor(scope: string): string | undefined {
+    return this.sent.get(scope) ?? this.active.get(scope);
   }
 
   consume(scope: string): boolean {
@@ -71,11 +75,11 @@ export class CliSelfSendTracker {
   noteInbound(chatId: string, threadId?: string): boolean {
     const topicScope = threadId ? `${chatId}:${threadId}` : undefined;
     if (topicScope !== undefined && this.active.has(topicScope)) {
-      this.sent.add(topicScope);
+      this.sent.set(topicScope, this.active.get(topicScope));
       return true;
     }
     if (this.active.has(chatId)) {
-      this.sent.add(chatId);
+      this.sent.set(chatId, this.active.get(chatId));
       return true;
     }
     return false;
@@ -106,39 +110,46 @@ export class OutboundTimeoutError extends Error {
   }
 }
 
-const OUTBOUND_OPS = ['send', 'stream', 'updateCard', 'updateCardById'] as const;
+const TIMED_CHANNEL_OPS = [
+  'send',
+  'updateCard',
+  'updateCardById',
+  'getChatMode',
+  'getAppInfo',
+  'listChats',
+  'fetchRawMessage',
+  'fetchMessage',
+] as const;
+const WRAPPED_CHANNEL_OPS = [...TIMED_CHANNEL_OPS, 'stream'] as const;
 
 export async function withOutboundTimeout<T>(
   op: string,
   work: Promise<T>,
   timeoutMs = OUTBOUND_REQUEST_TIMEOUT_MS,
 ): Promise<T> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new OutboundTimeoutError(op, timeoutMs));
+    }, timeoutMs);
+  });
+  const settled = work.then(
+    (value) => ({ ok: true as const, value }),
+    (error: unknown) => ({ ok: false as const, error }),
+  );
   try {
-    return await Promise.race([
-      work,
-      new Promise<never>((_, reject) => {
-        const onAbort = (): void => {
-          ctrl.signal.removeEventListener('abort', onAbort);
-          reject(new OutboundTimeoutError(op, timeoutMs));
-        };
-        if (ctrl.signal.aborted) {
-          onAbort();
-          return;
-        }
-        ctrl.signal.addEventListener('abort', onAbort);
-      }),
+    const winner = await Promise.race([
+      settled,
+      timeout.then(
+        () => ({ ok: 'timeout' as const, error: new OutboundTimeoutError(op, timeoutMs) }),
+        (error: unknown) => ({ ok: 'timeout' as const, error }),
+      ),
     ]);
+    if (winner.ok === true) return winner.value;
+    throw winner.error;
   } finally {
-    clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   }
-}
-
-const inflightByUuid = new Map<string, Promise<unknown>>();
-
-export function outboundInFlight(uuid: string | undefined): boolean {
-  return Boolean(uuid && inflightByUuid.has(uuid));
 }
 
 export function wrapChannelOutbound(
@@ -146,57 +157,208 @@ export function wrapChannelOutbound(
   outbound: OutboundMessageIds,
   opts: {
     timeoutMs?: number;
-    onSettled?: (uuid: string, result: unknown) => void;
+    /** Bound for the producer callback. Unset keeps the agent-run unbounded (T11). */
+    producerTimeoutMs?: number;
+    onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void;
   } = {},
 ): void {
   const timeoutMs = opts.timeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
   const mutable = channel as Record<string, unknown>;
-  for (const op of OUTBOUND_OPS) {
+  for (const op of WRAPPED_CHANNEL_OPS) {
     const current = mutable[op];
     if (typeof current !== 'function') continue;
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
     mutable[op] = (...args: unknown[]) => {
-      const uuid = outboundUuid(args);
-      const work = orig(...stripOutboundUuid(args)).then((result) => {
-        if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
-        if (uuid) opts.onSettled?.(uuid, result);
+      if (op === 'stream') {
+        return timedStreamCall(orig, args, outbound, timeoutMs, opts.onResult, opts.producerTimeoutMs);
+      }
+      const work = orig(...args).then((result) => {
+        if (op === 'send') outbound.add(outboundMessageId(result));
         return result;
       });
-      if (uuid) {
-        inflightByUuid.set(uuid, work);
-        // Two-branch then: finally() would spawn a second rejected promise
-        // that the caller never sees, and Node would treat a normal send
-        // failure as an unhandledRejection.
-        void work.then(
-          () => {
-            if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
-          },
-          () => {
-            if (inflightByUuid.get(uuid) === work) inflightByUuid.delete(uuid);
-          },
-        );
-      }
-      return withOutboundTimeout(op, work, timeoutMs);
+      const pending = isTimedChannelOp(op) ? withOutboundTimeout(op, work, timeoutMs) : work;
+      return pending.then(
+        (result) => {
+          opts.onResult?.({ ok: true });
+          return result;
+        },
+        (error: unknown) => {
+          opts.onResult?.({ ok: false, error });
+          throw error;
+        },
+      );
     };
   }
+  wrapMessageList(channel, timeoutMs, opts.onResult);
 }
 
-/** Attach an in-process delivery id. Stripped before the SDK send. */
-export function attachOutboundUuid<T extends object>(opts: T, uuid?: string): T {
-  if (!uuid) return opts;
-  return { ...opts, uuid } as T;
+function wrapMessageList(
+  channel: object,
+  timeoutMs: number,
+  onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
+): void {
+  const rawClient = (channel as { rawClient?: unknown }).rawClient;
+  if (!rawClient || typeof rawClient !== 'object') return;
+  const im = (rawClient as { im?: unknown }).im;
+  if (!im || typeof im !== 'object') return;
+  const v1 = (im as { v1?: unknown }).v1;
+  if (!v1 || typeof v1 !== 'object') return;
+  const message = (v1 as { message?: unknown }).message;
+  if (!message || typeof message !== 'object') return;
+  const rec = message as Record<string, unknown>;
+  const current = rec.list;
+  if (typeof current !== 'function') return;
+  const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(message);
+  rec.list = (...args: unknown[]) => {
+    const work = Promise.resolve(orig(...args));
+    return withOutboundTimeout('message.list', work, timeoutMs).then(
+      (result) => {
+        onResult?.({ ok: true });
+        return result;
+      },
+      (error: unknown) => {
+        onResult?.({ ok: false, error });
+        throw error;
+      },
+    );
+  };
 }
 
-function outboundUuid(args: unknown[]): string | undefined {
-  const last = args.at(-1);
-  if (!last || typeof last !== 'object') return undefined;
-  const uuid = (last as { uuid?: unknown }).uuid;
-  return typeof uuid === 'string' && uuid ? uuid : undefined;
+function isTimedChannelOp(op: (typeof WRAPPED_CHANNEL_OPS)[number]): boolean {
+  return (TIMED_CHANNEL_OPS as readonly string[]).includes(op);
 }
 
-function stripOutboundUuid(args: unknown[]): unknown[] {
-  const last = args.at(-1);
-  if (!last || typeof last !== 'object' || !('uuid' in last)) return args;
-  const { uuid: _uuid, ...rest } = last as { uuid?: unknown } & Record<string, unknown>;
-  return [...args.slice(0, -1), rest];
+function timedStreamCall(
+  orig: (...args: unknown[]) => Promise<unknown>,
+  args: unknown[],
+  outbound: OutboundMessageIds,
+  timeoutMs: number,
+  onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
+  producerTimeoutMs?: number,
+): Promise<unknown> {
+  const producerStarted = createGate();
+  const producerDone = createGate();
+  const wrappedInput = wrapStreamProducer(args[1], outbound, timeoutMs, {
+    onStart: () => producerStarted.resolve(),
+    onDone: () => producerDone.resolve(),
+  });
+  const work = orig(args[0], wrappedInput, ...args.slice(2)).then((result) => {
+    outbound.add(outboundMessageId(result));
+    return result;
+  });
+  void work.then(() => {}, () => {});
+
+  return (async () => {
+    try {
+      const opened = await withOutboundTimeout(
+        'stream.open',
+        Promise.race([
+          work.then((value) => ({ phase: 'done' as const, value })),
+          producerStarted.promise.then(() => ({ phase: 'producer' as const })),
+        ]),
+        timeoutMs,
+      );
+      if (opened.phase === 'done') {
+        onResult?.({ ok: true });
+        return opened.value;
+      }
+      if (producerTimeoutMs !== undefined) {
+        await withOutboundTimeout('stream.producer', producerDone.promise, producerTimeoutMs);
+      } else {
+        await producerDone.promise;
+      }
+      const closed = await withOutboundTimeout('stream.close', work, timeoutMs);
+      onResult?.({ ok: true });
+      return closed;
+    } catch (error: unknown) {
+      onResult?.({ ok: false, error });
+      throw error;
+    }
+  })();
+}
+
+function wrapStreamProducer(
+  input: unknown,
+  outbound: OutboundMessageIds,
+  timeoutMs: number,
+  hooks: { onStart(): void; onDone(): void },
+): unknown {
+  if (!input || typeof input !== 'object') return input;
+  const rec = input as Record<string, unknown>;
+  if (rec.card && typeof rec.card === 'object' && rec.card !== null) {
+    const card = rec.card as {
+      initial?: unknown;
+      producer?: (ctrl: StreamCtrl) => Promise<void> | void;
+    };
+    if (typeof card.producer === 'function') {
+      const producer = card.producer;
+      return {
+        ...rec,
+        card: {
+          ...card,
+          producer: async (ctrl: StreamCtrl) => {
+            hooks.onStart();
+            outbound.add(ctrl.messageId);
+            try {
+              return await producer(timedStreamCtrl(ctrl, timeoutMs));
+            } finally {
+              hooks.onDone();
+            }
+          },
+        },
+      };
+    }
+  }
+  if (typeof rec.markdown === 'function') {
+    const markdown = rec.markdown as (ctrl: StreamCtrl) => Promise<void> | void;
+    return {
+      ...rec,
+      markdown: async (ctrl: StreamCtrl) => {
+        hooks.onStart();
+        outbound.add(ctrl.messageId);
+        try {
+          return await markdown(timedStreamCtrl(ctrl, timeoutMs));
+        } finally {
+          hooks.onDone();
+        }
+      },
+    };
+  }
+  return input;
+}
+
+type StreamCtrl = {
+  messageId?: string;
+  update?(card: unknown): Promise<void> | void;
+  setContent?(markdown: string): Promise<void> | void;
+};
+
+function timedStreamCtrl(ctrl: StreamCtrl, timeoutMs: number): StreamCtrl {
+  // Delegate to the SDK controller so class getters (messageId in
+  // @larksuite/channel 0.7.1) survive. Object spread copies own data
+  // properties only and drops prototype getters.
+  const timed = Object.create(ctrl) as StreamCtrl;
+  if (typeof ctrl.update === 'function') {
+    timed.update = (card: unknown) => withOutboundTimeout(
+      'stream.update',
+      Promise.resolve(ctrl.update!(card)),
+      timeoutMs,
+    );
+  }
+  if (typeof ctrl.setContent === 'function') {
+    timed.setContent = (markdown: string) => withOutboundTimeout(
+      'stream.setContent',
+      Promise.resolve(ctrl.setContent!(markdown)),
+      timeoutMs,
+    );
+  }
+  return timed;
+}
+
+function createGate(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }

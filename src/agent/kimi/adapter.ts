@@ -82,6 +82,8 @@ export class KimiAdapter implements AgentAdapter {
       translator: wrapParsedTranslator(new KimiJsonlTranslator(), 'kimi'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'kimi',
+      // No terminal JSONL line: clean exit finishes the run. Empty stdout is
+      // still a failure (missing Windows CLI via cmd.exe can exit 0).
       successFinish: 'normal',
       logFields: {
         hasSession: Boolean(opts.resumeHandle),

@@ -161,7 +161,7 @@ export function ConfigView({ profile }: { profile: string }) {
               <Input type="number" min={1} max={50} value={cfg.maxConcurrentRuns}
                 onChange={(e) => set("maxConcurrentRuns", Number(e.target.value))} />
             </Field>
-            <Field label="探活分钟（0=关闭）">
+            <Field label="探活分钟（默认 15，0=关闭）">
               <Input type="number" min={0} max={120} value={cfg.runIdleTimeoutMinutes}
                 onChange={(e) => set("runIdleTimeoutMinutes", Number(e.target.value))} />
             </Field>

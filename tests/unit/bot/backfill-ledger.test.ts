@@ -126,7 +126,25 @@ describe('BackfillLedger', () => {
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
       schemaVersion: 1,
       lastLiveAt: 1_759_000_000_000,
+      processed: { om_old: now - 60_000, om_next: now - 1_000 },
+    });
+  });
+
+  it('loads an old lastBackfillEnd and drops it on the next save', async () => {
+    const now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await writeFile(file, `${JSON.stringify({
+      schemaVersion: 1,
+      lastLiveAt: 1_759_000_000_000,
       lastBackfillEnd: 1_759_500_000_000,
+      processed: { om_old: now - 60_000 },
+    }, null, 2)}\n`);
+    await ledger.load();
+    ledger.record('om_next', now - 1_000);
+    await ledger.flush();
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      lastLiveAt: 1_759_000_000_000,
       processed: { om_old: now - 60_000, om_next: now - 1_000 },
     });
   });
@@ -302,10 +320,10 @@ describe('BackfillLedger', () => {
     reloaded.markScanComplete(now, now, now - 60_000);
     await reloaded.flush();
     expect(reloaded.getIncompleteFrom()).toBeUndefined();
+    expect(reloaded.getLastBackfillEnd()).toBe(now);
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
       schemaVersion: 1,
-      lastLiveAt: now,
-      lastBackfillEnd: now,
+      lastLiveAt: now - 60_000,
       processed: {},
     });
   });

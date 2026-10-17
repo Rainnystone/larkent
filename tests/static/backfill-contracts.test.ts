@@ -12,7 +12,8 @@ const read = (rel: string): string => readFileSync(join(root, rel), 'utf8');
 const BACKFILL_IMPL_FILES = [
   'src/bot/backfill.ts',
   'src/bot/backfill-ledger.ts',
-  'src/bot/keepalive.ts',
+  'src/bot/feishu-link.ts',
+  'src/bot/recovery.ts',
 ] as const;
 
 const NAMED_BOTS = ['grokbot', 'Grok Bot', 'larkent-for-grokbot', 'SpaceXAI'];
@@ -26,7 +27,8 @@ describe('backfill static contracts', () => {
     const botLayer = [
       'src/bot/backfill.ts',
       'src/bot/backfill-ledger.ts',
-      'src/bot/keepalive.ts',
+      'src/bot/feishu-link.ts',
+      'src/bot/recovery.ts',
       'src/bot/channel.ts',
       'src/commands/index.ts',
     ].map(read).join('\n');
@@ -70,9 +72,21 @@ describe('backfill static contracts', () => {
     expect([...seen].sort()).toEqual([...AGENT_KINDS].sort());
   });
 
-  it('wires keepalive wake-up to backfill without touching lastLiveAt first', () => {
-    expect(read('src/bot/channel.ts')).toMatch(/onWakeUp:\s*\(\)\s*=>\s*launchBackfill\('wake-up'\)/);
-    expect(read('src/bot/keepalive.ts')).toMatch(/onWakeUp\?\.\(\)/);
+  it('routes recovery through FeishuLink recovered rather than keepalive wake-up', () => {
+    expect(read('src/bot/channel.ts')).toMatch(/onRecovered/);
+    expect(read('src/bot/channel.ts')).toMatch(/startFeishuLink/);
+    expect(read('src/bot/channel.ts')).not.toMatch(/launchBackfill\('wake-up'\)/);
+    expect(read('src/bot/channel.ts')).not.toMatch(/onConnectedTick/);
+  });
+
+  it('creates FeishuLink before connect so owner refresh cannot delay wrapping', () => {
+    const source = read('src/bot/channel.ts');
+    const linkAt = source.indexOf('startFeishuLink({');
+    const connectAt = source.indexOf('await channel.connect()');
+    const ownerAt = source.indexOf('ownerRefresh.start()');
+    expect(linkAt).toBeGreaterThan(-1);
+    expect(connectAt).toBeGreaterThan(linkAt);
+    expect(ownerAt).toBeGreaterThan(connectAt);
   });
 
   it('hands session-known chat ids into the backfill scan', () => {

@@ -95,13 +95,20 @@ describe('CLI stderr signature table', () => {
     })).toMatchObject({ kind: 'failed', cause: 'quota', needsHuman: true });
   });
 
+  it('uses network wording for transient-upstream when no signature matched', () => {
+    expect(cardUserMessage({ kind: 'failed', cause: 'transient-upstream' }, undefined))
+      .toBe('网络连接中断，可稍后继续');
+    expect(cardUserMessage({ kind: 'failed', cause: 'unclassified' }, undefined))
+      .toBe('agent 运行失败');
+  });
+
   it('uses the signature userMessage for partial outcomes', () => {
     const signature = descriptorFor('antigravity').stderrSignatures.find((item) => (
       item.classify.kind === 'partial'
     ));
     expect(signature).toBeDefined();
-    expect(cardUserMessage({ kind: 'partial' }, signature, true)).toBe(signature?.userMessage);
-    expect(cardUserMessage({ kind: 'completed' }, signature, true)).toBeUndefined();
+    expect(cardUserMessage({ kind: 'partial' }, signature)).toBe(signature?.userMessage);
+    expect(cardUserMessage({ kind: 'completed' }, signature)).toBeUndefined();
   });
 
   it('does not let an interrupted signature override an existing stop request', () => {
@@ -136,7 +143,7 @@ describe('CLI stderr signature table', () => {
       needsHuman: false,
     });
     expect(formatRunOutcome(outcome)).toBe('failed:transient-upstream');
-    expect(cardUserMessage(outcome, matchingSignature(NETWORK_TRANSIENT_SIGNATURES, stderrTail), true))
+    expect(cardUserMessage(outcome, matchingSignature(NETWORK_TRANSIENT_SIGNATURES, stderrTail)))
       .toBe('网络连接中断，可稍后继续');
   });
 
@@ -158,7 +165,7 @@ describe('CLI stderr signature table', () => {
     expect(cardUserMessage(outcome, matchingSignature(
       descriptorFor('antigravity').stderrSignatures,
       readGolden('antigravity', 'error-interrupted.txt'),
-    ), true)).toBeUndefined();
+    ))).toBeUndefined();
   });
 
   it('classifies unknown stderr as unclassified and records a count log', () => {
@@ -170,7 +177,7 @@ describe('CLI stderr signature table', () => {
       signatures,
       terminalEvent: { type: 'error', message: stderrTail, terminationReason: 'failed' },
     });
-    expect(outcome).toEqual({ kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: false });
+    expect(outcome).toEqual({ kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false });
     expect(matchingSignature(signatures, stderrTail)).toBeUndefined();
 
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});

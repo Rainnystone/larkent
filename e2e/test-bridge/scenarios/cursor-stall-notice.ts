@@ -42,7 +42,7 @@ export async function runCursorStallNotice(opts: {
         atBotContinue: noticeLogs >= 1,
         note: cardSeen
           ? `notice card copy seen in tester history; notice.sent log count=${noticeLogs}. Button continue still needs a live card click.`
-          : `no notice copy in tester history; notice.sent log count=${noticeLogs}; enable profile.reliability.notice on the test instance.`,
+          : `no notice copy in tester history; notice.sent log count=${noticeLogs}; notices are always on — check stall injection and notice.sent logs.`,
       };
     },
     async () => {

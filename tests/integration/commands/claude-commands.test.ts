@@ -238,18 +238,23 @@ describe('Claude slash command visible behavior', () => {
 
     await expect(h.run('/timeout')).resolves.toBe(true);
     expect(lastMarkdown(h.channel)).toContain('当前 session 探活');
+    expect(lastMarkdown(h.channel)).toContain('跟随全局(15 分钟)');
 
     await expect(h.run('/timeout 15')).resolves.toBe(true);
     expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBe(15);
     expect(lastMarkdown(h.channel)).toContain('已设为 15 分钟');
 
-    await expect(h.run('/timeout off')).resolves.toBe(true);
+    await expect(h.run('/timeout 0')).resolves.toBe(true);
     expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBe(0);
     expect(lastMarkdown(h.channel)).toContain('已关闭当前 session');
 
     await expect(h.run('/timeout default')).resolves.toBe(true);
     expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBeUndefined();
     expect(lastMarkdown(h.channel)).toContain('已清除 session 覆盖');
+
+    await expect(h.run('/timeout off')).resolves.toBe(true);
+    expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBe(0);
+    expect(lastMarkdown(h.channel)).toContain('已关闭当前 session');
 
     await expect(h.run('/timeout 999')).resolves.toBe(true);
     expect(lastMarkdown(h.channel)).toContain('用法:`/timeout <1-120>`');

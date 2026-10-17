@@ -10,7 +10,6 @@ export type StopRequest =
   | { type: 'user-stop' }
   | { type: 'superseded'; by: SupersedeBy }
   | { type: 'reconnect-command' }
-  | { type: 'keepalive-restart' }
   | { type: 'account-restart' }
   | { type: 'shutdown-signal' }
   | { type: 'exit-command' }
@@ -40,6 +39,8 @@ export interface DeriveRunOutcomeInput {
   terminalEvent?: AgentEvent;
   stderrTail?: string;
   signatures?: readonly CliSignature[];
+  /** True when the Feishu link's outage epoch changed during the run. */
+  outageOverlapped?: boolean;
 }
 
 export interface StoppableHandle {
@@ -80,22 +81,34 @@ export function noteTerminalStop(handle: StoppableHandle, event: AgentEvent): bo
   return reason ? requestStop(handle, reason) : false;
 }
 
-/** System events always pass. With runOutcome on, a real terminal still lands after stop. */
+/** System events always pass. A real terminal still lands after stop. */
 export function shouldDeliverAgentEvent(
   handle: StoppableHandle,
   event: AgentEvent,
-  runOutcomeEnabled: boolean,
 ): boolean {
   if (event.type === 'system') return true;
   if (!handle.interrupted) return true;
-  if (!runOutcomeEnabled) return false;
   return event.type === 'done' || event.type === 'error';
 }
 
 export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
+  return applyOutageOverlap(deriveRunOutcomeShape(input), input);
+}
+
+export function runOverlappedOutage(
+  link: { outageEpoch(): number } | undefined,
+  startedEpoch: number,
+  startedDown = false,
+): boolean {
+  if (!link) return false;
+  if (startedDown) return true;
+  return link.outageEpoch() !== startedEpoch;
+}
+
+function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
   const signed = matchCliSignature(input.stderrTail, input.signatures);
   if (signed && signatureApplies(signed.classify, input)) {
-    return signed.classify;
+    return applySignatureOverlay(signed.classify);
   }
   // agy prints `error: interrupted` and exits 1 on SIGTERM, which the runner
   // surfaces as a failed terminal. Keep an earlier user-stop (or other stop)
@@ -131,6 +144,23 @@ export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
     return failed('unclassified');
   }
   return completed();
+}
+
+/** Signatures pick card wording and `needsHuman`; retriable follows the cause. */
+function applySignatureOverlay(classify: RunOutcome): RunOutcome {
+  if (classify.kind !== 'failed') return classify;
+  if (classify.needsHuman) {
+    return { ...classify, retriable: false };
+  }
+  return failed(classify.cause);
+}
+
+function applyOutageOverlap(outcome: RunOutcome, input: DeriveRunOutcomeInput): RunOutcome {
+  if (outcome.kind !== 'failed') return outcome;
+  if (outcome.needsHuman) return outcome;
+  if (outcome.cause !== 'unclassified') return outcome;
+  if (input.outageOverlapped) return failed('transient-upstream');
+  return failed('unclassified');
 }
 
 function signatureApplies(
@@ -183,7 +213,7 @@ function failed(cause: FailedCause): RunOutcome {
     case 'killed-externally':
       return { kind: 'failed', cause, retriable: true, needsHuman: false };
     case 'unclassified':
-      return { kind: 'failed', cause, retriable: false, needsHuman: false };
+      return { kind: 'failed', cause, retriable: true, needsHuman: false };
     default: {
       const _exhaustive: never = cause;
       return _exhaustive;
@@ -199,7 +229,6 @@ function interruptedRetriable(reason: StopRequest): boolean {
     case 'account-restart':
       return false;
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'shutdown-signal':
     case 'bridge-idle-watchdog':
     case 'runner-timeout':
@@ -228,7 +257,6 @@ export function formatStopRequest(reason: StopRequest): string {
       return `superseded:${reason.by}`;
     case 'user-stop':
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'account-restart':
     case 'shutdown-signal':
     case 'exit-command':
@@ -288,8 +316,6 @@ function describeStopRequest(reason: StopRequest): string {
       return '会话已切换';
     case 'reconnect-command':
       return '重连';
-    case 'keepalive-restart':
-      return '保活重启';
     case 'account-restart':
       return '账号切换';
     case 'shutdown-signal':
@@ -357,7 +383,6 @@ function interruptedCardTerminal(reason: StopRequest): Terminal {
     case 'user-stop':
     case 'superseded':
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'account-restart':
     case 'shutdown-signal':
     case 'exit-command':

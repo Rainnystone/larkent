@@ -1,5 +1,6 @@
 import type { LarkChannel } from '@larksuite/channel';
 import { log } from '../core/logger';
+import { classify } from './feishu-error';
 
 export type ChatMode = 'p2p' | 'group' | 'topic';
 
@@ -15,9 +16,9 @@ export type ChatMode = 'p2p' | 'group' | 'topic';
  * the next resolve re-probes and a stale `group` entry can't outlive one
  * message.
  *
- * On lookup failure (network / permission / unknown chatId) we **fall back
- * to 'group'** — that's the conservative default since it means "treat as
- * a normal chat, one session per chatId, no thread split". Doesn't crash.
+ * Link-class lookup failures are rethrown so intake can release its claim.
+ * Other failures (permission / unknown chatId) **fall back to 'group'** —
+ * the conservative default: one session per chatId, no thread split.
  */
 export class ChatModeCache {
   private readonly cache = new Map<string, ChatMode>();
@@ -35,6 +36,7 @@ export class ChatModeCache {
         chatId,
         err: err instanceof Error ? err.message : String(err),
       });
+      if (classify(err) === 'link') throw err;
       // Don't poison the cache — next message gets another try.
       return 'group';
     }

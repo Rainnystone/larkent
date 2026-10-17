@@ -114,6 +114,21 @@ describe('inbound skip-self during a run', () => {
     )).toBe(false);
   });
 
+  it('binds a CLI self-send to the active turn id', () => {
+    const tracker = new CliSelfSendTracker();
+    tracker.begin(CHAT, 'turn-b');
+    const outbound = new OutboundMessageIds();
+    expect(noteInboundSkipSelf({
+      messageId: 'om_cli',
+      chatId: CHAT,
+      isSelf: true,
+      outbound,
+      tracker,
+    })).toBe(true);
+    expect(tracker.has(CHAT)).toBe(true);
+    expect(tracker.turnIdFor(CHAT)).toBe('turn-b');
+  });
+
   it('does not suppress a sibling topic thread', () => {
     const tracker = new CliSelfSendTracker();
     const threadA = `${CHAT}:omt_a`;
