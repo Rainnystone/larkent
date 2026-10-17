@@ -198,7 +198,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 
 ### 10. Observability
 
-结构化事件：`auto.draft`、`auto.confirmed`、`auto.rejected`、`auto.fire`、`auto.missed`、`auto.catch-up`（含原定时刻与触发来源：startup / link-recovered / wake）、`auto.skipped`（agent 任务重叠跳过：原定时刻与原因；不发群消息）、`auto.wake.already-started`（静默，仅本地日志）、`auto.result`（outcome）、`auto.paused`、`auto.deleted`、`auto.expired`、`auto.policy-guard`、`auto.board.repin`、`auto.removed-from-chat`。不含任务正文。`auto.missed`、`auto.catch-up` 与 `auto.skipped` 同时写入永久的 automations log（ADR-016/017/019/021）。
+结构化事件：`auto.draft`、`auto.confirmed`、`auto.rejected`、`auto.fire`、`auto.missed`、`auto.catch-up`（含原定时刻与触发来源：startup / link-recovered / wake / confirm）、`auto.skipped`（agent 任务重叠跳过：原定时刻与原因；不发群消息）、`auto.wake.already-started`（静默，仅本地日志）、`auto.result`（outcome）、`auto.paused`、`auto.deleted`、`auto.expired`、`auto.policy-guard`、`auto.board.repin`、`auto.removed-from-chat`。不含任务正文。`auto.missed`、`auto.catch-up` 与 `auto.skipped` 同时写入永久的 automations log（ADR-016/017/019/021）。确认卡点击后的 `nudge()` 使用触发来源 `confirm`；automations log 读回接受 `confirm`。
 
 ### 11. Backfill fix (F20)
 
