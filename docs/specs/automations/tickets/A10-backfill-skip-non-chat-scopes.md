@@ -1,9 +1,13 @@
 # A10: Backfill never queries auto:/meeting: scopes (F20)
 
-**What to build:** when backfill derives chat ids from session scopes, `auto:` and `meeting:` scopes never enter chat-mode lookup and cannot mark a scan incomplete.
+Spec: [../../automations.md](../../automations.md) §11
 
-**Blocked by:** None (can start immediately)
+**What to build:** when backfill derives chat ids from session scopes, `auto:` and `meeting:` scopes never enter chat-mode lookup and cannot mark a scan incomplete. (On master the scope prefix before the first `:` is taken as a chat id, so `auto:3:…` and `meeting:…` become the bogus chat ids `auto` / `meeting`.)
 
-**Status:** ready-for-agent
+**Blocked by:** None
 
-- [ ] Regression test with auto: and meeting: scopes in the catalog: no chat-mode query, scan complete.
+**Depends on #47:** soft (high conflict) — #47 rewrites backfill's session-chat discovery and incomplete-scan handling; wait for #47 to merge and apply the fix on top.
+
+**Status:** ready-for-agent (after #47)
+
+- [ ] Regression test with `auto:` and `meeting:` scopes in the catalog: no chat-mode query, scan complete.
