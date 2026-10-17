@@ -2,13 +2,20 @@ import type { LarkChannel } from '@larksuite/channel';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { log } from '../core/logger';
+import {
+  createHostSleepProbe,
+  HOST_SLEEP_PROBE_TIMEOUT_MS,
+  type HostSleepEvidence,
+  type HostSleepProbe,
+} from '../platform/host-sleep';
 import { classify } from './feishu-error';
 import { OutboundMessageIds, wrapChannelOutbound } from './self-message';
 
 export const FEISHU_LINK_TICK_MS = 15_000;
+/** Wall-clock gap that still takes the link down. Not itself suspend evidence. */
 export const FEISHU_LINK_SLEEP_MS = 30_000;
 export const FEISHU_LINK_SILENT_PROBE_MS = 60_000;
-/** Must stay below `FEISHU_LINK_SLEEP_MS` so a hung probe cannot look like suspend. */
+/** Must stay below `FEISHU_LINK_SLEEP_MS` so a hung Feishu probe cannot look like a tick gap. */
 export const FEISHU_LINK_PROBE_TIMEOUT_MS = 20_000;
 const TIMER_STORM_GUARD_MS = 5_000;
 const WS_DOWN_LOG_EVERY = 20;
@@ -16,7 +23,7 @@ const WS_DOWN_LOG_EVERY = 20;
 export interface Outage {
   since: number;
   until: number;
-  /** True when a tick gap over 30s (sleep/freeze/clock jump) fell inside the outage. */
+  /** True only with real OS sleep evidence inside the outage. Freeze is not sleep. */
   hostSuspended: boolean;
   /** Last local tick before a host-suspend gap. Review uses this, not `since`. */
   suspendStartedAt?: number;
@@ -41,6 +48,7 @@ export interface FeishuLinkDeps {
   heartbeatPath?: string;
   outbound?: OutboundMessageIds;
   outboundTimeoutMs?: number;
+  sleepProbe?: HostSleepProbe;
 }
 
 export function createFeishuProbe(
@@ -139,6 +147,7 @@ async function raceProbe(
 
 export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Promise<void> } {
   const nowFn = deps.now ?? Date.now;
+  const sleepProbe = deps.sleepProbe ?? createHostSleepProbe();
   const listeners = new Set<(o: Outage) => void>();
   let stopped = false;
   let down = true;
@@ -151,6 +160,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let probeAbort: AbortController | undefined;
   let hostSuspended = false;
   let suspendStartedAt: number | undefined;
+  let sleepDetect: Promise<void> | undefined;
   let wsDownTicks = 0;
 
   const touchHeartbeat = (): void => {
@@ -220,12 +230,42 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
   const noteSuspendIfGap = (at: number): void => {
     const sinceLast = lastTickAt > 0 ? at - lastTickAt : 0;
-    if (sinceLast <= FEISHU_LINK_SLEEP_MS) return;
-    log.info('link', 'sleep', { sleptMs: sinceLast });
-    goDown(lastTickAt, { hostSuspended: true, suspendStartedAt: lastTickAt });
-    probeSeq += 1;
-    probing = false;
-    probeAbort?.abort();
+    if (lastTickAt > 0 && sinceLast > FEISHU_LINK_SLEEP_MS) {
+      log.info('link', 'tick-gap', { gapMs: sinceLast });
+      goDown(lastTickAt);
+      probeSeq += 1;
+      probing = false;
+      probeAbort?.abort();
+      const gapFrom = lastTickAt;
+      const gapTo = at;
+      sleepDetect = detectSleep(sleepProbe, { fromMs: gapFrom, toMs: gapTo }).then((evidence) => {
+        if (!evidence.suspended) return;
+        log.info('link', 'sleep', {
+          sleptMs: sinceLast,
+          ...(evidence.suspendStartedAt !== undefined ? { suspendStartedAt: evidence.suspendStartedAt } : {}),
+        });
+        goDown(gapFrom, {
+          hostSuspended: true,
+          suspendStartedAt: evidence.suspendStartedAt ?? gapFrom,
+        });
+      });
+    }
+    void Promise.resolve()
+      .then(() => sleepProbe.note(at))
+      .catch(() => {
+        /* OS sample is best-effort */
+      });
+  };
+
+  const applySleepEvidence = async (): Promise<void> => {
+    const pending = sleepDetect;
+    if (!pending) return;
+    sleepDetect = undefined;
+    try {
+      await pending;
+    } catch {
+      /* timeout/failure = not suspended; never block recovery */
+    }
   };
 
   const tick = async (fromTimer = false): Promise<void> => {
@@ -280,6 +320,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       if (seq !== probeSeq) return;
       probing = false;
     }
+    await applySleepEvidence();
     if (seq !== probeSeq || stopped) return;
     switch (ok) {
       case true:
@@ -301,7 +342,10 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   };
 
   wrapChannelOutbound(deps.channel, deps.outbound ?? new OutboundMessageIds(), {
-    ...(deps.outboundTimeoutMs !== undefined ? { timeoutMs: deps.outboundTimeoutMs } : {}),
+    ...(deps.outboundTimeoutMs !== undefined ? {
+      timeoutMs: deps.outboundTimeoutMs,
+      producerTimeoutMs: deps.outboundTimeoutMs,
+    } : {}),
     onResult: (result) => {
       if (stopped) return;
       if (result.ok) {
@@ -351,4 +395,30 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     },
     tick,
   };
+}
+
+async function detectSleep(
+  probe: HostSleepProbe,
+  gap: { fromMs: number; toMs: number },
+): Promise<HostSleepEvidence> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const fallback: HostSleepEvidence = { suspended: false };
+  const work = Promise.resolve()
+    .then(() => probe.detect(gap))
+    .then(
+      (value) => ({ ok: true as const, value }),
+      () => ({ ok: false as const }),
+    );
+  try {
+    const winner = await Promise.race([
+      work,
+      new Promise<{ ok: false }>((resolve) => {
+        timer = setTimeout(() => resolve({ ok: false }), HOST_SLEEP_PROBE_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
+    return winner.ok ? winner.value : fallback;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

@@ -157,6 +157,8 @@ export function wrapChannelOutbound(
   outbound: OutboundMessageIds,
   opts: {
     timeoutMs?: number;
+    /** Bound for the producer callback. Unset keeps the agent-run unbounded (T11). */
+    producerTimeoutMs?: number;
     onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void;
   } = {},
 ): void {
@@ -168,7 +170,7 @@ export function wrapChannelOutbound(
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
     mutable[op] = (...args: unknown[]) => {
       if (op === 'stream') {
-        return timedStreamCall(orig, args, outbound, timeoutMs, opts.onResult);
+        return timedStreamCall(orig, args, outbound, timeoutMs, opts.onResult, opts.producerTimeoutMs);
       }
       const work = orig(...args).then((result) => {
         if (op === 'send') outbound.add(outboundMessageId(result));
@@ -187,6 +189,39 @@ export function wrapChannelOutbound(
       );
     };
   }
+  wrapMessageList(channel, timeoutMs, opts.onResult);
+}
+
+function wrapMessageList(
+  channel: object,
+  timeoutMs: number,
+  onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
+): void {
+  const rawClient = (channel as { rawClient?: unknown }).rawClient;
+  if (!rawClient || typeof rawClient !== 'object') return;
+  const im = (rawClient as { im?: unknown }).im;
+  if (!im || typeof im !== 'object') return;
+  const v1 = (im as { v1?: unknown }).v1;
+  if (!v1 || typeof v1 !== 'object') return;
+  const message = (v1 as { message?: unknown }).message;
+  if (!message || typeof message !== 'object') return;
+  const rec = message as Record<string, unknown>;
+  const current = rec.list;
+  if (typeof current !== 'function') return;
+  const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(message);
+  rec.list = (...args: unknown[]) => {
+    const work = Promise.resolve(orig(...args));
+    return withOutboundTimeout('message.list', work, timeoutMs).then(
+      (result) => {
+        onResult?.({ ok: true });
+        return result;
+      },
+      (error: unknown) => {
+        onResult?.({ ok: false, error });
+        throw error;
+      },
+    );
+  };
 }
 
 function isTimedChannelOp(op: (typeof WRAPPED_CHANNEL_OPS)[number]): boolean {
@@ -199,6 +234,7 @@ function timedStreamCall(
   outbound: OutboundMessageIds,
   timeoutMs: number,
   onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
+  producerTimeoutMs?: number,
 ): Promise<unknown> {
   const producerStarted = createGate();
   const producerDone = createGate();
@@ -226,7 +262,11 @@ function timedStreamCall(
         onResult?.({ ok: true });
         return opened.value;
       }
-      await producerDone.promise;
+      if (producerTimeoutMs !== undefined) {
+        await withOutboundTimeout('stream.producer', producerDone.promise, producerTimeoutMs);
+      } else {
+        await producerDone.promise;
+      }
       const closed = await withOutboundTimeout('stream.close', work, timeoutMs);
       onResult?.({ ok: true });
       return closed;
@@ -294,27 +334,25 @@ type StreamCtrl = {
 };
 
 function timedStreamCtrl(ctrl: StreamCtrl, timeoutMs: number): StreamCtrl {
-  return {
-    ...ctrl,
-    ...(typeof ctrl.update === 'function'
-      ? {
-          update: (card: unknown) => withOutboundTimeout(
-            'stream.update',
-            Promise.resolve(ctrl.update!(card)),
-            timeoutMs,
-          ),
-        }
-      : {}),
-    ...(typeof ctrl.setContent === 'function'
-      ? {
-          setContent: (markdown: string) => withOutboundTimeout(
-            'stream.setContent',
-            Promise.resolve(ctrl.setContent!(markdown)),
-            timeoutMs,
-          ),
-        }
-      : {}),
-  };
+  // Delegate to the SDK controller so class getters (messageId in
+  // @larksuite/channel 0.7.1) survive. Object spread copies own data
+  // properties only and drops prototype getters.
+  const timed = Object.create(ctrl) as StreamCtrl;
+  if (typeof ctrl.update === 'function') {
+    timed.update = (card: unknown) => withOutboundTimeout(
+      'stream.update',
+      Promise.resolve(ctrl.update!(card)),
+      timeoutMs,
+    );
+  }
+  if (typeof ctrl.setContent === 'function') {
+    timed.setContent = (markdown: string) => withOutboundTimeout(
+      'stream.setContent',
+      Promise.resolve(ctrl.setContent!(markdown)),
+      timeoutMs,
+    );
+  }
+  return timed;
 }
 
 function createGate(): { promise: Promise<void>; resolve(): void } {

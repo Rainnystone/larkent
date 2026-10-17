@@ -42,10 +42,12 @@ import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
 import {
   CliSelfSendTracker,
   OutboundMessageIds,
+  OUTBOUND_REQUEST_TIMEOUT_MS,
   isSelfSender,
   noteInboundSkipSelf,
   outboundMessageId,
   senderTypeFromRaw,
+  withOutboundTimeout,
 } from './self-message';
 import {
   finalizeIfRunning,
@@ -110,7 +112,7 @@ import {
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { classify, rateLimitResetDelayMs } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
-import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
+import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
 import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
@@ -143,9 +145,8 @@ import {
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
-/** Bounded retry of staged 4xx/local cards while the link stays up (I1). */
+/** Retry delay for staged 4xx/local cards while the link stays up (I1). */
 const OUTBOX_SWEEP_MS = 50;
-const OUTBOX_SWEEP_MAX = 8;
 
 /** Single handshake attempt. Also the force-reconnect budget via connectTimeoutMs. */
 export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
@@ -266,6 +267,7 @@ export interface StartChannelDeps {
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, journal, controls } = deps;
+  const outboundTimeoutMs = deps.outboundTimeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
   let channelForCards: LarkChannel | undefined;
   const continuations = createContinuations({
     journal,
@@ -482,6 +484,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           cliSelfSent,
           link,
           onDeliveryWait: (delayMs) => outboxSweep.schedule(delayMs),
+          outboundTimeoutMs,
         });
       } finally {
         sessionWriter.release();
@@ -546,7 +549,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const journalRecoverOpts = (owned: TurnJournal) => ({
-    isDown: () => link.isDown(),
+    isDown: () => closing || link.isDown(),
     resend: (entry: TurnJournalEntry) => resendJournalReply({
       channel,
       journal: owned,
@@ -614,10 +617,17 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   let sweepTimer: ReturnType<typeof setTimeout> | undefined;
   let sweepStopped = false;
-  let sweepPasses = 0;
+  let sweepDelayMs = OUTBOX_SWEEP_MS;
   let sweepInFlight = false;
   let sweepQueued = false;
   let sweepTail: Promise<void> = Promise.resolve();
+  const armSweepTimer = (delayMs: number): void => {
+    if (sweepTimer) clearTimeout(sweepTimer);
+    sweepTimer = setTimeout(() => {
+      sweepTimer = undefined;
+      void runOutboxSweep();
+    }, delayMs);
+  };
   const runOutboxSweep = (): Promise<void> => {
     if (sweepStopped || !journal || link.isDown()) return Promise.resolve();
     if (sweepInFlight) {
@@ -625,19 +635,21 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       return sweepTail;
     }
     sweepInFlight = true;
-    sweepPasses += 1;
     sweepTail = trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal').then(() => {
       if (sweepStopped || link.isDown()) return;
       const pending = journal.list().some((entry) => (
         replyState(entry) === 'staged' || noticeState(entry) === 'staged'
       ));
-      if (!pending || sweepPasses >= OUTBOX_SWEEP_MAX) return;
-      sweepTimer = setTimeout(() => {
-        sweepTimer = undefined;
-        void runOutboxSweep();
-      }, OUTBOX_SWEEP_MS);
-    }, () => {
-      // Logged by trackConsumer. Do not reschedule a failed pass as success.
+      if (!pending) {
+        sweepDelayMs = OUTBOX_SWEEP_MS;
+        return;
+      }
+      armSweepTimer(OUTBOX_SWEEP_MS);
+    }, (error: unknown) => {
+      if (sweepStopped) return;
+      const delay = rateLimitResetDelayMs(error) ?? sweepDelayMs;
+      sweepDelayMs = Math.min(sweepDelayMs * 2, RECOVERY_RETRY_MAX_MS);
+      armSweepTimer(delay);
     }).finally(() => {
       sweepInFlight = false;
       if (!sweepQueued) return;
@@ -647,16 +659,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     return sweepTail;
   };
   outboxSweep.schedule = (delayMs = 0) => {
-    sweepPasses = 0;
+    sweepDelayMs = OUTBOX_SWEEP_MS;
     if (delayMs > 0) {
-      if (sweepTimer) {
-        clearTimeout(sweepTimer);
-        sweepTimer = undefined;
-      }
-      sweepTimer = setTimeout(() => {
-        sweepTimer = undefined;
-        void runOutboxSweep();
-      }, delayMs);
+      armSweepTimer(delayMs);
       return;
     }
     void runOutboxSweep();
@@ -697,7 +702,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       hostSuspended: outage?.hostSuspended === true,
       ...(outage?.suspendStartedAt !== undefined ? { suspendStartedAt: outage.suspendStartedAt } : {}),
     });
-    sweepPasses = 0;
+    sweepDelayMs = OUTBOX_SWEEP_MS;
     await runOutboxSweep();
   };
 
@@ -924,7 +929,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     tickLink: () => started.tick(),
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
-      recovery.stop();
+      await recovery.stop();
       outboxSweep.stop();
       resumeCandidates.clear();
       // Commands can themselves call disconnect, so track run consumers only,
@@ -1333,6 +1338,7 @@ interface RunBatchDeps {
   cliSelfSent?: CliSelfSendTracker;
   link?: { outageEpoch(): number; isDown(): boolean };
   onDeliveryWait?: (delayMs?: number) => void;
+  outboundTimeoutMs: number;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1359,6 +1365,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     cliSelfSent,
     link,
     onDeliveryWait,
+    outboundTimeoutMs,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1829,6 +1836,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         renderDone,
         producerStarted: () => producerStarted,
         producerRendered: () => producerRendered,
+        timeoutMs: outboundTimeoutMs,
       });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       const terminalState = finalAnswerOnly
@@ -1903,6 +1911,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         renderDone,
         producerStarted: () => producerStarted,
         producerRendered: () => producerRendered,
+        timeoutMs: outboundTimeoutMs,
       });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       const terminalState = finalAnswerOnly
@@ -2134,6 +2143,14 @@ async function recallStreamedMessage(
   }
 }
 
+function threadIdForReply(
+  journal: TurnJournal,
+  turnId: string,
+): { threadId: string } | Record<string, never> {
+  const threadId = journal.get(turnId)?.threadId?.trim();
+  return threadId ? { threadId } : {};
+}
+
 async function deliverFinalReply(input: {
   channel: LarkChannel;
   chatId: string;
@@ -2189,6 +2206,7 @@ async function deliverFinalReply(input: {
     replyTo: input.sendOpts.replyTo,
     replyMode: input.replyMode,
     ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+    ...(input.journal && input.turnId ? threadIdForReply(input.journal, input.turnId) : {}),
     ...(deliveryId ? { deliveryId } : {}),
     ...(!dedicatedFinal && streamMessageId ? { messageId: streamMessageId, interactive: true as const } : {}),
   };
@@ -2578,6 +2596,7 @@ async function processAgentStream(
   const TOOL_IDLE_PAUSE_CAP_MS = 60 * 60_000;
   let timer: NodeJS.Timeout | undefined;
   let armedDelayMs = idleTimeoutMs;
+  let stallTimerArmed = false;
   const inFlightTools = new Set<string>();
   const clearIdleTimer = (): void => {
     if (timer) clearTimeout(timer);
@@ -2597,6 +2616,8 @@ async function processAgentStream(
   };
   const armIdleWatchdog = (): void => {
     delete handle.stallDeadlineMs;
+    delete handle.stallArmedAt;
+    stallTimerArmed = false;
     if (!idleTimeoutMs) {
       clearIdleTimer();
       return;
@@ -2604,9 +2625,14 @@ async function processAgentStream(
     const delayMs = inFlightTools.size > 0 ? TOOL_IDLE_PAUSE_CAP_MS : idleTimeoutMs;
     armIdleTimer(delayMs);
   };
-  handle.armStallDeadline = armIdleTimer;
+  handle.armStallDeadline = (delayMs: number): void => {
+    if (stallTimerArmed) return;
+    stallTimerArmed = true;
+    handle.stallArmedAt = Date.now();
+    armIdleTimer(delayMs);
+  };
   if (handle.stallDeadlineMs !== undefined) {
-    armIdleTimer(handle.stallDeadlineMs);
+    handle.armStallDeadline(handle.stallDeadlineMs);
   } else {
     armIdleWatchdog();
   }
@@ -2691,6 +2717,7 @@ async function processAgentStream(
     clearIdleTimer();
     delete handle.armStallDeadline;
     delete handle.stallDeadlineMs;
+    delete handle.stallArmedAt;
     delete handle.hasOpenToolCall;
   }
 
@@ -2811,6 +2838,7 @@ async function awaitRenderAwareStream(input: {
   renderDone: Promise<RunState>;
   producerStarted: () => boolean;
   producerRendered: () => boolean;
+  timeoutMs: number;
 }): Promise<StreamDelivery> {
   const streamResult = input.progress.settled.then(
     (result) => ({ kind: 'stream' as const, ok: true as const, result }),
@@ -2860,9 +2888,13 @@ async function awaitRenderAwareStream(input: {
         mode: input.mode,
         graceMs: STREAM_TERMINAL_GRACE_MS,
       });
-      const waited = await streamResult;
-      if (!waited.ok) return failedStream(waited.err, input.progress);
-      return confirmedStream(waited.result, input.progress);
+      try {
+        const waited = await withOutboundTimeout('stream.producer', streamResult, input.timeoutMs);
+        if (!waited.ok) return failedStream(waited.err, input.progress);
+        return confirmedStream(waited.result, input.progress);
+      } catch (err) {
+        return failedStream(err, input.progress);
+      }
     }
     // Still nothing on screen after the grace window: give up on the stream and
     // reply without it. `abandon()` keeps a late producer from rendering the

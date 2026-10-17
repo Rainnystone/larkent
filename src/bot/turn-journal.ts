@@ -32,6 +32,8 @@ export interface TurnReply {
   markdown: string;
   replyTo: string;
   replyInThread?: boolean;
+  /** Real Feishu thread_id when replyInThread. Never a parent message id. */
+  threadId?: string;
   replyMode: string;
   deliveryId?: string;
   messageId?: string;
@@ -233,17 +235,20 @@ export class TurnJournal {
     markdown: string;
     replyTo: string;
     replyInThread?: boolean;
+    threadId?: string;
     replyMode?: string;
     deliveryId?: string;
     messageId?: string;
     interactive?: boolean;
   }): void {
     const current = this.entries.find((item) => item.turnId === turnId);
+    const threadId = reply.threadId?.trim() || current?.threadId;
     const nextReply: TurnReply = {
       markdown: reply.markdown,
       replyTo: reply.replyTo,
       replyMode: reply.replyMode ?? 'text',
       ...(reply.replyInThread ? { replyInThread: true } : {}),
+      ...(threadId ? { threadId } : {}),
       deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
       ...(reply.messageId ? { messageId: reply.messageId } : {}),
       ...(reply.interactive === true ? { interactive: true } : {}),
@@ -464,7 +469,7 @@ export class TurnJournal {
               turnId: current.turnId,
               err: error instanceof Error ? error.message : String(error),
             });
-            if (classify(error) === 'link') break;
+            if (classify(error) === 'link') throw error;
           }
         }
       }
@@ -492,7 +497,7 @@ export class TurnJournal {
           turnId: latest.turnId,
           err: error instanceof Error ? error.message : String(error),
         });
-        if (classify(error) === 'link') break;
+        if (classify(error) === 'link') throw error;
       }
     }
 
@@ -815,6 +820,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
     replyTo: raw.replyTo,
     replyMode: raw.replyMode,
     ...(raw.replyInThread === true ? { replyInThread: true } : {}),
+    ...(typeof raw.threadId === 'string' && raw.threadId ? { threadId: raw.threadId } : {}),
     ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
     ...(raw.interactive === true ? { interactive: true } : {}),

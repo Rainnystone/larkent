@@ -99,7 +99,8 @@ export async function redeliverStagedReply(input: {
       afterMs: input.entry.createdAt,
       receiptId: reply.messageId,
       replyInThread: reply.replyInThread === true,
-      threadId: input.entry.threadId,
+      threadId: reply.threadId ?? input.entry.threadId,
+      markdown: reply.markdown,
       excludeIds: excludedReadBackIds(input.entry),
     });
     switch (found.kind) {
@@ -139,15 +140,20 @@ export async function readBackBotReply(input: {
   receiptId?: string;
   replyInThread?: boolean;
   threadId?: string;
+  markdown?: string;
   excludeIds?: ReadonlySet<string>;
 }): Promise<ReadBackMatch> {
   let pageToken: string | undefined;
   const inThread = input.replyInThread === true;
+  const threadId = input.threadId?.trim();
+  // A parent message id is not a thread id. If the real thread is unknown,
+  // skip list rather than probing a container Feishu will not treat as a topic.
+  if (inThread && !threadId) return { kind: 'none' };
   for (let page = 0; page < FEISHU_READBACK_MAX_PAGES; page += 1) {
     const res = await input.channel.rawClient.im.v1.message.list({
       params: {
         container_id_type: inThread ? 'thread' : 'chat',
-        container_id: inThread ? (input.threadId ?? input.parentId) : input.chatId,
+        container_id: inThread ? threadId : input.chatId,
         start_time: String(Math.floor(input.afterMs / 1000)),
         sort_type: 'ByCreateTimeDesc',
         page_size: FEISHU_READBACK_PAGE_SIZE,
@@ -182,6 +188,7 @@ function matchListedReply(
     botAppId: string;
     afterMs: number;
     receiptId?: string;
+    markdown?: string;
     excludeIds?: ReadonlySet<string>;
   },
 ): ReadBackMatch {
@@ -198,7 +205,66 @@ function matchListedReply(
   const sender = asRecord(item.sender);
   if (typeof sender?.id !== 'string' || sender.id !== input.botAppId) return { kind: 'none' };
   if (createTimeMs(item.create_time) < input.afterMs) return { kind: 'none' };
-  return listedKind(item, messageId);
+  const kind = listedKind(item, messageId);
+  // Cards are recovered from recorded ids (R1). An unrecorded interactive
+  // message under the parent is not the answer.
+  if (kind.kind === 'card') return { kind: 'none' };
+  if (kind.kind === 'text' && !textReplyMatchesAnswer(item, input.markdown)) {
+    return { kind: 'none' };
+  }
+  return kind;
+}
+
+function textReplyMatchesAnswer(item: Record<string, unknown>, markdown?: string): boolean {
+  const expected = markdown?.trim();
+  if (!expected) return false;
+  const listed = listedTextFingerprint(item);
+  return listed === expected || listed.includes(expected);
+}
+
+function listedTextFingerprint(item: Record<string, unknown>): string {
+  const body = asRecord(item.body);
+  const content = typeof body?.content === 'string' ? body.content : '';
+  const parsed = parseJsonObject(content);
+  if (!parsed) return content.trim();
+  if (typeof parsed.text === 'string') return parsed.text.trim();
+  if (typeof parsed.markdown === 'string') return parsed.markdown.trim();
+  const post = postMarkdown(parsed);
+  if (post) return post;
+  return content.trim();
+}
+
+function postMarkdown(parsed: Record<string, unknown>): string | undefined {
+  const chunks: string[] = [];
+  collectPostText(parsed, chunks);
+  const joined = chunks.join('').trim();
+  return joined || undefined;
+}
+
+function collectPostText(value: unknown, out: string[]): void {
+  if (typeof value === 'string') {
+    if (value) out.push(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectPostText(item, out);
+    return;
+  }
+  const rec = asRecord(value);
+  if (!rec) return;
+  if (typeof rec.text === 'string') out.push(rec.text);
+  if (typeof rec.content === 'string') out.push(rec.content);
+  for (const nested of Object.values(rec)) {
+    if (nested && typeof nested === 'object') collectPostText(nested, out);
+  }
+}
+
+function parseJsonObject(raw: string): Record<string, unknown> | undefined {
+  try {
+    return asRecord(JSON.parse(raw) as unknown);
+  } catch {
+    return undefined;
+  }
 }
 
 function excludedReadBackIds(entry: TurnJournalEntry): Set<string> {

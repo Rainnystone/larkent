@@ -16,6 +16,8 @@ export interface ReviewableRun {
   hasOpenToolCall?: boolean;
   /** Pending stall delay when the stream processor has not installed a hook yet. */
   stallDeadlineMs?: number;
+  /** Set once a stall deadline is armed; later reviews must not extend it. */
+  stallArmedAt?: number;
   armStallDeadline?(delayMs: number): void;
 }
 
@@ -26,7 +28,11 @@ export function reviewActiveRuns(runs: Iterable<ReviewableRun>, outage: Outage):
     if (handle.lastEventAt >= since) continue;
     // Open tool calls keep the 60-minute cap unless the host actually slept.
     if (handle.hasOpenToolCall && !outage.hostSuspended) continue;
+    // Keep the earliest absolute deadline. A later recovery retry must not
+    // reset the idle timer back to a fresh 2 minutes.
+    if (handle.stallArmedAt !== undefined) continue;
     handle.stallDeadlineMs = STALL_AFTER_RECOVERY_MS;
+    handle.stallArmedAt = Date.now();
     handle.armStallDeadline?.(STALL_AFTER_RECOVERY_MS);
   }
 }
@@ -49,7 +55,7 @@ export interface RecoveryDeps {
 
 export interface Recovery {
   run(o: Outage): Promise<void>;
-  stop(): void;
+  stop(): Promise<void>;
 }
 
 type RecoveryStep = 'reap' | 'redeliver' | 'backfill' | 'review';
@@ -61,6 +67,7 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
   let retryTimer: ReturnType<typeof setTimeout> | undefined;
   let retryDelayMs = RECOVERY_RETRY_MIN_MS;
   let stopped = false;
+  let reviewedKey: string | undefined;
 
   const runStep = async (step: RecoveryStep, outage: Outage, work: () => Promise<void> | void): Promise<boolean> => {
     try {
@@ -89,8 +96,11 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
         windowStart: window.windowStart,
       });
     }
+    if (stopped) return false;
     const reapOk = await runStep('reap', outage, () => deps.journal.reapOrphans());
+    if (stopped) return false;
     const redeliverOk = await runStep('redeliver', outage, () => deps.journal.redeliver());
+    if (stopped) return false;
     let backfillOk = false;
     try {
       const scanned = await deps.backfill.scan(window.windowStart);
@@ -106,9 +116,15 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
       log.fail('recovery', err, { step: 'backfill', since: outage.since, until: outage.until });
       backfillOk = false;
     }
-    const reviewOk = await runStep('review', outage, () => {
-      deps.runs.review(outage);
-    });
+    if (stopped) return false;
+    const key = outageReviewKey(outage);
+    let reviewOk = true;
+    if (reviewedKey !== key) {
+      reviewOk = await runStep('review', outage, () => {
+        deps.runs.review(outage);
+      });
+      if (reviewOk) reviewedKey = key;
+    }
     return reapOk && redeliverOk && backfillOk && reviewOk;
   };
 
@@ -143,7 +159,9 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
       retry = undefined;
       try {
         while (current) {
+          if (stopped) break;
           const ok = await runOnce(current);
+          if (stopped) break;
           if (!ok) retry = retry ? mergeOutage(retry, current) : current;
           else retryDelayMs = RECOVERY_RETRY_MIN_MS;
           current = queued;
@@ -168,8 +186,13 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
       clearRetryTimer();
       retry = undefined;
       queued = undefined;
+      return inFlight ?? Promise.resolve();
     },
   };
+}
+
+function outageReviewKey(outage: Outage): string {
+  return `${outage.since}:${outage.until}:${outage.hostSuspended ? 1 : 0}`;
 }
 
 function mergeOutage(left: Outage, right: Outage): Outage {

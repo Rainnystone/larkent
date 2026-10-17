@@ -14,6 +14,8 @@ export interface RunHandle {
   hasOpenToolCall?: boolean;
   /** Set by recovery when the run was silent before the outage. */
   stallDeadlineMs?: number;
+  /** Set once a stall deadline is armed; later reviews must not extend it. */
+  stallArmedAt?: number;
   /** Installed by the stream processor so recovery can shorten the idle bound. */
   armStallDeadline?: (delayMs: number) => void;
 }

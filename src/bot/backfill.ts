@@ -103,13 +103,17 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<boolean> {
     log.info('backfill', 'skip-no-identity', gapFields(deps.ledger, now));
     return true;
   }
-  const incompleteFrom = deps.ledger.getIncompleteFrom();
-  const incompleteEpoch = deps.ledger.getIncompleteEpoch();
   const origin = deps.since ?? deps.fromMs;
   const window = {
     windowStart: deps.fromMs,
     windowEnd: now,
   };
+  // Persist incompleteFrom before any network so a crash or abort keeps the
+  // window. markScanComplete is the only path that clears it.
+  deps.ledger.markScanIncomplete(origin);
+  await deps.ledger.flush();
+  const incompleteFrom = deps.ledger.getIncompleteFrom();
+  const incompleteEpoch = deps.ledger.getIncompleteEpoch();
 
   log.info('backfill', 'trigger', {
     windowStart: window.windowStart,
@@ -191,7 +195,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<boolean> {
 
   if (aborted) {
     log.info('backfill', 'aborted');
-    return true;
+    return false;
   }
 
   const durationMs = Date.now() - startedAt;
