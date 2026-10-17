@@ -157,7 +157,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(false);
     expect(h.store.get(1)?.nextFireAt).toBe(t0);
 
-    h.setNow(t0 + 60_000);
+    h.setNow(t0 + 61_000);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
     await waitFor(async () => {

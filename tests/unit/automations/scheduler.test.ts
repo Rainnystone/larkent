@@ -7,8 +7,9 @@ import {
   formatFireKey,
   type Schedule,
 } from '../../../src/automations/schedule';
+import { BoardActionAuth } from '../../../src/automations/board-auth';
+import { automationBoardCard } from '../../../src/automations/board-card';
 import {
-  MAX_SCHEDULER_DELAY_MS,
   createAutomationScheduler,
   type FireSend,
   type MissedNotify,
@@ -61,6 +62,11 @@ class ManualClock {
     if (typeof id === 'number') this.timers.delete(id);
   };
 
+  /** Wall-clock jump. Pending timers stay on their original deadlines. */
+  jump(ms: number): void {
+    this.nowMs += ms;
+  }
+
   async advanceTo(target: number, idle: () => Promise<void>): Promise<void> {
     for (;;) {
       const due = [...this.timers.entries()]
@@ -68,10 +74,10 @@ class ManualClock {
         .sort((a, b) => a[1].at - b[1].at || a[0] - b[0]);
       const first = due[0];
       if (!first) {
-        this.nowMs = target;
+        this.nowMs = Math.max(this.nowMs, target);
         return;
       }
-      this.nowMs = first[1].at;
+      this.nowMs = Math.max(this.nowMs, first[1].at);
       this.timers.delete(first[0]);
       first[1].fn();
       await idle();
@@ -243,8 +249,8 @@ describe('automation scheduler', () => {
     });
   });
 
-  it('arms a one-month reminder in bounded chunks instead of a 1ms spin', async () => {
-    const fireAt = t0 + 30 * 24 * HOUR;
+  it('rearms a 40-day one-shot in segments of at most 60s without a 1ms spin', async () => {
+    const fireAt = t0 + 40 * 24 * HOUR;
     const delays: number[] = [];
     const NODE_MAX = 2_147_483_647;
     const clockBox: { clock?: ManualClock } = {};
@@ -260,15 +266,105 @@ describe('automation scheduler', () => {
       startAt: t0,
       endAt: fireAt,
       nextFireAt: fireAt,
-      name: '一个月后',
+      name: '四十天后',
     }));
     await h.scheduler.start();
     await h.scheduler.idle();
-    expect(delays[0]).toBe(MAX_SCHEDULER_DELAY_MS);
-    expect(delays[0]).toBeLessThanOrEqual(NODE_MAX);
-    await h.clock.advanceTo(t0 + 5_000, () => h.scheduler.idle());
+    expect(delays[0]).toBeLessThanOrEqual(60_000);
+    expect(delays[0]).toBeGreaterThan(1);
+    await h.clock.advanceTo(t0 + 3 * 60_000, async () => {
+      await h.scheduler.idle();
+      if (delays.length > 12) throw new Error(`timer spin: ${delays.length} arms`);
+    });
     expect(h.fires).toEqual([]);
-    expect(delays.length).toBe(1);
+    expect(delays.every((delay) => delay <= 60_000 && delay > 1)).toBe(true);
+    expect(delays.length).toBeGreaterThanOrEqual(3);
+    expect(delays.length).toBeLessThanOrEqual(8);
+  });
+
+  it('after a 2h wall-clock jump, the next segment delivers the due fire with a catch-up label', async () => {
+    const fireAt = t0 + 10 * 60_000;
+    const delays: number[] = [];
+    const clockBox: { clock?: ManualClock } = {};
+    const h = await harness(t0, {
+      setTimeout: (fn, delayMs) => {
+        delays.push(delayMs);
+        return clockBox.clock!.setTimeout(fn, delayMs);
+      },
+    });
+    clockBox.clock = h.clock;
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: t0,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+      name: '睡醒提醒',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(delays[0]).toBeLessThanOrEqual(60_000);
+    expect(h.fires).toEqual([]);
+
+    h.clock.jump(2 * HOUR);
+    await h.clock.advanceTo(t0 + (delays[0] ?? 0), () => h.scheduler.idle());
+
+    expect(h.fires).toEqual([
+      expect.objectContaining({ fireAt, catchUp: true }),
+    ]);
+    expect(h.notices).toEqual([]);
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        id: 1,
+        scheduledAt: fireAt,
+        result: 'catch-up',
+      }),
+    ]);
+    expect(await readStatus(h.statusPath)).toMatchObject({ items: [] });
+  });
+
+  it('does not label a 59s-late timer fire as catch-up', async () => {
+    const h = await harness(t0 + 59_000);
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt: t0 },
+      startAt: t0 - 20 * 60_000,
+      endAt: t0,
+      nextFireAt: t0,
+      name: '准点',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.fires).toEqual([
+      expect.objectContaining({ fireAt: t0, catchUp: false }),
+    ]);
+    expect(await h.store.readLog()).toEqual([]);
+    expect(h.notices).toEqual([]);
+    expect(await readStatus(h.statusPath)).toMatchObject({ items: [] });
+  });
+
+  it('labels a 61s-late missed fire as catch-up', async () => {
+    const h = await harness(t0 + 61_000);
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt: t0 },
+      startAt: t0 - 20 * 60_000,
+      endAt: t0,
+      nextFireAt: t0,
+      name: '迟到',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.fires).toEqual([
+      expect.objectContaining({ fireAt: t0, catchUp: true }),
+    ]);
+    expect(h.notices).toEqual([]);
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        scheduledAt: t0,
+        result: 'catch-up',
+      }),
+    ]);
+    expect(await readStatus(h.statusPath)).toMatchObject({ items: [] });
   });
 
   it('pauses an existing agent task before markStarted when agentTasks is off', async () => {
@@ -468,7 +564,7 @@ describe('automation scheduler', () => {
 
   it('calls the sender once when restart, link-recovered and wake race for the same fire key', async () => {
     const fireAt = t0;
-    const now = fireAt + 60_000;
+    const now = fireAt + 61_000;
     const orders: Array<Array<'start' | 'recovered' | 'wake'>> = [
       ['start', 'recovered', 'wake'],
       ['start', 'wake', 'recovered'],
@@ -713,6 +809,82 @@ describe('automation scheduler', () => {
       expect.objectContaining({ missedFires: [t0, t0 + HOUR] }),
     ]);
     expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+  });
+
+  it('skips the next agent fire while the previous run is unsettled and leaves a board and log trace', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness(t0, {
+      send: () => hold,
+    });
+    await h.store.create(reminderInput({
+      taskType: 'agent',
+      cwd: h.dir,
+      schedule: hourly,
+      nextFireAt: t0,
+      name: '汇总',
+      taskText: '每天总结本群',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toHaveLength(1);
+    expect(h.store.get(1)?.lastStatus).toBe('running');
+    expect(h.store.get(1)?.lastFireAt).toBe(t0);
+
+    await h.clock.advanceTo(t0 + HOUR, () => h.scheduler.idle());
+    expect(h.fires).toHaveLength(1);
+    expect(h.notices).toEqual([]);
+    expect(h.store.get(1)).toMatchObject({
+      lastStatus: 'running',
+      lastFireAt: t0,
+      nextFireAt: t0 + 2 * HOUR,
+    });
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        id: 1,
+        taskType: 'agent',
+        scheduledAt: t0 + HOUR,
+        result: 'skipped',
+        skipReason: 'previous-run-unsettled',
+      }),
+    ]);
+    const status = await readStatus(h.statusPath);
+    expect(status.items).toEqual([
+      expect.objectContaining({ id: 1, lastStatus: 'running', lastFireAt: t0 }),
+    ]);
+    const item = h.store.get(1);
+    const rendered = automationBoardCard({
+      items: item ? [item] : [],
+      status,
+      auth: new BoardActionAuth({ secret: 'board-secret', now: () => h.clock.now() }),
+    }) as { elements: Array<{ content?: string; text?: { content?: string } }> };
+    const lines = rendered.elements.map((element) => element.text?.content ?? element.content ?? '');
+    expect(lines.join('\n')).toContain('已跳过 原定 2026-01-02 13:00');
+    expect(lines.join('\n')).toContain('"lastStatus":"running"');
+    release();
+  });
+
+  it('drops started fire keys older than 48h and keeps keys inside the window', async () => {
+    const h = await harness(t0);
+    await h.store.create(reminderInput({
+      nextFireAt: t0 + 40 * 24 * HOUR,
+      paused: true,
+    }));
+    const stale = formatFireKey(1, t0 - 48 * HOUR - 1);
+    const kept = formatFireKey(1, t0 - 48 * HOUR);
+    await h.store.markStarted(stale);
+    await h.store.markStarted(kept);
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.store.hasStarted(stale)).toBe(false);
+    expect(h.store.hasStarted(kept)).toBe(true);
+    expect(h.fires).toEqual([]);
+    const onDisk = JSON.parse(await readFile(join(h.dir, 'automations.json'), 'utf8')) as { started: string[] };
+    expect(onDisk.started).not.toContain(stale);
+    expect(onDisk.started).toContain(kept);
   });
 
   it('starts overlapping fires without waiting for the previous sender to finish', async () => {

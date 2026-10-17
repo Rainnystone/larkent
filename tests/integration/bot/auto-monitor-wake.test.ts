@@ -113,7 +113,7 @@ describe('automation monitor wake hook', () => {
     await h.restart();
     expect(h.store.hasStarted(formatFireKey(1, fireAt))).toBe(false);
     await h.store.setNextFireAt(1, fireAt);
-    h.setNow(fireAt + 60_000);
+    h.setNow(fireAt + 61_000);
 
     const sentBefore = h.channel.sent.length;
     const fireKey = formatFireKey(1, fireAt);
@@ -190,7 +190,7 @@ describe('automation monitor wake hook', () => {
 
   it('starts from a stop with a pending wake file and catch-up once', async () => {
     const fireAt = T0;
-    const h = await harness({ nowMs: fireAt + 60_000, start: false });
+    const h = await harness({ nowMs: fireAt + 61_000, start: false });
     await seedItem(h, fireAt);
     const fireKey = formatFireKey(1, fireAt);
     await enqueueWakeRequest(h.wakeDir, fireKey);

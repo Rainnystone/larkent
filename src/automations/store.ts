@@ -9,12 +9,15 @@ export const AUTOMATIONS_SCHEMA_VERSION = 1 as const;
 export const AUTOMATIONS_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 export const AUTOMATIONS_MISSED_TTL_MS = 24 * 60 * 60 * 1000;
 export const AUTOMATIONS_FIRE_HISTORY_MAX = 20;
+/** Started fire keys older than this are dropped so a long-lived process does not grow the set. */
+export const AUTOMATIONS_STARTED_KEY_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 export type AutomationTaskType = 'reminder' | 'agent';
 export type AutomationLastStatus = 'ok' | 'missed' | 'failed' | 'running';
 export type AutomationTriggerSource = 'startup' | 'link-recovered' | 'wake';
-export type AutomationLogResult = 'missed' | 'catch-up' | 'policy-guard';
+export type AutomationLogResult = 'missed' | 'catch-up' | 'policy-guard' | 'skipped';
 export type AutomationPolicyGuardReason = PolicyGuardReason;
+export type AutomationSkipReason = 'previous-run-unsettled';
 export type MarkStartedResult = 'started' | 'already-started';
 
 export interface AutomationFireRecord {
@@ -25,6 +28,12 @@ export interface AutomationFireRecord {
 export interface MissedInstant {
   fireAt: number;
   recordedAt: number;
+}
+
+export interface SkippedInstant {
+  fireAt: number;
+  recordedAt: number;
+  reason: AutomationSkipReason;
 }
 
 export interface AutomationItem {
@@ -46,6 +55,7 @@ export interface AutomationItem {
   taskText: string;
   cwd?: string;
   missedInstants: MissedInstant[];
+  skippedInstants: SkippedInstant[];
 }
 
 export interface CreateAutomationInput {
@@ -86,6 +96,7 @@ export interface AutomationsLogEntry {
   triggerSource?: AutomationTriggerSource;
   result: AutomationLogResult;
   reason?: AutomationPolicyGuardReason;
+  skipReason?: AutomationSkipReason;
 }
 
 export interface AutomationBoardBinding {
@@ -184,7 +195,8 @@ export class AutomationsStore {
   hasAgedMissedInstants(): boolean {
     const cutoff = this.now() - AUTOMATIONS_MISSED_TTL_MS;
     return this.items.some((item) =>
-      item.missedInstants.some((entry) => entry.recordedAt < cutoff),
+      item.missedInstants.some((entry) => entry.recordedAt < cutoff)
+      || item.skippedInstants.some((entry) => entry.recordedAt < cutoff),
     );
   }
 
@@ -219,6 +231,7 @@ export class AutomationsStore {
       taskText: input.taskText,
       ...(input.taskType === 'agent' && input.cwd ? { cwd: input.cwd } : {}),
       missedInstants: [],
+      skippedInstants: [],
     };
     this.items.push(item);
     await this.persistNow();
@@ -273,8 +286,29 @@ export class AutomationsStore {
     }
     if (added === 0) return;
     item.missed += added;
-    item.lastStatus = 'missed';
+    if (item.lastStatus !== 'running') item.lastStatus = 'missed';
     await this.persistNow();
+  }
+
+  /**
+   * Record a skipped slot and move nextFireAt in one write.
+   * Does not change lastFireAt or lastStatus, so the in-flight run can still settle.
+   */
+  async recordSkippedFire(
+    id: number,
+    fireAt: number,
+    reason: AutomationSkipReason,
+    nextFireAt: number,
+  ): Promise<boolean> {
+    this.assertMutable();
+    const item = this.items.find((entry) => entry.id === id);
+    if (!item) return false;
+    if (!item.skippedInstants.some((entry) => entry.fireAt === fireAt)) {
+      item.skippedInstants.push({ fireAt, recordedAt: this.now(), reason });
+    }
+    item.nextFireAt = nextFireAt;
+    await this.persistNow();
+    return true;
   }
 
   async recordLog(entry: AutomationsLogEntry): Promise<void> {
@@ -292,6 +326,7 @@ export class AutomationsStore {
       result: entry.result,
       ...(entry.triggerSource ? { triggerSource: entry.triggerSource } : {}),
       ...(entry.reason ? { reason: entry.reason } : {}),
+      ...(entry.skipReason ? { skipReason: entry.skipReason } : {}),
     }));
     this.logEntries.push(...mapped);
     await this.persistLogLines(mapped);
@@ -442,6 +477,20 @@ export class AutomationsStore {
     return this.started.has(fireKey);
   }
 
+  async pruneStartedFireKeys(now: number): Promise<boolean> {
+    this.assertMutable();
+    let changed = false;
+    for (const key of [...this.started]) {
+      const parsed = parseFireKey(key);
+      if (!parsed) continue;
+      if (now - parsed.fireAt <= AUTOMATIONS_STARTED_KEY_WINDOW_MS) continue;
+      this.started.delete(key);
+      changed = true;
+    }
+    if (changed) await this.persistNow();
+    return changed;
+  }
+
   async pause(id: number): Promise<boolean> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
@@ -555,6 +604,7 @@ export class AutomationsStore {
     const cutoff = this.now() - AUTOMATIONS_MISSED_TTL_MS;
     const viewed = cloneItem(item);
     viewed.missedInstants = viewed.missedInstants.filter((entry) => entry.recordedAt >= cutoff);
+    viewed.skippedInstants = viewed.skippedInstants.filter((entry) => entry.recordedAt >= cutoff);
     return viewed;
   }
 
@@ -667,6 +717,7 @@ function cloneItem(item: AutomationItem): AutomationItem {
     ...item,
     fireHistory: item.fireHistory.map((record) => ({ ...record })),
     missedInstants: item.missedInstants.map((entry) => ({ ...entry })),
+    skippedInstants: item.skippedInstants.map((entry) => ({ ...entry })),
   };
 }
 
@@ -784,7 +835,19 @@ function parseItem(raw: unknown): AutomationItem | undefined {
     taskText: raw.taskText,
     ...(cwd ? { cwd } : {}),
     missedInstants: parseMissedInstants(raw.missedInstants),
+    skippedInstants: parseSkippedInstants(raw.skippedInstants),
   };
+}
+
+function parseSkippedInstants(raw: unknown): SkippedInstant[] {
+  if (!Array.isArray(raw)) return [];
+  const instants: SkippedInstant[] = [];
+  for (const entry of raw) {
+    if (!isObject(entry) || !isFiniteNumber(entry.fireAt) || !isFiniteNumber(entry.recordedAt)) continue;
+    if (entry.reason !== 'previous-run-unsettled') continue;
+    instants.push({ fireAt: entry.fireAt, recordedAt: entry.recordedAt, reason: entry.reason });
+  }
+  return instants;
 }
 
 function parseMissedInstants(raw: unknown): MissedInstant[] {
@@ -879,7 +942,12 @@ function parseLogEntry(raw: unknown): AutomationsLogEntry | undefined {
   if (!isPositiveInt(raw.id)) return undefined;
   if (raw.taskType !== 'reminder' && raw.taskType !== 'agent') return undefined;
   if (!isFiniteNumber(raw.scheduledAt) || !isFiniteNumber(raw.decidedAt)) return undefined;
-  if (raw.result !== 'missed' && raw.result !== 'catch-up' && raw.result !== 'policy-guard') {
+  if (
+    raw.result !== 'missed'
+    && raw.result !== 'catch-up'
+    && raw.result !== 'policy-guard'
+    && raw.result !== 'skipped'
+  ) {
     return undefined;
   }
   const triggerSource =
@@ -891,6 +959,8 @@ function parseLogEntry(raw: unknown): AutomationsLogEntry | undefined {
   if (raw.result !== 'policy-guard' && !triggerSource) return undefined;
   const reason = parsePolicyGuardReason(raw.reason);
   if (raw.result === 'policy-guard' && raw.reason !== undefined && !reason) return undefined;
+  const skipReason = raw.skipReason === 'previous-run-unsettled' ? raw.skipReason : undefined;
+  if (raw.result === 'skipped' && !skipReason) return undefined;
   return {
     id: raw.id,
     taskType: raw.taskType,
@@ -899,6 +969,7 @@ function parseLogEntry(raw: unknown): AutomationsLogEntry | undefined {
     result: raw.result,
     ...(triggerSource ? { triggerSource } : {}),
     ...(reason ? { reason } : {}),
+    ...(skipReason ? { skipReason } : {}),
   };
 }
 

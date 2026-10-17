@@ -19,10 +19,13 @@ import {
 } from './store';
 import { consumeWakeRequests, watchWakeDir, type WakeWatch } from './wake-file';
 
-/** Late timers within one second are on-time, not 补跑. */
-export const ON_TIME_GRACE_MS = 1_000;
-/** Node clamps setTimeout above 2^31-1 ms to 1 ms; stay under that. */
-export const MAX_SCHEDULER_DELAY_MS = 24 * 24 * 60 * 60 * 1000;
+/**
+ * Fires at most this late, with no earlier missed slot, are on-time.
+ * This chooses the 补跑 label only. It does not change the miss rule.
+ */
+export const ON_TIME_GRACE_MS = 60_000;
+/** Each arm sleeps at most this long, then recomputes due work from the wall clock. */
+const SCHEDULER_SEGMENT_MS = 60_000;
 
 export interface FireSend {
   id: number;
@@ -107,7 +110,6 @@ class Scheduler implements AutomationScheduler {
   /** Crash leftovers are settled once, before the first fire in this process. */
   private orphansAbandoned = false;
   private fireTimer: unknown;
-  private expireTimer: unknown;
   private wakeWatch?: WakeWatch;
 
   constructor(deps: AutomationSchedulerDeps) {
@@ -294,6 +296,7 @@ class Scheduler implements AutomationScheduler {
       && live.lastFireAt < live.nextFireAt
     ) {
       if (!this.isLinkUp()) return;
+      if (await this.skipUnsettledAgent(live, live.nextFireAt, source, schedule)) return;
       await this.fireExact(live, live.nextFireAt, false, source, schedule);
       return;
     }
@@ -354,7 +357,9 @@ class Scheduler implements AutomationScheduler {
         await this.writeStatus();
         return;
       }
-      await this.fireExact(live, plan.run, true, source, schedule);
+      if (await this.skipUnsettledAgent(live, plan.run, source, schedule)) return;
+      const onTime = plan.missedFires.length === 0 && now - plan.run <= ON_TIME_GRACE_MS;
+      await this.fireExact(live, plan.run, !onTime, source, schedule);
       return;
     }
 
@@ -461,6 +466,36 @@ class Scheduler implements AutomationScheduler {
     );
   }
 
+  /**
+   * An agent task with an unsettled run skips this slot: no second run, no
+   * group post. The board and automations log keep the original time.
+   */
+  private async skipUnsettledAgent(
+    item: AutomationItem,
+    fireAt: number,
+    source: AutomationTriggerSource,
+    schedule: Schedule,
+  ): Promise<boolean> {
+    if (item.taskType !== 'agent' || item.lastStatus !== 'running') return false;
+    if (item.lastFireAt === fireAt) return false;
+    const reason = 'previous-run-unsettled' as const;
+    const next = nextFireAfter(schedule, fireAt);
+    const recorded = await this.store.recordSkippedFire(item.id, fireAt, reason, next);
+    if (!recorded) return false;
+    await this.store.recordLog({
+      id: item.id,
+      taskType: item.taskType,
+      scheduledAt: fireAt,
+      decidedAt: this.now(),
+      triggerSource: source,
+      result: 'skipped',
+      skipReason: reason,
+    });
+    log.info('auto', 'skipped', { id: item.id, fireAt, reason });
+    await this.writeStatus();
+    return true;
+  }
+
   private async dropChat(chatId: string): Promise<boolean> {
     const ok = await this.store.removeChat(chatId);
     if (ok) {
@@ -473,6 +508,7 @@ class Scheduler implements AutomationScheduler {
 
   private async handleDue(): Promise<void> {
     if (this.closed || !this.enabled()) return;
+    await this.store.pruneStartedFireKeys(this.now());
     const now = this.now();
     if (!this.isLinkUp()) {
       this.armTimer();
@@ -486,6 +522,7 @@ class Scheduler implements AutomationScheduler {
         await this.applyCatchUp(item, 'startup');
         continue;
       }
+      if (await this.skipUnsettledAgent(item, item.nextFireAt, 'startup', schedule)) continue;
       await this.fireExact(item, item.nextFireAt, false, 'startup', schedule);
     }
     await this.expireDue();
@@ -537,38 +574,38 @@ class Scheduler implements AutomationScheduler {
     this.clearTimers();
     if (this.closed || !this.enabled()) return;
     const now = this.now();
+    const deadline = this.nextDeadline(now);
+    if (deadline === undefined) return;
+    const delay = Math.min(SCHEDULER_SEGMENT_MS, Math.max(0, deadline - now));
+    this.fireTimer = this.setTimeout(() => {
+      void this.enqueue(() => this.handleDue());
+    }, delay);
+  }
+
+  private nextDeadline(now: number): number | undefined {
     const linkUp = this.isLinkUp();
-    let nextFire = Number.POSITIVE_INFINITY;
-    let nextExpire = Number.POSITIVE_INFINITY;
+    let next = Number.POSITIVE_INFINITY;
     for (const item of this.store.list()) {
       if (!item.paused && item.nextFireAt > 0) {
         if (item.nextFireAt > now || (linkUp && item.nextFireAt === now)) {
-          nextFire = Math.min(nextFire, item.nextFireAt);
+          next = Math.min(next, item.nextFireAt);
         }
       }
       const expiry = this.expiryAt(item);
-      if (expiry > 0) nextExpire = Math.min(nextExpire, expiry);
+      if (expiry > 0) next = Math.min(next, expiry);
       for (const entry of item.missedInstants) {
-        nextExpire = Math.min(nextExpire, entry.recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1);
+        next = Math.min(next, entry.recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1);
+      }
+      for (const entry of item.skippedInstants) {
+        next = Math.min(next, entry.recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1);
       }
     }
-    if (Number.isFinite(nextFire)) {
-      this.fireTimer = this.setTimeout(() => {
-        void this.enqueue(() => this.handleDue());
-      }, Math.min(MAX_SCHEDULER_DELAY_MS, Math.max(0, nextFire - now)));
-    }
-    if (Number.isFinite(nextExpire)) {
-      this.expireTimer = this.setTimeout(() => {
-        void this.enqueue(() => this.expireDue().then(() => this.armTimer()));
-      }, Math.min(MAX_SCHEDULER_DELAY_MS, Math.max(0, nextExpire - now)));
-    }
+    return Number.isFinite(next) ? next : undefined;
   }
 
   private clearTimers(): void {
     if (this.fireTimer !== undefined) this.clearTimeout(this.fireTimer);
-    if (this.expireTimer !== undefined) this.clearTimeout(this.expireTimer);
     this.fireTimer = undefined;
-    this.expireTimer = undefined;
   }
 
   private armWakeWatch(): void {

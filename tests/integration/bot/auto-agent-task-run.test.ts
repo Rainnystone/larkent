@@ -168,7 +168,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(continuationBodies(h.channel)).toEqual([]);
   });
 
-  it('lets two overlapping fires of one task each produce their own result post', async () => {
+  it('skips the next fire of an agent task while the previous run is unsettled', async () => {
     let release!: () => void;
     const hold = new Promise<void>((resolve) => {
       release = resolve;
@@ -186,21 +186,32 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     await waitFor(() => h.agent.runs.length === 1);
     h.setNow(t0 + HOUR);
     await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));
-    await waitFor(() => h.agent.runs.length === 2);
-    expect(h.agent.runOptions.map((opts) => opts.prompt)).toEqual([
-      expect.stringContaining(TASK),
-      expect.stringContaining(TASK),
-    ]);
-    expect(h.agent.runOptions.every((opts) => opts.prompt.includes(`"chatId":"${CHAT}"`))).toBe(true);
+    await waitFor(async () => (await h.store.readLog()).some((entry) => entry.result === 'skipped'));
+
+    expect(h.agent.runs).toHaveLength(1);
     expect(resultBodies(h.channel)).toEqual([]);
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        id: 1,
+        taskType: 'agent',
+        scheduledAt: t0 + HOUR,
+        result: 'skipped',
+        skipReason: 'previous-run-unsettled',
+      }),
+    ]);
+    expect(await readStatus(h.statusPath)).toMatchObject({
+      items: [expect.objectContaining({ lastStatus: 'running', lastFireAt: t0, missed: 0 })],
+    });
+    const board = JSON.stringify(h.channel.sent) + JSON.stringify(h.channel.updatedCards);
+    expect(board).toContain('已跳过 原定 2026-01-02 13:00');
+    expect(board).toContain('进行中');
+    expect(board).toContain('\\"lastStatus\\":\\"running\\"');
 
     release();
-    await waitFor(() => resultBodies(h.channel).length === 2);
-    expect(resultBodies(h.channel)).toEqual([
-      `${FIRE_ONE}\n\n${FOOTER}`,
-      `${FIRE_TWO}\n\n${FOOTER}`,
-    ]);
-    expect(h.channel.streams).toEqual([]);
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    await waitFor(async () => (await readStatus(h.statusPath)).items[0]?.lastStatus === 'ok');
+    expect(resultBodies(h.channel)).toEqual([`${FIRE_ONE}\n\n${FOOTER}`]);
+    expect(h.agent.runs).toHaveLength(1);
     expect(continuationBodies(h.channel)).toEqual([]);
   });
 
@@ -315,7 +326,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(outboxSends(h.channel)).toEqual([]);
     expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(false);
 
-    h.setNow(t0 + 60_000);
+    h.setNow(t0 + 61_000);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
     await waitFor(() => resultBodies(h.channel).length === 1);
@@ -368,7 +379,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
       hold,
     });
     await first.bridge.tickLink();
-    first.setNow(t0 + 60_000);
+    first.setNow(t0 + 61_000);
     first.channel.connectionState = 'connected';
     await first.bridge.tickLink();
     await waitFor(() => first.agent.runs.length === 1);
@@ -383,7 +394,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(staged?.reply?.markdown ?? '').toContain(FOOTER);
 
     const restarted = await harness({
-      nowMs: t0 + 60_000,
+      nowMs: t0 + 61_000,
       tmp: first.tmp,
       store: first.store,
       reuseCleanup: true,

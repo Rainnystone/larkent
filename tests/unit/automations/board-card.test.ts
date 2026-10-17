@@ -28,6 +28,7 @@ function item(overrides: Partial<AutomationItem> = {}): AutomationItem {
     name: '交周报',
     taskText: 'secret ping body',
     missedInstants: [],
+    skippedInstants: [],
     ...overrides,
   };
 }

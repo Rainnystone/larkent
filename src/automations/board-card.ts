@@ -86,6 +86,11 @@ export function automationBoardCard(input: {
           `已错过 原定 ${formatZonedDateTime(item.timezone, missed.fireAt)}`,
         ));
       }
+      for (const skipped of [...item.skippedInstants].sort((a, b) => a.fireAt - b.fireAt)) {
+        elements.push(divMd(
+          `已跳过 原定 ${formatZonedDateTime(item.timezone, skipped.fireAt)}`,
+        ));
+      }
       if (index < input.items.length - 1) elements.push(HR);
     });
   }
