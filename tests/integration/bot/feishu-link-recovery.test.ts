@@ -11,6 +11,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { axiosHttpError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -56,10 +57,9 @@ describe('FeishuLink recovery through the bridge', () => {
     });
 
     await waitFor(() => recovered.length === 1);
-    // Startup recover is fire-and-forget after the first tick. Join it
-    // (or retry immediately if that pass was incomplete) before the
-    // silent-probe clock starts, or lastEvidenceAt jumps and the outage
-    // window starts after failureStart.
+    // Startup recover is fire-and-forget after the first tick. Join the
+    // in-flight pass before the silent-probe clock starts, or lastEvidenceAt
+    // jumps and the outage window starts after failureStart.
     await h.bridge.recover();
     recovered.length = 0;
 
@@ -341,6 +341,46 @@ describe('FeishuLink recovery through the bridge', () => {
     await waitFor(() => h.agent.runOptions.some((opts) => opts.prompt.includes('posted during outage')));
     expect(h.agent.runOptions.filter((opts) => opts.prompt.includes('posted during outage'))).toHaveLength(1);
   });
+
+  it('does not self-trigger recovery scans while one chat history stays 429', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval'] });
+    const BAD = 'oc_bad';
+    const OK = 'oc_ok';
+    let lists = 0;
+    let releaseOk!: () => void;
+    const holdOk = new Promise<void>((resolve) => {
+      releaseOk = resolve;
+    });
+    let holdingOk = true;
+    await startHarness({
+      now: () => NOW,
+      probe: async () => true,
+      lastLiveAt: NOW,
+      history: { [BAD]: [], [OK]: [] },
+      chats: [{ id: BAD, name: 'Bad' }, { id: OK, name: 'Ok' }],
+      configureChannel(channel) {
+        const orig = channel.rawClient.im.v1.message.list.bind(channel.rawClient.im.v1.message);
+        channel.rawClient.im.v1.message.list = async (params: unknown) => {
+          lists += 1;
+          const nested = isRecord(params) && isRecord(params.params) ? params.params : isRecord(params) ? params : {};
+          const chatId = typeof nested.container_id === 'string' ? nested.container_id : undefined;
+          if (chatId === BAD) throw axiosHttpError(429);
+          if (holdingOk && chatId === OK) await holdOk;
+          return orig(params);
+        };
+      },
+    });
+
+    const deadline = Date.now() + 2_000;
+    while (lists < 2 && Date.now() < deadline) await yieldIO();
+    expect(lists).toBeGreaterThanOrEqual(2);
+    holdingOk = false;
+    releaseOk();
+    for (let i = 0; i < 40; i++) await yieldIO();
+    const snapshot = lists;
+    for (let i = 0; i < 40; i++) await yieldIO();
+    expect(lists).toBe(snapshot);
+  });
 });
 
 async function startHarness(opts: {
@@ -351,6 +391,8 @@ async function startHarness(opts: {
   onRecovered?: (outage: { since: number; until: number }) => void;
   withJournal?: boolean;
   boomRedeliver?: boolean;
+  chats?: Array<{ id: string; name: string }>;
+  configureChannel?: (channel: ReturnType<typeof createRecordingLarkChannel>) => void;
 }) {
   const tmp = await createTmpProfile('feishu-link-recovery-');
   const ledger = new BackfillLedger(`${tmp.profile}/backfill-state.json`, { now: opts.now });
@@ -388,9 +430,10 @@ async function startHarness(opts: {
   });
   const channel = createRecordingLarkChannel({
     botIdentity: { openId: BOT, name: 'Bot' },
-    chats: [{ id: CHAT, name: 'Group' }],
+    chats: opts.chats ?? [{ id: CHAT, name: 'Group' }],
     messagesByChat: opts.history,
   });
+  opts.configureChannel?.(channel);
   sdk.channel = channel;
   const bridge = await startChannel({
     cfg,

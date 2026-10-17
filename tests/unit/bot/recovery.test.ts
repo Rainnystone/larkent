@@ -216,6 +216,7 @@ describe('Recovery', () => {
   });
 
   it('still reviews and retries the window when backfill throws', async () => {
+    vi.useFakeTimers();
     const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
     const scanned: number[] = [];
     const reviewed: Outage[] = [];
@@ -248,6 +249,8 @@ describe('Recovery', () => {
     expect(fail.mock.calls.some((call) => call[0] === 'recovery')).toBe(true);
 
     await recovery.run({ since: 8_000, until: 9_000, hostSuspended: false });
+    expect(scanned).toEqual([outage.since - WATERMARK_MARGIN_MS]);
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS);
     expect(scanned).toEqual([
       outage.since - WATERMARK_MARGIN_MS,
       outage.since - WATERMARK_MARGIN_MS,
@@ -256,6 +259,7 @@ describe('Recovery', () => {
   });
 
   it('still backfills and reviews when journal flush throws during redeliver', async () => {
+    vi.useFakeTimers();
     const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
     const steps: string[] = [];
     let redeliveries = 0;
@@ -289,6 +293,8 @@ describe('Recovery', () => {
     expect(fail.mock.calls.some((call) => call[0] === 'recovery')).toBe(true);
 
     await recovery.run({ since: 6_000, until: 7_000, hostSuspended: true });
+    expect(steps).toEqual(['reap', 'redeliver', 'scan', 'review']);
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS);
     expect(steps).toEqual([
       'reap', 'redeliver', 'scan', 'review',
       'reap', 'redeliver', 'scan', 'review',
@@ -438,7 +444,7 @@ describe('Recovery', () => {
     await truncation.stop();
   });
 
-  it('a later run() retries an incomplete scan immediately without waiting for the timer', async () => {
+  it('a recovered run() while a retry is waiting only merges and does not scan', async () => {
     vi.useFakeTimers();
     const scans: boolean[] = [];
     const recovery = createRecovery({
@@ -460,8 +466,47 @@ describe('Recovery', () => {
     await recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
     expect(scans).toEqual([false]);
     await recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    expect(scans).toEqual([false]);
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS);
     expect(scans).toEqual([false, true]);
-    expect(vi.getTimerCount()).toBe(0);
+    await recovery.stop();
+  });
+
+  it('does not drain a recovered outage queued during an incomplete scan until the retry wait', async () => {
+    vi.useFakeTimers();
+    let scans = 0;
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const recovery = createRecovery({
+      journal: {
+        reapOrphans: async () => {},
+        redeliver: async () => {},
+      },
+      backfill: {
+        scan: async () => {
+          scans += 1;
+          if (scans === 1) await hold;
+          return false;
+        },
+      },
+      runs: { review: () => {} },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+    const first = recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    const queued = recovery.run({ since: 1_000, until: 6_000, hostSuspended: false });
+    expect(queued).toBe(first);
+    release();
+    await first;
+    expect(scans).toBe(1);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(scans).toBe(1);
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS);
+    expect(scans).toBe(2);
     await recovery.stop();
   });
 

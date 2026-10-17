@@ -155,10 +155,15 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
 
   const run = (outage: Outage): Promise<void> => {
     if (stopped) return Promise.resolve();
-    clearRetryTimer();
     if (inFlight) {
       queued = queued ? mergeOutage(queued, outage) : outage;
       return inFlight;
+    }
+    // Recovered/queued signals only merge into the pending window. The shared
+    // retry timer is the wait; clearing it here used to bypass backoff.
+    if (retryTimer) {
+      retry = retry ? mergeOutage(retry, outage) : outage;
+      return Promise.resolve();
     }
     inFlight = (async () => {
       let current: Outage | undefined = retry ? mergeOutage(retry, outage) : outage;
@@ -168,14 +173,17 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
           if (stopped) break;
           const ok = await runOnce(current);
           if (stopped) break;
-          if (!ok) retry = retry ? mergeOutage(retry, current) : current;
-          else retryDelayMs = RECOVERY_RETRY_MIN_MS;
+          if (!ok) {
+            retry = retry ? mergeOutage(retry, current) : current;
+            if (queued) {
+              retry = mergeOutage(retry, queued);
+              queued = undefined;
+            }
+            break;
+          }
+          retryDelayMs = RECOVERY_RETRY_MIN_MS;
           current = queued;
           queued = undefined;
-          if (current && retry) {
-            current = mergeOutage(retry, current);
-            retry = undefined;
-          }
         }
       } finally {
         inFlight = undefined;
