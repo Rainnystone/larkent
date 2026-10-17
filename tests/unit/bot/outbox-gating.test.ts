@@ -88,12 +88,12 @@ describe('per-item outbox (T13)', () => {
         axiosErrno('ENETUNREACH', 'connect ENETUNREACH 1.2.3.4:443'),
       );
     });
-    await journal.redeliver({ resend, resendNotice });
+    await expect(journal.redeliver({ resend, resendNotice })).rejects.toBeInstanceOf(Error);
     expect(resend).toHaveBeenCalledTimes(1);
     expect(journal.get('both')?.reply?.state).toBe('sent');
     expect(journal.get('both')?.notice?.state).toBe('staged');
 
-    await journal.redeliver({ resend, resendNotice });
+    await expect(journal.redeliver({ resend, resendNotice })).rejects.toBeInstanceOf(Error);
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(2);
   });
@@ -155,7 +155,7 @@ describe('per-item outbox (T13)', () => {
       if (entry.turnId === 'a') throw linkErr;
       return true;
     });
-    await journal.redeliver({ resend });
+    await expect(journal.redeliver({ resend })).rejects.toBe(linkErr);
     expect(attempted).toEqual(['a']);
     expect(journal.get('a')?.reply?.state).toBe('staged');
     expect(journal.get('b')?.reply?.state).toBe('staged');

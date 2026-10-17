@@ -121,9 +121,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
       if (original) byUuid.delete(input.uuid);
     }
     const inThread = outboundReplyInThread(input.options);
-    const threadId = inThread
-      ? rawThreadIds.get(input.parentId ?? '') ?? input.parentId
-      : undefined;
+    const threadId = inThread ? rawThreadIds.get(input.parentId ?? '') : undefined;
     const messageId = `om_fake_${nextMessage++}`;
     const stored: StoredChatMessage = {
       messageId,
@@ -283,25 +281,10 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
       });
       record.messageId = landed.message_id;
 
-      const ctrl = {
-        get messageId(): string {
-          return landed.message_id;
-        },
-        update: async (card: unknown): Promise<void> => {
-          record.cardUpdates.push(card);
-          const stored = byId.get(landed.message_id);
-          if (stored) stored.content = { card };
-        },
-        setContent: async (markdown: string): Promise<void> => {
-          record.markdownContents.push(markdown);
-          const stored = byId.get(landed.message_id);
-          if (stored) {
-            stored.content = {
-              card: { schema: '2.0', body: { elements: [{ tag: 'markdown', content: markdown }] } },
-            };
-          }
-        },
-      };
+      // Mirror @larksuite/channel 0.7.1: messageId is a class getter on the
+      // prototype. Object spread in a wrapper drops it; tests must use this
+      // shape so that class of bug fails instead of copying an own getter.
+      const ctrl = new FakeStreamController(landed.message_id, record, byId);
 
       if (isCardStreamInput(input)) {
         await input.card.producer(ctrl);
@@ -473,6 +456,38 @@ function stringField(record: Record<string, unknown> | undefined, key: string): 
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === 'object' && value !== null ? value as Record<string, unknown> : undefined;
+}
+
+/**
+ * SDK-faithful stream controller: `messageId` is a prototype getter, matching
+ * `@larksuite/channel` 0.7.1 card (:3938) and markdown (:4124) controllers.
+ */
+class FakeStreamController {
+  constructor(
+    private readonly landedId: string,
+    private readonly record: FakeChannelStream,
+    private readonly store: Map<string, StoredChatMessage>,
+  ) {}
+
+  get messageId(): string {
+    return this.landedId;
+  }
+
+  async update(card: unknown): Promise<void> {
+    this.record.cardUpdates.push(card);
+    const stored = this.store.get(this.landedId);
+    if (stored) stored.content = { card };
+  }
+
+  async setContent(markdown: string): Promise<void> {
+    this.record.markdownContents.push(markdown);
+    const stored = this.store.get(this.landedId);
+    if (stored) {
+      stored.content = {
+        card: { schema: '2.0', body: { elements: [{ tag: 'markdown', content: markdown }] } },
+      };
+    }
+  }
 }
 
 interface FakeCardController {

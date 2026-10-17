@@ -193,6 +193,54 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(noticeSends(h.channel)[0]?.options).toMatchObject({ replyInThread: true });
   });
 
+  it('retries a failed notice via the outbox sweep while the link stays up and delivers it once', async () => {
+    const h = await harness({
+      fakeTimers: false,
+      events: [[{ type: 'done', terminationReason: 'interrupted' }]],
+    });
+    failNoticeSends(h.channel, { remaining: 1 });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
+    expect(noticeSends(h.channel)).toHaveLength(1);
+    expect(h.channel.getConnectionStatus().state).toBe('connected');
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(noticeSends(h.channel)).toHaveLength(1);
+  });
+
+  it('keeps sweeping a staged notice after more than eight failed passes', async () => {
+    const h = await harness({
+      fakeTimers: false,
+      events: [[{ type: 'done', terminationReason: 'interrupted' }]],
+    });
+    failNoticeSends(h.channel, { remaining: 12 });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
+    expect(noticeSends(h.channel)).toHaveLength(1);
+  });
+
+  it('does not re-patch a reply with a receipt after its notice completes', async () => {
+    const streamed = 'STREAMED_ANSWER';
+    const h = await harness({
+      fakeTimers: false,
+      replyMode: 'markdown',
+      events: [[{ type: 'text', delta: streamed }, { type: 'done', terminationReason: 'interrupted' }]],
+    });
+    failNoticeSends(h.channel, { remaining: 1 });
+    await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_run') && Boolean(entry.reply?.messageId)
+    )));
+    const streamId = h.channel.streams[0]?.messageId;
+    expect(streamId).toBeTruthy();
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
+    const patchesWhenNoticeLanded = h.channel.updatedCards.filter((row) => row.messageId === streamId).length;
+    await yieldIO();
+    await h.bridge.recoverMissed();
+    expect(h.channel.updatedCards.filter((row) => row.messageId === streamId)).toHaveLength(patchesWhenNoticeLanded);
+    expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
+    expect(noticeSends(h.channel)).toHaveLength(1);
+  });
+
   it('resends a failed notice exactly once after recoverMissed', async () => {
     const h = await harness({
       fakeTimers: false,

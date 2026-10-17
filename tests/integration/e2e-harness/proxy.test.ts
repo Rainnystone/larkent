@@ -58,7 +58,17 @@ describe('test-bridge fault proxy', () => {
     cleanups.push(() => proxy.close());
 
     await expect(connectThroughProxy(proxy.url, target, 800)).rejects.toSatisfy((err: unknown) => {
-      expect(['EAI_AGAIN', 'ENOTFOUND']).toContain(errorCode(err));
+      const code = errorCode(err);
+      const text = String(err);
+      // Some resolvers surface NXDOMAIN immediately; others stall until the
+      // client CONNECT timer fires. Both are the unresolvable-host path.
+      expect(
+        code === 'EAI_AGAIN'
+        || code === 'ENOTFOUND'
+        || code === 'ETIMEDOUT'
+        || code === 'ETIMEOUT'
+        || /timeout|ENOTFOUND|EAI_AGAIN/i.test(text),
+      ).toBe(true);
       return true;
     });
   });

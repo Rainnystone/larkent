@@ -325,6 +325,21 @@ describe('redeliverStagedReply', () => {
 });
 
 describe('readBackBotReply', () => {
+  it('does not treat an unrecorded aux text reply as the landed answer', async () => {
+    const channel = createFakeChannel({ botAppId: APP, now: () => 1_760_000_001_000 });
+    const aux = await channel.send(CHAT, { markdown: 'WORKING…' }, { replyTo: 'om_src' });
+    const found = await readBackBotReply({
+      channel,
+      chatId: CHAT,
+      parentId: 'om_src',
+      botAppId: APP,
+      afterMs: 1_760_000_000_000,
+      markdown: 'ANSWER',
+    });
+    expect(aux.messageId).toBeTruthy();
+    expect(found).toEqual({ kind: 'none' });
+  });
+
   it('skips known non-answer ids and still finds the final answer', async () => {
     const channel = createFakeChannel({ botAppId: APP, now: () => 1_760_000_001_000 });
     const notice = await channel.send(CHAT, { markdown: 'COT 过程消息更新失败' }, { replyTo: 'om_src' });
@@ -335,6 +350,7 @@ describe('readBackBotReply', () => {
       parentId: 'om_src',
       botAppId: APP,
       afterMs: 1_760_000_000_000,
+      markdown: 'ANSWER',
       excludeIds: new Set([notice.messageId]),
     });
     expect(found).toEqual({ kind: 'text', messageId: answer.messageId });
@@ -367,6 +383,27 @@ describe('readBackBotReply', () => {
     expect(result.delivered).toBe(true);
     expect(result.messageId).toBe(answer.messageId);
     expect(channel.sent).toHaveLength(2);
+  });
+
+  it('does not use the parent message id as a thread container', async () => {
+    const listed: Array<{ type?: unknown; id?: unknown }> = [];
+    const channel = createFakeChannel({ botAppId: APP });
+    channel.rawClient.im.v1.message.list = async (params: unknown) => {
+      const nested = asListParams(params);
+      listed.push({ type: nested.container_id_type, id: nested.container_id });
+      return { data: { items: [], has_more: false } };
+    };
+    const found = await readBackBotReply({
+      channel,
+      chatId: CHAT,
+      parentId: 'om_src',
+      botAppId: APP,
+      afterMs: 1_760_000_000_000,
+      replyInThread: true,
+      markdown: 'ANSWER',
+    });
+    expect(found).toEqual({ kind: 'none' });
+    expect(listed).toEqual([]);
   });
 
   it('reads a replyInThread answer from the thread container after the uuid window', async () => {
@@ -470,4 +507,12 @@ async function idOf(channel: ReturnType<typeof createFakeChannel>): Promise<stri
     params: { container_id: CHAT, container_id_type: 'chat' },
   }) as { data?: { items?: Array<{ message_id?: string }> } };
   return listed.data?.items?.[0]?.message_id;
+}
+
+function asListParams(params: unknown): Record<string, unknown> {
+  if (!params || typeof params !== 'object') return {};
+  const rec = params as Record<string, unknown>;
+  const nested = rec.params;
+  if (nested && typeof nested === 'object') return nested as Record<string, unknown>;
+  return rec;
 }

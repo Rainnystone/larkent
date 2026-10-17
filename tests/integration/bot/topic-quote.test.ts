@@ -55,6 +55,8 @@ interface FakeLarkChannel {
   fetchRawMessage: ReturnType<typeof vi.fn>;
   /** Identity of the vi.fn; wrapChannelOutbound replaces `fetchRawMessage`. */
   fetchRawMessageMock: ReturnType<typeof vi.fn>;
+  /** Identity of the vi.fn; wrapMessageList replaces `rawClient.im.v1.message.list`. */
+  messageListMock: ReturnType<typeof vi.fn>;
   recallMessage: ReturnType<typeof vi.fn>;
   on(handlers: MessageHandlerMap): void;
   connect(): Promise<void>;
@@ -240,7 +242,7 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenCalledWith(
+    expect(h.channel.messageListMock).toHaveBeenCalledWith(
       expect.objectContaining({
         params: expect.objectContaining({
           container_id_type: 'thread',
@@ -289,7 +291,7 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.rawClient.im.v1.message.list).not.toHaveBeenCalled();
+    expect(h.channel.messageListMock).not.toHaveBeenCalled();
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).not.toContain('<topic_context>');
     expect(h.agent.runOptions[0]?.resumeHandle).toBe('sess_existing');
@@ -340,7 +342,7 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenCalledWith(
+    expect(h.channel.messageListMock).toHaveBeenCalledWith(
       expect.objectContaining({
         params: expect.objectContaining({
           container_id_type: 'thread',
@@ -423,7 +425,7 @@ describe('topic message quote handling', () => {
     expect(firstPrompt).toContain('<topic_context>');
     expect(firstPrompt).toContain('the real upstream question');
     expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
-    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenCalledTimes(1);
+    expect(h.channel.messageListMock).toHaveBeenCalledTimes(1);
 
     await waitFor(() => (h.agent.runs[0]?.waitForExitCalls ?? 0) >= 1);
 
@@ -439,7 +441,7 @@ describe('topic message quote handling', () => {
     await waitFor(() => h.agent.runOptions.length === 2, 4000);
 
     const secondPrompt = h.agent.runOptions[1]?.prompt ?? '';
-    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenCalledTimes(1);
+    expect(h.channel.messageListMock).toHaveBeenCalledTimes(1);
     expect(secondPrompt).not.toContain('<topic_context>');
     expect(h.agent.runOptions[1]?.resumeHandle).toBe('thread_codex_1');
   });
@@ -720,6 +722,7 @@ function createFakeLarkChannel(options: {
   };
   const rawThreadIds = options.rawThreadIds ?? {};
   const threadMessages = options.threadMessages ?? [];
+  const messageList = vi.fn(async () => ({ data: { items: threadMessages, has_more: false } }));
   const fetchRawMessage = vi.fn(async (messageId: string) => [
     {
       message_id: messageId,
@@ -744,7 +747,7 @@ function createFakeLarkChannel(options: {
       im: {
         v1: {
           message: {
-            list: vi.fn(async () => ({ data: { items: threadMessages, has_more: false } })),
+            list: messageList,
           },
           messageReaction: {
             create: vi.fn(async () => ({ data: { reaction_id: 'reaction_1' } })),
@@ -757,6 +760,7 @@ function createFakeLarkChannel(options: {
     listChats: vi.fn(async () => []),
     fetchRawMessage,
     fetchRawMessageMock: fetchRawMessage,
+    messageListMock: messageList,
     on(nextHandlers) {
       Object.assign(handlers, nextHandlers);
     },

@@ -70,6 +70,7 @@ describe('backfill after FeishuLink recovers a reconnect', () => {
       h.channel.emit('reconnected');
       await h.bridge.tickLink();
     }
+    await waitFor(() => listHold.started >= 1);
     expect(listHold.started).toBe(1);
     listHold.release();
     await waitFor(() => events(info, 'backfill').some((row) => row.event === 'done'));
@@ -297,7 +298,8 @@ async function settle() {
 }
 
 async function waitFor(predicate: () => boolean) {
-  for (let n = 0; n < 10_000; n++) {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
     if (predicate()) return;
     await yieldIO();
   }

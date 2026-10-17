@@ -70,11 +70,14 @@ One-shot per matching run id unless `:sticky` / `--sticky`.
 sends an @ message, then restores. Put the redacted conclusion (WS redelivery
 vs backfill) in the docs-track delivery note. Do not commit ids or tokens.
 
-`host-sleep-cli-self-send` SIGSTOPs the test bridge mid-run (host-sleep
-stand-in), resumes, then records whether a CLI self-send skipped the extra
-final reply (`skip-cli-already-sent` / intake skip-self) and whether Cursor
-`connection`/`retry` logged as `stream-reconnect`. Use `--real-cli` when the
-CLI itself posts to the group.
+`host-sleep-cli-self-send` SIGSTOPs the test bridge mid-run. That is a
+**process freeze, not OS sleep** (S7): on Linux `hostSuspended` must stay
+false unless `/proc/uptime` vs monotonic actually grew, so runs are not
+sleep-reviewed. Real-sleep acceptance is a manual lid-close on the user's
+Mac (`kern.waketime` / `kern.sleeptime`). The scenario still records whether
+a CLI self-send skipped the extra final reply (`skip-cli-already-sent` /
+intake skip-self) and whether Cursor `connection`/`retry` logged as
+`stream-reconnect`. Use `--real-cli` when the CLI itself posts to the group.
 
 ## Safety
 

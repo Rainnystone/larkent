@@ -11,6 +11,7 @@ import {
   startFeishuLink,
   type Outage,
 } from '../../../src/bot/feishu-link';
+import { HOST_SLEEP_PROBE_TIMEOUT_MS } from '../../../src/platform/host-sleep';
 import {
   axiosErrno,
   axiosHttpError,
@@ -82,7 +83,7 @@ describe('FeishuLink', () => {
     expect(watermark.value).toBe(now);
   });
 
-  it('treats a 5-minute tick gap as an outage whose scan starts before the sleep', async () => {
+  it('treats a 5-minute tick gap as an outage without hostSuspended', async () => {
     let now = 1_700_000_000_000;
     const start = now;
     const recovered: Outage[] = [];
@@ -91,6 +92,7 @@ describe('FeishuLink', () => {
       probe: async () => true,
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: notSleepingProbe(),
     });
     link.onRecovered((outage) => {
       recovered.push(outage);
@@ -106,7 +108,83 @@ describe('FeishuLink', () => {
     expect(recovered[0]!.since).toBe(start);
     expect(recovered[0]!.since).toBeLessThan(now - FEISHU_LINK_SLEEP_MS);
     expect(recovered[0]!.until).toBe(now);
+    expect(recovered[0]!.hostSuspended).toBe(false);
+  });
+
+  it('sets hostSuspended only when the OS sleep probe finds evidence in the gap', async () => {
+    let now = 1_700_000_000_000;
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: sleepingProbe(),
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+    now += 5 * 60_000;
+    await link.tick();
+    expect(recovered).toHaveLength(1);
     expect(recovered[0]!.hostSuspended).toBe(true);
+    expect(recovered[0]!.suspendStartedAt).toBe(now - 5 * 60_000);
+  });
+
+  it('does not set hostSuspended when the OS sleep probe fails', async () => {
+    let now = 1_700_000_000_000;
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: {
+        note() {},
+        async detect() {
+          throw new Error('sysctl failed');
+        },
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+    now += 5 * 60_000;
+    await link.tick();
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.hostSuspended).toBe(false);
+  });
+
+  it('does not block recovery when the OS sleep probe hangs', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    let now = 1_700_000_000_000;
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: {
+        note() {},
+        detect: () => new Promise(() => {}),
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+    now += 5 * 60_000;
+    const pending = link.tick();
+    await vi.advanceTimersByTimeAsync(HOST_SLEEP_PROBE_TIMEOUT_MS);
+    await pending;
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.hostSuspended).toBe(false);
+    expect(link.isDown()).toBe(false);
   });
 
   it('keeps suspendStartedAt on the last local tick when later ws-down pulls since back to Feishu evidence', async () => {
@@ -119,6 +197,7 @@ describe('FeishuLink', () => {
       probe: async () => true,
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: sleepingProbe(),
     });
     link.onRecovered((outage) => {
       recovered.push(outage);
@@ -394,10 +473,12 @@ describe('FeishuLink', () => {
           markdown?: (ctrl: { messageId: string; setContent: (text: string) => Promise<void> }) => Promise<void>;
         },
       ) => {
-        await input.markdown?.({
-          messageId: 'om_s',
-          setContent: async () => {},
-        });
+        await input.markdown?.(new (class {
+          get messageId(): string {
+            return 'om_s';
+          }
+          async setContent(_text: string): Promise<void> {}
+        })());
         return { messageId: 'om_s' };
       },
     } as unknown as LarkChannel;
@@ -406,6 +487,7 @@ describe('FeishuLink', () => {
       probe: async () => true,
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: notSleepingProbe(),
     });
     link.onRecovered((outage) => {
       recovered.push(outage);
@@ -509,7 +591,7 @@ describe('FeishuLink', () => {
     expect(recovered.outages).toHaveLength(0);
   });
 
-  it('detects a host suspend during an in-flight probe, ignores the late result, and recovers once', async () => {
+  it('detects a tick gap during an in-flight probe, ignores the late result, and recovers once', async () => {
     let now = 1_700_000_000_000;
     const outages: Outage[] = [];
     let probes = 0;
@@ -525,6 +607,7 @@ describe('FeishuLink', () => {
       },
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: notSleepingProbe(),
     });
     link.onRecovered((outage) => {
       outages.push(outage);
@@ -558,13 +641,13 @@ describe('FeishuLink', () => {
     hanging[1]!(true);
     await probing;
     expect(outages).toHaveLength(1);
-    expect(outages[0]!.hostSuspended).toBe(true);
+    expect(outages[0]!.hostSuspended).toBe(false);
     expect(outages[0]!.since).toBe(probeStartedAt);
     expect(outages[0]!.until).toBe(now);
     expect(link.isDown()).toBe(false);
   });
 
-  it('marks hostSuspended when a hung probe timer resumes after a tick gap', async () => {
+  it('takes the link down when a hung probe timer resumes after a tick gap without calling it suspend', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let now = 1_700_000_000_000;
     const outages: Outage[] = [];
@@ -577,6 +660,7 @@ describe('FeishuLink', () => {
       },
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: notSleepingProbe(),
     });
     link.onRecovered((outage) => {
       outages.push(outage);
@@ -606,7 +690,7 @@ describe('FeishuLink', () => {
     now += FEISHU_LINK_TICK_MS;
     await link.tick();
     expect(outages).toHaveLength(1);
-    expect(outages[0]!.hostSuspended).toBe(true);
+    expect(outages[0]!.hostSuspended).toBe(false);
   });
 
   it('times out a hung probe below the sleep threshold without counting it as suspend', async () => {
@@ -623,6 +707,7 @@ describe('FeishuLink', () => {
       },
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: notSleepingProbe(),
     });
     link.onRecovered((outage) => {
       outages.push(outage);
@@ -677,6 +762,7 @@ describe('FeishuLink', () => {
       },
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: notSleepingProbe(),
     });
     await link.tick();
     expect(link.isDown()).toBe(false);
@@ -714,6 +800,7 @@ describe('FeishuLink', () => {
       },
       watermark: memoryWatermark(now),
       now: () => now,
+      sleepProbe: notSleepingProbe(),
     });
     link.onRecovered((outage) => {
       recovered.push(outage);
@@ -818,6 +905,7 @@ async function hangSilentProbe(opts: {
     },
     watermark: memoryWatermark(clock.now),
     now: () => clock.now,
+    sleepProbe: notSleepingProbe(),
   });
   link.onRecovered((outage) => {
     outages.push(outage);
@@ -858,6 +946,30 @@ function fakeChannel(
   return {
     getConnectionStatus: () => ({ state: state(), reconnectAttempts: 0 }),
   } as unknown as LarkChannel;
+}
+
+function notSleepingProbe(): {
+  note(): void;
+  detect(): Promise<{ suspended: false }>;
+} {
+  return {
+    note() {},
+    async detect() {
+      return { suspended: false };
+    },
+  };
+}
+
+function sleepingProbe(): {
+  note(): void;
+  detect(gap: { fromMs: number; toMs: number }): Promise<{ suspended: true; suspendStartedAt: number }>;
+} {
+  return {
+    note() {},
+    async detect(gap) {
+      return { suspended: true, suspendStartedAt: gap.fromMs };
+    },
+  };
 }
 
 function memoryWatermark(initial?: number): { get(): number | undefined; set(at: number): void } {

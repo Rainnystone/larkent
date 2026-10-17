@@ -147,6 +147,25 @@ describe('TurnJournal', () => {
     });
   });
 
+  it('persists the real thread id on a replyInThread turn', async () => {
+    const { file, journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ threadId: 'omt_topic' }));
+    journal.stageReply('turn-1', {
+      markdown: 'in thread',
+      replyTo: 'om_1',
+      replyMode: 'text',
+      replyInThread: true,
+    });
+    await journal.flush();
+    expect(journal.get('turn-1')?.reply?.threadId).toBe('omt_topic');
+    const reloaded = new TurnJournal(file);
+    await reloaded.load();
+    expect(reloaded.get('turn-1')?.threadId).toBe('omt_topic');
+    expect(reloaded.get('turn-1')?.reply?.threadId).toBe('omt_topic');
+    expect(reloaded.get('turn-1')?.reply?.replyInThread).toBe(true);
+  });
+
   it('keeps completed-undelivered until recover resends exactly once', async () => {
     const { journal } = await fixture();
     await journal.load();

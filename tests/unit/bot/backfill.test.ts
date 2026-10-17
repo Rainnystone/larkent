@@ -355,18 +355,73 @@ describe('runBackfill', () => {
     });
     let closing = false;
     const info = spyInfo();
-    await runBackfill(await deps({
+    const ok = await runBackfill(await deps({
       ...h,
       isClosing: () => closing,
       onIntake: () => {
         closing = true;
       },
     }));
+    expect(ok).toBe(false);
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_1']);
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({ event: 'aborted' }),
     );
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(h.ledger.getIncompleteFrom()).toBeDefined();
+
+    closing = false;
+    const resumed = await runBackfill(await deps({ ...h, isClosing: () => false }));
+    expect(resumed).toBe(true);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_1', 'om_2']);
+  });
+
+  it('marks the scan incomplete before listing chats so a crash keeps the window', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_1', CHAT_A, 'hi', NOW - 10_000)] },
+    });
+    const pending = runBackfill(await deps({ ...h, listChatsHold: hold }));
+    await waitUntil(() => h.listed.length >= 1);
+    expect(h.ledger.getIncompleteFrom()).toBeDefined();
+    release();
+    expect(await pending).toBe(true);
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
+  });
+
+  it('answers a missed mention once after a crash mid-scan', async () => {
+    const hold = new Promise<void>(() => {});
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_crash', CHAT_A, 'missed', NOW - 10_000)] },
+    });
+    void runBackfill(await deps({ ...h, listChatsHold: hold }));
+    await waitUntil(() => h.listed.length >= 1);
+    await h.ledger.flush();
+
+    const restarted = new BackfillLedger(h.ledger.getFilePath(), { now: () => NOW });
+    ledgers.push(restarted);
+    await restarted.load();
+    expect(restarted.getIncompleteFrom()).toBeDefined();
+
+    const intake: NormalizedMessage[] = [];
+    const second = {
+      ...h,
+      ledger: restarted,
+      listed: [] as typeof h.listed,
+      list: [] as string[],
+      intake,
+      requests: [] as Record<string, unknown>[],
+    };
+    expect(await runBackfill(await deps(second))).toBe(true);
+    expect(intake.map((msg) => msg.messageId)).toEqual(['om_crash']);
+    expect(restarted.has('om_crash')).toBe(true);
+    expect(restarted.getIncompleteFrom()).toBeUndefined();
+    expect(h.intake).toEqual([]);
   });
 
   it('logs trigger with window bounds', async () => {
@@ -1331,6 +1386,7 @@ describe('createBackfillRun coalescing mutex', () => {
     const first = run(firstDeps);
     const second = run(secondDeps);
     expect(second).toBe(first);
+    await waitUntil(() => h.listed.length >= 1);
     expect(h.listed).toHaveLength(1);
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({ event: 'coalesced' }),
@@ -1402,6 +1458,7 @@ describe('createBackfillRun coalescing mutex', () => {
     const first = left(await deps({ ...leftH, listChatsHold: hold }));
     const second = right(await deps({ ...rightH, listChatsHold: hold }));
     expect(second).not.toBe(first);
+    await waitUntil(() => leftH.listed.length >= 1 && rightH.listed.length >= 1);
     expect(leftH.listed).toHaveLength(1);
     expect(rightH.listed).toHaveLength(1);
     expect(events(info, 'backfill').filter((row) => row.event === 'coalesced')).toEqual([]);

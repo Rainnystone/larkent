@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import {
   filterHostSleepFinals,
   readLogsSince,
+  sawHostSleepClassification,
   sawStreamReconnect,
   sawUnknownConnectionOnSameRecord,
   snapshotLogOffsets,
@@ -72,6 +73,25 @@ describe('readLogsSince', () => {
     const line = '{"phase":"jsonl","event":"stream-reconnect","eventType":"connection"}\n';
     await writeFile(jsonl, line);
     expect(await readLogsSince(root, offsets)).toBe(line);
+  });
+});
+
+describe('S7 freeze is not host sleep', () => {
+  it('does not treat a SIGSTOP freeze recovered log as reviewed on Linux', () => {
+    const freeze = [
+      '{"phase":"link","event":"tick-gap","gapMs":8000}',
+      '{"phase":"link","event":"recovered","hostSuspended":false}',
+    ].join('\n');
+    expect(sawHostSleepClassification(freeze)).toBe(false);
+  });
+
+  it('treats link.sleep or hostSuspended recovered as real sleep evidence', () => {
+    expect(sawHostSleepClassification(
+      '{"phase":"link","event":"sleep","sleptMs":60000}',
+    )).toBe(true);
+    expect(sawHostSleepClassification(
+      '{"phase":"link","event":"recovered","hostSuspended":true}',
+    )).toBe(true);
   });
 });
 

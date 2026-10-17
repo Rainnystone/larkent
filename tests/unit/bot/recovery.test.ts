@@ -86,6 +86,60 @@ describe('Recovery', () => {
     ]);
   });
 
+  it('does not re-arm a stall deadline on a second review of the same silent run', () => {
+    let armed = 0;
+    const silent: ReviewableRun = {
+      lastEventAt: 900,
+      interrupted: false,
+      armStallDeadline: () => {
+        armed += 1;
+        delete silent.stallDeadlineMs;
+      },
+    };
+    const outage = { since: 1_000, until: 5_000, hostSuspended: false };
+    reviewActiveRuns([silent], outage);
+    reviewActiveRuns([silent], outage);
+    expect(armed).toBe(1);
+  });
+
+  it('reviews silent runs once across recovery retries of the same outage', async () => {
+    vi.useFakeTimers();
+    const reviewed: Outage[] = [];
+    let scans = 0;
+    let second!: () => void;
+    const secondScan = new Promise<void>((resolve) => {
+      second = resolve;
+    });
+    const outage: Outage = { since: 1_000, until: 5_000, hostSuspended: false };
+    const recovery = createRecovery({
+      journal: {
+        reapOrphans: async () => {},
+        redeliver: async () => {},
+      },
+      backfill: {
+        scan: async () => {
+          scans += 1;
+          if (scans === 1) throw new Error('backfill boom');
+          second();
+        },
+      },
+      runs: {
+        review: (o) => {
+          reviewed.push(o);
+        },
+      },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+    await recovery.run(outage);
+    expect(reviewed).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS);
+    await secondScan;
+    expect(scans).toBe(2);
+    expect(reviewed).toHaveLength(1);
+    recovery.stop();
+  });
+
   it('arms a 2-minute stall only for runs silent since before the outage', () => {
     const silent: ReviewableRun = { lastEventAt: 900, interrupted: false, armStallDeadline: vi.fn() };
     const live: ReviewableRun = { lastEventAt: 1_000, interrupted: false, armStallDeadline: vi.fn() };
@@ -348,7 +402,41 @@ describe('Recovery', () => {
     await truncation.run({ since: 1_000, until: 5_000, hostSuspended: false });
     await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS * 2);
     expect(truncates).toEqual([1]);
-    recovery.stop();
-    truncation.stop();
+    await recovery.stop();
+    await truncation.stop();
+  });
+
+  it('stop awaits the in-flight pass and does not start the next step once closing', async () => {
+    let redeliverStarted = false;
+    let reviewStarted = false;
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const recovery = createRecovery({
+      journal: {
+        reapOrphans: async () => {
+          await hold;
+        },
+        redeliver: async () => {
+          redeliverStarted = true;
+        },
+      },
+      backfill: { scan: async () => {} },
+      runs: {
+        review: () => {
+          reviewStarted = true;
+        },
+      },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+    const running = recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    const stopping = recovery.stop();
+    release();
+    await stopping;
+    await running;
+    expect(redeliverStarted).toBe(false);
+    expect(reviewStarted).toBe(false);
   });
 });

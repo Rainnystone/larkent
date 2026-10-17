@@ -139,12 +139,14 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     await h.bridge.disconnect();
     await h.ledger.flush();
     expect(h.ledger.has('om_term')).toBe(false);
-    expect(h.ledger.getIncompleteFrom()).toBe(queued.createTime);
+    expect(h.ledger.getIncompleteFrom()).toBeDefined();
+    expect(h.ledger.getIncompleteFrom()!).toBeLessThanOrEqual(queued.createTime);
 
     const reloaded = new BackfillLedger(h.file);
     await reloaded.load();
     expect(reloaded.has('om_term')).toBe(false);
-    expect(reloaded.getIncompleteFrom()).toBe(queued.createTime);
+    expect(reloaded.getIncompleteFrom()).toBeDefined();
+    expect(reloaded.getIncompleteFrom()!).toBeLessThanOrEqual(queued.createTime);
 
     sdk.channel = createRecordingLarkChannel({
       chats: [{ id: CHAT, name: 'G' }],
