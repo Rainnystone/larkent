@@ -30,6 +30,7 @@ const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
+  vi.useRealTimers();
   vi.restoreAllMocks();
   sdk.channel = undefined;
 });
@@ -55,11 +56,11 @@ describe('FeishuLink recovery through the bridge', () => {
     });
 
     await waitFor(() => recovered.length === 1);
-    // Startup recover is not awaited; wrapping REST success feeds the
-    // classifier with nowFn(). Wait for that scan to settle before the
+    // Startup recover is fire-and-forget after the first tick. Join it
+    // (or retry immediately if that pass was incomplete) before the
     // silent-probe clock starts, or lastEvidenceAt jumps and the outage
     // window starts after failureStart.
-    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+    await h.bridge.recover();
     recovered.length = 0;
 
     probeOk = false;
@@ -241,10 +242,8 @@ describe('FeishuLink recovery through the bridge', () => {
       history: { [CHAT]: [] },
     });
     await waitFor(() => h.ledger.getLiveAt() === NOW);
-    // Startup recover is not awaited; wrapping REST success feeds the
-    // classifier with nowFn(). Wait for that scan to settle before the
-    // connected-tick loop advances `now`.
-    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+    // Join startup recover before the connected-tick loop advances `now`.
+    await h.bridge.recover();
     const listed = h.channel.listChatsCalls;
     const liveAt = h.ledger.getLiveAt();
 
@@ -267,7 +266,10 @@ describe('FeishuLink recovery through the bridge', () => {
       history,
       withJournal: true,
     });
-    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+    // waitFor is 10k setImmediate turns and cannot see Recovery's 1s
+    // retry after an incomplete startup scan. Join the in-flight pass
+    // (or retry immediately) before wrapping redeliver.
+    await h.bridge.recover();
 
     let releaseRedeliver!: () => void;
     const holdRedeliver = new Promise<void>((resolve) => {
@@ -334,6 +336,7 @@ describe('FeishuLink recovery through the bridge', () => {
     cleanups.push(async () => {
       await second.disconnect().catch(() => {});
     });
+    await second.recover();
     await waitForDebounce();
     await waitFor(() => h.agent.runOptions.some((opts) => opts.prompt.includes('posted during outage')));
     expect(h.agent.runOptions.filter((opts) => opts.prompt.includes('posted during outage'))).toHaveLength(1);

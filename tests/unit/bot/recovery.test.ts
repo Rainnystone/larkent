@@ -438,6 +438,33 @@ describe('Recovery', () => {
     await truncation.stop();
   });
 
+  it('a later run() retries an incomplete scan immediately without waiting for the timer', async () => {
+    vi.useFakeTimers();
+    const scans: boolean[] = [];
+    const recovery = createRecovery({
+      journal: {
+        reapOrphans: async () => {},
+        redeliver: async () => {},
+      },
+      backfill: {
+        scan: async () => {
+          const ok = scans.length > 0;
+          scans.push(ok);
+          return ok;
+        },
+      },
+      runs: { review: () => {} },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+    await recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    expect(scans).toEqual([false]);
+    await recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    expect(scans).toEqual([false, true]);
+    expect(vi.getTimerCount()).toBe(0);
+    await recovery.stop();
+  });
+
   it('stop awaits the in-flight pass and does not start the next step once closing', async () => {
     let redeliverStarted = false;
     let reviewStarted = false;
