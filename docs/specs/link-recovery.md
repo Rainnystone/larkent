@@ -162,6 +162,7 @@ Checked against master `426f670`, the `@larksuite/channel` 0.7.1 source, and a l
   - Windows: the System event log has a power transition (sleep/wake) inside the gap.
   - Each check has its own timeout. If it fails, times out, or finds no evidence, the host was **not** suspended, and review never stops or deadlines runs with an open tool call.
   - A frozen process (SIGSTOP), an event-loop stall, CPU starvation, a debugger pause or a wall-clock jump is **not** sleep. A tick gap alone proves nothing.
+  - Optional manual check (not a merge gate): a Mac lid-close test. The guard is a precaution; the likely deployment is an always-on Mac mini.
 
 ### 6. Outcome / retriability
 

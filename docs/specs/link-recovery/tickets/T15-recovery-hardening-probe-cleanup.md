@@ -30,10 +30,11 @@
 - [ ] A suspend during an in-flight probe with OS sleep evidence yields `hostSuspended = true`; an outage from a failed probe alone yields `false` (FeishuLink unit test with a fake clock and a fake sleep-evidence source).
 - [ ] A tick gap with no sleep evidence (SIGSTOP, event-loop stall, debugger pause, clock jump) yields `hostSuspended = false`, and a run inside a tool call is not stopped.
 - [ ] The sleep-evidence check failing or timing out yields `hostSuspended = false`; the run is not stopped.
-- [ ] Manual check on the user's Mac: close the lid for at least 2 minutes with a run inside a tool call, then open it. The outage is marked `hostSuspended = true` from `kern.waketime`. A separate SIGSTOP of the same length marks it `false`.
 - [ ] A silent run with no open tool call is still reviewed after a network-only outage (unchanged).
 - [ ] `CONTEXT.md` outbox section matches the implemented behaviour.
 - [ ] `pnpm ci:local` passes.
+
+**Optional manual check** (not part of acceptance, not a merge gate; the guard is a precaution and the likely deployment is an always-on Mac mini): on a Mac, close the lid for at least 2 minutes with a run inside a tool call, then open it. The outage should be marked `hostSuspended = true` from `kern.waketime`. A SIGSTOP of the same length should mark it `false`.
 
 ## Files likely touched
 
