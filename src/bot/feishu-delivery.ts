@@ -87,14 +87,16 @@ export async function redeliverStagedReply(input: {
     return { delivered: true, messageId: reply.messageId };
   }
 
+  const replyTo = reply.replyTo.trim();
   const now = input.now ?? Date.now;
   const outsideUuidWindow = now() - input.entry.createdAt > FEISHU_UUID_WINDOW_MS;
-  if (outsideUuidWindow) {
+  // Top-level fires have no parent; listing cannot match them (ADR-018).
+  if (outsideUuidWindow && replyTo) {
     await (input.sleep ?? defaultSleep)(FEISHU_LIST_VISIBILITY_LAG_MS);
     const found = await readBackBotReply({
       channel: input.channel,
       chatId: input.entry.chatId,
-      parentId: reply.replyTo,
+      parentId: replyTo,
       botAppId: input.botAppId,
       afterMs: input.entry.createdAt,
       receiptId: reply.messageId,
@@ -117,12 +119,11 @@ export async function redeliverStagedReply(input: {
       }
     }
   }
-
   const result = await input.channel.send(
     input.entry.chatId,
     { markdown: reply.markdown },
     withDeliveryUuid({
-      replyTo: reply.replyTo,
+      ...(replyTo ? { replyTo } : {}),
       ...(reply.replyInThread ? { replyInThread: true } : {}),
     }, reply.deliveryId?.trim() || replyDeliveryKey(input.entry.turnId)),
   );

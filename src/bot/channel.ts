@@ -127,6 +127,16 @@ import {
 import { AutoActionAuth } from '../automations/action-auth';
 import { BoardActionAuth } from '../automations/board-auth';
 import { createAutomationBoard, type AutomationBoard } from '../automations/board';
+import { submitAutomationProposal } from '../automations/command';
+import { createAutomationDelivery } from '../automations/delivery';
+import {
+  AUTOMATION_PROPOSAL_INSTRUCTION,
+  extractAutomationProposal,
+  proposalTextFromState,
+  shouldHonorAutomationProposal,
+  stripProposalFromState,
+  type AutomationProposalFields,
+} from '../automations/proposal';
 import {
   createAutomationScheduler,
   type AutomationScheduler,
@@ -518,6 +528,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           link,
           onDeliveryWait: (delayMs) => outboxSweep.schedule(delayMs),
           outboundTimeoutMs,
+          automations: deps.automations,
+          autoAuth,
+          ...(deps.now ? { now: deps.now } : {}),
         });
       } finally {
         sessionWriter.release();
@@ -780,8 +793,24 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     });
     automationsCtl.scheduler = createAutomationScheduler({
       store: deps.automations,
-      sender: { send: async () => {} },
-      notifier: { notify: async () => {} },
+      ...createAutomationDelivery({
+        journal,
+        channel,
+        botAppId: cfg.accounts.app.id,
+        botOpenId: () => channel.botIdentity?.openId ?? '',
+        isLinkDown: () => closing || started.isDown(),
+        ...(deps.now ? { now: deps.now } : {}),
+        ...(journal ? {
+          deliver: (entry) => resendJournalReply({
+            channel,
+            journal,
+            entry,
+            botAppId: cfg.accounts.app.id,
+            now: deps.now,
+          }),
+        } : {}),
+        onUndelivered: () => outboxSweep.schedule(),
+      }),
       botDisplayName: () => channel.botIdentity?.name ?? 'bot',
       ...(deps.now ? { now: deps.now } : {}),
       isLinkUp: () => !closing && !started.isDown(),
@@ -1446,6 +1475,9 @@ interface RunBatchDeps {
   link?: { outageEpoch(): number; isDown(): boolean };
   onDeliveryWait?: (delayMs?: number) => void;
   outboundTimeoutMs: number;
+  automations?: AutomationsStore;
+  autoAuth?: AutoActionAuth;
+  now?: () => number;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1473,6 +1505,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     link,
     onDeliveryWait,
     outboundTimeoutMs,
+    automations,
+    autoAuth,
+    now,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1594,6 +1629,13 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const extraInstructions: string[] = [];
   const taken = await continuations.take(scope, batch);
   applyTakenInstruction(taken, extraInstructions);
+  if (
+    controls.profileConfig.automations.enabled
+    && !scope.startsWith('auto:')
+    && !scope.startsWith('meeting:')
+  ) {
+    extraInstructions.push(AUTOMATION_PROPOSAL_INSTRUCTION);
+  }
   if (modelSwitched) {
     extraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
@@ -1798,12 +1840,37 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   log.info('flush', 'reply-mode', { mode: replyMode });
   const cotMessages = getCotMessages(controls.cfg);
   const cotEnabled = cotMessages !== 'off';
+  const triggerSenderType = senderTypeFromRaw((lastMsg as { raw?: unknown }).raw);
+  const automationReply = controls.profileConfig.automations.enabled
+    ? {
+        honor: shouldHonorAutomationProposal({
+          enabled: true,
+          scope,
+          senderId: lastMsg.senderId,
+          ...(triggerSenderType ? { senderType: triggerSenderType } : {}),
+          ...(channel.botIdentity?.openId ? { botOpenId: channel.botIdentity.openId } : {}),
+        }),
+        apply: (parsed: AutomationProposalFields) => submitAutomationProposal({
+          channel,
+          msg: lastMsg,
+          scope,
+          chatMode: mode,
+          workspaces,
+          automations,
+          autoAuth,
+          ...(now ? { now } : {}),
+          controls,
+        }, parsed),
+      }
+    : undefined;
 
   // Re-read prefs on every flush so toggling /config mid-stream takes
   // effect immediately. Cheap object lookups, no allocation when on.
   const filterForPrefs = (state: RunState): RunState => {
-    if (getShowToolCalls(controls.cfg)) return state;
-    return { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
+    const withoutTools = getShowToolCalls(controls.cfg)
+      ? state
+      : { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
+    return automationReply ? stripProposalFromState(withoutTools) : withoutTools;
   };
   const cardRenderOptions = callbackAuth
     ? {
@@ -1874,6 +1941,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           chatId,
           scope,
           state: finalAnswerOnlyState(finalState),
+          skipFrom: finalState,
           replyMode,
           sendOpts,
           cardRenderOptions,
@@ -1884,6 +1952,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           cliSelfSent,
           link,
           onWait: onDeliveryWait,
+          ...(automationReply ? { automation: automationReply } : {}),
         });
         return;
       }
@@ -1969,6 +2038,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        ...(automationReply ? { automation: automationReply } : {}),
       });
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
@@ -2044,6 +2114,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        ...(automationReply ? { automation: automationReply } : {}),
       });
     } else {
       // text mode: drain the agent stream without sending anything during
@@ -2066,6 +2137,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         state: finalAnswerOnly
           ? finalAnswerOnlyState(filterForPrefs(finalState))
           : filterForPrefs(finalState),
+        skipFrom: finalState,
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -2076,6 +2148,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        ...(automationReply ? { automation: automationReply } : {}),
       });
     }
   } catch (err) {
@@ -2284,12 +2357,33 @@ async function deliverFinalReply(input: {
   cliSelfSent?: CliSelfSendTracker;
   link?: { isDown(): boolean };
   onWait?: (delayMs?: number) => void;
+  automation?: {
+    honor: boolean;
+    apply: (parsed: AutomationProposalFields) => Promise<void>;
+  };
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
-  const body = renderText(input.state);
-  const visibleBody = body.trim() ? body : renderText(input.skipFrom ?? input.state);
+  const extracted = input.automation
+    ? extractAutomationProposal(proposalTextFromState(input.skipFrom ?? input.state))
+    : undefined;
+  const state = extracted?.tagged ? stripProposalFromState(input.state) : input.state;
+  const skipFrom = extracted?.tagged && input.skipFrom
+    ? stripProposalFromState(input.skipFrom)
+    : input.skipFrom;
+  const applyAutomationProposal = async (): Promise<void> => {
+    const parsed = extracted?.parsed;
+    if (!parsed || !input.automation) return;
+    if (!input.automation.honor) {
+      log.info('auto', 'proposal-ignored', { scope: input.scope });
+      return;
+    }
+    if (state.terminal !== 'done' && input.handle.outcome?.kind !== 'completed') return;
+    await input.automation.apply(parsed);
+  };
+  const body = renderText(state);
+  const visibleBody = body.trim() ? body : renderText(skipFrom ?? state);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
     && (input.skipFrom ?? input.state).terminal === 'done';
   const skipCli = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent;
@@ -2342,6 +2436,7 @@ async function deliverFinalReply(input: {
   } else if (skip && stream.kind === 'none') {
     log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
   } else if (input.link?.isDown()) {
+    await applyAutomationProposal();
     return;
   } else {
     const settled = await settleStreamDelivery({
@@ -2351,7 +2446,7 @@ async function deliverFinalReply(input: {
       send: () => sendFinalReply({
         ...input,
         deliveryId,
-        state: body.trim() ? input.state : (input.skipFrom ?? input.state),
+        state: body.trim() ? state : (skipFrom ?? state),
       }),
       fallback: () => sendPlainTextReply({
         channel: input.channel,
@@ -2367,6 +2462,7 @@ async function deliverFinalReply(input: {
     });
     if (settled.kind === 'wait') {
       input.onWait?.(rateLimitResetDelayMs(settled.error));
+      await applyAutomationProposal();
       return;
     }
   }
@@ -2383,6 +2479,7 @@ async function deliverFinalReply(input: {
       onWait: input.onWait,
     });
   }
+  await applyAutomationProposal();
 }
 
 type OutboundSettle = { kind: 'done' } | { kind: 'wait'; error?: unknown };
@@ -2658,10 +2755,14 @@ async function sendPlainTextReply(input: {
   deliveryId?: string;
 }): Promise<{ messageId?: string } | undefined> {
   if (!input.body.trim()) return undefined;
+  const replyTo = input.sendOpts.replyTo.trim();
   const result = await input.channel.send(
     input.chatId,
     { text: input.body },
-    withDeliveryUuid(input.sendOpts, input.deliveryId),
+    withDeliveryUuid({
+      ...(replyTo ? { replyTo } : {}),
+      ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+    }, input.deliveryId),
   );
   requireMessageReceipt(result, 'text');
   return result;
