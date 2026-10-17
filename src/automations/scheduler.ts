@@ -381,7 +381,7 @@ class Scheduler implements AutomationScheduler {
       await this.store.delete(item.id);
       changed = true;
     }
-    if (changed) await this.writeStatus();
+    if (changed || this.store.hasAgedMissedInstants()) await this.writeStatus();
   }
 
   private expiryAt(item: AutomationItem): number {
@@ -408,6 +408,9 @@ class Scheduler implements AutomationScheduler {
       }
       const expiry = this.expiryAt(item);
       if (expiry > 0) nextExpire = Math.min(nextExpire, expiry);
+      for (const entry of item.missedInstants) {
+        nextExpire = Math.min(nextExpire, entry.recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1);
+      }
     }
     if (Number.isFinite(nextFire)) {
       this.fireTimer = this.setTimeout(() => {

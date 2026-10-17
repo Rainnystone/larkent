@@ -101,7 +101,11 @@ class Board implements AutomationBoard {
       const card = automationBoardCard({ items, status, auth: this.auth });
       const next = await this.patchOrResend(chatId, binding, card);
       if (items.length === 0) await this.ensureUnpinned(next);
-      else await this.ensurePinned(chatId, next);
+      else {
+        await this.ensurePinned(chatId, next, {
+          repin: binding?.messageId === next.messageId,
+        });
+      }
     });
   }
 
@@ -116,7 +120,7 @@ class Board implements AutomationBoard {
         return binding;
       } catch (error) {
         if (classify(error) === 'link') throw error;
-        if (!isGoneMessage(error) && classify(error) !== 'rejected') throw error;
+        if (!isGoneMessage(error)) throw error;
         log.warn('auto', 'board.resend', { chatId });
         await this.unpinQuietly(binding.messageId);
       }
@@ -141,14 +145,18 @@ class Board implements AutomationBoard {
     await this.channel.updateCard(binding.messageId, card);
   }
 
-  private async ensurePinned(chatId: string, binding: AutomationBoardBinding): Promise<void> {
+  private async ensurePinned(
+    chatId: string,
+    binding: AutomationBoardBinding,
+    opts: { repin: boolean },
+  ): Promise<void> {
     try {
       const pinned = await listPinnedMessageIds(this.channel, chatId);
       if (pinned.includes(binding.messageId)) return;
       await pinMessage(this.channel, binding.messageId);
-      log.info('auto', 'board.repin', { chatId });
+      if (opts.repin) log.info('auto', 'board.repin', { chatId });
     } catch (error) {
-      log.fail('auto', error, { event: 'board.repin', chatId });
+      log.fail('auto', error, { event: 'board.pin', chatId });
       await this.hintPinFailed(chatId, binding);
     }
   }

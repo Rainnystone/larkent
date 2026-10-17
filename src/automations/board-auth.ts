@@ -22,7 +22,8 @@ export type BoardVerifyResult =
 
 const PREFIX = 'auto_board.v1';
 
-export const BOARD_CARD_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Covers the 1-year schedule cap so a board that is not re-rendered still accepts taps. */
+export const BOARD_CARD_TTL_MS = 400 * 24 * 60 * 60 * 1000;
 
 export class BoardActionAuth {
   private readonly secret: string;

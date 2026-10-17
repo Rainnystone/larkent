@@ -167,6 +167,13 @@ export class AutomationsStore {
     return this.items.map((item) => this.viewItem(item));
   }
 
+  hasAgedMissedInstants(): boolean {
+    const cutoff = this.now() - AUTOMATIONS_MISSED_TTL_MS;
+    return this.items.some((item) =>
+      item.missedInstants.some((entry) => entry.recordedAt < cutoff),
+    );
+  }
+
   get(id: number): AutomationItem | undefined {
     const item = this.items.find((entry) => entry.id === id);
     return item ? this.viewItem(item) : undefined;
