@@ -1,46 +1,42 @@
 # Automations tickets
 
-Spec: [../../automations.md](../../automations.md). Mattpocock-style vertical slices, **one ticket per session**; each starts with a failing test that asserts what the chat (or the status file / block) shows and ends with `pnpm ci:local` passing. No latency criteria. Code lands on `feat/automations` (PR #45).
+Spec: [../../automations.md](../../automations.md). Mattpocock-style vertical slices, **one ticket per session**; each starts with a failing test that asserts what the chat (or the status file / block / automations log) shows and ends with `pnpm ci:local` passing. No latency criteria. Tickets are claimed from this docs PR (#44); code lands on `feat/automations-v2` (draft PR #49, from `master@d056198`). The old code PR #45 (`feat/automations`) is closed.
 
-Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key, monitor wakes after a miss, status block v1) and `master@426f670`. Old A1 (tracer) is split into A0b/A0c/A0d/A1'; old A3 (missed, no catch-up) is replaced by A0c.
+Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key, monitor wakes after a miss, status block v1; ADR-016..020: trace every 已错过 instant, one-shot expiry after a miss, accepted read-back limit, agent-task catch-up wording, **agent task** rename with flag `automations.agentTasks`) and **`master@d056198`** (link-recovery #47 merged: Outbox, FeishuLink, default idle bound and "no Continuations" are now on master, so no ticket waits on #47). Every file:line anchor in the tickets was checked against `d056198`. Old A1 (tracer) is split into A0b/A0c/A0d/A1'; old A3 (missed, no catch-up) is replaced by A0c.
 
-**#47 dependency** (link-recovery, still open). Stated as behaviour/contract only, never as #47 code details:
-- **none** — no #47 contract involved; start now.
-- **soft** — no behavioral dependency, but overlaps code #47 reshapes; may start now (or should wait, where marked "high conflict") and rebase after #47 merges.
-- **hard** — needs a #47 contract (Outbox, FeishuLink up/down + recovered, default idle bound, no Continuations) to exist on master; blocked until #47 merges.
+| Ticket | Title | Blocked by (tickets) | Status |
+|---|---|---|---|
+| [A0a](A0a-schedule-pure-functions.md) | Schedule pure functions (grammar, floors, next fires, miss rule, catch-up plan incl. each missed instant) | — | ready |
+| [A0b](A0b-store-and-flag.md) | Store (never-reused ids, creation fields, started fire keys, drafts), `automations` settings, automations log, CONTEXT glossary + `isBotOwner` | — | ready |
+| [A0c](A0c-scheduler-catch-up.md) | Scheduler + fake clock + fire-key idempotency + catch-up ≤ 24 h + missed trace (injected sender / notifier / wake) | A0a, A0b | ready |
+| [A0d](A0d-auto-new-confirm-card.md) | `/auto new` + signed confirm card (NoticeActionAuth-style, `auto.*` route) | A0a, A0b | ready |
+| [A1'](A1p-delivery-via-outbox.md) | Reminder + missed-notice delivery via Outbox (per-fire journal entry); missed on link down; catch-up on recovery | A0c, A0d | ready |
+| [A2](A2-recurring-creation-and-expiry.md) | Recurring creation, scripted end card, expiry | A0d | ready |
+| [A4](A4-board-card.md) | Board + Pause/Delete + 已错过 rows + status block v1 (`id`/`paused`/`updatedAt`) | A0c, A0d | ready |
+| [A5](A5-monitor-hook.md) | Monitor hook contract + local wake CLI subcommand | A0c, A4 | ready |
+| [A6](A6-natural-language-creation.md) | Natural-language creation | A2 | ready |
+| [A7](A7-lifecycle-and-observability.md) | Bot removed / chat disbanded (events + not-in-chat class), DM, observability | A4 | ready |
+| [A8](A8-agent-task-run.md) | Agent task: own executor path, fresh session, result post, thread follow-up | A1', A2 | ready |
+| [A9](A9-agent-safety-whitelist.md) | Agent-task safety: per-run bot-only identity, whitelist, `policy-guard` | A8 | ready |
+| [A10](A10-backfill-skip-non-chat-scopes.md) | Backfill skips `auto:`/`meeting:` scopes (F20) | — | ready |
+| [A11](A11-e2e-bot-arena.md) | E2E in Bot Arena (controller) | A0a–A10 | ready-for-human |
 
-| Ticket | Title | Blocked by (tickets) | Depends on #47 | Why |
-|---|---|---|---|---|
-| [A0a](A0a-schedule-pure-functions.md) | Schedule pure functions (grammar, floors, next fires, miss rule, catch-up plan) | — | none | Pure, injected clock |
-| [A0b](A0b-store-and-flag.md) | Store (never-reused ids, started fire keys, drafts) + flags | — | soft | Additive profile settings next to the reliability settings #47 reshapes |
-| [A0c](A0c-scheduler-catch-up.md) | Scheduler + fake clock + fire-key idempotency + catch-up ≤ 24 h + local wake entry core | A0a, A0b | none | Sender and link-recovered signal are injected |
-| [A0d](A0d-auto-new-confirm-card.md) | `/auto new` + signed confirm card | A0a, A0b | soft | Shares the signing base with notice actions #47 turns into Continuations |
-| [A1'](A1p-delivery-via-outbox.md) | Reminder delivery via Outbox; missed on link down; catch-up on recovery | A0c, A0d | **hard** | Outbox + FeishuLink contracts |
-| [A2](A2-recurring-creation-and-expiry.md) | Recurring creation, scripted end card, expiry | A0d | none | — |
-| [A4](A4-board-card.md) | Board + Pause/Delete + status block v1 (`id`/`paused`/`updatedAt`) | A0c, A0d | soft | Refresh after recovery uses the #47 recovered signal once merged |
-| [A5](A5-monitor-hook.md) | Monitor hook contract + local wake entry | A0c, A4 | none | Triggers the scheduler; real delivery from A1' |
-| [A6](A6-natural-language-creation.md) | Natural-language creation | A2 | soft (high conflict) | Final-reply path is rerouted through the Outbox by #47; wait |
-| [A7](A7-lifecycle-and-observability.md) | Bot removed / chat gone, DM, observability | A4 | soft | "Not in chat" classification uses #47's error classifier |
-| [A8](A8-agent-kind-run.md) | Agent kind: fresh session, result post | A1', A2 | **hard** | Outbox result post, default idle bound, no Continuations |
-| [A9](A9-agent-safety-whitelist.md) | Agent safety: bot-only identity, whitelist | A8 | **hard** (via A8) | Extends run outcome |
-| [A10](A10-backfill-skip-non-chat-scopes.md) | Backfill skips `auto:`/`meeting:` scopes (F20) | — | soft (high conflict) | #47 rewrites backfill session-chat discovery; wait |
-| [A11](A11-e2e-bot-arena.md) | E2E in Bot Arena (controller) | A0a–A10 | **hard** (via A1', A8) | — |
+## Start order on `feat/automations-v2` (PR #49)
 
-## Start order on `feat/automations` (PR #45)
+- **Now:** A0a, A0b, A10.
+- **After A0a + A0b:** A0c, A0d.
+- **After A0c + A0d:** A1', A2, A4; then A5 after A4, A7 after A4, A6 after A2.
+- **After A1' + A2:** A8 → A9.
+- **Last:** A11.
 
-- **Now:** A0a (none), A0b (soft, low conflict).
-- **After A0a + A0b:** A0c (none), A0d (soft).
-- **After A0c + A0d:** A2 (none), A4 (soft); then A5 (none) after A4.
-- **After A4:** A7 (soft; the rejection path can wait for #47).
-- **After #47 merges:** A1', A6, A10, then A8 → A9, then A11.
+Reminders ship after A0a–A1', A2, A4, A5, A7. Agent tasks (`automations.agentTasks`, default off) ship after A8–A9.
 
-Reminder ships after A0a–A1', A2, A4, A5, A7. Agent kind ships after A8–A9.
+Out of this repo: fixing larkent-monitor so misses stop happening is separate follow-up work (spec, Resolved decisions 6).
 
 ## Blocking graph
 
 ```mermaid
 graph LR
-  PR47[["link-recovery (PR 47) merged"]]
   A0a --> A0c
   A0b --> A0c
   A0a --> A0d
@@ -59,12 +55,4 @@ graph LR
   A8 --> A9
   A10
   A1p & A5 & A6 & A7 & A9 & A10 --> A11
-  PR47 ==>|hard| A1p
-  PR47 ==>|hard| A8
-  PR47 -.->|soft, high conflict| A6
-  PR47 -.->|soft, high conflict| A10
-  PR47 -.->|soft| A0b
-  PR47 -.->|soft| A0d
-  PR47 -.->|soft| A4
-  PR47 -.->|soft| A7
 ```

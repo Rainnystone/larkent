@@ -1,6 +1,6 @@
 # Spec: In-group automations（群内定时自动化）
 
-Status: ready-for-agent · Docs track: PR #44（本分支）· Code track: separate draft PR from `master@d056198`, tickets claimed from #44, one ticket per session
+Status: ready-for-agent · Docs track: PR #44（本分支）· Code track: draft PR #49（`feat/automations-v2`，from `master@d056198`；取代已关闭的 #45），tickets claimed from #44, one ticket per session
 Tickets: [`automations/tickets/`](automations/tickets/README.md)
 Baseline: `master@d056198`（run-reliability 与 link-recovery PR #47 均已合入）。只依赖 link-recovery 的**契约**：fire 结果与通知的投递复用 **Outbox**（turn journal：stage → send → delivered → recovery 时 redeliver），link down / recovered 信号来自 **FeishuLink**；**永不**使用 **Continuations**（fire 被中断不提供“继续”，也不自动续跑）。
 Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-013..015（补跑规则、larkent-monitor 路线、status block v1），ADR-013 **取代** ADR-004；用户 2026-10-17 决定 ADR-016..020（见 Resolved decisions，取代原 Open questions）。见文末 Decision log。本文只写行为、决策、边界与验收；代码锚点（file:line，已对 `master@d056198` 核对）写在各 ticket。
