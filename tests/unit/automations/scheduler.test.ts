@@ -1,0 +1,545 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import {
+  CATCH_UP_WINDOW_MS,
+  formatFireKey,
+  type Schedule,
+} from '../../../src/automations/schedule';
+import {
+  createAutomationScheduler,
+  type FireSend,
+  type MissedNotify,
+} from '../../../src/automations/scheduler';
+import { AutomationsStore, type CreateAutomationInput } from '../../../src/automations/store';
+import { log } from '../../../src/core/logger';
+
+const HOUR = 60 * 60_000;
+const t0 = Date.UTC(2026, 0, 2, 12, 0, 0);
+
+const hourly: Schedule = {
+  kind: 'interval',
+  timezone: 'UTC',
+  everyMs: HOUR,
+  startAt: t0,
+  endAt: t0 + 365 * 24 * HOUR,
+};
+
+const dirs: string[] = [];
+const schedulers: Array<{ stop(): void }> = [];
+
+afterEach(async () => {
+  for (const scheduler of schedulers.splice(0).reverse()) scheduler.stop();
+  await Promise.all(dirs.splice(0).map((dir) =>
+    rm(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }),
+  ));
+});
+
+class ManualClock {
+  nowMs: number;
+  private nextId = 1;
+  private readonly timers = new Map<number, { at: number; fn: () => void }>();
+
+  constructor(nowMs: number) {
+    this.nowMs = nowMs;
+  }
+
+  now = (): number => this.nowMs;
+
+  setTimeout = (fn: () => void, delayMs: number): number => {
+    const id = this.nextId;
+    this.nextId += 1;
+    this.timers.set(id, { at: this.nowMs + Math.max(0, delayMs), fn });
+    return id;
+  };
+
+  clearTimeout = (id: unknown): void => {
+    if (typeof id === 'number') this.timers.delete(id);
+  };
+
+  async advanceTo(target: number, idle: () => Promise<void>): Promise<void> {
+    for (;;) {
+      const due = [...this.timers.entries()]
+        .filter(([, timer]) => timer.at <= target)
+        .sort((a, b) => a[1].at - b[1].at || a[0] - b[0]);
+      const first = due[0];
+      if (!first) {
+        this.nowMs = target;
+        return;
+      }
+      this.nowMs = first[1].at;
+      this.timers.delete(first[0]);
+      first[1].fn();
+      await idle();
+    }
+  }
+}
+
+async function harness(nowMs: number, opts?: {
+  isLinkUp?: () => boolean;
+  send?: (fire: FireSend) => void | Promise<void>;
+}) {
+  const dir = await mkdtemp(join(tmpdir(), 'automations-scheduler-'));
+  dirs.push(dir);
+  const clock = new ManualClock(nowMs);
+  const store = new AutomationsStore({
+    path: join(dir, 'automations.json'),
+    logPath: join(dir, 'automations.log'),
+    statusPath: join(dir, 'automations-status.json'),
+    now: clock.now,
+  });
+  await store.load();
+  const fires: FireSend[] = [];
+  const notices: MissedNotify[] = [];
+  const scheduler = createAutomationScheduler({
+    store,
+    sender: {
+      send: async (fire) => {
+        fires.push(fire);
+        await opts?.send?.(fire);
+      },
+    },
+    notifier: { notify: async (notice) => { notices.push(notice); } },
+    now: clock.now,
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    botDisplayName: () => 'Grok Bot',
+    ...(opts?.isLinkUp ? { isLinkUp: opts.isLinkUp } : {}),
+  });
+  schedulers.push(scheduler);
+  return {
+    dir,
+    clock,
+    store,
+    fires,
+    notices,
+    scheduler,
+    statusPath: join(dir, 'automations-status.json'),
+    logPath: join(dir, 'automations.log'),
+  };
+}
+
+async function reopen(dir: string, nowMs: number) {
+  const clock = new ManualClock(nowMs);
+  const store = new AutomationsStore({
+    path: join(dir, 'automations.json'),
+    logPath: join(dir, 'automations.log'),
+    statusPath: join(dir, 'automations-status.json'),
+    now: clock.now,
+  });
+  await store.load();
+  const fires: FireSend[] = [];
+  const notices: MissedNotify[] = [];
+  const scheduler = createAutomationScheduler({
+    store,
+    sender: { send: async (fire) => { fires.push(fire); } },
+    notifier: { notify: async (notice) => { notices.push(notice); } },
+    now: clock.now,
+    setTimeout: clock.setTimeout,
+    clearTimeout: clock.clearTimeout,
+    botDisplayName: () => 'Grok Bot',
+  });
+  schedulers.push(scheduler);
+  return {
+    dir,
+    clock,
+    store,
+    fires,
+    notices,
+    scheduler,
+    statusPath: join(dir, 'automations-status.json'),
+    logPath: join(dir, 'automations.log'),
+  };
+}
+
+function reminderInput(overrides: Partial<CreateAutomationInput> = {}): CreateAutomationInput {
+  return {
+    taskType: 'reminder',
+    schedule: hourly,
+    timezone: 'UTC',
+    startAt: t0,
+    endAt: t0 + 365 * 24 * HOUR,
+    nextFireAt: t0,
+    chatId: 'oc_group',
+    createdBy: 'ou_alice',
+    name: 'hourly ping',
+    taskText: 'ping',
+    ...overrides,
+  };
+}
+
+async function readStatus(path: string) {
+  return JSON.parse(await readFile(path, 'utf8')) as {
+    v: number;
+    bot: string;
+    updatedAt: number;
+    items: Array<{
+      id: number;
+      paused: boolean;
+      nextFireAt: number;
+      lastFireAt: number;
+      lastStatus: string;
+      endAt: number;
+      missed: number;
+    }>;
+  };
+}
+
+function statusFromStore(store: AutomationsStore, bot: string, updatedAt: number) {
+  return {
+    v: 1,
+    bot,
+    updatedAt,
+    items: store.list().map((item) => ({
+      id: item.id,
+      paused: item.paused,
+      nextFireAt: item.nextFireAt,
+      lastFireAt: item.lastFireAt,
+      lastStatus: item.lastStatus,
+      endAt: item.endAt,
+      missed: item.missed,
+    })),
+  };
+}
+
+describe('automation scheduler', () => {
+  it('calls the sender exactly once when the fake clock reaches the instant, and not before', async () => {
+    const fireAt = t0 + 10 * 60_000;
+    const h = await harness(t0);
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: t0,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+      name: '交周报',
+    }));
+
+    await h.scheduler.start();
+    await h.clock.advanceTo(fireAt - 1, () => h.scheduler.idle());
+    expect(h.fires).toEqual([]);
+
+    await h.clock.advanceTo(fireAt, () => h.scheduler.idle());
+    expect(h.fires).toEqual([
+      expect.objectContaining({
+        id: 1,
+        fireAt,
+        fireKey: formatFireKey(1, fireAt),
+        catchUp: false,
+      }),
+    ]);
+  });
+
+  it('on restart after a 3-hour jump catches up the latest hour and traces the other two as missed', async () => {
+    const stopped = await harness(t0);
+    await stopped.store.create(reminderInput({ nextFireAt: t0 }));
+    stopped.scheduler.stop();
+
+    const restarted = await reopen(stopped.dir, t0 + 2 * HOUR + 1);
+    await restarted.scheduler.start();
+    await restarted.scheduler.idle();
+
+    const latest = t0 + 2 * HOUR;
+    expect(restarted.fires).toEqual([
+      expect.objectContaining({
+        fireAt: latest,
+        fireKey: formatFireKey(1, latest),
+        catchUp: true,
+      }),
+    ]);
+    expect(restarted.store.get(1)?.missed).toBe(2);
+    expect(restarted.notices).toEqual([
+      expect.objectContaining({
+        id: 1,
+        missedFires: [t0, t0 + HOUR],
+      }),
+    ]);
+    const logEntries = await restarted.store.readLog();
+    expect(logEntries.filter((entry) => entry.result === 'missed')).toHaveLength(2);
+    expect(logEntries.filter((entry) => entry.result === 'catch-up')).toEqual([
+      expect.objectContaining({
+        id: 1,
+        scheduledAt: latest,
+        triggerSource: 'startup',
+        result: 'catch-up',
+      }),
+    ]);
+  });
+
+  it('abandons a 25 h old missed instant without sending, advances nextFireAt, and notifies + logs once', async () => {
+    const fireAt = t0;
+    const h = await harness(fireAt + CATCH_UP_WINDOW_MS + 60 * 60_000);
+    await h.store.create(reminderInput({
+      schedule: {
+        kind: 'interval',
+        timezone: 'UTC',
+        everyMs: 48 * HOUR,
+        startAt: fireAt,
+        endAt: fireAt + 365 * 24 * HOUR,
+      },
+      nextFireAt: fireAt,
+    }));
+
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.fires).toEqual([]);
+    expect(h.store.get(1)?.missed).toBe(1);
+    expect(h.store.get(1)?.lastStatus).toBe('missed');
+    expect(h.store.get(1)?.nextFireAt).toBe(fireAt + 48 * HOUR);
+    expect(h.notices).toEqual([
+      expect.objectContaining({ id: 1, missedFires: [fireAt] }),
+    ]);
+    await expect(h.store.readLog()).resolves.toEqual([
+      expect.objectContaining({
+        id: 1,
+        scheduledAt: fireAt,
+        triggerSource: 'startup',
+        result: 'missed',
+      }),
+    ]);
+  });
+
+  it('sets a one-shot missed 25 h ago to nextFireAt 0, shows it missed, deletes it 24 h later, and keeps the log', async () => {
+    const fireAt = t0;
+    const missedAt = fireAt + CATCH_UP_WINDOW_MS + 1;
+    const h = await harness(missedAt);
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: fireAt - 20 * 60_000,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+      name: 'one-shot',
+    }));
+
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.fires).toEqual([]);
+    expect(h.store.get(1)?.nextFireAt).toBe(0);
+    expect(h.store.get(1)?.lastStatus).toBe('missed');
+    expect(h.store.get(1)?.missedInstants.map((entry) => entry.fireAt)).toEqual([fireAt]);
+    const logAfterMiss = await h.store.readLog();
+    expect(logAfterMiss).toEqual([
+      expect.objectContaining({ result: 'missed', scheduledAt: fireAt }),
+    ]);
+
+    await h.clock.advanceTo(missedAt + CATCH_UP_WINDOW_MS, () => h.scheduler.idle());
+    expect(h.store.get(1)).toBeDefined();
+
+    await h.clock.advanceTo(missedAt + CATCH_UP_WINDOW_MS + 1, () => h.scheduler.idle());
+    expect(h.store.get(1)).toBeUndefined();
+    expect(h.store.list()).toEqual([]);
+    await expect(h.store.readLog()).resolves.toEqual(logAfterMiss);
+  });
+
+  it('calls the sender once when restart, link-recovered and wake race for the same fire key', async () => {
+    const fireAt = t0;
+    const now = fireAt + 60_000;
+    const orders: Array<Array<'start' | 'recovered' | 'wake'>> = [
+      ['start', 'recovered', 'wake'],
+      ['start', 'wake', 'recovered'],
+      ['recovered', 'start', 'wake'],
+      ['recovered', 'wake', 'start'],
+      ['wake', 'start', 'recovered'],
+      ['wake', 'recovered', 'start'],
+    ];
+
+    for (const order of orders) {
+      const h = await harness(now);
+      await h.store.create(reminderInput({
+        schedule: { kind: 'one-shot', fireAt },
+        startAt: fireAt - 20 * 60_000,
+        endAt: fireAt,
+        nextFireAt: fireAt,
+      }));
+      const fireKey = formatFireKey(1, fireAt);
+      const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+      try {
+        for (const step of order) {
+          if (step === 'start') await h.scheduler.start();
+          else if (step === 'recovered') await h.scheduler.onLinkRecovered();
+          else await h.scheduler.wake(fireKey);
+        }
+        await h.scheduler.idle();
+        expect(h.fires, order.join('>')).toEqual([
+          expect.objectContaining({ fireKey, fireAt, catchUp: true }),
+        ]);
+        const silent = info.mock.calls.some((call) =>
+          call[0] === 'auto' && call[1] === 'wake.already-started',
+        );
+        if (order[0] === 'wake') expect(silent, order.join('>')).toBe(false);
+        else expect(silent, order.join('>')).toBe(true);
+      } finally {
+        info.mockRestore();
+      }
+    }
+
+    const concurrent = await harness(now);
+    await concurrent.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: fireAt - 20 * 60_000,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+    }));
+    const fireKey = formatFireKey(1, fireAt);
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    try {
+      await Promise.all([
+        concurrent.scheduler.start(),
+        concurrent.scheduler.onLinkRecovered(),
+        concurrent.scheduler.wake(fireKey),
+      ]);
+      await concurrent.scheduler.idle();
+      expect(concurrent.fires).toEqual([
+        expect.objectContaining({ fireKey, fireAt, catchUp: true }),
+      ]);
+    } finally {
+      info.mockRestore();
+    }
+  });
+
+  it('does not resend after a kill between started persist and the sender call', async () => {
+    const fireAt = t0;
+    const first = await harness(fireAt + 60_000);
+    await first.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: fireAt - 20 * 60_000,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+    }));
+    const fireKey = formatFireKey(1, fireAt);
+    await expect(first.store.markStarted(fireKey)).resolves.toBe('started');
+    first.scheduler.stop();
+
+    const restarted = await reopen(first.dir, fireAt + 60_000);
+    await restarted.scheduler.start();
+    await restarted.scheduler.idle();
+    await restarted.scheduler.wake(fireKey);
+    await restarted.scheduler.idle();
+    expect(restarted.fires).toEqual([]);
+    expect(restarted.store.hasStarted(fireKey)).toBe(true);
+  });
+
+  it('never catches up a paused item; resume recomputes nextFireAt from now', async () => {
+    const h = await harness(t0 + 2 * HOUR + 1);
+    const item = await h.store.create(reminderInput({ nextFireAt: t0, paused: true }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([]);
+    expect(h.notices).toEqual([]);
+    expect(h.store.get(item.id)?.nextFireAt).toBe(t0);
+    expect(h.store.get(item.id)?.missed).toBe(0);
+
+    await h.scheduler.resume(item.id);
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([]);
+    expect(h.store.get(item.id)?.paused).toBe(false);
+    expect(h.store.get(item.id)?.nextFireAt).toBe(t0 + 3 * HOUR);
+  });
+
+  it('keeps the status file matched to the store after fire, catch-up, abandon, pause, and delete', async () => {
+    const h = await harness(t0 - 1);
+    const item = await h.store.create(reminderInput({ nextFireAt: t0, name: 'status' }));
+    await h.scheduler.start();
+    await h.clock.advanceTo(t0, () => h.scheduler.idle());
+    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+
+    const catchUp = await harness(t0 + 2 * HOUR + 1);
+    await catchUp.store.create(reminderInput({ nextFireAt: t0, name: 'catch' }));
+    await catchUp.scheduler.start();
+    await catchUp.scheduler.idle();
+    expect(await readStatus(catchUp.statusPath)).toEqual(
+      statusFromStore(catchUp.store, 'Grok Bot', catchUp.clock.now()),
+    );
+
+    const abandon = await harness(t0 + CATCH_UP_WINDOW_MS + HOUR);
+    await abandon.store.create(reminderInput({
+      schedule: {
+        kind: 'interval',
+        timezone: 'UTC',
+        everyMs: 48 * HOUR,
+        startAt: t0,
+        endAt: t0 + 365 * 24 * HOUR,
+      },
+      nextFireAt: t0,
+      name: 'abandon',
+    }));
+    await abandon.scheduler.start();
+    await abandon.scheduler.idle();
+    expect(await readStatus(abandon.statusPath)).toEqual(
+      statusFromStore(abandon.store, 'Grok Bot', abandon.clock.now()),
+    );
+
+    await h.scheduler.pause(item.id);
+    await h.scheduler.idle();
+    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+
+    await h.scheduler.delete(item.id);
+    await h.scheduler.idle();
+    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+  });
+
+  it('after catch-up keeps a fire due exactly now for the on-time path', async () => {
+    const stopped = await harness(t0);
+    await stopped.store.create(reminderInput({ nextFireAt: t0 }));
+    stopped.scheduler.stop();
+
+    const restarted = await reopen(stopped.dir, t0 + 2 * HOUR);
+    await restarted.scheduler.start();
+    await restarted.scheduler.idle();
+
+    expect(restarted.fires.map((fire) => ({ fireAt: fire.fireAt, catchUp: fire.catchUp }))).toEqual([
+      { fireAt: t0 + HOUR, catchUp: true },
+      { fireAt: t0 + 2 * HOUR, catchUp: false },
+    ]);
+    expect(restarted.notices).toEqual([
+      expect.objectContaining({ missedFires: [t0] }),
+    ]);
+  });
+
+  it('writes status and does not start a catch-up fire while the link is down', async () => {
+    const h = await harness(t0 + 2 * HOUR + 1, { isLinkUp: () => false });
+    await h.store.create(reminderInput({ nextFireAt: t0 }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.fires).toEqual([]);
+    expect(h.store.get(1)?.nextFireAt).toBe(t0 + 2 * HOUR);
+    expect(h.store.get(1)?.missed).toBe(2);
+    expect(h.notices).toEqual([
+      expect.objectContaining({ missedFires: [t0, t0 + HOUR] }),
+    ]);
+    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+  });
+
+  it('starts overlapping fires without waiting for the previous sender to finish', async () => {
+    const blocked: Array<() => void> = [];
+    const h = await harness(t0, {
+      send: () => new Promise<void>((resolve) => { blocked.push(resolve); }),
+    });
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt: t0 },
+      startAt: t0 - 20 * 60_000,
+      endAt: t0,
+      nextFireAt: t0,
+      name: 'one',
+    }));
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt: t0 },
+      startAt: t0 - 20 * 60_000,
+      endAt: t0,
+      nextFireAt: t0,
+      name: 'two',
+    }));
+
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires.map((fire) => fire.id).sort((a, b) => a - b)).toEqual([1, 2]);
+    expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(true);
+    expect(h.store.hasStarted(formatFireKey(2, t0))).toBe(true);
+    expect(blocked).toHaveLength(2);
+    for (const resolve of blocked) resolve();
+    await h.scheduler.idle();
+  });
+});
