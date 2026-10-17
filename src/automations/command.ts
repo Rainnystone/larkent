@@ -222,7 +222,7 @@ export async function handleAutoCommand(args: string, ctx: CommandContext): Prom
 }
 
 export async function confirmAutomationDraft(
-  ctx: Pick<CommandContext, 'automations' | 'channel' | 'controls' | 'now' | 'onAutomationConfirmed'>,
+  ctx: Pick<CommandContext, 'automations' | 'onAutomationConfirmed'>,
   draft: AutomationDraft,
 ): Promise<AutomationItem | undefined> {
   if (!ctx.automations) return undefined;
@@ -239,8 +239,6 @@ export async function confirmAutomationDraft(
     taskText: draft.taskText,
     ...(draft.cwd ? { cwd: draft.cwd } : {}),
   });
-  const botName = ctx.channel.botIdentity?.name ?? ctx.controls.profile;
-  await ctx.automations.writeStatus(botName).catch(() => {});
   ctx.onAutomationConfirmed?.(item);
   log.info('auto', 'confirmed', { id: item.id, taskType: item.taskType, chatId: item.chatId });
   return item;

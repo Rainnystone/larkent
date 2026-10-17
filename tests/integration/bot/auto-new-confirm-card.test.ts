@@ -123,6 +123,32 @@ describe('/auto new confirm card', () => {
     });
   });
 
+  it('stores nothing when the bot itself taps 是, then still accepts a human tap', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    const token = confirmToken(confirmCard(h));
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    await h.channel.handlers.cardAction?.(cardClick('ou_bot', token, messageId));
+    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    expect(h.store.list()).toEqual([]);
+    expect(h.store.listDrafts()).toHaveLength(1);
+
+    await h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId));
+    expect(h.store.list()).toHaveLength(1);
+    expect(h.store.list()[0]).toMatchObject({ createdBy: USER, name: '交周报' });
+  });
+
+  it('discards the draft when 否 is tapped', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    const card = confirmCard(h);
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    await h.channel.handlers.cardAction?.(cardClick(MATE, rejectToken(card), messageId, 'auto.reject'));
+    expect(JSON.stringify(h.channel.sent)).toContain('已取消该草稿。');
+    expect(h.store.list()).toEqual([]);
+    expect(h.store.listDrafts()).toEqual([]);
+  });
+
   it('creates nothing from a bot-sent /auto new', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_bot', '/auto new in 15m | 交周报 | 提醒交周报', {
@@ -312,14 +338,25 @@ function confirmCard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
 }
 
 function confirmToken(cardJson: string): string {
-  const match = cardJson.match(/"auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v1\.[^"]+)"/);
   expect(match?.[1], 'expected auto.confirm token').toBeDefined();
   return match![1]!;
 }
 
-function cardClick(operatorId: string, token: string, messageId: string): CardActionEvent {
+function rejectToken(cardJson: string): string {
+  const match = cardJson.match(/"cmd":"auto.reject","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  expect(match?.[1], 'expected auto.reject token').toBeDefined();
+  return match![1]!;
+}
+
+function cardClick(
+  operatorId: string,
+  token: string,
+  messageId: string,
+  cmd: 'auto.confirm' | 'auto.reject' = 'auto.confirm',
+): CardActionEvent {
   return {
-    action: { value: { cmd: 'auto.confirm', auto_token: token } },
+    action: { value: { cmd, auto_token: token } },
     chatId: CHAT,
     messageId,
     operator: { openId: operatorId, name: 'Op' },

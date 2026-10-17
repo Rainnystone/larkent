@@ -435,7 +435,7 @@ async function sendAutoHint(deps: CardDispatchDeps, markdown: string): Promise<v
   try {
     await deps.channel.send(deps.evt.chatId, { markdown }, { replyTo: deps.evt.messageId });
   } catch (error) {
-    log.warn('auto', 'invalid-hint-failed', {
+    log.warn('auto', 'hint-failed', {
       err: error instanceof Error ? error.message : String(error),
     });
   }
