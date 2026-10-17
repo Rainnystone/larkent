@@ -289,6 +289,7 @@ class Scheduler implements AutomationScheduler {
     const schedule = readSchedule(live.schedule);
     if (!schedule) return;
     const now = this.now();
+    if (await this.skipUnsettledAgentSlots(live, source)) return;
     if (
       live.nextFireAt > 0
       && live.nextFireAt <= now
@@ -296,7 +297,6 @@ class Scheduler implements AutomationScheduler {
       && live.lastFireAt < live.nextFireAt
     ) {
       if (!this.isLinkUp()) return;
-      if (await this.skipUnsettledAgent(live, live.nextFireAt, source, schedule)) return;
       await this.fireExact(live, live.nextFireAt, false, source, schedule);
       return;
     }
@@ -357,7 +357,6 @@ class Scheduler implements AutomationScheduler {
         await this.writeStatus();
         return;
       }
-      if (await this.skipUnsettledAgent(live, plan.run, source, schedule)) return;
       const onTime = plan.missedFires.length === 0 && now - plan.run <= ON_TIME_GRACE_MS;
       await this.fireExact(live, plan.run, !onTime, source, schedule);
       return;
@@ -467,6 +466,37 @@ class Scheduler implements AutomationScheduler {
   }
 
   /**
+   * Skip every due slot of an agent task whose previous run has not settled.
+   * Does not send, so it runs even while the link is down and does not leave
+   * the slot queued for later.
+   */
+  private async skipUnsettledAgentSlots(
+    item: AutomationItem,
+    source: AutomationTriggerSource,
+  ): Promise<boolean> {
+    if (item.paused || item.taskType !== 'agent' || item.lastStatus !== 'running') return false;
+    let live: AutomationItem | undefined = item;
+    let skippedAny = false;
+    const seen = new Set<number>();
+    while (
+      live
+      && live.lastStatus === 'running'
+      && live.nextFireAt > 0
+      && live.nextFireAt <= this.now()
+    ) {
+      if (seen.has(live.nextFireAt)) return skippedAny;
+      seen.add(live.nextFireAt);
+      const schedule = readSchedule(live.schedule);
+      if (!schedule) return skippedAny;
+      const skipped = await this.skipUnsettledAgent(live, live.nextFireAt, source, schedule);
+      if (!skipped) return skippedAny;
+      skippedAny = true;
+      live = this.store.get(item.id);
+    }
+    return skippedAny;
+  }
+
+  /**
    * An agent task with an unsettled run skips this slot: no second run, no
    * group post. The board and automations log keep the original time.
    */
@@ -511,6 +541,9 @@ class Scheduler implements AutomationScheduler {
     await this.store.pruneStartedFireKeys(this.now());
     const now = this.now();
     if (!this.isLinkUp()) {
+      for (const item of this.store.list()) {
+        await this.skipUnsettledAgentSlots(item, 'startup');
+      }
       this.armTimer();
       return;
     }
@@ -518,11 +551,11 @@ class Scheduler implements AutomationScheduler {
       if (item.paused || item.nextFireAt <= 0 || item.nextFireAt > now) continue;
       const schedule = readSchedule(item.schedule);
       if (!schedule) continue;
+      if (await this.skipUnsettledAgentSlots(item, 'startup')) continue;
       if (item.nextFireAt < now - ON_TIME_GRACE_MS) {
         await this.applyCatchUp(item, 'startup');
         continue;
       }
-      if (await this.skipUnsettledAgent(item, item.nextFireAt, 'startup', schedule)) continue;
       await this.fireExact(item, item.nextFireAt, false, 'startup', schedule);
     }
     await this.expireDue();

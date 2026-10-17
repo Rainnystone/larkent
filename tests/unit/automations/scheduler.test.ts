@@ -866,6 +866,57 @@ describe('automation scheduler', () => {
     release();
   });
 
+  it('skips overdue agent slots while the link is down instead of queueing them', async () => {
+    let linkUp = true;
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const delays: number[] = [];
+    const clockBox: { clock?: ManualClock } = {};
+    const h = await harness(t0, {
+      isLinkUp: () => linkUp,
+      send: () => hold,
+      setTimeout: (fn, delayMs) => {
+        delays.push(delayMs);
+        return clockBox.clock!.setTimeout(fn, delayMs);
+      },
+    });
+    clockBox.clock = h.clock;
+    await h.store.create(reminderInput({
+      taskType: 'agent',
+      cwd: h.dir,
+      schedule: hourly,
+      nextFireAt: t0,
+      name: '汇总',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toHaveLength(1);
+    linkUp = false;
+    h.clock.jump(2 * HOUR);
+    await h.clock.advanceTo(t0 + (delays.at(-1) ?? 0), () => h.scheduler.idle());
+
+    expect(h.fires).toHaveLength(1);
+    expect(h.notices).toEqual([]);
+    expect(h.store.get(1)).toMatchObject({
+      lastStatus: 'running',
+      lastFireAt: t0,
+      nextFireAt: t0 + 3 * HOUR,
+    });
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({ scheduledAt: t0 + HOUR, result: 'skipped' }),
+      expect.objectContaining({ scheduledAt: t0 + 2 * HOUR, result: 'skipped' }),
+    ]);
+
+    linkUp = true;
+    await h.scheduler.onLinkRecovered();
+    await h.scheduler.idle();
+    expect(h.fires).toHaveLength(1);
+    expect(h.store.get(1)?.lastStatus).toBe('running');
+    release();
+  });
+
   it('drops started fire keys older than 48h and keeps keys inside the window', async () => {
     const h = await harness(t0);
     await h.store.create(reminderInput({
