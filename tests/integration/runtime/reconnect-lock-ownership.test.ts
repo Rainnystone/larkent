@@ -1,18 +1,48 @@
-import { mkdtemp, realpath, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { createRootConfig, loadRootConfig, saveRootConfig } from '../../../src/config/profile-store';
-import { resolveAppPaths } from '../../../src/config/app-paths';
+import { resolveAppPaths, type AppPaths } from '../../../src/config/app-paths';
 import * as locks from '../../../src/runtime/locks';
 import { Supervisor } from '../../../src/runtime/supervisor';
 import { readAndPrune } from '../../../src/runtime/registry';
 import { writeVersionExecutable } from '../../helpers/fake-executable';
 
+async function seedEmptyStores(paths: AppPaths): Promise<void> {
+  await mkdir(paths.profileDir, { recursive: true });
+  await writeFile(paths.sessionsFile, `${JSON.stringify({ schemaVersion: 2, entries: {} }, null, 2)}\n`);
+  await writeFile(`${paths.sessionsFile}.catalog.json`, `${JSON.stringify({ schemaVersion: 2, entries: [] })}\n`);
+  await writeFile(
+    paths.workspacesFile,
+    `${JSON.stringify({ schemaVersion: 2, chats: {}, named: {} }, null, 2)}\n`,
+  );
+}
+
+async function settle(work: Promise<unknown>, ms: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      work.catch(() => undefined),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 it.each(['old transferred lock', 'new rollback lock'] as const)('retains and reports a failed release of the %s until stop retries it', async mode => {
+  const previousXdg = process.env.XDG_RUNTIME_DIR;
+  const xdg = await realpath(await mkdtemp(join(tmpdir(), 'reconnect-lock-xdg-')));
+  process.env.XDG_RUNTIME_DIR = xdg;
   const root = await realpath(await mkdtemp(join(tmpdir(), 'reconnect-lock-ownership-')));
   const paths = resolveAppPaths({ rootDir: root, profile: 'test' });
+  const otherPaths = resolveAppPaths({ rootDir: root, profile: 'other' });
+  await seedEmptyStores(paths);
+  await seedEmptyStores(otherPaths);
   const configPath = join(root, 'config.json');
   const binary = await writeVersionExecutable(root, 'fake-claude', '1.0.0');
   const profile = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app: { id: 'old-app', secret: 'fake-secret', tenant: 'feishu' } } });
@@ -74,9 +104,18 @@ it.each(['old transferred lock', 'new rollback lock'] as const)('retains and rep
       expect.stringMatching(new RegExp(`supervisor\\.lock-release-failed.*kind=app.*${failedTarget} release failed`)),
     ]);
   } finally {
-    await supervisor.shutdown();
-    if ((await locks.checkRuntimeLock(paths.appLockFile(failedTarget))).locked) await originalRelease?.();
+    // Mock startChannelFn never calls channel.disconnect → recovery.stop().
+    // If stop/shutdown hangs (Windows lock IO), still drop the machine lock
+    // dir so the next it.each case cannot inherit RuntimeLockConflictError.
+    await settle(supervisor.shutdown(), 1000);
+    if ((await locks.checkRuntimeLock(paths.appLockFile(failedTarget))).locked) {
+      await originalRelease?.().catch(() => undefined);
+    }
     vi.restoreAllMocks();
-    await rm(root, { recursive: true, force: true });
+    process.env.XDG_RUNTIME_DIR = previousXdg;
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(xdg, { recursive: true, force: true }),
+    ]);
   }
 });
