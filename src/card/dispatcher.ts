@@ -5,9 +5,20 @@ import type { BackfillLedger } from '../bot/backfill-ledger';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
-import type { AutoActionAuth, AutoCardAction } from '../automations/action-auth';
+import {
+  isAutoCardAction,
+  isAutoEndAction,
+  type AutoActionAuth,
+  type AutoCardAction,
+} from '../automations/action-auth';
 import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth';
-import { AUTO_INVALID_HINT, confirmAutomationDraft } from '../automations/command';
+import {
+  AUTO_INVALID_END,
+  AUTO_INVALID_HINT,
+  completeDraftEnd,
+  confirmAutomationDraft,
+  resolveEndAt,
+} from '../automations/command';
 import type { AutomationScheduler } from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
 import type { CallbackAuth } from './callback-auth';
@@ -125,8 +136,8 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     await dispatchNoticeAction(deps, payload, cmd, scope, threadId, mode, accessDecision);
     return;
   }
-  if (cmd === 'auto.confirm' || cmd === 'auto.reject') {
-    await dispatchAutoAction(deps, payload, cmd, accessDecision);
+  if (isAutoCardAction(cmd)) {
+    await dispatchAutoAction(deps, payload, cmd, accessDecision, formValue);
     return;
   }
   if (cmd === 'auto.pause' || cmd === 'auto.resume' || cmd === 'auto.delete') {
@@ -370,6 +381,7 @@ async function dispatchAutoAction(
   payload: Record<string, unknown>,
   cmd: AutoCardAction,
   access: ReturnType<typeof evaluateAccess>,
+  formValue?: Record<string, unknown>,
 ): Promise<void> {
   if (!access.ok) return;
   const botOpenId = deps.channel.botIdentity?.openId;
@@ -409,6 +421,31 @@ async function dispatchAutoAction(
     await sendAutoInvalid(deps);
     return;
   }
+  if (isAutoEndAction(cmd)) {
+    const now = (deps.now ?? Date.now)();
+    const customText = readEndInput(payload, formValue);
+    const endAt = resolveEndAt(cmd, {
+      timezone: registered.timezone,
+      now,
+      startAt: registered.startAt,
+      ...(customText ? { customText } : {}),
+    });
+    if (endAt === undefined) {
+      await sendAutoHint(deps, AUTO_INVALID_END);
+      return;
+    }
+    const result = await completeDraftEnd({
+      automations: deps.automations,
+      autoAuth: deps.autoAuth,
+      channel: deps.channel,
+      now: deps.now,
+    }, registered, endAt, deps.evt.messageId);
+    if (!result.ok) {
+      await sendAutoHint(deps, result.message);
+    }
+    return;
+  }
+
   const taken = await deps.automations.takeDraft(registered.draftId);
   if (!taken) {
     await sendAutoInvalid(deps);
@@ -496,6 +533,17 @@ async function dispatchBoardAction(
       return _exhaustive;
     }
   }
+}
+
+function readEndInput(
+  payload: Record<string, unknown>,
+  formValue: Record<string, unknown> | undefined,
+): string | undefined {
+  const fromForm = formValue?.end_at;
+  if (typeof fromForm === 'string' && fromForm.trim()) return fromForm.trim();
+  const fromPayload = payload.end_at;
+  if (typeof fromPayload === 'string' && fromPayload.trim()) return fromPayload.trim();
+  return undefined;
 }
 
 async function sendAutoInvalid(deps: CardDispatchDeps): Promise<void> {

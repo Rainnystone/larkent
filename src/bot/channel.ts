@@ -354,6 +354,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const onAutomationConfirmed = async (item: AutomationItem): Promise<void> => {
     await deps.onAutomationConfirmed?.(item);
     await automationsCtl.scheduler?.notifyChanged();
+    await automationsCtl.scheduler?.nudge();
   };
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model

@@ -204,6 +204,24 @@ function statusFromStore(store: AutomationsStore, bot: string, updatedAt: number
 }
 
 describe('automation scheduler', () => {
+  it('deletes a recurring item with no remaining fires when the fake clock reaches endAt', async () => {
+    const endAt = t0 + HOUR;
+    const h = await harness(t0);
+    await h.store.create(reminderInput({
+      schedule: { ...hourly, startAt: t0, endAt },
+      startAt: t0,
+      endAt,
+      nextFireAt: 0,
+      name: 'done',
+    }));
+    await h.scheduler.start();
+    await h.clock.advanceTo(endAt - 1, () => h.scheduler.idle());
+    expect(h.store.list()).toHaveLength(1);
+    await h.clock.advanceTo(endAt, () => h.scheduler.idle());
+    expect(h.store.list()).toEqual([]);
+    expect(await readStatus(h.statusPath)).toMatchObject({ items: [] });
+  });
+
   it('calls the sender exactly once when the fake clock reaches the instant, and not before', async () => {
     const fireAt = t0 + 10 * 60_000;
     const h = await harness(t0);

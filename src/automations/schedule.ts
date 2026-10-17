@@ -55,6 +55,16 @@ export type ParseScheduleResult =
   | { ok: true; schedule: Schedule }
   | { ok: false; reason: ScheduleRejectReason };
 
+/** Recurring rule captured from `/auto new` before an end time is supplied. */
+export type PendingRecurring = {
+  kind: 'daily' | 'weekday' | 'weekly' | 'interval';
+  timezone: string;
+  times?: LocalTime[];
+  weekdays?: number[];
+  every?: { unit: 'minutes' | 'hours'; n: number };
+  window?: { from: LocalTime; to: LocalTime };
+};
+
 export interface ParseScheduleOptions {
   taskType: TaskType;
   now: number;

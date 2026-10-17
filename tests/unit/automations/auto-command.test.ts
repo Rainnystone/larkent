@@ -77,4 +77,55 @@ describe('parseScheduleText', () => {
       reason: 'lead-too-soon',
     });
   });
+
+  it('parses weekday / daily / weekly / interval text and keeps a pending rule when end is missing', () => {
+    expect(parseScheduleText('每个工作日 09:00', {
+      taskType: 'reminder',
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toEqual({
+      ok: false,
+      reason: 'missing-end-at',
+      pending: {
+        kind: 'weekday',
+        timezone: 'Asia/Shanghai',
+        times: [{ hour: 9, minute: 0 }],
+      },
+    });
+    expect(parseScheduleText('每天 09:00,18:00 到 2026-12-31', {
+      taskType: 'reminder',
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toMatchObject({
+      ok: true,
+      schedule: { kind: 'daily', times: [{ hour: 9, minute: 0 }, { hour: 18, minute: 0 }] },
+    });
+    expect(parseScheduleText('weekly 1,3 10:00 until 2026-12-31', {
+      taskType: 'reminder',
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toMatchObject({
+      ok: true,
+      schedule: { kind: 'weekly', weekdays: [1, 3] },
+    });
+    expect(parseScheduleText('every 30m 09:00-18:00 until 2026-12-31', {
+      taskType: 'reminder',
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toMatchObject({
+      ok: true,
+      schedule: { kind: 'interval', everyMs: 30 * 60_000 },
+    });
+  });
+
+  it('rejects reminder intervals under 10 minutes and agent-task intervals under 1 hour before asking for an end', () => {
+    expect(parseScheduleText('every 5m', { taskType: 'reminder', now: NOW, timezone: 'Asia/Shanghai' })).toEqual({
+      ok: false,
+      reason: 'interval-too-small',
+    });
+    expect(parseScheduleText('every 30m', { taskType: 'agent', now: NOW, timezone: 'Asia/Shanghai' })).toEqual({
+      ok: false,
+      reason: 'interval-too-small',
+    });
+  });
 });
