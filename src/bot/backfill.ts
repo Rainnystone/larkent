@@ -557,6 +557,7 @@ function uniqueSessionChatIds(
   const listed: string[] = [];
   const seen = new Set<string>();
   for (const scope of sessionChatIds) {
+    if (scope.startsWith('auto:') || scope.startsWith('meeting:')) continue;
     const chatId = chatIdFromScope(scope);
     if (!chatId || seen.has(chatId)) continue;
     seen.add(chatId);
