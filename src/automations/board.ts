@@ -24,7 +24,7 @@ export interface AutomationBoardDeps {
   botDisplayName: () => string;
   now?: () => number;
   lockPath: string;
-  onNotInChat?: (chatId: string) => void | Promise<void>;
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
 }
 
 export function createAutomationBoard(deps: AutomationBoardDeps): AutomationBoard {
@@ -38,7 +38,7 @@ class Board implements AutomationBoard {
   private readonly botDisplayName: () => string;
   private readonly now: () => number;
   private readonly lockPath: string;
-  private readonly onNotInChat?: (chatId: string) => void | Promise<void>;
+  private readonly onNotInChat?: (chatId: string) => void | Promise<unknown>;
   private tail: Promise<void> = Promise.resolve();
   private queued = false;
   private running = false;

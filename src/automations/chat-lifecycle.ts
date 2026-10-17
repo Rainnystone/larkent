@@ -42,7 +42,7 @@ export function chatIdFromRawEvent(data: unknown): string | undefined {
  */
 export function attachAutomationChatLifecycle(
   channel: unknown,
-  onRemoved: (chatId: string) => void | Promise<void>,
+  onRemoved: (chatId: string) => void | Promise<unknown>,
 ): () => void {
   const source = channel as RawEventSource | undefined;
   if (typeof source?.onRawEvent !== 'function') {
