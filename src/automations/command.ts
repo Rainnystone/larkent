@@ -351,6 +351,7 @@ export type AutomationProposalContext = Pick<
   | 'workspaces'
   | 'automations'
   | 'autoAuth'
+  | 'automationsScheduler'
   | 'now'
   | 'controls'
 >;

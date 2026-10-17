@@ -531,6 +531,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           outboundTimeoutMs,
           automations: deps.automations,
           autoAuth,
+          automationsScheduler: automationsCtl.scheduler,
           ...(deps.now ? { now: deps.now } : {}),
         });
       } finally {
@@ -1481,6 +1482,7 @@ interface RunBatchDeps {
   outboundTimeoutMs: number;
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
+  automationsScheduler?: AutomationScheduler;
   now?: () => number;
 }
 
@@ -1511,6 +1513,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     outboundTimeoutMs,
     automations,
     autoAuth,
+    automationsScheduler,
     now,
   } = deps;
   if (batch.length === 0) return;
@@ -1862,6 +1865,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           workspaces,
           automations,
           autoAuth,
+          automationsScheduler,
           ...(now ? { now } : {}),
           controls,
         }, parsed),
