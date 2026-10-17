@@ -5,6 +5,7 @@ import {
   monthlyFireCount,
   nextFireAfter,
   nextFires,
+  parseFireKey,
   parseSchedule,
   planCatchUp,
   type Schedule,
@@ -313,6 +314,7 @@ describe('miss rule and catch-up', () => {
 
   it('formats a fire key as id@fireAt', () => {
     expect(formatFireKey(3, 1792218600000)).toBe('3@1792218600000');
+    expect(parseFireKey('3@1792218600000')).toEqual({ id: 3, fireAt: 1792218600000 });
   });
 });
 

@@ -411,6 +411,63 @@ export function formatFireKey(id: number, fireAt: number): string {
   return `${id}@${fireAt}`;
 }
 
+export function parseFireKey(fireKey: string): { id: number; fireAt: number } | undefined {
+  const at = fireKey.lastIndexOf('@');
+  if (at <= 0) return undefined;
+  const id = Number(fireKey.slice(0, at));
+  const fireAt = Number(fireKey.slice(at + 1));
+  if (!Number.isInteger(id) || id < 1 || !Number.isFinite(fireAt)) return undefined;
+  return { id, fireAt };
+}
+
+/** Accept a persisted {@link Schedule} (the parse result, not the input form). */
+export function readSchedule(value: unknown): Schedule | undefined {
+  const rec = asRecord(value);
+  if (!rec || typeof rec.kind !== 'string') return undefined;
+  switch (rec.kind) {
+    case 'one-shot': {
+      if (typeof rec.fireAt !== 'number' || !Number.isFinite(rec.fireAt)) return undefined;
+      return { kind: 'one-shot', fireAt: rec.fireAt };
+    }
+    case 'daily':
+    case 'weekday': {
+      if (typeof rec.timezone !== 'string' || !rec.timezone) return undefined;
+      const times = readTimes(rec.times);
+      if (!times || typeof rec.startAt !== 'number' || typeof rec.endAt !== 'number') return undefined;
+      return rec.kind === 'daily'
+        ? { kind: 'daily', timezone: rec.timezone, times, startAt: rec.startAt, endAt: rec.endAt }
+        : { kind: 'weekday', timezone: rec.timezone, times, startAt: rec.startAt, endAt: rec.endAt };
+    }
+    case 'weekly': {
+      if (typeof rec.timezone !== 'string' || !rec.timezone) return undefined;
+      const times = readTimes(rec.times);
+      if (!times || typeof rec.startAt !== 'number' || typeof rec.endAt !== 'number') return undefined;
+      const weekdays = parseWeekdays(rec.weekdays);
+      if (!weekdays) return undefined;
+      return {
+        kind: 'weekly',
+        timezone: rec.timezone,
+        weekdays,
+        times,
+        startAt: rec.startAt,
+        endAt: rec.endAt,
+      };
+    }
+    case 'interval': {
+      if (typeof rec.timezone !== 'string' || !rec.timezone) return undefined;
+      if (typeof rec.everyMs !== 'number' || !Number.isFinite(rec.everyMs)) return undefined;
+      if (typeof rec.startAt !== 'number' || typeof rec.endAt !== 'number') return undefined;
+      const window = rec.window === undefined ? undefined : parseWindow(rec.window);
+      if (window === 'invalid') return undefined;
+      return window
+        ? { kind: 'interval', timezone: rec.timezone, everyMs: rec.everyMs, window, startAt: rec.startAt, endAt: rec.endAt }
+        : { kind: 'interval', timezone: rec.timezone, everyMs: rec.everyMs, startAt: rec.startAt, endAt: rec.endAt };
+    }
+    default:
+      return undefined;
+  }
+}
+
 const MONTH_WINDOW_MS = 30 * 24 * 60 * 60_000;
 
 export function monthlyFireCount(schedule: Schedule, fromMs: number): number {

@@ -125,6 +125,10 @@ import {
   type TurnJournalResource,
 } from './turn-journal';
 import { AutoActionAuth } from '../automations/action-auth';
+import {
+  createAutomationScheduler,
+  type AutomationScheduler,
+} from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
@@ -250,6 +254,8 @@ export interface BridgeChannel {
   recover(outage?: Outage): Promise<void>;
   recoverMissed(outage?: Outage): Promise<void>;
   tickLink(): Promise<void>;
+  /** Local wake entry (A5 owns transport). Already-started fire keys stay silent. */
+  wakeAutomation(fireKey: string): Promise<void>;
 }
 
 export interface StartChannelDeps {
@@ -745,9 +751,24 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     ...(deps.outboundTimeoutMs !== undefined ? { outboundTimeoutMs: deps.outboundTimeoutMs } : {}),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
+  const automationsScheduler: AutomationScheduler | undefined =
+    deps.automations && controls.profileConfig.automations.enabled
+      ? createAutomationScheduler({
+          store: deps.automations,
+          sender: { send: async () => {} },
+          notifier: { notify: async () => {} },
+          botDisplayName: () => channel.botIdentity?.name ?? 'bot',
+          ...(deps.now ? { now: deps.now } : {}),
+          isLinkUp: () => !closing && !started.isDown(),
+          enabled: () => controls.profileConfig.automations.enabled,
+        })
+      : undefined;
   started.onRecovered((outage) => {
     deps.onRecovered?.(outage);
     void trackConsumer(recover(outage), 'recovery');
+    if (automationsScheduler) {
+      void trackConsumer(automationsScheduler.onLinkRecovered(), 'auto');
+    }
   });
   const link = started;
 
@@ -951,13 +972,20 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   });
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
+  if (automationsScheduler) await automationsScheduler.start();
+
   return {
     channel,
     recover,
     recoverMissed: recover,
     tickLink: () => started.tick(),
+    wakeAutomation: (fireKey) => automationsScheduler
+      ? automationsScheduler.wake(fireKey)
+      : Promise.resolve(),
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
+      automationsScheduler?.stop();
+      await automationsScheduler?.idle();
       await recovery.stop();
       outboxSweep.stop();
       resumeCandidates.clear();

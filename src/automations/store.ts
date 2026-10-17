@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import { parseFireKey } from './schedule';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
 
@@ -306,6 +307,43 @@ export class AutomationsStore {
     }
     await this.persistNow();
     return 'started';
+  }
+
+  hasStarted(fireKey: string): boolean {
+    return this.started.has(fireKey);
+  }
+
+  async pause(id: number): Promise<boolean> {
+    this.assertMutable();
+    const item = this.items.find((entry) => entry.id === id);
+    if (!item) return false;
+    item.paused = true;
+    await this.persistNow();
+    return true;
+  }
+
+  async resume(id: number, nextFireAt: number): Promise<boolean> {
+    this.assertMutable();
+    const item = this.items.find((entry) => entry.id === id);
+    if (!item) return false;
+    item.paused = false;
+    item.nextFireAt = nextFireAt;
+    await this.persistNow();
+    return true;
+  }
+
+  async setNextFireAt(
+    id: number,
+    nextFireAt: number,
+    lastStatus?: AutomationLastStatus,
+  ): Promise<boolean> {
+    this.assertMutable();
+    const item = this.items.find((entry) => entry.id === id);
+    if (!item) return false;
+    item.nextFireAt = nextFireAt;
+    if (lastStatus) item.lastStatus = lastStatus;
+    await this.persistNow();
+    return true;
   }
 
   private async loadDocument(): Promise<void> {
@@ -618,15 +656,6 @@ function parseLogEntry(raw: unknown): AutomationsLogEntry | undefined {
     triggerSource: raw.triggerSource,
     result: raw.result,
   };
-}
-
-function parseFireKey(fireKey: string): { id: number; fireAt: number } | undefined {
-  const at = fireKey.lastIndexOf('@');
-  if (at <= 0) return undefined;
-  const id = Number(fireKey.slice(0, at));
-  const fireAt = Number(fireKey.slice(at + 1));
-  if (!Number.isInteger(id) || id < 1 || !Number.isFinite(fireAt)) return undefined;
-  return { id, fireAt };
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
