@@ -362,7 +362,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
 
     const staged = first.journal.list().find((entry) => entry.turnId.startsWith('af:'));
     expect(staged?.reply?.markdown ?? '').toMatch(/已中断|进程退出|运行失败/);
-    expect(staged?.reply?.markdown ?? '').toContain(FOOTER);
+    expect(staged?.reply?.markdown ?? '').not.toContain(FOOTER);
     expect(JSON.stringify(staged)).not.toContain('notice.continue');
     expect(continuationBodies(first.channel)).toEqual([]);
 
@@ -371,12 +371,30 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
       tmp: first.tmp,
       store: first.store,
       reuseCleanup: true,
-      events: [],
+      messageReply: 'text',
+      cotMessages: 'off',
+      events: [[
+        { type: 'system', resumeHandle: 'sess-human' },
+        { type: 'text', delta: 'NOT_THE_FIRE' },
+        { type: 'done', terminationReason: 'normal' },
+      ]],
     });
-    await waitFor(() => resultBodies(restarted.channel).length === 1);
-    expect(resultBodies(restarted.channel).join('\n')).toMatch(/已中断|进程退出|运行失败/);
+    await waitFor(() => bodies(restarted.channel).some((body) => /已中断|进程退出|运行失败/.test(body)));
+    expect(bodies(restarted.channel).join('\n')).toMatch(/已中断|进程退出|运行失败/);
+    expect(bodies(restarted.channel).join('\n')).not.toContain(FOOTER);
     expect(continuationBodies(restarted.channel)).toEqual([]);
     expect(JSON.stringify(restarted.channel.sent)).not.toContain('notice.continue');
+
+    const rootId = resultPostId(restarted.journal);
+    await restarted.channel.handlers.message?.(mention('om_recover', '继续', {
+      threadId: rootId,
+      rootId,
+      parentId: rootId,
+    }));
+    await waitFor(() => restarted.agent.runs.length === 1);
+    expect(restarted.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    const follow = restarted.journal.list().find((entry) => entry.messageIds.includes('om_recover'));
+    expect(follow?.scope.startsWith('auto:')).toBe(false);
     await waitFor(async () => (await readStatus(restarted.statusPath)).items[0]?.lastStatus === 'failed');
     expect(await readStatus(restarted.statusPath)).toMatchObject({
       items: [expect.objectContaining({ id: 1, lastFireAt: t0, lastStatus: 'failed', missed: 0 })],
@@ -472,7 +490,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
         id: 1,
         taskType: 'agent',
         scheduledAt: t0,
-        triggerSource: 'link-recovered',
+        triggerSource: 'startup',
         result: 'catch-up',
       }),
     ]);
@@ -521,7 +539,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     const staged = first.journal.list().find((entry) => entry.turnId.startsWith('af:'));
     expect(staged?.reply?.markdown ?? '').toMatch(/已中断|进程退出|运行失败/);
     expect(staged?.reply?.markdown ?? '').toContain('（补跑，原定 12:00）');
-    expect(staged?.reply?.markdown ?? '').toContain(FOOTER);
+    expect(staged?.reply?.markdown ?? '').not.toContain(FOOTER);
 
     const restarted = await harness({
       nowMs: t0 + 61_000,
@@ -530,16 +548,17 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
       reuseCleanup: true,
       events: [],
     });
-    await waitFor(() => resultBodies(restarted.channel).length === 1);
-    expect(resultBodies(restarted.channel).join('\n')).toContain('（补跑，原定 12:00）');
-    expect(resultBodies(restarted.channel).join('\n')).toMatch(/已中断|进程退出|运行失败/);
+    await waitFor(() => bodies(restarted.channel).some((body) => body.includes('（补跑，原定 12:00）')));
+    expect(bodies(restarted.channel).join('\n')).toContain('（补跑，原定 12:00）');
+    expect(bodies(restarted.channel).join('\n')).toMatch(/已中断|进程退出|运行失败/);
+    expect(bodies(restarted.channel).join('\n')).not.toContain(FOOTER);
     expect(continuationBodies(restarted.channel)).toEqual([]);
     expect(await restarted.store.readLog()).toEqual([
       expect.objectContaining({
         id: 1,
         taskType: 'agent',
         scheduledAt: t0,
-        triggerSource: 'link-recovered',
+        triggerSource: 'startup',
         result: 'catch-up',
       }),
     ]);

@@ -19,6 +19,29 @@ export interface PolicyGuardHit {
   reason: PolicyGuardReason;
 }
 
+export function policyGuardReasonLabel(reason: PolicyGuardReason): string {
+  switch (reason) {
+    case 'members':
+      return '成员增删';
+    case 'chat-create':
+      return '建群';
+    case 'leave':
+      return '退群';
+    case 'chat-settings':
+      return '群设置';
+    case 'contacts':
+      return '通讯录';
+    case 'hr':
+      return '人事';
+    case 'user-identity':
+      return '用户身份';
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
 const LARK_CLI_NAME = /^(?:.*[/\\])?lark-cli(?:\.(?:cmd|exe))?$/i;
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const WRAPPERS = new Set(['env', 'npx', 'command', 'sudo', 'nice', 'time']);

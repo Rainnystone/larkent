@@ -109,6 +109,10 @@ class Scheduler implements AutomationScheduler {
   private closed = false;
   /** Crash leftovers are settled once, before the first fire in this process. */
   private orphansAbandoned = false;
+  /** False until `start()` finishes its startup catch-up. Earlier link recovery folds into that pass. */
+  private opened = false;
+  /** True once a due pass has run with the link up. The first connect of a down start stays `startup`. */
+  private linkSeenUp = false;
   private fireTimer: unknown;
   private wakeWatch?: WakeWatch;
 
@@ -132,10 +136,12 @@ class Scheduler implements AutomationScheduler {
     return this.enqueue(async () => {
       await this.abandonOrphansOnce();
       await this.catchUp('startup');
-      await this.handleDue();
+      await this.handleDue('startup');
       await this.writeStatus();
       this.armWakeWatch();
       await this.drainWake();
+      this.opened = true;
+      if (this.isLinkUp()) this.linkSeenUp = true;
     });
   }
 
@@ -152,10 +158,12 @@ class Scheduler implements AutomationScheduler {
 
   onLinkRecovered(): Promise<void> {
     return this.enqueue(async () => {
-      if (this.closed) return;
+      if (this.closed || !this.opened) return;
+      const source: AutomationTriggerSource = this.linkSeenUp ? 'link-recovered' : 'startup';
+      if (this.isLinkUp()) this.linkSeenUp = true;
       await this.abandonOrphansOnce();
-      await this.catchUp('link-recovered');
-      await this.handleDue();
+      await this.catchUp(source);
+      await this.handleDue(source);
     });
   }
 
@@ -178,7 +186,7 @@ class Scheduler implements AutomationScheduler {
       if (!parsed) return;
       await this.abandonOrphansOnce();
       await this.catchUp('wake');
-      await this.handleDue();
+      await this.handleDue('wake');
     });
   }
 
@@ -186,7 +194,7 @@ class Scheduler implements AutomationScheduler {
     return this.enqueue(async () => {
       if (this.closed || !this.enabled()) return;
       await this.abandonOrphansOnce();
-      await this.handleDue();
+      await this.handleDue('startup');
     });
   }
 
@@ -534,13 +542,13 @@ class Scheduler implements AutomationScheduler {
     return ok;
   }
 
-  private async handleDue(): Promise<void> {
+  private async handleDue(source: AutomationTriggerSource): Promise<void> {
     if (this.closed || !this.enabled()) return;
     await this.store.pruneStartedFireKeys(this.now());
     const now = this.now();
     if (!this.isLinkUp()) {
       for (const item of this.store.list()) {
-        await this.skipUnsettledAgentSlots(item, 'startup');
+        await this.skipUnsettledAgentSlots(item, source);
       }
       this.armTimer();
       return;
@@ -549,17 +557,17 @@ class Scheduler implements AutomationScheduler {
       if (item.paused || item.nextFireAt <= 0 || item.nextFireAt > now) continue;
       const schedule = readSchedule(item.schedule);
       if (!schedule) continue;
-      const state = await this.skipUnsettledAgentSlots(item, 'startup');
+      const state = await this.skipUnsettledAgentSlots(item, source);
       const live = state.item;
       if (!live || live.paused || state.unsettled) continue;
       if (live.nextFireAt <= 0 || live.nextFireAt > now) continue;
       const liveSchedule = readSchedule(live.schedule);
       if (!liveSchedule) continue;
       if (live.nextFireAt < now - ON_TIME_GRACE_MS) {
-        await this.applyCatchUp(live, 'startup');
+        await this.applyCatchUp(live, source);
         continue;
       }
-      await this.fireExact(live, live.nextFireAt, false, 'startup', liveSchedule);
+      await this.fireExact(live, live.nextFireAt, false, source, liveSchedule);
     }
     await this.expireDue();
     this.armTimer();
@@ -615,7 +623,7 @@ class Scheduler implements AutomationScheduler {
     if (deadline === undefined) return;
     const delay = Math.min(SCHEDULER_SEGMENT_MS, Math.max(0, deadline - now));
     this.fireTimer = this.setTimeout(() => {
-      void this.enqueue(() => this.handleDue());
+      void this.enqueue(() => this.handleDue('timer'));
     }, delay);
   }
 

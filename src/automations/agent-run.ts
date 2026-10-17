@@ -50,10 +50,14 @@ import type { WorkspaceStore } from '../workspace/store';
 import {
   deliverAutomationMarkdown,
   fireTurnId,
-  formatScheduledHm,
+  formatScheduledLabel,
   type AutomationDeliveryDeps,
 } from './delivery';
-import { inspectAutomationToolUse, type PolicyGuardReason } from './policy-guard';
+import {
+  inspectAutomationToolUse,
+  policyGuardReasonLabel,
+  type PolicyGuardReason,
+} from './policy-guard';
 import type { FireSend } from './scheduler';
 import type { AutomationsStore } from './store';
 
@@ -61,16 +65,17 @@ export const AGENT_RESULT_FOOTER = '在本消息话题里追问';
 export const AGENT_EMPTY_RESULT = '任务已完成，agent 没有给出文字结果。';
 export const CATCH_UP_PROMPT_MARKER = '本次为补跑，原定 ';
 
-export function formatCatchUpPromptHint(timezone: string, fireAt: number): string {
-  return `${CATCH_UP_PROMPT_MARKER}${formatScheduledHm(timezone, fireAt)}。请按原定任务执行。`;
+export function formatCatchUpPromptHint(timezone: string, fireAt: number, now = fireAt): string {
+  return `${CATCH_UP_PROMPT_MARKER}${formatScheduledLabel(timezone, fireAt, now)}。请按原定任务执行。`;
 }
 
 export function formatAutomationAgentPrompt(
   fire: Pick<FireSend, 'chatId' | 'createdBy' | 'taskText' | 'catchUp' | 'timezone' | 'fireAt'>,
   botOpenId?: string,
+  now = fire.fireAt,
 ): string {
   const userInput = fire.catchUp
-    ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt)}\n\n${fire.taskText}`
+    ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt, now)}\n\n${fire.taskText}`
     : fire.taskText;
   return buildAgentPrompt({
     context: {
@@ -89,28 +94,41 @@ export function formatAgentResultPost(input: {
   catchUp: boolean;
   timezone: string;
   fireAt: number;
+  now?: number;
+  /** Completed and partial result posts invite a thread follow-up. Interrupt notices do not. */
+  followUp?: boolean;
 }): string {
   const lines = [input.body.trim()].filter((line) => line.length > 0);
   if (input.catchUp) {
-    lines.push(`（补跑，原定 ${formatScheduledHm(input.timezone, input.fireAt)}）`);
+    lines.push(`（补跑，原定 ${formatScheduledLabel(input.timezone, input.fireAt, input.now ?? input.fireAt)}）`);
   }
-  lines.push(AGENT_RESULT_FOOTER);
+  if (input.followUp !== false) lines.push(AGENT_RESULT_FOOTER);
   return lines.join('\n\n');
 }
 
 export function formatAgentFailureNotice(
   outcome: RunOutcome,
-  meta?: { catchUp?: boolean; timezone?: string; fireAt?: number },
+  meta?: {
+    catchUp?: boolean;
+    timezone?: string;
+    fireAt?: number;
+    policyGuard?: PolicyGuardReason;
+  },
 ): string {
   return formatAgentResultPost({
-    body: formatAgentFailureBody(outcome),
+    body: formatAgentFailureBody(outcome, meta?.policyGuard),
     catchUp: meta?.catchUp === true,
     timezone: meta?.timezone ?? 'UTC',
     fireAt: meta?.fireAt ?? 0,
+    followUp: false,
   });
 }
 
-function formatAgentFailureBody(outcome?: RunOutcome): string {
+function formatAgentFailureBody(outcome?: RunOutcome, policyGuard?: PolicyGuardReason): string {
+  if (outcome?.kind === 'interrupted' && outcome.reason.type === 'policy-guard') {
+    const reason = policyGuard ? `（${policyGuardReasonLabel(policyGuard)}）` : '';
+    return `自动化任务中断：策略拦截${reason}。任务已暂停，可在看板恢复或删除。`;
+  }
   return outcome
     ? `自动化任务中断：${describeRunOutcome(outcome)}`
     : '自动化任务中断：运行失败';
@@ -124,6 +142,7 @@ export function automationScopeForReply(
   const posts = new Map<string, string>();
   for (const entry of journal.list()) {
     if (!isAutomationRunScope(entry.scope)) continue;
+    if (entry.outcome?.kind === 'interrupted' || entry.outcome?.kind === 'failed') continue;
     const id = entry.reply?.messageId?.trim();
     if (id) posts.set(id, entry.scope);
   }
@@ -173,12 +192,22 @@ async function runAutomationAgentFireBody(
   const now = (runtime.now ?? Date.now)();
   const cwd = fire.cwd?.trim();
   if (!cwd) {
-    await postFireMarkdown(runtime, fire, turnId, scope, '自动化任务中断：缺少工作目录');
+    noteUnanchored(runtime, fire, turnId, scope, {
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: false,
+      needsHuman: true,
+    });
+    await postFireMarkdown(runtime, fire, turnId, scope, '自动化任务中断：缺少工作目录', false);
     return;
   }
   runtime.workspaces.setCwd(scope, cwd);
 
-  const prompt = formatAutomationAgentPrompt(fire, runtime.botOpenId() || undefined);
+  const prompt = formatAutomationAgentPrompt(
+    fire,
+    runtime.botOpenId() || undefined,
+    now,
+  );
   const journal = runtime.journal;
   if (journal && !journal.get(turnId)) {
     const actor = runtime.botOpenId();
@@ -236,12 +265,19 @@ async function runAutomationAgentFireBody(
     },
   });
   if (!flow.ok) {
+    noteUnanchored(runtime, fire, turnId, scope, {
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: false,
+      needsHuman: true,
+    });
     await postFireMarkdown(
       runtime,
       fire,
       turnId,
       scope,
       `自动化任务中断：${flow.rejectReason.userVisible}`,
+      false,
     );
     log.info('auto', 'result', { id: fire.id, fireAt: fire.fireAt, outcome: flow.rejectReason.code });
     return;
@@ -295,8 +331,9 @@ async function runAutomationAgentFireBody(
   }
 
   let body = '';
+  let followUp = false;
   if (outcome?.kind === 'interrupted' || outcome?.kind === 'failed') {
-    body = formatAgentFailureBody(outcome);
+    body = formatAgentFailureBody(outcome, policyGuard);
   } else {
     const replied = finalReplyFor(state, {
       replyMode: descriptorFor(runtime.profileConfig.agentKind).replyMode,
@@ -308,13 +345,14 @@ async function runAutomationAgentFireBody(
     };
     body = renderText(visible).trim();
     if (!body && outcome && outcome.kind !== 'completed' && outcome.kind !== 'partial') {
-      body = formatAgentFailureBody(outcome);
+      body = formatAgentFailureBody(outcome, policyGuard);
     } else {
       if (!body) body = AGENT_EMPTY_RESULT;
       setStatus('ok');
+      followUp = true;
     }
   }
-  await postFireMarkdown(runtime, fire, turnId, scope, body);
+  await postFireMarkdown(runtime, fire, turnId, scope, body, followUp);
 }
 
 async function persistFireStatus(
@@ -333,12 +371,38 @@ async function persistFireStatus(
   }
 }
 
+function noteUnanchored(
+  runtime: AgentFireRuntime,
+  fire: FireSend,
+  turnId: string,
+  scope: string,
+  outcome: RunOutcome,
+): void {
+  const journal = runtime.journal;
+  if (!journal) return;
+  if (!journal.get(turnId)) {
+    const actor = runtime.botOpenId();
+    journal.enqueue({
+      turnId,
+      scope,
+      chatId: fire.chatId,
+      messageIds: [],
+      senderId: actor,
+      initiatorId: actor,
+      initiatorType: 'bot',
+      status: 'queued',
+    });
+  }
+  journal.markSettled(turnId, outcome);
+}
+
 async function postFireMarkdown(
   runtime: AgentFireRuntime,
   fire: FireSend,
   turnId: string,
   scope: string,
   body: string,
+  followUp: boolean,
 ): Promise<void> {
   if (!runtime.journal) return;
   await deliverAutomationMarkdown({
@@ -352,6 +416,8 @@ async function postFireMarkdown(
       catchUp: fire.catchUp,
       timezone: fire.timezone,
       fireAt: fire.fireAt,
+      now: (runtime.now ?? Date.now)(),
+      followUp,
     }),
   });
 }

@@ -610,8 +610,10 @@ describe('automation scheduler', () => {
         const silent = info.mock.calls.some((call) =>
           call[0] === 'auto' && call[1] === 'wake.already-started',
         );
-        if (order[0] === 'wake') expect(silent, order.join('>')).toBe(false);
-        else expect(silent, order.join('>')).toBe(true);
+        const wakeIndex = order.indexOf('wake');
+        const startIndex = order.indexOf('start');
+        const startedBeforeWake = startIndex !== -1 && startIndex < wakeIndex;
+        expect(silent, order.join('>')).toBe(startedBeforeWake);
       } finally {
         info.mockRestore();
       }
@@ -1238,5 +1240,150 @@ describe('automation scheduler', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  it('records a timer wake as timer when an unsettled agent skips and when a slot is past the grace', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const running = await harness(t0, { send: () => hold });
+    await running.store.create(reminderInput({
+      taskType: 'agent',
+      cwd: running.dir,
+      schedule: hourly,
+      nextFireAt: t0,
+    }));
+    await running.scheduler.start();
+    await running.scheduler.idle();
+    await running.clock.advanceTo(t0 + HOUR, () => running.scheduler.idle());
+    expect(await running.store.readLog()).toEqual([
+      expect.objectContaining({
+        scheduledAt: t0 + HOUR,
+        result: 'skipped',
+        triggerSource: 'timer',
+      }),
+    ]);
+    release();
+
+    const late = await harness(t0);
+    await late.store.create(reminderInput({ nextFireAt: t0 + HOUR }));
+    await late.scheduler.start();
+    await late.scheduler.idle();
+    late.clock.jump(HOUR + 61_000);
+    await late.clock.advanceTo(late.clock.now(), () => late.scheduler.idle());
+    expect(late.fires).toEqual([
+      expect.objectContaining({ fireAt: t0 + HOUR, catchUp: true }),
+    ]);
+    expect(await late.store.readLog()).toEqual([
+      expect.objectContaining({
+        scheduledAt: t0 + HOUR,
+        result: 'catch-up',
+        triggerSource: 'timer',
+      }),
+    ]);
+  });
+
+  it('records a pre-start link recovery as startup and a later recovery as link-recovered', async () => {
+    const fireAt = t0;
+    const before = await harness(fireAt + 61_000);
+    await before.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: fireAt - 20 * 60_000,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+    }));
+    await before.scheduler.onLinkRecovered();
+    await before.scheduler.start();
+    await before.scheduler.idle();
+    expect(before.fires).toEqual([expect.objectContaining({ fireAt, catchUp: true })]);
+    expect(await before.store.readLog()).toEqual([
+      expect.objectContaining({ result: 'catch-up', triggerSource: 'startup' }),
+    ]);
+
+    const after = await harness(t0);
+    await after.store.create(reminderInput({ nextFireAt: t0 + HOUR }));
+    await after.scheduler.start();
+    await after.scheduler.idle();
+    after.clock.jump(HOUR + 61_000);
+    await after.scheduler.onLinkRecovered();
+    await after.scheduler.idle();
+    expect(await after.store.readLog()).toEqual([
+      expect.objectContaining({
+        scheduledAt: t0 + HOUR,
+        result: 'catch-up',
+        triggerSource: 'link-recovered',
+      }),
+    ]);
+  });
+
+  it('records the first connect after a down start as startup and a later outage as link-recovered', async () => {
+    let linkUp = false;
+    const now = t0 + 2 * HOUR + 61_000;
+    const down = await harness(now, { isLinkUp: () => linkUp });
+    await down.store.create(reminderInput({ nextFireAt: t0 }));
+    await down.scheduler.start();
+    await down.scheduler.idle();
+    expect(down.fires).toEqual([]);
+    expect(await down.store.readLog()).toEqual([
+      expect.objectContaining({ scheduledAt: t0, result: 'missed', triggerSource: 'startup' }),
+      expect.objectContaining({ scheduledAt: t0 + HOUR, result: 'missed', triggerSource: 'startup' }),
+    ]);
+
+    linkUp = true;
+    await down.scheduler.onLinkRecovered();
+    await down.scheduler.idle();
+    expect(down.fires).toEqual([
+      expect.objectContaining({ fireAt: t0 + 2 * HOUR, catchUp: true }),
+    ]);
+    expect(await down.store.readLog()).toEqual([
+      expect.objectContaining({ scheduledAt: t0, result: 'missed', triggerSource: 'startup' }),
+      expect.objectContaining({ scheduledAt: t0 + HOUR, result: 'missed', triggerSource: 'startup' }),
+      expect.objectContaining({
+        scheduledAt: t0 + 2 * HOUR,
+        result: 'catch-up',
+        triggerSource: 'startup',
+      }),
+    ]);
+
+    down.clock.jump(HOUR + 61_000);
+    linkUp = false;
+    linkUp = true;
+    await down.scheduler.onLinkRecovered();
+    await down.scheduler.idle();
+    expect(await down.store.readLog()).toEqual([
+      expect.objectContaining({ scheduledAt: t0, result: 'missed', triggerSource: 'startup' }),
+      expect.objectContaining({ scheduledAt: t0 + HOUR, result: 'missed', triggerSource: 'startup' }),
+      expect.objectContaining({
+        scheduledAt: t0 + 2 * HOUR,
+        result: 'catch-up',
+        triggerSource: 'startup',
+      }),
+      expect.objectContaining({
+        scheduledAt: t0 + 3 * HOUR,
+        result: 'catch-up',
+        triggerSource: 'link-recovered',
+      }),
+    ]);
+  });
+
+  it('records a wake catch-up as wake', async () => {
+    const h = await harness(t0);
+    await h.store.create(reminderInput({ nextFireAt: t0 + HOUR }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    h.clock.jump(HOUR + 61_000);
+    await h.scheduler.wake(formatFireKey(1, t0 + HOUR));
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([
+      expect.objectContaining({ fireAt: t0 + HOUR, catchUp: true }),
+    ]);
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        scheduledAt: t0 + HOUR,
+        result: 'catch-up',
+        triggerSource: 'wake',
+      }),
+    ]);
   });
 });

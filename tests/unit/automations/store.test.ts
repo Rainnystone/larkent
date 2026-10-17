@@ -159,6 +159,15 @@ describe('AutomationsStore', () => {
       triggerSource: 'link-recovered',
       result: 'catch-up',
     });
+    await store.recordLog({
+      id: item.id,
+      taskType: item.taskType,
+      scheduledAt: 1_760_000_180_000,
+      decidedAt: now.t,
+      triggerSource: 'timer',
+      result: 'skipped',
+      skipReason: 'previous-run-unsettled',
+    });
 
     for (let i = 0; i < 25; i += 1) {
       now.t += 60_000;
@@ -188,6 +197,15 @@ describe('AutomationsStore', () => {
         decidedAt: 1_760_000_000_000,
         triggerSource: 'link-recovered',
         result: 'catch-up',
+      },
+      {
+        id: item.id,
+        taskType: 'reminder',
+        scheduledAt: 1_760_000_180_000,
+        decidedAt: 1_760_000_000_000,
+        triggerSource: 'timer',
+        result: 'skipped',
+        skipReason: 'previous-run-unsettled',
       },
     ]);
 

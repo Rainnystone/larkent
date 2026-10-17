@@ -61,8 +61,10 @@ describe('automation agent-task safety whitelist', { timeout: 20_000 }, () => {
     await waitFor(() => outboxBodies(h.channel).some((body) => body.includes(POLICY_NOTICE)));
     const status = await waitForStatus(h, (snapshot) => snapshot.items[0]?.paused === true);
 
-    expect(outboxBodies(h.channel).join('\n')).toContain(POLICY_NOTICE);
-    expect(outboxBodies(h.channel).join('\n')).toContain(FOOTER);
+    expect(outboxBodies(h.channel).join('\n')).toContain(
+      '自动化任务中断：策略拦截（成员增删）。任务已暂停，可在看板恢复或删除。',
+    );
+    expect(outboxBodies(h.channel).join('\n')).not.toContain(FOOTER);
     expect(outboxBodies(h.channel).join('\n')).not.toContain('继续');
     expect(JSON.stringify(h.channel.sent)).not.toContain('notice.continue');
     expect(status.items).toEqual([expect.objectContaining({
@@ -120,6 +122,53 @@ describe('automation agent-task safety whitelist', { timeout: 20_000 }, () => {
     expect(info.mock.calls.filter((call) => call[0] === 'auto' && call[1] === 'policy-guard')).toHaveLength(1);
     info.mockRestore();
   });
+
+  it.each(['group', 'topic'] as const)(
+    'does not resume the blocked session from a thread reply under the policy-guard notice (%s)',
+    async (chatMode) => {
+      const h = await harness({
+        nowMs: t0,
+        seed: true,
+        chatMode,
+        messageReply: 'text',
+        events: [
+          bashRun('lark-cli im chat.members create --chat-id oc_group --data \'{"id_list":["ou_victim"]}\''),
+          [
+            { type: 'system', resumeHandle: 'sess-human' },
+            { type: 'text', delta: HUMAN },
+            { type: 'done', terminationReason: 'normal' },
+          ],
+        ],
+      });
+
+      await waitFor(() => outboxBodies(h.channel).some((body) => body.includes('任务已暂停')));
+      const notice = outboxBodies(h.channel).find((body) => body.includes(POLICY_NOTICE)) ?? '';
+      expect(notice).toBe('自动化任务中断：策略拦截（成员增删）。任务已暂停，可在看板恢复或删除。');
+      expect(notice).not.toContain(FOOTER);
+      expect(notice).not.toContain(TASK);
+
+      const rootId = h.journal.list().find((entry) => (
+        entry.turnId.startsWith('af:') && typeof entry.reply?.messageId === 'string'
+      ))?.reply?.messageId;
+      expect(rootId).toMatch(/^om_/);
+
+      await h.channel.handlers.message?.(mention('om_follow', '继续', {
+        threadId: rootId,
+        rootId,
+        parentId: rootId,
+      }));
+      await waitFor(() => h.agent.runs.length === 2);
+
+      expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+      expect(h.agent.runOptions[1]?.prompt).toContain('继续');
+      expect(h.agent.runOptions[1]?.promptVariant).not.toBe('automation');
+      const follow = h.journal.list().find((entry) => entry.messageIds.includes('om_follow'));
+      // A threaded reply is topic-scoped by intake even in a regular group.
+      // The closed hole is the fire scope: this must not be auto:<id>:<fireAt>.
+      expect(follow?.scope).toBe(`${CHAT}:${rootId}`);
+      expect(follow?.scope.startsWith('auto:')).toBe(false);
+    },
+  );
 
   it('lets allowed reads and same-group sends finish with status ok and an empty policy-guard log', async () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
@@ -239,6 +288,7 @@ async function harness(opts: {
   events?: FakeAgentEvents;
   hold?: Promise<void>;
   messageReply?: 'card' | 'text';
+  chatMode?: 'group' | 'topic';
   tmp?: Awaited<ReturnType<typeof createTmpProfile>>;
   store?: AutomationsStore;
 } = { nowMs: t0 }) {
@@ -295,7 +345,7 @@ async function harness(opts: {
   });
   const channel = createRecordingLarkChannel({
     chats: [{ id: CHAT, name: 'G' }],
-    chatMode: 'group',
+    chatMode: opts.chatMode ?? 'group',
     botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
   });
   sdk.channel = channel;
@@ -360,7 +410,11 @@ function bashRun(command: string, extra: AgentEvent[] = []): AgentEvent[] {
   ];
 }
 
-function mention(messageId: string, content: string): NormalizedMessage {
+function mention(
+  messageId: string,
+  content: string,
+  extra: { threadId?: string; rootId?: string; parentId?: string } = {},
+): NormalizedMessage {
   return {
     messageId,
     content,
@@ -373,6 +427,9 @@ function mention(messageId: string, content: string): NormalizedMessage {
     mentionedBot: true,
     mentions: [{ key: '@_user_1', openId: 'ou_bot', name: 'Pin Bot', isBot: true }],
     createTime: Date.now(),
+    ...(extra.threadId ? { threadId: extra.threadId } : {}),
+    ...(extra.rootId ? { rootId: extra.rootId } : {}),
+    ...(extra.parentId ? { parentId: extra.parentId, replyToMessageId: extra.parentId } : {}),
   } as unknown as NormalizedMessage;
 }
 

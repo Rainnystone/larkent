@@ -177,7 +177,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
       expect.objectContaining({
         id: 1,
         scheduledAt: t0,
-        triggerSource: 'link-recovered',
+        triggerSource: 'startup',
         result: 'catch-up',
       }),
     ]);
@@ -221,7 +221,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     });
 
     expect(reminderBodies(h.channel)).toEqual([]);
-    expect(missedBodies(h.channel)).toEqual(['已错过：hourly ping\n原定 12:00']);
+    expect(missedBodies(h.channel)).toEqual(['已错过：hourly ping\n原定 01-02 12:00']);
     expect(outboxSends(h.channel)).toHaveLength(1);
     expect(h.store.get(1)?.missed).toBe(1);
     expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(false);
@@ -229,7 +229,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
       expect.objectContaining({
         id: 1,
         scheduledAt: t0,
-        triggerSource: 'link-recovered',
+        triggerSource: 'startup',
         result: 'missed',
       }),
     ]);
