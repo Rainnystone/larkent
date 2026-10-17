@@ -54,8 +54,8 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     await waitFor(() => reminderBodies(h.channel).length === 1);
 
     expect(reminderBodies(h.channel)).toEqual(['⏰ hourly ping：ping']);
-    expect(h.channel.sent).toHaveLength(1);
-    expect(replyToOf(h.channel.sent[0])).toBeUndefined();
+    expect(outboxSends(h.channel)).toHaveLength(1);
+    expect(replyToOf(outboxSends(h.channel)[0])).toBeUndefined();
     expect(continuationBodies(h.channel)).toEqual([]);
     expect(await readStatus(h.statusPath)).toEqual({
       v: 1,
@@ -84,11 +84,11 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(true);
 
     h.releaseSend();
-    await h.bridge.recoverMissed();
+    await h.bridge.tickLink();
     await waitFor(() => reminderBodies(h.channel).length === 1);
 
     expect(reminderBodies(h.channel)).toEqual(['⏰ hourly ping：ping']);
-    expect(h.channel.sent).toHaveLength(1);
+    expect(outboxSends(h.channel)).toHaveLength(1);
     expect(h.journal.list().some((entry) => (
       entry.turnId.startsWith('af:') && entry.reply?.state === 'sent'
     ))).toBe(true);
@@ -100,7 +100,8 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     await h.bridge.tickLink();
 
     expect(h.journal.list()).toEqual([]);
-    expect(h.channel.sent).toEqual([]);
+    expect(outboxSends(h.channel)).toEqual([]);
+    expect(reminderBodies(h.channel)).toEqual([]);
     expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(false);
     expect(h.store.get(1)?.nextFireAt).toBe(t0);
 
@@ -110,7 +111,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     await waitFor(() => reminderBodies(h.channel).length === 1);
 
     expect(reminderBodies(h.channel)).toEqual(['⏰ hourly ping：ping（补跑，原定 12:00）']);
-    expect(h.channel.sent).toHaveLength(1);
+    expect(outboxSends(h.channel)).toHaveLength(1);
     expect(continuationBodies(h.channel)).toEqual([]);
     expect(await h.store.readLog()).toEqual([
       expect.objectContaining({
@@ -143,7 +144,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
       linkDown: true,
     });
     await h.bridge.tickLink();
-    expect(h.channel.sent).toEqual([]);
+    expect(outboxSends(h.channel)).toEqual([]);
     expect(h.journal.list()).toEqual([]);
 
     h.setNow(t0 + CATCH_UP_WINDOW_MS + 1);
@@ -153,7 +154,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
 
     expect(reminderBodies(h.channel)).toEqual([]);
     expect(missedBodies(h.channel)).toEqual(['已错过：hourly ping\n原定 12:00']);
-    expect(h.channel.sent).toHaveLength(1);
+    expect(outboxSends(h.channel)).toHaveLength(1);
     expect(h.store.get(1)?.missed).toBe(1);
     expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(false);
     expect(await h.store.readLog()).toEqual([
@@ -180,7 +181,8 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     await waitFor(() => first.journal.list().some((entry) => (
       entry.turnId.startsWith('af:') && entry.reply?.state === 'staged'
     )));
-    expect(first.channel.sent).toEqual([]);
+    expect(outboxSends(first.channel)).toEqual([]);
+    expect(reminderBodies(first.channel)).toEqual([]);
     await first.journal.flush();
     await first.store.flush();
     await first.bridge.disconnect();
@@ -194,7 +196,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     await waitFor(() => reminderBodies(restarted.channel).length === 1);
 
     expect(reminderBodies(restarted.channel)).toEqual(['⏰ hourly ping：ping']);
-    expect(restarted.channel.sent).toHaveLength(1);
+    expect(outboxSends(restarted.channel)).toHaveLength(1);
     expect(continuationBodies(restarted.channel)).toEqual([]);
   });
 
@@ -366,6 +368,14 @@ function bodies(channel: Recording): string[] {
   });
 }
 
+function isBoardSend(row: Recording['sent'][number]): boolean {
+  return JSON.stringify(row.content).includes('本群自动化');
+}
+
+function outboxSends(channel: Recording): Recording['sent'] {
+  return channel.sent.filter((row) => !isBoardSend(row));
+}
+
 function reminderBodies(channel: Recording): string[] {
   return bodies(channel).filter((body) => body.startsWith('⏰'));
 }
@@ -385,10 +395,10 @@ function replyToOf(row: Recording['sent'][number] | undefined): string | undefin
 }
 
 function deliveryIds(channel: Recording): string[] {
-  return channel.sent.map((row) => {
+  return outboxSends(channel).map((row) => {
     const uuid = (row.options as { uuid?: string } | undefined)?.uuid;
     return typeof uuid === 'string' ? uuid : '';
-  }).filter(Boolean);
+  }).filter((id) => id.startsWith('reply:af:') || id.startsWith('reply:am:'));
 }
 
 async function readStatus(path: string) {
