@@ -37,6 +37,15 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 - 访问管理：`/invite user`、`/remove user`、`/invite group`、`/remove group`、`/invite all group`、`/invite admin`。
 - `/stop` 停止当前 scope 的任务，profile 保持在线；前台 Ctrl-C 停止整个 profile。
 
+## Automations events
+
+`automations.enabled` 打开后，bridge 通过现有长连接的 `onRawEvent` 处理 bot 被移出群和群解散。在飞书开放平台为该应用订阅这两个事件（与会议 `vc.bot.*` 一样走同一条连接，不要再开第二条）：
+
+- `im.chat.member.bot.deleted_v1`
+- `im.chat.disbanded_v1`
+
+未订阅时，bridge 仍会在发送被拒为不在群内（`230002`）或群已解散（`232009`）时删除该群任务。
+
 Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
 
 One turn → one bridge-owned final reply. Agents must not post the final answer to the triggering chat themselves (`lark-cli im +messages-send` / `+messages-reply` / `send-card` to the current chat). Sending to other chats, or sending when the user explicitly asks for a lark-cli send, is allowed. 一轮对话只有一条由 bridge 发出的最终回复；agent 不要自己把最终答案发到触发会话。
@@ -84,10 +93,68 @@ Kill switch: set `preferences.backfill.enabled` to `false`. Scans stop; the live
 
 Staged rollout is an operations choice, not product behavior: enable on one profile, watch one recovery cycle, then the others. Every profile runs the same code.
 
+## Automations monitor hook
+
+This section is the contract larkent-monitor follows. The monitor is a private Cloudflare Worker (scan pinned board → wake webhook → this always-on box). It is not in this repo. No GitHub Action. Other PCs are out of scope. At most one wake per fire key, and only after a miss (no pre-wake).
+
+### Status block v1
+
+The pinned per-bot board card includes a visible notation markdown note. Feishu's simplified render keeps that note text and drops HTML comments and button values. Parse the first JSON object whose `"v"` is `1`:
+
+```json
+{"v":1,"bot":"<display name>","updatedAt":0,"items":[{"id":3,"paused":false,"nextFireAt":0,"lastFireAt":0,"lastStatus":"ok","endAt":0,"missed":0}]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `v` | Always `1` |
+| `bot` | Bot display name, not a Feishu id |
+| `updatedAt` | Card-level UTC millis of this render |
+| `items[].id` | Per-profile short automation id (same as `/auto`, never reused, never a Feishu id) |
+| `items[].paused` | Pause state |
+| `items[].nextFireAt` | Planned fire UTC millis; `0` means no further fire |
+| `items[].lastFireAt` | Last started planned instant UTC millis |
+| `items[].lastStatus` | `ok` \| `missed` \| `failed` \| `running` |
+| `items[].endAt` | End UTC millis; `0` if none |
+| `items[].missed` | Count of 已错过 instants (not catch-ups) |
+
+Times are UTC milliseconds. The block contains no Feishu IDs, task text, or creator. The on-disk source of truth is `<data-root>/profiles/<profile>/automations-status.json`.
+
+### Miss rule and fire key
+
+An item is missed iff `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`. `now == nextFireAt` is not a miss. Paused items are not missed.
+
+Fire key: `<id>@<nextFireAt>`, for example `3@1792218600000`. Wake at most once per key. After a miss, Larkent catch-up (restart, link recovery, or this wake) runs the latest eligible instant at most once within 24 hours; older instants are 已错过 and are not sent.
+
+### Local wake CLI
+
+```sh
+node bin/lark-channel-bridge.mjs wake 3@1792218600000 --profile my-agent
+```
+
+`--profile` defaults to the active profile. The command writes `<data-root>/profiles/<profile>/automations-wake/wake-<stamp>-<hex>.json`:
+
+```json
+{"v":1,"fireKey":"3@1792218600000"}
+```
+
+Writes are atomic (`0600`). Skip names that start with `.` (temp files from the atomic rename).
+
+The profile is running when `ps` lists it or its own classic OS service is running. Then the CLI exits 0 with no output and does not restart anything. The running scheduler consumes the directory on startup (after its own catch-up) and on change (`fs.watch` on the directory, plus a 500 ms readdir fallback because replace-via-rename can miss a watch event on Windows). That fallback is local file IPC, not a recovery poller.
+
+If nothing is running, the CLI starts the registered topology: `start --web-ui` when the supervisor service is installed and there is no per-profile service; otherwise `start --profile` (skipping the interactive lark-cli check). Startup catch-up applies. Do not use this path for first-run setup.
+
+If the supervisor service is already running but this profile is not in `ps`, the CLI still writes the wake file and exits 0 without bouncing supervisor or installing a second classic daemon. The console token is random per process and is not a wake channel; start that profile in the console (or make it the auto-started active profile). The next profile start drains the file.
+
+Already started fire keys: no chat message, no board patch, no report to anyone. Local log only: `auto.wake.already-started`. Repeating `wake` for the same key is safe.
+
+Linux, macOS, and Windows share this file transport. There is no stable IPC to the UI server: its token is random per process and is not used here.
+
 ## Logs and stored data
 
 - profile 结构化日志：`<data-root>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`。
 - supervisor 结构化日志：`<data-root>/logs/bridge-YYYYMMDD.jsonl`。
+- automations wake requests：`<data-root>/profiles/<profile>/automations-wake/`。
 - daemon stdout/stderr 路径由 `status --profile <profile>` / `status --web-ui` 显示。前台运行登记用 `ps` 查看。
 
 Profile 使用 schema v3，session、workspace 和 catalog 使用 v2。版本回退要同时恢复匹配的数据备份；仅切换 Git 版本不会降级持久化数据。

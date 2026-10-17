@@ -233,6 +233,22 @@ export class AutomationsStore {
     return this.delete(id);
   }
 
+  async removeChat(chatId: string): Promise<boolean> {
+    this.assertMutable();
+    const items = this.items.filter((item) => item.chatId !== chatId);
+    const drafts = this.drafts.filter((draft) => draft.chatId !== chatId);
+    const boards = this.boards.filter((board) => board.chatId !== chatId);
+    const changed = items.length !== this.items.length
+      || drafts.length !== this.drafts.length
+      || boards.length !== this.boards.length;
+    if (!changed) return false;
+    this.items = items;
+    this.drafts = drafts;
+    this.boards = boards;
+    await this.persistNow();
+    return true;
+  }
+
   async recordMissedInstant(id: number, fireAt: number): Promise<void> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);

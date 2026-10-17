@@ -1,3 +1,4 @@
+import { isNotInChat } from '../bot/feishu-error';
 import { log } from '../core/logger';
 import {
   CATCH_UP_WINDOW_MS,
@@ -16,6 +17,7 @@ import {
   type AutomationTriggerSource,
   type AutomationsStore,
 } from './store';
+import { consumeWakeRequests, watchWakeDir, type WakeWatch } from './wake-file';
 
 export interface FireSend {
   id: number;
@@ -58,6 +60,8 @@ export interface AutomationSchedulerDeps {
   isLinkUp?: () => boolean;
   enabled?: () => boolean;
   onChanged?: () => void | Promise<void>;
+  /** Profile `automations-wake/` directory. A5 local wake transport. */
+  wakeDir?: string;
 }
 
 export interface AutomationScheduler {
@@ -72,6 +76,7 @@ export interface AutomationScheduler {
   pause(id: number): Promise<boolean>;
   resume(id: number): Promise<boolean>;
   delete(id: number): Promise<boolean>;
+  removeFromChat(chatId: string): Promise<boolean>;
 }
 
 export function createAutomationScheduler(deps: AutomationSchedulerDeps): AutomationScheduler {
@@ -89,10 +94,12 @@ class Scheduler implements AutomationScheduler {
   private readonly isLinkUp: () => boolean;
   private readonly enabled: () => boolean;
   private readonly onChanged?: () => void | Promise<void>;
+  private readonly wakeDir?: string;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   private fireTimer: unknown;
   private expireTimer: unknown;
+  private wakeWatch?: WakeWatch;
 
   constructor(deps: AutomationSchedulerDeps) {
     this.store = deps.store;
@@ -105,6 +112,7 @@ class Scheduler implements AutomationScheduler {
     this.isLinkUp = deps.isLinkUp ?? (() => true);
     this.enabled = deps.enabled ?? (() => true);
     this.onChanged = deps.onChanged;
+    this.wakeDir = deps.wakeDir;
   }
 
   start(): Promise<void> {
@@ -113,11 +121,15 @@ class Scheduler implements AutomationScheduler {
       await this.catchUp('startup');
       await this.handleDue();
       await this.writeStatus();
+      this.armWakeWatch();
+      await this.drainWake();
     });
   }
 
   stop(): void {
     this.closed = true;
+    this.wakeWatch?.close();
+    this.wakeWatch = undefined;
     this.clearTimers();
   }
 
@@ -176,9 +188,9 @@ class Scheduler implements AutomationScheduler {
       const item = this.store.get(id);
       if (!item) return false;
       const schedule = readSchedule(item.schedule);
-      const next = schedule ? nextFireAfter(schedule, this.now()) : 0;
-      const ok = await this.store.resume(id, next);
-      if (ok && next === 0) await this.store.delete(id);
+    const next = schedule ? nextFireAfter(schedule, this.now()) : 0;
+    const ok = await this.store.resume(id, next);
+    if (ok && next === 0) await this.store.delete(id);
       if (ok) await this.writeStatus();
       this.armTimer();
       return ok;
@@ -192,6 +204,10 @@ class Scheduler implements AutomationScheduler {
       this.armTimer();
       return ok;
     });
+  }
+
+  removeFromChat(chatId: string): Promise<boolean> {
+    return this.enqueue(() => this.dropChat(chatId));
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -272,13 +288,21 @@ class Scheduler implements AutomationScheduler {
       log.info('auto', 'missed', { id: live.id, fireAt, triggerSource: source });
     }
     if (newlyMissed.length > 0) {
-      await this.notifier.notify({
-        id: live.id,
-        missedFires: newlyMissed,
-        chatId: live.chatId,
-        name: live.name,
-        timezone: live.timezone,
-      });
+      try {
+        await this.notifier.notify({
+          id: live.id,
+          missedFires: newlyMissed,
+          chatId: live.chatId,
+          name: live.name,
+          timezone: live.timezone,
+        });
+      } catch (error) {
+        if (isNotInChat(error)) {
+          await this.dropChat(live.chatId);
+          return;
+        }
+        log.fail('auto', error, { event: 'missed' });
+      }
     }
 
     if (plan.run !== undefined) {
@@ -355,8 +379,24 @@ class Scheduler implements AutomationScheduler {
     };
     void Promise.resolve(this.sender.send(payload)).then(
       () => {},
-      (error) => { log.fail('auto', error, { event: catchUp ? 'catch-up' : 'fire' }); },
+      (error) => {
+        if (isNotInChat(error)) {
+          void this.removeFromChat(item.chatId);
+          return;
+        }
+        log.fail('auto', error, { event: catchUp ? 'catch-up' : 'fire' });
+      },
     );
+  }
+
+  private async dropChat(chatId: string): Promise<boolean> {
+    const ok = await this.store.removeChat(chatId);
+    if (ok) {
+      log.info('auto', 'removed-from-chat', { chatId });
+      await this.writeStatus();
+    }
+    this.armTimer();
+    return ok;
   }
 
   private async handleDue(): Promise<void> {
@@ -392,11 +432,13 @@ class Scheduler implements AutomationScheduler {
           if (now - recordedAt <= AUTOMATIONS_MISSED_TTL_MS) continue;
         }
         await this.store.delete(item.id);
+        log.info('auto', 'expired', { id: item.id });
         changed = true;
         continue;
       }
       if (item.endAt > 0 && now >= item.endAt) {
         await this.store.delete(item.id);
+        log.info('auto', 'expired', { id: item.id });
         changed = true;
       }
     }
@@ -453,6 +495,20 @@ class Scheduler implements AutomationScheduler {
     if (this.expireTimer !== undefined) this.clearTimeout(this.expireTimer);
     this.fireTimer = undefined;
     this.expireTimer = undefined;
+  }
+
+  private armWakeWatch(): void {
+    if (!this.wakeDir || this.wakeWatch || this.closed) return;
+    const dir = this.wakeDir;
+    this.wakeWatch = watchWakeDir(dir, (keys) => {
+      for (const fireKey of keys) void this.wake(fireKey);
+    });
+  }
+
+  private async drainWake(): Promise<void> {
+    if (!this.wakeDir || this.closed) return;
+    const keys = await consumeWakeRequests(this.wakeDir);
+    for (const fireKey of keys) void this.wake(fireKey);
   }
 
   private async writeStatus(): Promise<void> {

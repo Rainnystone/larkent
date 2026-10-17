@@ -26,6 +26,7 @@ import {
 } from './commands/service';
 import { runStart } from './commands/start';
 import { runUi } from './commands/ui';
+import { runWake } from './commands/wake';
 
 const program = new Command();
 
@@ -212,6 +213,14 @@ program
   .option('--web-ui', 'target the supervisor service instead of a per-profile one')
   .action(async (opts: { profile?: string; webUi?: boolean }) => {
     await runServiceStatus({ profile: opts.profile, webUi: opts.webUi });
+  });
+
+program
+  .command('wake <fireKey>')
+  .description('Catch up one automation fire key (id@utcMillis). Starts the profile if it is stopped; signals the running process otherwise.')
+  .option('--profile <name>', 'profile name (defaults to active profile)')
+  .action(async (fireKey: string, opts: { profile?: string }) => {
+    await runWake(fireKey, { profile: opts.profile });
   });
 
 program

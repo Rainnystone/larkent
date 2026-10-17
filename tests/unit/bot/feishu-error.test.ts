@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LarkChannelError } from '@larksuite/channel';
-import { classify, isGoneMessage, rateLimitResetDelayMs } from '../../../src/bot/feishu-error';
+import { classify, isGoneMessage, isNotInChat, rateLimitResetDelayMs } from '../../../src/bot/feishu-error';
 import { OutboundTimeoutError } from '../../../src/bot/self-message';
 import {
   axiosErrno,
@@ -137,7 +137,16 @@ describe('classify Feishu errors from the real SDK', () => {
 });
 
 describe('isGoneMessage', () => {
-  it.each([230002, 230025, 230026])('treats Feishu %s as a gone card, still classified rejected', (code) => {
+  it('does not treat Feishu 230002 as a gone card', () => {
+    const err = sdkShapedSendError('format_error', axiosLike('The bot can not be outside the group', {
+      response: { status: 400, data: { code: 230002 } },
+    }));
+    expect(classify(err)).toBe('rejected');
+    expect(isNotInChat(err)).toBe(true);
+    expect(isGoneMessage(err)).toBe(false);
+  });
+
+  it.each([230025, 230026])('treats Feishu %s as a gone card, still classified rejected', (code) => {
     const err = sdkShapedSendError('unknown', axiosLike('message not found', {
       response: { status: 400, data: { code } },
     }));
@@ -155,5 +164,26 @@ describe('isGoneMessage', () => {
     const err = sdkShapedSendError('unknown', axiosHttpError(400));
     expect(classify(err)).toBe('rejected');
     expect(isGoneMessage(err)).toBe(false);
+  });
+});
+
+describe('isNotInChat', () => {
+  it.each([230002, 232009])('treats Feishu %s as not-in-chat', (code) => {
+    const err = sdkShapedSendError('format_error', axiosLike('The bot can not be outside the group', {
+      response: { status: 400, data: { code } },
+    }));
+    expect(classify(err)).toBe('rejected');
+    expect(isNotInChat(err)).toBe(true);
+  });
+
+  it('does not treat a gone-card 404 or 230025 as not-in-chat', () => {
+    const gone = sdkShapedSendError('unknown', axiosHttpError(404));
+    const tooLong = sdkShapedSendError('unknown', axiosLike('message not found', {
+      response: { status: 400, data: { code: 230025 } },
+    }));
+    expect(isGoneMessage(gone)).toBe(true);
+    expect(isNotInChat(gone)).toBe(false);
+    expect(isGoneMessage(tooLong)).toBe(true);
+    expect(isNotInChat(tooLong)).toBe(false);
   });
 });
