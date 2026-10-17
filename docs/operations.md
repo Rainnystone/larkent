@@ -84,10 +84,68 @@ Kill switch: set `preferences.backfill.enabled` to `false`. Scans stop; the live
 
 Staged rollout is an operations choice, not product behavior: enable on one profile, watch one recovery cycle, then the others. Every profile runs the same code.
 
+## Automations monitor hook
+
+This section is the contract larkent-monitor follows. The monitor is a private Cloudflare Worker (scan pinned board → wake webhook → this always-on box). It is not in this repo. No GitHub Action. Other PCs are out of scope. At most one wake per fire key, and only after a miss (no pre-wake).
+
+### Status block v1
+
+The pinned per-bot board card includes a visible notation markdown note. Feishu's simplified render keeps that note text and drops HTML comments and button values. Parse the first JSON object whose `"v"` is `1`:
+
+```json
+{"v":1,"bot":"<display name>","updatedAt":0,"items":[{"id":3,"paused":false,"nextFireAt":0,"lastFireAt":0,"lastStatus":"ok","endAt":0,"missed":0}]}
+```
+
+| Field | Meaning |
+| --- | --- |
+| `v` | Always `1` |
+| `bot` | Bot display name, not a Feishu id |
+| `updatedAt` | Card-level UTC millis of this render |
+| `items[].id` | Per-profile short automation id (same as `/auto`, never reused, never a Feishu id) |
+| `items[].paused` | Pause state |
+| `items[].nextFireAt` | Planned fire UTC millis; `0` means no further fire |
+| `items[].lastFireAt` | Last started planned instant UTC millis |
+| `items[].lastStatus` | `ok` \| `missed` \| `failed` \| `running` |
+| `items[].endAt` | End UTC millis; `0` if none |
+| `items[].missed` | Count of 已错过 instants (not catch-ups) |
+
+Times are UTC milliseconds. The block contains no Feishu IDs, task text, or creator. The on-disk source of truth is `<data-root>/profiles/<profile>/automations-status.json`.
+
+### Miss rule and fire key
+
+An item is missed iff `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`. `now == nextFireAt` is not a miss. Paused items are not missed.
+
+Fire key: `<id>@<nextFireAt>`, for example `3@1792218600000`. Wake at most once per key. After a miss, Larkent catch-up (restart, link recovery, or this wake) runs the latest eligible instant at most once within 24 hours; older instants are 已错过 and are not sent.
+
+### Local wake CLI
+
+```sh
+node bin/lark-channel-bridge.mjs wake 3@1792218600000 --profile my-agent
+```
+
+`--profile` defaults to the active profile. The command writes `<data-root>/profiles/<profile>/automations-wake/wake-<stamp>-<hex>.json`:
+
+```json
+{"v":1,"fireKey":"3@1792218600000"}
+```
+
+Writes are atomic (`0600`). Skip names that start with `.` (temp files from the atomic rename).
+
+The profile is running when `ps` lists it or its own classic OS service is running. Then the CLI exits 0 with no output and does not restart anything. The running scheduler consumes the directory on startup (after its own catch-up) and on change (`fs.watch` on the directory, plus a 500 ms readdir fallback because replace-via-rename can miss a watch event on Windows). That fallback is local file IPC, not a recovery poller.
+
+If nothing is running, the CLI starts the registered topology: `start --web-ui` when the supervisor service is installed and there is no per-profile service; otherwise `start --profile` (skipping the interactive lark-cli check). Startup catch-up applies. Do not use this path for first-run setup.
+
+If the supervisor service is already running but this profile is not in `ps`, the CLI still writes the wake file and exits 0 without bouncing supervisor or installing a second classic daemon. The console token is random per process and is not a wake channel; start that profile in the console (or make it the auto-started active profile). The next profile start drains the file.
+
+Already started fire keys: no chat message, no board patch, no report to anyone. Local log only: `auto.wake.already-started`. Repeating `wake` for the same key is safe.
+
+Linux, macOS, and Windows share this file transport. There is no stable IPC to the UI server: its token is random per process and is not used here.
+
 ## Logs and stored data
 
 - profile 结构化日志：`<data-root>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`。
 - supervisor 结构化日志：`<data-root>/logs/bridge-YYYYMMDD.jsonl`。
+- automations wake requests：`<data-root>/profiles/<profile>/automations-wake/`。
 - daemon stdout/stderr 路径由 `status --profile <profile>` / `status --web-ui` 显示。前台运行登记用 `ps` 查看。
 
 Profile 使用 schema v3，session、workspace 和 catalog 使用 v2。版本回退要同时恢复匹配的数据备份；仅切换 Git 版本不会降级持久化数据。

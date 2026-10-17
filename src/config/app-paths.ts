@@ -19,6 +19,7 @@ export interface AppPaths {
   automationsFile: string;
   automationsLogFile: string;
   automationsStatusFile: string;
+  automationsWakeDir: string;
   workspacesFile: string;
   secretsFile: string;
   keystoreSaltFile: string;
@@ -67,6 +68,7 @@ export function resolveAppPaths(opts: ResolveAppPathsOptions = {}): AppPaths {
     automationsFile: join(profileDir, 'automations.json'),
     automationsLogFile: join(profileDir, 'automations.log'),
     automationsStatusFile: join(profileDir, 'automations-status.json'),
+    automationsWakeDir: join(profileDir, 'automations-wake'),
     workspacesFile: join(profileDir, 'workspaces.json'),
     secretsFile: join(profileDir, 'secrets.enc'),
     keystoreSaltFile: join(profileDir, '.keystore.salt'),
