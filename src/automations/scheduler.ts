@@ -55,6 +55,7 @@ export interface AutomationSchedulerDeps {
   clearTimeout?: (id: unknown) => void;
   isLinkUp?: () => boolean;
   enabled?: () => boolean;
+  onChanged?: () => void | Promise<void>;
 }
 
 export interface AutomationScheduler {
@@ -63,6 +64,7 @@ export interface AutomationScheduler {
   idle(): Promise<void>;
   onLinkRecovered(): Promise<void>;
   wake(fireKey: string): Promise<void>;
+  notifyChanged(): Promise<void>;
   pause(id: number): Promise<boolean>;
   resume(id: number): Promise<boolean>;
   delete(id: number): Promise<boolean>;
@@ -82,6 +84,7 @@ class Scheduler implements AutomationScheduler {
   private readonly clearTimeout: (id: unknown) => void;
   private readonly isLinkUp: () => boolean;
   private readonly enabled: () => boolean;
+  private readonly onChanged?: () => void | Promise<void>;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   private fireTimer: unknown;
@@ -97,6 +100,7 @@ class Scheduler implements AutomationScheduler {
     this.clearTimeout = deps.clearTimeout ?? ((id) => clearTimeout(id as NodeJS.Timeout));
     this.isLinkUp = deps.isLinkUp ?? (() => true);
     this.enabled = deps.enabled ?? (() => true);
+    this.onChanged = deps.onChanged;
   }
 
   start(): Promise<void> {
@@ -104,6 +108,7 @@ class Scheduler implements AutomationScheduler {
     return this.enqueue(async () => {
       await this.catchUp('startup');
       await this.handleDue();
+      await this.writeStatus();
     });
   }
 
@@ -121,6 +126,14 @@ class Scheduler implements AutomationScheduler {
       if (this.closed) return;
       await this.catchUp('link-recovered');
       await this.handleDue();
+    });
+  }
+
+  notifyChanged(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.closed) return;
+      await this.writeStatus();
+      this.armTimer();
     });
   }
 
@@ -417,5 +430,10 @@ class Scheduler implements AutomationScheduler {
 
   private async writeStatus(): Promise<void> {
     await this.store.writeStatus(this.botDisplayName());
+    try {
+      await this.onChanged?.();
+    } catch (error) {
+      log.fail('auto', error, { event: 'board' });
+    }
   }
 }

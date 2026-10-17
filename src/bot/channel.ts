@@ -125,6 +125,8 @@ import {
   type TurnJournalResource,
 } from './turn-journal';
 import { AutoActionAuth } from '../automations/action-auth';
+import { BoardActionAuth } from '../automations/board-auth';
+import { createAutomationBoard, type AutomationBoard } from '../automations/board';
 import {
   createAutomationScheduler,
   type AutomationScheduler,
@@ -267,7 +269,7 @@ export interface StartChannelDeps {
   ledger?: BackfillLedger;
   journal?: TurnJournal;
   automations?: AutomationsStore;
-  onAutomationConfirmed?: (item: AutomationItem) => void;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
   now?: () => number;
@@ -344,6 +346,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ...(deps.now ? { now: deps.now } : {}),
       })
     : undefined;
+  const automationsCtl: {
+    scheduler?: AutomationScheduler;
+    board?: AutomationBoard;
+    boardAuth?: BoardActionAuth;
+  } = {};
+  const onAutomationConfirmed = async (item: AutomationItem): Promise<void> => {
+    await deps.onAutomationConfirmed?.(item);
+    await automationsCtl.scheduler?.notifyChanged();
+  };
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model
   // switch can inject a one-time "model changed" note into the next (resumed)
@@ -538,8 +549,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         pool,
         automations: deps.automations,
         autoAuth,
+        automationsScheduler: automationsCtl.scheduler,
         ...(deps.now ? { now: deps.now } : {}),
-        onAutomationConfirmed: deps.onAutomationConfirmed,
+        onAutomationConfirmed,
       }),
     ).catch((err) => {
       log.fail('intake', err);
@@ -751,23 +763,39 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     ...(deps.outboundTimeoutMs !== undefined ? { outboundTimeoutMs: deps.outboundTimeoutMs } : {}),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
-  const automationsScheduler: AutomationScheduler | undefined =
-    deps.automations && controls.profileConfig.automations.enabled
-      ? createAutomationScheduler({
-          store: deps.automations,
-          sender: { send: async () => {} },
-          notifier: { notify: async () => {} },
-          botDisplayName: () => channel.botIdentity?.name ?? 'bot',
-          ...(deps.now ? { now: deps.now } : {}),
-          isLinkUp: () => !closing && !started.isDown(),
-          enabled: () => controls.profileConfig.automations.enabled,
-        })
-      : undefined;
+  if (deps.automations && controls.profileConfig.automations.enabled) {
+    automationsCtl.boardAuth = new BoardActionAuth({
+      secret: appSecret,
+      ...(deps.now ? { now: deps.now } : {}),
+    });
+    automationsCtl.board = createAutomationBoard({
+      store: deps.automations,
+      channel,
+      auth: automationsCtl.boardAuth,
+      botDisplayName: () => channel.botIdentity?.name ?? 'bot',
+      lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
+      ...(deps.now ? { now: deps.now } : {}),
+    });
+    automationsCtl.scheduler = createAutomationScheduler({
+      store: deps.automations,
+      sender: { send: async () => {} },
+      notifier: { notify: async () => {} },
+      botDisplayName: () => channel.botIdentity?.name ?? 'bot',
+      ...(deps.now ? { now: deps.now } : {}),
+      isLinkUp: () => !closing && !started.isDown(),
+      enabled: () => controls.profileConfig.automations.enabled,
+      onChanged: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
+    });
+  }
+  const automationsScheduler = automationsCtl.scheduler;
   started.onRecovered((outage) => {
     deps.onRecovered?.(outage);
     void trackConsumer(recover(outage), 'recovery');
-    if (automationsScheduler) {
-      void trackConsumer(automationsScheduler.onLinkRecovered(), 'auto');
+    if (automationsScheduler || automationsCtl.board) {
+      void trackConsumer((async () => {
+        await automationsScheduler?.onLinkRecovered();
+        await automationsCtl.board?.refresh();
+      })(), 'auto');
     }
   });
   const link = started;
@@ -817,9 +845,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           journal,
           noticeAuth,
           autoAuth,
+          boardAuth: automationsCtl.boardAuth,
           automations: deps.automations,
+          automationsScheduler: automationsCtl.scheduler,
           ...(deps.now ? { now: deps.now } : {}),
-          onAutomationConfirmed: deps.onAutomationConfirmed,
+          onAutomationConfirmed,
           continuations,
           onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
             if (action !== 'notice.continue') return;
@@ -986,6 +1016,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       closing = true;
       automationsScheduler?.stop();
       await automationsScheduler?.idle();
+      await automationsCtl.board?.idle();
       await recovery.stop();
       outboxSweep.stop();
       resumeCandidates.clear();
@@ -1114,8 +1145,9 @@ interface IntakeDeps {
   pool: ProcessPool;
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
+  automationsScheduler?: AutomationScheduler;
   now?: () => number;
-  onAutomationConfirmed?: (item: AutomationItem) => void;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 
 type LogThreadModeOverride = (input: {
@@ -1163,6 +1195,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     pool,
     automations,
     autoAuth,
+    automationsScheduler,
     now,
     onAutomationConfirmed,
   } = deps;
@@ -1301,6 +1334,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     controls,
     automations,
     autoAuth,
+    automationsScheduler,
     ...(now ? { now } : {}),
     onAutomationConfirmed,
   });

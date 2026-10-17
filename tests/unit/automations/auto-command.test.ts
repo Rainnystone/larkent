@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  parseAutoCommand,
   parseAutoNewArgs,
   parseScheduleText,
 } from '../../../src/automations/command';
@@ -14,6 +15,18 @@ describe('isRegisteredSlashCommand', () => {
       automationsEnabled: true,
     })).toBe(true);
     expect(isRegisteredSlashCommand('/help', { automationsEnabled: false })).toBe(true);
+  });
+});
+
+describe('parseAutoCommand', () => {
+  it('treats empty / list as list and pause|resume|delete <id> as mutations', () => {
+    expect(parseAutoCommand('')).toEqual({ op: 'list' });
+    expect(parseAutoCommand('list')).toEqual({ op: 'list' });
+    expect(parseAutoCommand('pause 1')).toEqual({ op: 'pause', id: 1 });
+    expect(parseAutoCommand('resume 2')).toEqual({ op: 'resume', id: 2 });
+    expect(parseAutoCommand('delete 3')).toEqual({ op: 'delete', id: 3 });
+    expect(parseAutoCommand('pause 0')).toEqual({ op: 'usage' });
+    expect(parseAutoCommand('pause x')).toEqual({ op: 'usage' });
   });
 });
 

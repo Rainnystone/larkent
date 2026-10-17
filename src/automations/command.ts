@@ -14,6 +14,7 @@ import {
   type TaskType,
 } from './schedule';
 import { zonedLocalToUtc } from './zoned-time';
+import { formatAutomationListLine } from './board-card';
 import type { AutomationDraft, AutomationItem, AutomationTaskType } from './store';
 
 export const AUTO_NEW_USAGE = '用法：`/auto new <时间表> | <名称> | <任务>`';
@@ -26,6 +27,8 @@ export const AUTO_AGENT_NEEDS_CWD = '请先用 `/cd` 设置工作目录。';
 export const AUTO_MISSING_END = '周期任务必须指定结束时间。';
 export const AUTO_INTERVAL_TOO_SMALL = '间隔过短。';
 export const AUTO_INVALID_SCHEDULE = '无法解析时间表。';
+export const AUTO_UNKNOWN_ID = '没有这个编号。';
+export const AUTO_LIST_EMPTY = '暂无';
 
 export interface ParsedAutoNew {
   taskType: AutomationTaskType;
@@ -124,6 +127,28 @@ export function rejectMessage(reason: ScheduleRejectReason): string {
   }
 }
 
+export type ParsedAutoCommand =
+  | ParsedAutoNew & { op: 'new' }
+  | { op: 'list' }
+  | { op: 'pause' | 'resume' | 'delete'; id: number }
+  | { op: 'usage' };
+
+export function parseAutoCommand(args: string): ParsedAutoCommand {
+  const trimmed = args.trim();
+  if (!trimmed || /^list$/i.test(trimmed)) return { op: 'list' };
+  const mutate = trimmed.match(/^(pause|resume|delete)\s+(\d+)$/i);
+  if (mutate) {
+    const id = Number(mutate[2]);
+    if (!Number.isInteger(id) || id < 1) return { op: 'usage' };
+    const op = mutate[1]!.toLowerCase();
+    if (op !== 'pause' && op !== 'resume' && op !== 'delete') return { op: 'usage' };
+    return { op, id };
+  }
+  const parsed = parseAutoNewArgs(trimmed);
+  if ('ok' in parsed) return { op: 'usage' };
+  return { op: 'new', ...parsed };
+}
+
 export async function handleAutoCommand(args: string, ctx: CommandContext): Promise<void> {
   if (!ctx.controls.profileConfig.automations.enabled) return;
   if (isIgnoredAutoSender(ctx)) return;
@@ -133,11 +158,27 @@ export async function handleAutoCommand(args: string, ctx: CommandContext): Prom
     return;
   }
 
-  const parsed = parseAutoNewArgs(args);
-  if ('ok' in parsed) {
-    await replyAuto(ctx, AUTO_NEW_USAGE);
-    return;
+  const parsed = parseAutoCommand(args);
+  switch (parsed.op) {
+    case 'list':
+      await listAutos(ctx);
+      return;
+    case 'pause':
+    case 'resume':
+    case 'delete':
+      await mutateAuto(ctx, parsed.op, parsed.id);
+      return;
+    case 'usage':
+      await replyAuto(ctx, AUTO_NEW_USAGE);
+      return;
+    case 'new':
+      break;
+    default: {
+      const _exhaustive: never = parsed;
+      return _exhaustive;
+    }
   }
+  if (parsed.op !== 'new') return;
 
   if (parsed.taskType === 'agent' && !ctx.controls.profileConfig.automations.agentTasks) {
     await replyAuto(ctx, AUTO_AGENT_DISABLED);
@@ -239,9 +280,60 @@ export async function confirmAutomationDraft(
     taskText: draft.taskText,
     ...(draft.cwd ? { cwd: draft.cwd } : {}),
   });
-  ctx.onAutomationConfirmed?.(item);
+  await ctx.onAutomationConfirmed?.(item);
   log.info('auto', 'confirmed', { id: item.id, taskType: item.taskType, chatId: item.chatId });
   return item;
+}
+
+async function listAutos(ctx: CommandContext): Promise<void> {
+  if (!ctx.automations) {
+    await replyAuto(ctx, AUTO_LIST_EMPTY);
+    return;
+  }
+  const items = ctx.automations.list().filter((item) => item.chatId === ctx.msg.chatId);
+  if (items.length === 0) {
+    await replyAuto(ctx, AUTO_LIST_EMPTY);
+    return;
+  }
+  await replyAuto(ctx, items.map(formatAutomationListLine).join('\n'));
+}
+
+async function mutateAuto(
+  ctx: CommandContext,
+  op: 'pause' | 'resume' | 'delete',
+  id: number,
+): Promise<void> {
+  if (!ctx.automations || !ctx.automationsScheduler) {
+    await replyAuto(ctx, AUTO_UNKNOWN_ID);
+    return;
+  }
+  const item = ctx.automations.get(id);
+  if (!item || item.chatId !== ctx.msg.chatId) {
+    await replyAuto(ctx, AUTO_UNKNOWN_ID);
+    return;
+  }
+  let ok = false;
+  switch (op) {
+    case 'pause':
+      ok = await ctx.automationsScheduler.pause(id);
+      if (ok) log.info('auto', 'paused', { id });
+      await replyAuto(ctx, ok ? `已暂停 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
+      return;
+    case 'resume':
+      ok = await ctx.automationsScheduler.resume(id);
+      if (ok) log.info('auto', 'resumed', { id });
+      await replyAuto(ctx, ok ? `已恢复 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
+      return;
+    case 'delete':
+      ok = await ctx.automationsScheduler.delete(id);
+      if (ok) log.info('auto', 'deleted', { id });
+      await replyAuto(ctx, ok ? `已删除 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
+      return;
+    default: {
+      const _exhaustive: never = op;
+      return _exhaustive;
+    }
+  }
 }
 
 function scheduleStartAt(schedule: Schedule, now: number): number {
