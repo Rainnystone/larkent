@@ -70,6 +70,30 @@ describe('delivery keys', () => {
 });
 
 describe('redeliverStagedReply', () => {
+  it('does not list the chat for a top-level fire outside the uuid window', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    const createdAt = 1_000;
+    const result = await redeliverStagedReply({
+      channel,
+      entry: staged({
+        turnId: 'af:1@1000',
+        deliveryId: 'reply:af:1@1000',
+        markdown: '⏰ ping：x',
+        replyTo: '',
+        createdAt,
+      }),
+      botAppId: APP,
+      now: () => createdAt + FEISHU_UUID_WINDOW_MS + 1,
+      sleep: async () => {
+        throw new Error('top-level fire must not wait for list visibility');
+      },
+    });
+    expect(result.delivered).toBe(true);
+    expect(channel.rawClient.requests.some((row) => row.method === 'im.v1.message.list')).toBe(false);
+    expect(channel.sent).toHaveLength(1);
+    expect((channel.sent[0]?.options as { replyTo?: string } | undefined)?.replyTo).toBeUndefined();
+  });
+
   it('resends a lost response with the same uuid and records the original message_id', async () => {
     const channel = createFakeChannel({ botAppId: APP });
     const first = await channel.send(CHAT, { markdown: 'ANSWER' }, { uuid: 'reply:lost', replyTo: 'om_src' });
@@ -475,6 +499,7 @@ function staged(input: {
   turnId: string;
   deliveryId?: string;
   markdown: string;
+  replyTo?: string;
   replyMode?: string;
   messageId?: string;
   interactive?: boolean;
@@ -491,7 +516,7 @@ function staged(input: {
     status: 'completed-undelivered',
     reply: {
       markdown: input.markdown,
-      replyTo: 'om_src',
+      replyTo: input.replyTo ?? 'om_src',
       replyMode: input.replyMode ?? 'text',
       ...(input.deliveryId ? { deliveryId: input.deliveryId } : {}),
       ...(input.messageId ? { messageId: input.messageId } : {}),

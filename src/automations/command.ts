@@ -342,6 +342,19 @@ export function rejectMessage(reason: ScheduleRejectReason): string {
   }
 }
 
+export type AutomationProposalContext = Pick<
+  CommandContext,
+  | 'channel'
+  | 'msg'
+  | 'scope'
+  | 'chatMode'
+  | 'workspaces'
+  | 'automations'
+  | 'autoAuth'
+  | 'now'
+  | 'controls'
+>;
+
 export type ParsedAutoCommand =
   | ParsedAutoNew & { op: 'new' }
   | { op: 'list' }
@@ -387,13 +400,26 @@ export async function handleAutoCommand(args: string, ctx: CommandContext): Prom
       await replyAuto(ctx, AUTO_NEW_USAGE);
       return;
     case 'new':
-      break;
+      await submitAutomationProposal(ctx, parsed);
+      return;
     default: {
       const _exhaustive: never = parsed;
       return _exhaustive;
     }
   }
-  if (parsed.op !== 'new') return;
+}
+
+export async function submitAutomationProposal(
+  ctx: AutomationProposalContext,
+  parsed: ParsedAutoNew,
+): Promise<void> {
+  if (!ctx.controls.profileConfig.automations.enabled) return;
+  if (isIgnoredAutoSender(ctx)) return;
+  if (ctx.scope.startsWith('auto:') || ctx.scope.startsWith('meeting:')) return;
+  if (ctx.chatMode === 'p2p' || ctx.msg.chatType === 'p2p') {
+    await replyAuto(ctx, AUTO_P2P_HINT);
+    return;
+  }
 
   if (parsed.taskType === 'agent' && !ctx.controls.profileConfig.automations.agentTasks) {
     await replyAuto(ctx, AUTO_AGENT_DISABLED);
@@ -731,14 +757,14 @@ function scheduleEndAt(schedule: Schedule): number | undefined {
   }
 }
 
-function isIgnoredAutoSender(ctx: CommandContext): boolean {
+function isIgnoredAutoSender(ctx: Pick<CommandContext, 'msg' | 'channel'>): boolean {
   const senderType = senderTypeFromRaw((ctx.msg as NormalizedMessage & { raw?: unknown }).raw);
   if (senderType === 'app' || senderType === 'bot') return true;
   const botOpenId = ctx.channel.botIdentity?.openId;
   return Boolean(botOpenId) && ctx.msg.senderId === botOpenId;
 }
 
-async function replyAuto(ctx: CommandContext, markdown: string): Promise<void> {
+async function replyAuto(ctx: AutomationProposalContext, markdown: string): Promise<void> {
   try {
     await ctx.channel.send(
       ctx.msg.chatId,
