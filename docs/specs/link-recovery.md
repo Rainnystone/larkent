@@ -83,7 +83,7 @@ User-visible contract after an outage of any cause:
 Interface (type shape from the architecture review):
 
 ```ts
-interface Outage { since: number; until: number; hostSuspended: boolean } // true if a tick gap (sleep/freeze) fell inside the outage
+interface Outage { since: number; until: number; hostSuspended: boolean } // true only with real OS sleep evidence inside the outage (§5)
 interface FeishuLink {
   isDown(): boolean;
   outageEpoch(): number;                       // +1 on every up→down
@@ -100,7 +100,7 @@ startFeishuLink(deps: {
 ```
 
 - Starts **down** with `since` = persisted watermark; start and swap therefore recover.
-- **Down** on: WebSocket not `connected` at a tick; two ticks > 30 s apart (sleep/freeze; `since` = last tick; marks the outage `hostSuspended`); outbound timeout, no HTTP response, or 5xx; probe failure. Structural, never stderr/message text. Business 4xx keeps the link up.
+- **Down** on: WebSocket not `connected` at a tick; two ticks > 30 s apart (`since` = last tick; this alone does **not** mark `hostSuspended`, see §5); outbound timeout, no HTTP response, or 5xx; probe failure. Structural, never stderr/message text. Business 4xx keeps the link up.
 - **Up** when WebSocket connected **and** fresh evidence (probe ok, outbound ok, inbound event). Emits `recovered` exactly once.
 - Watermark advances only on evidence while up.
 - Probe: every tick while down; while up only after 60 s without evidence (catches REST blackhole behind a "connected" socket).
@@ -156,6 +156,12 @@ Checked against master `426f670`, the `@larksuite/channel` 0.7.1 source, and a l
 - An open tool call pauses the watchdog for **at most 60 minutes**.
 - Run handles expose `lastEventAt`. `runs.review(outage)` gives any run silent since before `since` a 2-minute stall deadline, then requests stop with the bridge idle-watchdog reason; it ends through the normal outcome + notice path.
 - **Run review and host suspend** (user decision 2026-10-17): the review may give a deadline to, or stop, a silent run with an **open tool call** only if the host actually suspended or slept during the outage (`outage.hostSuspended`). A pure network/link outage with no host suspend never deadlines or stops such a run; the 60-minute tool-call cap still applies. Silent runs with no open tool call are reviewed as before.
+- **What counts as host suspend** (user decision 2026-10-17): only real OS sleep evidence inside the gap counts.
+  - Linux: `/proc/uptime` (boottime) minus the monotonic clock grows across the gap.
+  - macOS: `kern.waketime` / `kern.sleeptime` shows a wake inside the gap.
+  - Windows: the System event log has a power transition (sleep/wake) inside the gap.
+  - Each check has its own timeout. If it fails, times out, or finds no evidence, the host was **not** suspended, and review never stops or deadlines runs with an open tool call.
+  - A frozen process (SIGSTOP), an event-loop stall, CPU starvation, a debugger pause or a wall-clock jump is **not** sleep. A tick gap alone proves nothing.
 
 ### 6. Outcome / retriability
 
