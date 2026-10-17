@@ -69,19 +69,21 @@ export function buildNoticeMarkdown(input: {
   requireBotMention: boolean;
   outcome: RunOutcome;
   includeButtons?: boolean;
+  mentionInitiator?: boolean;
 }): string {
-  const mention = `<at id="${input.initiatorId}"></at>`;
+  const mention = input.mentionInitiator === false ? '' : `<at id="${input.initiatorId}"></at> `;
   const reason = describeRunOutcome(input.outcome);
   const buttons = input.includeButtons !== false;
   const continuePhrase = input.requireBotMention ? '@bot 继续' : '继续';
   const actionLine = buttons
     ? `点「继续 / 暂不」，或 ${continuePhrase}。`
     : `或 ${continuePhrase}。`;
-  return `${mention} 上一轮未完成（${reason}）。${CONTINUE_HINT}。${actionLine}`;
+  return `${mention}上一轮未完成（${reason}）。${CONTINUE_HINT}。${actionLine}`;
 }
 
-export function buildAuthInitiatorMarkdown(initiatorId: string): string {
-  return `<at id="${initiatorId}"></at> CLI 登录已失效，需要重新登录后再试。这次不能继续，新的消息仍会照常处理。`;
+export function buildAuthInitiatorMarkdown(initiatorId: string, mentionInitiator = true): string {
+  const mention = mentionInitiator ? `<at id="${initiatorId}"></at> ` : '';
+  return `${mention}CLI 登录已失效，需要重新登录后再试。这次不能继续，新的消息仍会照常处理。`;
 }
 
 export function buildAuthOwnerMarkdown(): string {
@@ -354,6 +356,7 @@ function stageContinueNotice(
       requireBotMention: input.requireBotMention,
       outcome: input.outcome,
       includeButtons: buttons,
+      mentionInitiator: entry.initiatorType !== 'bot',
     }),
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
@@ -415,7 +418,10 @@ function stageAuthNotice(
   const notice: TurnNotice = existing ?? {
     kind: 'auth',
     recipientChatId: entry.chatId,
-    markdown: buildAuthInitiatorMarkdown(entry.initiatorId || entry.senderId),
+    markdown: buildAuthInitiatorMarkdown(
+      entry.initiatorId || entry.senderId,
+      entry.initiatorType !== 'bot',
+    ),
     replyTo: entry.messageIds.at(-1),
     ...(entry.threadId ? { replyInThread: true } : {}),
     ...(input.ownerId ? { ownerChatId: input.ownerId } : {}),

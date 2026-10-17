@@ -5,6 +5,7 @@ import {
   NOTICE_MAX_BUTTON_STREAK,
   NoticeActionAuth,
   buildNoticeMarkdown,
+  deliverInterruptionNotice,
   abandonExtraInstruction,
   continueExtraInstruction,
   isContinuePrompt,
@@ -12,6 +13,7 @@ import {
   planInterruptionNotice,
   resolvedNoticeCard,
 } from '../../../src/bot/interruption-notice';
+import { TurnJournal } from '../../../src/bot/turn-journal';
 import { interruptionNoticeCard } from '../../../src/card/templates';
 import type { RunOutcome } from '../../../src/bot/run-outcome';
 import { createTmpProfile } from '../../helpers/tmp-profile';
@@ -123,6 +125,17 @@ describe('interruption notice decision', () => {
     })).not.toContain('@bot');
   });
 
+  it('does not structurally @mention a bot initiator', () => {
+    const body = buildNoticeMarkdown({
+      initiatorId: 'ou_peer_bot',
+      requireBotMention: true,
+      outcome: interrupted('external-signal'),
+      mentionInitiator: false,
+    });
+    expect(body).not.toMatch(/<at\b/);
+    expect(body).toContain('上一轮未完成');
+  });
+
   it('shows Chinese reasons on notice cards instead of internal outcome codes', () => {
     const idle = buildNoticeMarkdown({
       initiatorId: 'ou_init',
@@ -208,6 +221,61 @@ describe('interruption notice actions', () => {
     expect(json).toContain('notice.continue');
     expect(json).toContain('notice.dismiss');
     expect(json).toContain('tok-c');
+  });
+
+  it('delivers a human-initiated notice with a structured @ and a bot-initiated notice without one', async () => {
+    const interruptedOutcome: RunOutcome = {
+      kind: 'interrupted',
+      reason: { type: 'external-signal' },
+      retriable: true,
+      needsHuman: false,
+    };
+    const human = await noticeDelivery('ou_user');
+    expect(noticeMarkdown(human.sent)).toContain('<at id="ou_user"></at>');
+    const bot = await noticeDelivery('ou_peer_bot', 'bot');
+    expect(noticeMarkdown(bot.sent)).not.toMatch(/<at\b/);
+    expect(noticeMarkdown(bot.sent)).toContain('上一轮未完成');
+    await human.cleanup();
+    await bot.cleanup();
+
+    async function noticeDelivery(initiatorId: string, initiatorType?: 'user' | 'bot') {
+      const tmp = await createTmpProfile('notice-initiator-');
+      const journal = new TurnJournal(`${tmp.profile}/turn-journal.json`);
+      await journal.load();
+      journal.enqueue({
+        turnId: 'turn-1',
+        scope: 'oc_group',
+        chatId: 'oc_group',
+        messageIds: ['om_1'],
+        senderId: initiatorId,
+        initiatorId,
+        ...(initiatorType ? { initiatorType } : {}),
+        status: 'queued',
+      });
+      const sent: unknown[] = [];
+      await deliverInterruptionNotice({
+        send: async (_chatId, content) => {
+          sent.push(content);
+          return { messageId: 'om_notice' };
+        },
+        journal,
+        turnId: 'turn-1',
+        outcome: interruptedOutcome,
+        consecutive: 4,
+        requireBotMention: true,
+        authNotified: false,
+      });
+      return { sent, cleanup: tmp.cleanup };
+    }
+
+    function noticeMarkdown(sent: unknown[]): string {
+      return sent.map((item) => {
+        if (item && typeof item === 'object' && 'markdown' in item) {
+          return String((item as { markdown: unknown }).markdown);
+        }
+        return JSON.stringify(item);
+      }).join('\n');
+    }
   });
 
   it('renders a resolved card without continue/dismiss buttons', () => {

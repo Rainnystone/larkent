@@ -78,6 +78,8 @@ export interface TurnJournalEntry {
   messageIds: string[];
   senderId: string;
   initiatorId: string;
+  /** Feishu sender_type of the turn initiator. `bot` means an app sender. */
+  initiatorType?: 'user' | 'bot';
   resumeHandle?: string;
   policyFingerprint?: string;
   runId?: string;
@@ -772,6 +774,9 @@ function parseEntry(raw: unknown): TurnJournalEntry | undefined {
     messageIds,
     senderId: typeof raw.senderId === 'string' ? raw.senderId : '',
     initiatorId: typeof raw.initiatorId === 'string' ? raw.initiatorId : '',
+    ...(raw.initiatorType === 'user' || raw.initiatorType === 'bot'
+      ? { initiatorType: raw.initiatorType }
+      : {}),
     ...(typeof raw.resumeHandle === 'string' ? { resumeHandle: raw.resumeHandle } : {}),
     ...(typeof raw.policyFingerprint === 'string' ? { policyFingerprint: raw.policyFingerprint } : {}),
     ...(typeof raw.runId === 'string' ? { runId: raw.runId } : {}),

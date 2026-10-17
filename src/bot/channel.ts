@@ -361,6 +361,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       dmMode: 'open',
       requireMention: false,
       respondToMentionAll: false,
+      botLoopGuard: { enabled: true },
     },
     // Disable per-chat serialization so we can implement our own
     // debounce + run-chain policy (see pending-queue + runChain below).
@@ -1556,6 +1557,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   };
   const turnId = journal ? randomUUID() : undefined;
   if (journal && turnId) {
+    const initiatorType = senderTypeOf(lastMsg);
     journal.enqueue({
       turnId,
       scope,
@@ -1564,6 +1566,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       messageIds: batch.map((msg) => msg.messageId),
       senderId: firstMsg.senderId,
       initiatorId: lastMsg.senderId,
+      ...(initiatorType ? { initiatorType } : {}),
       status: 'queued',
       userInput: promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n'),
       ...journalResources(batch),
