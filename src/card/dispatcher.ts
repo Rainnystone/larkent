@@ -12,6 +12,7 @@ import {
   type AutoCardAction,
 } from '../automations/action-auth';
 import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth';
+import { abandonIfNotInChat } from '../automations/chat-lifecycle';
 import {
   AUTO_INVALID_END,
   AUTO_INVALID_HINT,
@@ -437,6 +438,7 @@ async function dispatchAutoAction(
     const result = await completeDraftEnd({
       automations: deps.automations,
       autoAuth: deps.autoAuth,
+      automationsScheduler: deps.automationsScheduler,
       channel: deps.channel,
       now: deps.now,
     }, registered, endAt, deps.evt.messageId);
@@ -554,6 +556,13 @@ async function sendAutoHint(deps: CardDispatchDeps, markdown: string): Promise<v
   try {
     await deps.channel.send(deps.evt.chatId, { markdown }, { replyTo: deps.evt.messageId });
   } catch (error) {
+    if (await abandonIfNotInChat(
+      error,
+      deps.evt.chatId,
+      (chatId) => deps.automationsScheduler?.removeFromChat(chatId),
+    )) {
+      return;
+    }
     log.warn('auto', 'hint-failed', {
       err: error instanceof Error ? error.message : String(error),
     });

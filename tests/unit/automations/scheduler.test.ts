@@ -14,6 +14,7 @@ import {
 } from '../../../src/automations/scheduler';
 import { AutomationsStore, type CreateAutomationInput } from '../../../src/automations/store';
 import { log } from '../../../src/core/logger';
+import { axiosLike, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 
 const HOUR = 60 * 60_000;
 const t0 = Date.UTC(2026, 0, 2, 12, 0, 0);
@@ -345,10 +346,14 @@ describe('automation scheduler', () => {
     await h.clock.advanceTo(missedAt + CATCH_UP_WINDOW_MS, () => h.scheduler.idle());
     expect(h.store.get(1)).toBeDefined();
 
+    const info = vi.spyOn(log, 'info');
     await h.clock.advanceTo(missedAt + CATCH_UP_WINDOW_MS + 1, () => h.scheduler.idle());
     expect(h.store.get(1)).toBeUndefined();
     expect(h.store.list()).toEqual([]);
     await expect(h.store.readLog()).resolves.toEqual(logAfterMiss);
+    expect(info.mock.calls.some((call) => call[0] === 'auto' && call[1] === 'expired' && (call[2] as { id?: number })?.id === 1)).toBe(true);
+    expect(JSON.stringify(info.mock.calls)).not.toContain('one-shot');
+    info.mockRestore();
   });
 
   it('calls the sender once when restart, link-recovered and wake race for the same fire key', async () => {
@@ -578,5 +583,56 @@ describe('automation scheduler', () => {
     expect(blocked).toHaveLength(2);
     for (const resolve of blocked) resolve();
     await h.scheduler.idle();
+  });
+
+  it('deletes a chat when fire send is rejected as not-in-chat and leaves other chats', async () => {
+    const err = sdkShapedSendError('format_error', axiosLike('The bot can not be outside the group', {
+      response: { status: 400, data: { code: 230002 } },
+    }));
+    const h = await harness(t0, {
+      send: async (fire) => {
+        if (fire.chatId === 'oc_gone') throw err;
+      },
+    });
+    await h.store.create(reminderInput({
+      chatId: 'oc_gone',
+      nextFireAt: t0,
+      name: 'leaving',
+      taskText: 'secret fire body',
+    }));
+    await h.store.create(reminderInput({
+      chatId: 'oc_keep',
+      nextFireAt: t0 + HOUR,
+      name: 'staying',
+    }));
+
+    const info = vi.spyOn(log, 'info');
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    await Promise.resolve();
+    await h.scheduler.idle();
+
+    expect(h.store.list().map((item) => item.chatId)).toEqual(['oc_keep']);
+    expect(info.mock.calls.some((call) =>
+      call[0] === 'auto' && call[1] === 'removed-from-chat' && (call[2] as { chatId?: string })?.chatId === 'oc_gone',
+    )).toBe(true);
+    expect(JSON.stringify(info.mock.calls)).not.toContain('secret fire body');
+    info.mockRestore();
+  });
+
+  it('does not delete a chat when fire send is a gone-card 404', async () => {
+    const err = sdkShapedSendError('unknown', axiosLike('not found', {
+      response: { status: 404 },
+    }));
+    const h = await harness(t0, {
+      send: async () => { throw err; },
+    });
+    await h.store.create(reminderInput({ nextFireAt: t0 }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    await Promise.resolve();
+    await h.scheduler.idle();
+    expect(h.store.list()).toHaveLength(1);
+    expect(h.store.get(1)?.lastFireAt).toBe(t0);
   });
 });

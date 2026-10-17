@@ -13,7 +13,9 @@ export interface RecordingLarkChannel extends FakeChannel {
   readonly callLog: RecordingCall[];
   readonly listChatsCalls: number;
   on(handlers: RecordingLarkChannel['handlers']): void;
+  onRawEvent(eventType: string, handler: (data: unknown) => void): () => void;
   emit(event: 'reconnecting' | 'reconnected'): void;
+  emitRaw(eventType: string, data: unknown): void;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
@@ -53,6 +55,7 @@ export function createRecordingLarkChannel(options: {
   const inner = createFakeChannel();
   const callLog: RecordingCall[] = [];
   const handlers: RecordingLarkChannel['handlers'] = {};
+  const rawHandlers = new Map<string, Set<(data: unknown) => void>>();
   let reactionSeq = 1;
   let listChatsCalls = 0;
 
@@ -129,8 +132,20 @@ export function createRecordingLarkChannel(options: {
     on(next) {
       Object.assign(handlers, next);
     },
+    onRawEvent(eventType, handler) {
+      let set = rawHandlers.get(eventType);
+      if (!set) {
+        set = new Set();
+        rawHandlers.set(eventType, set);
+      }
+      set.add(handler);
+      return () => { set.delete(handler); };
+    },
     emit(event) {
       handlers[event]?.();
+    },
+    emitRaw(eventType, data) {
+      for (const handler of rawHandlers.get(eventType) ?? []) handler(data);
     },
     async connect() {},
     async disconnect() {},

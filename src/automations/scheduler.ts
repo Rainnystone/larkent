@@ -1,3 +1,4 @@
+import { isNotInChat } from '../bot/feishu-error';
 import { log } from '../core/logger';
 import {
   CATCH_UP_WINDOW_MS,
@@ -70,6 +71,7 @@ export interface AutomationScheduler {
   pause(id: number): Promise<boolean>;
   resume(id: number): Promise<boolean>;
   delete(id: number): Promise<boolean>;
+  removeFromChat(chatId: string): Promise<boolean>;
 }
 
 export function createAutomationScheduler(deps: AutomationSchedulerDeps): AutomationScheduler {
@@ -174,9 +176,9 @@ class Scheduler implements AutomationScheduler {
       const item = this.store.get(id);
       if (!item) return false;
       const schedule = readSchedule(item.schedule);
-      const next = schedule ? nextFireAfter(schedule, this.now()) : 0;
-      const ok = await this.store.resume(id, next);
-      if (ok && next === 0) await this.store.delete(id);
+    const next = schedule ? nextFireAfter(schedule, this.now()) : 0;
+    const ok = await this.store.resume(id, next);
+    if (ok && next === 0) await this.store.delete(id);
       if (ok) await this.writeStatus();
       this.armTimer();
       return ok;
@@ -190,6 +192,10 @@ class Scheduler implements AutomationScheduler {
       this.armTimer();
       return ok;
     });
+  }
+
+  removeFromChat(chatId: string): Promise<boolean> {
+    return this.enqueue(() => this.dropChat(chatId));
   }
 
   private enqueue<T>(fn: () => Promise<T>): Promise<T> {
@@ -270,13 +276,21 @@ class Scheduler implements AutomationScheduler {
       log.info('auto', 'missed', { id: live.id, fireAt, triggerSource: source });
     }
     if (newlyMissed.length > 0) {
-      await this.notifier.notify({
-        id: live.id,
-        missedFires: newlyMissed,
-        chatId: live.chatId,
-        name: live.name,
-        timezone: live.timezone,
-      });
+      try {
+        await this.notifier.notify({
+          id: live.id,
+          missedFires: newlyMissed,
+          chatId: live.chatId,
+          name: live.name,
+          timezone: live.timezone,
+        });
+      } catch (error) {
+        if (isNotInChat(error)) {
+          await this.dropChat(live.chatId);
+          return;
+        }
+        log.fail('auto', error, { event: 'missed' });
+      }
     }
 
     if (plan.run !== undefined) {
@@ -351,8 +365,24 @@ class Scheduler implements AutomationScheduler {
     };
     void Promise.resolve(this.sender.send(payload)).then(
       () => {},
-      (error) => { log.fail('auto', error, { event: catchUp ? 'catch-up' : 'fire' }); },
+      (error) => {
+        if (isNotInChat(error)) {
+          void this.removeFromChat(item.chatId);
+          return;
+        }
+        log.fail('auto', error, { event: catchUp ? 'catch-up' : 'fire' });
+      },
     );
+  }
+
+  private async dropChat(chatId: string): Promise<boolean> {
+    const ok = await this.store.removeChat(chatId);
+    if (ok) {
+      log.info('auto', 'removed-from-chat', { chatId });
+      await this.writeStatus();
+    }
+    this.armTimer();
+    return ok;
   }
 
   private async handleDue(): Promise<void> {
@@ -388,11 +418,13 @@ class Scheduler implements AutomationScheduler {
           if (now - recordedAt <= AUTOMATIONS_MISSED_TTL_MS) continue;
         }
         await this.store.delete(item.id);
+        log.info('auto', 'expired', { id: item.id });
         changed = true;
         continue;
       }
       if (item.endAt > 0 && now >= item.endAt) {
         await this.store.delete(item.id);
+        log.info('auto', 'expired', { id: item.id });
         changed = true;
       }
     }

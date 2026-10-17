@@ -73,6 +73,7 @@ export interface FakeChannel {
   readonly updatedCards: Array<{ messageId: string; card: unknown }>;
   readonly pins: FakePin[];
   readonly cardErrors: { update?: unknown };
+  readonly sendErrors: { send?: unknown };
   dropPins(): void;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<{ messageId: string }>;
@@ -119,6 +120,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
 
   const streamErrors: { open?: unknown; finish?: unknown; hangFinish?: boolean } = {};
   const cardErrors: { update?: unknown } = {};
+  const sendErrors: { send?: unknown } = {};
 
   const throwCardUpdateIfArmed = (): void => {
     if (cardErrors.update === undefined) return;
@@ -195,6 +197,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
     streams,
     streamErrors,
     cardErrors,
+    sendErrors,
     updatedCards,
     pins,
     dropPins() {
@@ -299,6 +302,11 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
       applyCardToMessage(messageId, cardJson);
     },
     async send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }> {
+      if (sendErrors.send !== undefined) {
+        const err = sendErrors.send;
+        sendErrors.send = undefined;
+        throw err;
+      }
       const cardId = (content as { cardId?: unknown } | undefined)?.cardId;
       const resolved =
         typeof cardId === 'string' && cardById.has(cardId)

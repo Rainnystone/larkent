@@ -127,6 +127,7 @@ import {
 import { AutoActionAuth } from '../automations/action-auth';
 import { BoardActionAuth } from '../automations/board-auth';
 import { createAutomationBoard, type AutomationBoard } from '../automations/board';
+import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
 import {
   createAutomationScheduler,
   type AutomationScheduler,
@@ -351,6 +352,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     board?: AutomationBoard;
     boardAuth?: BoardActionAuth;
   } = {};
+  let detachAutomationChatLifecycle = (): void => {};
   const onAutomationConfirmed = async (item: AutomationItem): Promise<void> => {
     await deps.onAutomationConfirmed?.(item);
     await automationsCtl.scheduler?.notifyChanged();
@@ -775,6 +777,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       auth: automationsCtl.boardAuth,
       botDisplayName: () => channel.botIdentity?.name ?? 'bot',
       lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
+      onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
       ...(deps.now ? { now: deps.now } : {}),
     });
     automationsCtl.scheduler = createAutomationScheduler({
@@ -787,6 +790,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       enabled: () => controls.profileConfig.automations.enabled,
       onChanged: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
     });
+    detachAutomationChatLifecycle = attachAutomationChatLifecycle(channel, (chatId) =>
+      automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+    );
   }
   const automationsScheduler = automationsCtl.scheduler;
   started.onRecovered((outage) => {
@@ -1015,6 +1021,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       : Promise.resolve(),
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
+      detachAutomationChatLifecycle();
       automationsScheduler?.stop();
       await automationsScheduler?.idle();
       await automationsCtl.board?.idle();

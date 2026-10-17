@@ -237,6 +237,24 @@ describe('AutomationsStore', () => {
     expect(restarted.listDrafts().map((draft) => draft.name)).toEqual(['still-fresh']);
   });
 
+  it('removeChat drops that chat’s items, drafts and board and leaves other chats', async () => {
+    const { store } = await fixture();
+    await store.load();
+    await store.create(reminderInput({ chatId: 'oc_keep', name: 'keep' }));
+    await store.create(reminderInput({ chatId: 'oc_gone', name: 'gone', taskText: 'secret gone body' }));
+    await store.saveDraft(reminderInput({ chatId: 'oc_gone', name: 'draft-gone' }));
+    await store.saveDraft(reminderInput({ chatId: 'oc_keep', name: 'draft-keep' }));
+    await store.setBoard({ chatId: 'oc_gone', messageId: 'om_gone' });
+    await store.setBoard({ chatId: 'oc_keep', messageId: 'om_keep' });
+
+    expect(await store.removeChat('oc_gone')).toBe(true);
+    expect(store.list().map((item) => item.chatId)).toEqual(['oc_keep']);
+    expect(store.listDrafts().map((draft) => draft.chatId)).toEqual(['oc_keep']);
+    expect(store.getBoard('oc_gone')).toBeUndefined();
+    expect(store.getBoard('oc_keep')?.messageId).toBe('om_keep');
+    expect(await store.removeChat('oc_gone')).toBe(false);
+  });
+
   it('persists a per-chat board binding across restart', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     await store.load();

@@ -10,6 +10,12 @@ export const FEISHU_GONE_MESSAGE_CODES = new Set([
   230026, // message recalled
 ]);
 
+/** Send/reply/patch codes that mean this bot is not in the chat (or the chat is gone). */
+export const FEISHU_NOT_IN_CHAT_CODES = new Set([
+  230002, // The bot can not be outside the group
+  232009, // chat which has already been dissolved
+]);
+
 /** Frequency-limit / permission-budget codes the SDK maps before HTTP status. */
 export const FEISHU_TRANSIENT_API_CODES = new Set([
   230020,
@@ -137,6 +143,19 @@ export function isGoneMessage(err: unknown): boolean {
     if (status === 404) return true;
     const code = feishuCode(node);
     if (code !== undefined && FEISHU_GONE_MESSAGE_CODES.has(code)) return true;
+  }
+  return false;
+}
+
+/**
+ * A rejected 4xx that means the bot is outside the group or the chat was
+ * dissolved. Distinct from {@link isGoneMessage}: 230002 is also listed as a
+ * gone-card code for stream recovery, but automations must treat it as leave.
+ */
+export function isNotInChat(err: unknown): boolean {
+  for (const node of causeChain(err)) {
+    const code = feishuCode(node);
+    if (code !== undefined && FEISHU_NOT_IN_CHAT_CODES.has(code)) return true;
   }
   return false;
 }

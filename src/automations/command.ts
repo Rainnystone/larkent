@@ -2,6 +2,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { senderTypeFromRaw } from '../bot/self-message';
+import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
 import { automationConfirmCard } from './confirm-card';
@@ -476,6 +477,7 @@ export async function completeDraftEnd(
   ctx: {
     automations: AutomationsStore;
     autoAuth: AutoActionAuth;
+    automationsScheduler?: CommandContext['automationsScheduler'];
     channel: CommandContext['channel'];
     now?: () => number;
     chatMode?: CommandContext['chatMode'];
@@ -505,6 +507,7 @@ export async function completeDraftEnd(
     channel: ctx.channel,
     automations: ctx.automations,
     autoAuth: ctx.autoAuth,
+    automationsScheduler: ctx.automationsScheduler,
     chatMode: ctx.chatMode ?? 'group',
     msg: { chatId: draft.chatId, threadId: undefined },
   }, updated, parsed.schedule, now, replyTo);
@@ -608,16 +611,23 @@ async function mutateAuto(
 }
 
 async function postEndCard(
-  ctx: Pick<CommandContext, 'channel' | 'automations' | 'autoAuth' | 'msg' | 'chatMode'>,
+  ctx: Pick<CommandContext, 'channel' | 'automations' | 'autoAuth' | 'msg' | 'chatMode' | 'automationsScheduler'>,
   draft: AutomationDraft,
 ): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth) return;
   const tokens = signEndTokens(ctx.autoAuth, draft);
-  const sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, automationEndCard(tokens), {
-    replyTo: ctx.msg.messageId,
-    ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
-  });
-  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
+  try {
+    const sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, automationEndCard(tokens), {
+      replyTo: ctx.msg.messageId,
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+    });
+    await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
+  } catch (error) {
+    if (await abandonIfNotInChat(error, ctx.msg.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
+      return;
+    }
+    throw error;
+  }
 }
 
 async function postConfirmCard(
@@ -625,6 +635,7 @@ async function postConfirmCard(
     channel: CommandContext['channel'];
     automations?: AutomationsStore;
     autoAuth?: AutoActionAuth;
+    automationsScheduler?: CommandContext['automationsScheduler'];
     chatMode: CommandContext['chatMode'];
     msg: { chatId: string; threadId?: string };
   },
@@ -657,11 +668,18 @@ async function postConfirmCard(
     rejectToken,
     ...(draft.cwd ? { cwd: draft.cwd } : {}),
   });
-  const sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
-    replyTo,
-    ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
-  });
-  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
+  try {
+    const sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+      replyTo,
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+    });
+    await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
+  } catch (error) {
+    if (await abandonIfNotInChat(error, draft.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
+      return;
+    }
+    throw error;
+  }
 }
 
 function signEndTokens(auth: AutoActionAuth, draft: AutomationDraft): EndCardTokens {
@@ -731,6 +749,9 @@ async function replyAuto(ctx: CommandContext, markdown: string): Promise<void> {
       },
     );
   } catch (err) {
+    if (await abandonIfNotInChat(err, ctx.msg.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
+      return;
+    }
     log.warn('auto', 'reply-failed', { err: err instanceof Error ? err.message : String(err) });
   }
 }

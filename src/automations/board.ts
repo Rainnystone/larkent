@@ -4,7 +4,7 @@ import type { LarkChannel } from '@larksuite/channel';
 import * as lockfile from 'proper-lockfile';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
-import { classify, isGoneMessage } from '../bot/feishu-error';
+import { classify, isGoneMessage, isNotInChat } from '../bot/feishu-error';
 import { automationBoardCard, chatStatusSnapshot } from './board-card';
 import { listPinnedMessageIds, pinMessage, unpinMessage } from './board-pins';
 import type { BoardActionAuth } from './board-auth';
@@ -24,6 +24,7 @@ export interface AutomationBoardDeps {
   botDisplayName: () => string;
   now?: () => number;
   lockPath: string;
+  onNotInChat?: (chatId: string) => void | Promise<void>;
 }
 
 export function createAutomationBoard(deps: AutomationBoardDeps): AutomationBoard {
@@ -37,6 +38,7 @@ class Board implements AutomationBoard {
   private readonly botDisplayName: () => string;
   private readonly now: () => number;
   private readonly lockPath: string;
+  private readonly onNotInChat?: (chatId: string) => void | Promise<void>;
   private tail: Promise<void> = Promise.resolve();
   private queued = false;
   private running = false;
@@ -48,6 +50,7 @@ class Board implements AutomationBoard {
     this.botDisplayName = deps.botDisplayName;
     this.now = deps.now ?? Date.now;
     this.lockPath = deps.lockPath;
+    this.onNotInChat = deps.onNotInChat;
   }
 
   refresh(): Promise<void> {
@@ -90,21 +93,34 @@ class Board implements AutomationBoard {
 
   private async renderChat(chatId: string): Promise<void> {
     await withBoardLock(this.lockPath, async () => {
-      const items = this.store.list().filter((item) => item.chatId === chatId);
-      const binding = this.store.getBoard(chatId);
-      if (items.length === 0 && !binding) return;
-      const snapshot = await this.store.readStatus();
-      const status = chatStatusSnapshot(snapshot, items, {
-        bot: this.botDisplayName(),
-        updatedAt: this.now(),
-      });
-      const card = automationBoardCard({ items, status, auth: this.auth });
-      const next = await this.patchOrResend(chatId, binding, card);
-      if (items.length === 0) await this.ensureUnpinned(next);
-      else {
-        await this.ensurePinned(chatId, next, {
-          repin: binding?.messageId === next.messageId,
+      try {
+        const items = this.store.list().filter((item) => item.chatId === chatId);
+        const binding = this.store.getBoard(chatId);
+        if (items.length === 0 && !binding) return;
+        const snapshot = await this.store.readStatus();
+        const status = chatStatusSnapshot(snapshot, items, {
+          bot: this.botDisplayName(),
+          updatedAt: this.now(),
         });
+        const card = automationBoardCard({ items, status, auth: this.auth });
+        const next = await this.patchOrResend(chatId, binding, card);
+        if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
+          return;
+        }
+        if (items.length === 0) await this.ensureUnpinned(next);
+        else {
+          await this.ensurePinned(chatId, next, {
+            repin: binding?.messageId === next.messageId,
+          });
+        }
+      } catch (error) {
+        if (isNotInChat(error)) {
+          void Promise.resolve(this.onNotInChat?.(chatId)).catch((next) => {
+            log.fail('auto', next, { event: 'removed-from-chat', chatId });
+          });
+          return;
+        }
+        throw error;
       }
     });
   }
@@ -119,6 +135,7 @@ class Board implements AutomationBoard {
         await this.patch(binding, card);
         return binding;
       } catch (error) {
+        if (isNotInChat(error)) throw error;
         if (classify(error) === 'link') throw error;
         if (!isGoneMessage(error)) throw error;
         log.warn('auto', 'board.resend', { chatId });
@@ -156,6 +173,7 @@ class Board implements AutomationBoard {
       await pinMessage(this.channel, binding.messageId);
       if (opts.repin) log.info('auto', 'board.repin', { chatId });
     } catch (error) {
+      if (isNotInChat(error)) throw error;
       log.fail('auto', error, { event: 'board.pin', chatId });
       await this.hintPinFailed(chatId, binding);
     }
@@ -169,6 +187,7 @@ class Board implements AutomationBoard {
     try {
       await unpinMessage(this.channel, messageId);
     } catch (error) {
+      if (isNotInChat(error)) throw error;
       log.warn('auto', 'board.unpin-failed', {
         err: error instanceof Error ? error.message : String(error),
       });
@@ -180,6 +199,7 @@ class Board implements AutomationBoard {
     try {
       await this.channel.send(chatId, { markdown: AUTO_PIN_FAILED_HINT });
     } catch (error) {
+      if (isNotInChat(error)) throw error;
       log.warn('auto', 'board.pin-hint-failed', {
         err: error instanceof Error ? error.message : String(error),
       });

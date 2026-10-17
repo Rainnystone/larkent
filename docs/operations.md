@@ -37,6 +37,15 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 - 访问管理：`/invite user`、`/remove user`、`/invite group`、`/remove group`、`/invite all group`、`/invite admin`。
 - `/stop` 停止当前 scope 的任务，profile 保持在线；前台 Ctrl-C 停止整个 profile。
 
+## Automations events
+
+`automations.enabled` 打开后，bridge 通过现有长连接的 `onRawEvent` 处理 bot 被移出群和群解散。在飞书开放平台为该应用订阅这两个事件（与会议 `vc.bot.*` 一样走同一条连接，不要再开第二条）：
+
+- `im.chat.member.bot.deleted_v1`
+- `im.chat.disbanded_v1`
+
+未订阅时，bridge 仍会在发送被拒为不在群内（`230002`）或群已解散（`232009`）时删除该群任务。
+
 Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
 
 One turn → one bridge-owned final reply. Agents must not post the final answer to the triggering chat themselves (`lark-cli im +messages-send` / `+messages-reply` / `send-card` to the current chat). Sending to other chats, or sending when the user explicitly asks for a lark-cli send, is allowed. 一轮对话只有一条由 bridge 发出的最终回复；agent 不要自己把最终答案发到触发会话。
