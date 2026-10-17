@@ -63,6 +63,8 @@ export interface AutomationScheduler {
   idle(): Promise<void>;
   onLinkRecovered(): Promise<void>;
   wake(fireKey: string): Promise<void>;
+  /** Re-arm after an in-process create/confirm so new nextFireAt / endAt take effect. */
+  nudge(): Promise<void>;
   pause(id: number): Promise<boolean>;
   resume(id: number): Promise<boolean>;
   delete(id: number): Promise<boolean>;
@@ -134,6 +136,13 @@ class Scheduler implements AutomationScheduler {
       const parsed = parseFireKey(fireKey);
       if (!parsed) return;
       await this.catchUp('wake');
+      await this.handleDue();
+    });
+  }
+
+  nudge(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.closed || !this.enabled()) return;
       await this.handleDue();
     });
   }
@@ -359,25 +368,36 @@ class Scheduler implements AutomationScheduler {
     let changed = false;
     for (const item of this.store.list()) {
       const schedule = readSchedule(item.schedule);
-      if (schedule?.kind !== 'one-shot') continue;
-      if (item.nextFireAt !== 0 || item.lastStatus !== 'missed') continue;
-      if (item.missedInstants.length > 0) {
-        const recordedAt = Math.min(...item.missedInstants.map((entry) => entry.recordedAt));
-        if (now - recordedAt <= AUTOMATIONS_MISSED_TTL_MS) continue;
+      if (schedule?.kind === 'one-shot') {
+        if (item.nextFireAt !== 0 || item.lastStatus !== 'missed') continue;
+        if (item.missedInstants.length > 0) {
+          const recordedAt = Math.min(...item.missedInstants.map((entry) => entry.recordedAt));
+          if (now - recordedAt <= AUTOMATIONS_MISSED_TTL_MS) continue;
+        }
+        await this.store.delete(item.id);
+        changed = true;
+        continue;
       }
-      await this.store.delete(item.id);
-      changed = true;
+      if (item.endAt > 0 && now >= item.endAt) {
+        await this.store.delete(item.id);
+        changed = true;
+      }
     }
     if (changed) await this.writeStatus();
   }
 
   private expiryAt(item: AutomationItem): number {
     const schedule = readSchedule(item.schedule);
-    if (schedule?.kind !== 'one-shot') return 0;
-    if (item.nextFireAt !== 0 || item.lastStatus !== 'missed') return 0;
-    if (item.missedInstants.length === 0) return this.now();
-    const recordedAt = Math.min(...item.missedInstants.map((entry) => entry.recordedAt));
-    return recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1;
+    if (schedule?.kind === 'one-shot') {
+      if (item.nextFireAt !== 0 || item.lastStatus !== 'missed') return 0;
+      if (item.missedInstants.length === 0) return this.now();
+      const recordedAt = Math.min(...item.missedInstants.map((entry) => entry.recordedAt));
+      return recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1;
+    }
+    if (item.nextFireAt === 0 && item.endAt > 0) {
+      return item.endAt <= this.now() ? this.now() : item.endAt;
+    }
+    return 0;
   }
 
   private armTimer(): void {

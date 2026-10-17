@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { parseFireKey } from './schedule';
+import { parseFireKey, type PendingRecurring } from './schedule';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
 
@@ -64,6 +64,15 @@ export interface CreateAutomationInput {
 export interface AutomationDraft extends CreateAutomationInput {
   draftId: string;
   createdAt: number;
+  cardMessageId?: string;
+  pendingRecurring?: PendingRecurring;
+}
+
+export interface UpdateDraftPatch {
+  schedule?: unknown;
+  endAt?: number;
+  nextFireAt?: number;
+  pendingRecurring?: PendingRecurring | null;
   cardMessageId?: string;
 }
 
@@ -219,7 +228,7 @@ export class AutomationsStore {
     return this.logEntries.map((entry) => ({ ...entry }));
   }
 
-  async saveDraft(input: CreateAutomationInput): Promise<AutomationDraft> {
+  async saveDraft(input: CreateAutomationInput & { pendingRecurring?: PendingRecurring }): Promise<AutomationDraft> {
     this.assertMutable();
     this.pruneDrafts();
     const draft: AutomationDraft = {
@@ -266,6 +275,21 @@ export class AutomationsStore {
     if (index < 0) return undefined;
     const [draft] = this.drafts.splice(index, 1);
     if (!draft) return undefined;
+    await this.persistNow();
+    return { ...draft };
+  }
+
+  async updateDraft(draftId: string, patch: UpdateDraftPatch): Promise<AutomationDraft | undefined> {
+    this.assertMutable();
+    this.pruneDrafts();
+    const draft = this.drafts.find((entry) => entry.draftId === draftId);
+    if (!draft) return undefined;
+    if (patch.schedule !== undefined) draft.schedule = patch.schedule;
+    if (patch.endAt !== undefined) draft.endAt = patch.endAt;
+    if (patch.nextFireAt !== undefined) draft.nextFireAt = patch.nextFireAt;
+    if (patch.cardMessageId !== undefined) draft.cardMessageId = patch.cardMessageId;
+    if (patch.pendingRecurring === null) delete draft.pendingRecurring;
+    else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
     await this.persistNow();
     return { ...draft };
   }
@@ -597,7 +621,13 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
     ...(typeof raw.cwd === 'string' && raw.cwd ? { cwd: raw.cwd } : {}),
     ...(raw.paused === true ? { paused: true } : {}),
     ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
+    ...(isPendingRecurring(raw.pendingRecurring) ? { pendingRecurring: raw.pendingRecurring } : {}),
   };
+}
+
+function isPendingRecurring(value: unknown): value is PendingRecurring {
+  if (!isObject(value)) return false;
+  return value.kind === 'daily' || value.kind === 'weekday' || value.kind === 'weekly' || value.kind === 'interval';
 }
 
 function parseFireHistory(raw: unknown): AutomationFireRecord[] {

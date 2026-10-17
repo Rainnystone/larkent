@@ -2,7 +2,41 @@ import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { CallbackNonceStore } from '../card/callback-store';
 import { AUTOMATIONS_DRAFT_TTL_MS } from './store';
 
-export type AutoCardAction = 'auto.confirm' | 'auto.reject';
+export const AUTO_CARD_ACTIONS = [
+  'auto.confirm',
+  'auto.reject',
+  'auto.end.1m',
+  'auto.end.3m',
+  'auto.end.eoy',
+  'auto.end.1y',
+  'auto.end.custom',
+] as const;
+
+export type AutoCardAction = (typeof AUTO_CARD_ACTIONS)[number];
+
+export function isAutoCardAction(value: string): value is AutoCardAction {
+  return (AUTO_CARD_ACTIONS as readonly string[]).includes(value);
+}
+
+export type AutoEndAction = Extract<AutoCardAction, `auto.end.${string}`>;
+
+export function isAutoEndAction(action: AutoCardAction): action is AutoEndAction {
+  switch (action) {
+    case 'auto.end.1m':
+    case 'auto.end.3m':
+    case 'auto.end.eoy':
+    case 'auto.end.1y':
+    case 'auto.end.custom':
+      return true;
+    case 'auto.confirm':
+    case 'auto.reject':
+      return false;
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
 
 export interface AutoSignInput {
   draftId: string;
@@ -88,7 +122,8 @@ function decodePayload(encoded: string): AutoPayload | undefined {
     if (
       typeof raw.d !== 'string'
       || typeof raw.c !== 'string'
-      || (raw.a !== 'auto.confirm' && raw.a !== 'auto.reject')
+      || typeof raw.a !== 'string'
+      || !isAutoCardAction(raw.a)
       || typeof raw.exp !== 'number'
       || typeof raw.n !== 'string'
     ) {
