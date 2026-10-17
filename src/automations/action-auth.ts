@@ -94,7 +94,7 @@ export class AutoActionAuth {
     return `${PREFIX}.${encoded}.${sign(encoded, this.secret)}`;
   }
 
-  verify(token: string): AutoVerifyResult {
+  verify(token: string, options?: { consume?: boolean }): AutoVerifyResult {
     const parts = token.split('.');
     if (parts.length !== 4 || `${parts[0]}.${parts[1]}` !== PREFIX) {
       return { ok: false, reason: 'malformed' };
@@ -111,8 +111,13 @@ export class AutoActionAuth {
     const nonceState = this.nonceStore.state(payload.nonce);
     if (nonceState === 'revoked') return { ok: false, reason: 'nonce-revoked' };
     if (nonceState === 'used') return { ok: false, reason: 'nonce-replay' };
+    if (options?.consume === false) return { ok: true, payload };
     if (!this.nonceStore.consume(payload.nonce)) return { ok: false, reason: 'nonce-replay' };
     return { ok: true, payload };
+  }
+
+  consume(nonce: string): boolean {
+    return this.nonceStore.consume(nonce);
   }
 }
 

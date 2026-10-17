@@ -211,7 +211,9 @@ describe('automation agent-task safety whitelist', { timeout: 20_000 }, () => {
     await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));
     await waitFor(() => h.agent.runs.length === 2);
     expect(h.agent.runOptions[1]?.promptVariant).toBe('automation');
-    expect(h.agent.runOptions[1]?.prompt).toBe(TASK);
+    expect(h.agent.runOptions[1]?.prompt).toContain('<bridge_context>');
+    expect(h.agent.runOptions[1]?.prompt).toContain(`"chatId":"${CHAT}"`);
+    expect(h.agent.runOptions[1]?.prompt).toContain(TASK);
 
     release();
     await waitFor(() =>

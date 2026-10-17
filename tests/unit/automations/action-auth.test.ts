@@ -61,6 +61,30 @@ describe('AutoActionAuth', () => {
     h.setNow(1000);
     expect(h.auth.verify(forged)).toMatchObject({ ok: false, reason: 'bad-signature' });
   });
+
+  it('can verify an end-card token without consuming so a later successful submit still works', async () => {
+    const h = await harness();
+    const token = h.auth.sign({
+      draftId: 'draft-end',
+      chatId: 'oc_group',
+      action: 'auto.end.custom',
+      ttlMs: 60_000,
+    });
+    const first = h.auth.verify(token, { consume: false });
+    expect(first).toMatchObject({
+      ok: true,
+      payload: { draftId: 'draft-end', action: 'auto.end.custom' },
+    });
+    expect(h.store.state(first.ok ? first.payload.nonce : '')).toBeUndefined();
+
+    const second = h.auth.verify(token, { consume: false });
+    expect(second.ok).toBe(true);
+    expect(h.auth.consume(second.ok ? second.payload.nonce : '')).toBe(true);
+    expect(h.auth.verify(token, { consume: false })).toMatchObject({
+      ok: false,
+      reason: 'nonce-replay',
+    });
+  });
 });
 
 async function harness() {

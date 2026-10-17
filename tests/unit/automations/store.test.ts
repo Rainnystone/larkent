@@ -76,6 +76,28 @@ describe('AutomationsStore', () => {
     expect(fifth.id).toBe(5);
   });
 
+  it('settles only the matching fire key so an earlier overlapping run cannot clobber the later one', async () => {
+    const { store } = await fixture();
+    await store.load();
+    const item = await store.create(reminderInput({
+      taskType: 'agent',
+      cwd: '/tmp/ws',
+      nextFireAt: 1_760_000_600_000,
+    }));
+    const first = `${item.id}@${item.nextFireAt}`;
+    const second = `${item.id}@${item.nextFireAt + 3_600_000}`;
+    await store.markStarted(first);
+    await store.markStarted(second);
+    expect(store.get(item.id)?.lastStatus).toBe('running');
+    expect(store.get(item.id)?.lastFireAt).toBe(item.nextFireAt + 3_600_000);
+
+    expect(await store.settleFire(item.id, 'ok', first)).toBe(false);
+    expect(store.get(item.id)?.lastStatus).toBe('running');
+
+    expect(await store.settleFire(item.id, 'failed', second)).toBe(true);
+    expect(store.get(item.id)?.lastStatus).toBe('failed');
+  });
+
   it('makes markStarted durable before it returns and reports already-started on a second call', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     await store.load();

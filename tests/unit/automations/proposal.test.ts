@@ -31,6 +31,21 @@ describe('automation proposal extract', () => {
     });
   });
 
+  it('strips uppercase proposal tags with the same case-insensitive rules as parsing', () => {
+    const visible = '好的，10 分钟后提醒你交周报。';
+    const text = `${visible}\n<AUTOMATION_PROPOSAL>\n${JSON.stringify({
+      taskType: 'reminder',
+      schedule: '10 分钟后',
+      name: '交周报',
+      taskText: '提醒我交周报',
+    })}\n</AUTOMATION_PROPOSAL>`;
+    const extracted = extractAutomationProposal(text);
+    expect(extracted.tagged).toBe(true);
+    expect(extracted.visible).toBe(visible);
+    expect(extracted.parsed?.taskText).toBe('提醒我交周报');
+    expect(extracted.visible).not.toContain('AUTOMATION_PROPOSAL');
+  });
+
   it('does not rewrite text that has no proposal tag', () => {
     const text = 'hello\n';
     expect(extractAutomationProposal(text)).toEqual({ visible: text, tagged: false });

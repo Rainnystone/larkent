@@ -14,7 +14,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
-import { axiosErrno, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
+import { axiosLike, axiosErrno, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -48,6 +48,50 @@ afterEach(async () => {
 });
 
 describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
+  it('does not label a 50ms-late timer fire as 补跑 in chat, status, or automations log', async () => {
+    const h = await harness({ nowMs: t0 + 50, seed: true });
+
+    await waitFor(async () => {
+      if (reminderBodies(h.channel).length !== 1) return false;
+      try {
+        const status = await readStatus(h.statusPath);
+        return status.items[0]?.lastStatus === 'ok' && status.items[0]?.lastFireAt === t0;
+      } catch {
+        return false;
+      }
+    });
+
+    expect(reminderBodies(h.channel)).toEqual(['⏰ hourly ping：ping']);
+    expect(reminderBodies(h.channel)[0]).not.toContain('补跑');
+    expect(await h.store.readLog()).toEqual([]);
+    expect(await readStatus(h.statusPath)).toMatchObject({
+      items: [expect.objectContaining({
+        lastFireAt: t0,
+        lastStatus: 'ok',
+        missed: 0,
+      })],
+    });
+  });
+
+  it('removes the chat when delivery is rejected as not-in-chat', async () => {
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      send: () => async () => {
+        throw sdkShapedSendError(
+          'format_error',
+          axiosLike('The bot can not be outside the group', {
+            response: { status: 400, data: { code: 230002 } },
+          }),
+        );
+      },
+    });
+
+    await waitFor(() => h.store.list().length === 0);
+    expect(h.store.list()).toEqual([]);
+    expect(h.store.listBoards()).toEqual([]);
+  });
+
   it('posts exactly one reminder text when the fake clock reaches the instant', async () => {
     const h = await harness({ nowMs: t0, seed: true });
 

@@ -70,8 +70,10 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(h.channel.streams).toEqual([]);
     expect(reactions(h.channel)).toEqual([]);
     expect(continuationBodies(h.channel)).toEqual([]);
+    expect(h.agent.runOptions[0]?.prompt).toContain('<bridge_context>');
+    expect(h.agent.runOptions[0]?.prompt).toContain(`"chatId":"${CHAT}"`);
+    expect(h.agent.runOptions[0]?.prompt).toContain(TASK);
     expect(h.agent.runOptions[0]).toMatchObject({
-      prompt: TASK,
       resumeHandle: undefined,
     });
     expect(h.agent.runOptions[0]?.cwd).toBe(h.workspace);
@@ -117,7 +119,8 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     h.setNow(t0 + HOUR);
     await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));
     await waitFor(() => h.agent.runs.length === 2);
-    expect(h.agent.runOptions[1]?.prompt).toBe(TASK);
+    expect(h.agent.runOptions[1]?.prompt).toContain(TASK);
+    expect(h.agent.runOptions[1]?.prompt).toContain(`"chatId":"${CHAT}"`);
     expect(h.agent.runOptions[1]?.prompt).not.toContain('please answer the standup');
 
     release();
@@ -184,7 +187,11 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     h.setNow(t0 + HOUR);
     await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));
     await waitFor(() => h.agent.runs.length === 2);
-    expect(h.agent.runOptions.map((opts) => opts.prompt)).toEqual([TASK, TASK]);
+    expect(h.agent.runOptions.map((opts) => opts.prompt)).toEqual([
+      expect.stringContaining(TASK),
+      expect.stringContaining(TASK),
+    ]);
+    expect(h.agent.runOptions.every((opts) => opts.prompt.includes(`"chatId":"${CHAT}"`))).toBe(true);
     expect(resultBodies(h.channel)).toEqual([]);
 
     release();

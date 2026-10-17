@@ -255,19 +255,36 @@ export class AutomationsStore {
   }
 
   async recordMissedInstant(id: number, fireAt: number): Promise<void> {
+    await this.recordMissedInstants(id, [fireAt]);
+  }
+
+  async recordMissedInstants(id: number, fireAts: readonly number[]): Promise<void> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
-    if (!item) return;
-    if (item.missedInstants.some((entry) => entry.fireAt === fireAt)) return;
-    item.missedInstants.push({ fireAt, recordedAt: this.now() });
-    item.missed += 1;
+    if (!item || fireAts.length === 0) return;
+    const recorded = new Set(item.missedInstants.map((entry) => entry.fireAt));
+    const recordedAt = this.now();
+    let added = 0;
+    for (const fireAt of fireAts) {
+      if (recorded.has(fireAt)) continue;
+      recorded.add(fireAt);
+      item.missedInstants.push({ fireAt, recordedAt });
+      added += 1;
+    }
+    if (added === 0) return;
+    item.missed += added;
     item.lastStatus = 'missed';
     await this.persistNow();
   }
 
   async recordLog(entry: AutomationsLogEntry): Promise<void> {
+    await this.recordLogs([entry]);
+  }
+
+  async recordLogs(entries: readonly AutomationsLogEntry[]): Promise<void> {
     this.assertMutable();
-    this.logEntries.push({
+    if (entries.length === 0) return;
+    const mapped = entries.map((entry) => ({
       id: entry.id,
       taskType: entry.taskType,
       scheduledAt: entry.scheduledAt,
@@ -275,8 +292,9 @@ export class AutomationsStore {
       result: entry.result,
       ...(entry.triggerSource ? { triggerSource: entry.triggerSource } : {}),
       ...(entry.reason ? { reason: entry.reason } : {}),
-    });
-    await this.persistLogNow();
+    }));
+    this.logEntries.push(...mapped);
+    await this.persistLogLines(mapped);
   }
 
   async readLog(): Promise<AutomationsLogEntry[]> {
@@ -462,11 +480,15 @@ export class AutomationsStore {
    * `ok` may overwrite a raced reap `failed` from the still-live run.
    * Successful one-shots (`nextFireAt === 0`) are removed.
    */
-  async settleFire(id: number, status: 'ok' | 'failed'): Promise<boolean> {
+  async settleFire(id: number, status: 'ok' | 'failed', fireKey?: string): Promise<boolean> {
     this.assertMutable();
     const index = this.items.findIndex((entry) => entry.id === id);
     const item = this.items[index];
     if (!item) return false;
+    if (fireKey) {
+      const parsed = parseFireKey(fireKey);
+      if (!parsed || parsed.id !== id || item.lastFireAt !== parsed.fireAt) return false;
+    }
     if (status === 'ok') {
       if (item.lastStatus !== 'running' && item.lastStatus !== 'failed') return false;
     } else if (item.lastStatus !== 'running') {
@@ -550,10 +572,9 @@ export class AutomationsStore {
     await this.logQueue.flush();
   }
 
-  private async persistLogNow(): Promise<void> {
-    const entry = this.logEntries[this.logEntries.length - 1];
-    if (!entry) return;
-    const line = `${JSON.stringify(entry)}\n`;
+  private async persistLogLines(entries: readonly AutomationsLogEntry[]): Promise<void> {
+    if (entries.length === 0) return;
+    const chunk = `${entries.map((entry) => JSON.stringify(entry)).join('\n')}\n`;
     this.logQueue.enqueue(async () => {
       let previous = '';
       try {
@@ -562,7 +583,7 @@ export class AutomationsStore {
         if ((error as NodeJS.ErrnoException | undefined)?.code !== 'ENOENT') throw error;
       }
       const prefix = previous.length === 0 || previous.endsWith('\n') ? previous : `${previous}\n`;
-      await writeFileAtomic(this.logPath, `${prefix}${line}`, { mode: 0o600 });
+      await writeFileAtomic(this.logPath, `${prefix}${chunk}`, { mode: 0o600 });
     });
     await this.logQueue.flush();
   }

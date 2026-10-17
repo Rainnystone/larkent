@@ -109,7 +109,7 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { classify, rateLimitResetDelayMs } from './feishu-error';
+import { classify, isNotInChat, rateLimitResetDelayMs } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
@@ -134,7 +134,7 @@ import {
   automationScopeForReply,
 } from '../automations/agent-run';
 import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
-import { submitAutomationProposal } from '../automations/command';
+import { flushPendingDraftCards, submitAutomationProposal } from '../automations/command';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
 import {
   AUTOMATION_PROPOSAL_INSTRUCTION,
@@ -581,6 +581,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         automationsScheduler: automationsCtl.scheduler,
         journal,
         ...(deps.now ? { now: deps.now } : {}),
+        isLinkDown: () => closing || started.isDown(),
         onAutomationConfirmed,
       }),
     ).catch((err) => {
@@ -865,12 +866,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         }),
       } : {}),
       onUndelivered: () => outboxSweep.schedule(),
+      onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
     };
     automationsCtl.scheduler = createAutomationScheduler({
       store: deps.automations,
       ...createAutomationDelivery({
         ...automationOutbox,
-        agentTasks: () => controls.profileConfig.automations.agentTasks,
         runAgentFire: (fire) => trackConsumer(runAutomationAgentFire(fire, {
           ...automationOutbox,
           executor,
@@ -892,6 +893,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       ...(deps.now ? { now: deps.now } : {}),
       isLinkUp: () => !closing && !started.isDown(),
       enabled: () => controls.profileConfig.automations.enabled,
+      agentTasks: () => controls.profileConfig.automations.agentTasks,
       onChanged: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
       wakeDir: deps.appPaths?.automationsWakeDir
         ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
@@ -907,6 +909,16 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     if (automationsScheduler || automationsCtl.board) {
       void trackConsumer((async () => {
         await automationsScheduler?.onLinkRecovered();
+        if (deps.automations && autoAuth) {
+          await flushPendingDraftCards({
+            channel,
+            automations: deps.automations,
+            autoAuth,
+            automationsScheduler,
+            ...(deps.now ? { now: deps.now } : {}),
+            isLinkDown: () => closing || started.isDown(),
+          });
+        }
         await automationsCtl.board?.refresh();
       })(), 'auto');
     }
@@ -1262,6 +1274,7 @@ interface IntakeDeps {
   automationsScheduler?: AutomationScheduler;
   journal?: TurnJournal;
   now?: () => number;
+  isLinkDown?: () => boolean;
   onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 
@@ -1313,6 +1326,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     automationsScheduler,
     journal,
     now,
+    isLinkDown,
     onAutomationConfirmed,
   } = deps;
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
@@ -1453,6 +1467,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     autoAuth,
     automationsScheduler,
     ...(now ? { now } : {}),
+    ...(isLinkDown ? { isLinkDown } : {}),
     onAutomationConfirmed,
   });
   if (handled) {
@@ -1946,6 +1961,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           autoAuth,
           automationsScheduler,
           ...(now ? { now } : {}),
+          isLinkDown: () => Boolean(link?.isDown()),
           controls,
         }, parsed),
       }
@@ -2526,30 +2542,35 @@ async function deliverFinalReply(input: {
     await applyAutomationProposal();
     return;
   } else {
-    const settled = await settleStreamDelivery({
-      stream,
-      channel: input.channel,
-      body: visibleBody,
-      send: () => sendFinalReply({
-        ...input,
-        deliveryId,
-        state: body.trim() ? state : (skipFrom ?? state),
-      }),
-      fallback: () => sendPlainTextReply({
+    try {
+      const settled = await settleStreamDelivery({
+        stream,
         channel: input.channel,
-        chatId: input.chatId,
         body: visibleBody,
-        sendOpts: input.sendOpts,
-        deliveryId,
-      }),
-      journal: input.journal,
-      turnId: input.turnId,
-      replyMode: input.replyMode,
-      dedicatedFinal,
-    });
-    if (settled.kind === 'wait') {
-      input.onWait?.(rateLimitResetDelayMs(settled.error));
-      await applyAutomationProposal();
+        send: () => sendFinalReply({
+          ...input,
+          deliveryId,
+          state: body.trim() ? state : (skipFrom ?? state),
+        }),
+        fallback: () => sendPlainTextReply({
+          channel: input.channel,
+          chatId: input.chatId,
+          body: visibleBody,
+          sendOpts: input.sendOpts,
+          deliveryId,
+        }),
+        journal: input.journal,
+        turnId: input.turnId,
+        replyMode: input.replyMode,
+        dedicatedFinal,
+      });
+      if (settled.kind === 'wait') {
+        input.onWait?.(rateLimitResetDelayMs(settled.error));
+        await applyAutomationProposal();
+        return;
+      }
+    } catch (error) {
+      if (!isNotInChat(error)) throw error;
       return;
     }
   }
@@ -2644,6 +2665,10 @@ async function sendOrWait(input: {
       case 'link':
         return { kind: 'wait', error: err };
       case 'rejected': {
+        if (isNotInChat(err)) {
+          if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
+          throw err;
+        }
         if (!input.fallback) {
           if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
           return { kind: 'done' };
@@ -2654,6 +2679,7 @@ async function sendOrWait(input: {
           log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
           if (classify(retryErr) === 'link') return { kind: 'wait', error: retryErr };
           if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
+          if (isNotInChat(retryErr)) throw retryErr;
           return { kind: 'done' };
         }
       }

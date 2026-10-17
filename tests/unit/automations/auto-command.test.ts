@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   parseAutoCommand,
   parseAutoNewArgs,
+  parseEndAtText,
   parseScheduleText,
 } from '../../../src/automations/command';
 import { isRegisteredSlashCommand } from '../../../src/commands';
@@ -69,6 +70,21 @@ describe('parseScheduleText', () => {
       ok: true,
       schedule: { kind: 'one-shot', fireAt: NOW + 15 * 60_000 },
     });
+  });
+
+  it('rejects nonexistent calendar dates instead of rolling them into March', () => {
+    expect(parseScheduleText('at 2026-02-31 09:00', {
+      taskType: 'reminder',
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toEqual({ ok: false, reason: 'invalid-schedule' });
+    expect(parseEndAtText('2026-02-31', 'Asia/Shanghai')).toBeUndefined();
+    expect(parseEndAtText('2026-02-31 09:00', 'Asia/Shanghai')).toBeUndefined();
+    expect(parseScheduleText('每天 09:00 到 2026-02-31', {
+      taskType: 'reminder',
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toEqual({ ok: false, reason: 'invalid-schedule' });
   });
 
   it('rejects lead times under 10 minutes', () => {

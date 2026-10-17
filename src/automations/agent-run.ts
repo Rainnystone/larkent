@@ -1,4 +1,5 @@
 import { capabilityForProfile } from '../agent/capability';
+import { buildAgentPrompt } from '../agent/prompt';
 import type { AgentEvent } from '../agent/types';
 import { noteRunEvent, type RunHandle } from '../bot/active-runs';
 import { createIdleWatchdog } from '../bot/idle-watchdog';
@@ -54,6 +55,25 @@ export const CATCH_UP_PROMPT_MARKER = '本次为补跑，原定 ';
 
 export function formatCatchUpPromptHint(timezone: string, fireAt: number): string {
   return `${CATCH_UP_PROMPT_MARKER}${formatScheduledHm(timezone, fireAt)}。请按原定任务执行。`;
+}
+
+export function formatAutomationAgentPrompt(
+  fire: Pick<FireSend, 'chatId' | 'createdBy' | 'taskText' | 'catchUp' | 'timezone' | 'fireAt'>,
+  botOpenId?: string,
+): string {
+  const userInput = fire.catchUp
+    ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt)}\n\n${fire.taskText}`
+    : fire.taskText;
+  return buildAgentPrompt({
+    context: {
+      chatId: fire.chatId,
+      chatType: 'group',
+      senderId: fire.createdBy,
+      source: 'im',
+      ...(botOpenId ? { botOpenId } : {}),
+    },
+    userInput,
+  });
 }
 
 export function formatAgentResultPost(input: {
@@ -131,7 +151,7 @@ export async function runAutomationAgentFire(
       status = next;
     });
   } finally {
-    await persistFireStatus(runtime, fire.id, status);
+    await persistFireStatus(runtime, fire, status);
   }
 }
 
@@ -150,9 +170,7 @@ async function runAutomationAgentFireBody(
   }
   runtime.workspaces.setCwd(scope, cwd);
 
-  const prompt = fire.catchUp
-    ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt)}\n\n${fire.taskText}`
-    : fire.taskText;
+  const prompt = formatAutomationAgentPrompt(fire, runtime.botOpenId() || undefined);
   const journal = runtime.journal;
   if (journal && !journal.get(turnId)) {
     const actor = runtime.botOpenId();
@@ -285,13 +303,13 @@ async function runAutomationAgentFireBody(
 
 async function persistFireStatus(
   runtime: AgentFireRuntime,
-  id: number,
+  fire: FireSend,
   status: 'ok' | 'failed',
 ): Promise<void> {
   const store = runtime.automations;
   if (!store) return;
   try {
-    if (!await store.settleFire(id, status)) return;
+    if (!await store.settleFire(fire.id, status, fire.fireKey)) return;
     await store.writeStatus(runtime.botDisplayName?.() ?? 'bot');
     await runtime.onFireSettled?.();
   } catch (error) {

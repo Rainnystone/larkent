@@ -3,6 +3,7 @@ import {
   AGENT_RESULT_FOOTER,
   formatAgentFailureNotice,
   formatAgentResultPost,
+  formatAutomationAgentPrompt,
   formatCatchUpPromptHint,
 } from '../../../src/automations/agent-run';
 import {
@@ -15,6 +16,21 @@ import {
 const fireAt = Date.UTC(2026, 0, 2, 12, 0, 0);
 
 describe('agent-task result copy and follow-up mapping', () => {
+  it('injects the bound group chat into the agent-task prompt', () => {
+    const prompt = formatAutomationAgentPrompt({
+      chatId: 'oc_group',
+      createdBy: 'ou_alice',
+      taskText: '每天总结本群',
+      catchUp: false,
+      timezone: 'UTC',
+      fireAt,
+    }, 'ou_bot');
+    expect(prompt).toContain('<bridge_context>');
+    expect(prompt).toContain('"chatId":"oc_group"');
+    expect(prompt).toContain('"chatType":"group"');
+    expect(prompt).toContain('每天总结本群');
+  });
+
   it('formats on-time and catch-up result posts with the follow-up footer', () => {
     expect(formatAgentResultPost({
       body: '汇总完成',

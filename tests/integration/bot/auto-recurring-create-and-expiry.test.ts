@@ -4,6 +4,7 @@ import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AUTO_INTERVAL_TOO_SMALL,
+  AUTO_INVALID_END,
 } from '../../../src/automations/command';
 import { AutomationsStore } from '../../../src/automations/store';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
@@ -96,6 +97,44 @@ describe('A2 recurring creation and expiry', () => {
     const log = await h.store.readLog();
     expect(log.some((entry) => entry.result === 'catch-up' && entry.scheduledAt === LAST_FIRE)).toBe(true);
     expect(log.filter((entry) => entry.result === 'missed')).toHaveLength(2);
+  });
+
+  it('keeps the custom-end token after empty or typo end_at so a later submit on the same card works', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
+    const endCard = cardContaining(h, 'auto.end.');
+    const token = tokenFor(endCard, 'auto.end.custom');
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+
+    await h.channel.handlers.cardAction?.(cardClick(
+      MATE,
+      token,
+      messageId,
+      'auto.end.custom',
+      { end_at: '' },
+    ));
+    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_END);
+    expect(h.store.listDrafts()).toHaveLength(1);
+    expect(JSON.stringify(h.channel.sent)).not.toContain('auto.confirm');
+
+    await h.channel.handlers.cardAction?.(cardClick(
+      MATE,
+      token,
+      messageId,
+      'auto.end.custom',
+      { end_at: '2026-02-31' },
+    ));
+    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_END);
+
+    await h.channel.handlers.cardAction?.(cardClick(
+      MATE,
+      token,
+      messageId,
+      'auto.end.custom',
+      { end_at: '2026-10-21' },
+    ));
+    expect(confirmCard(h)).toContain('auto.confirm');
+    expect(h.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
   });
 
   it('rejects a reminder interval under 10 minutes and an agent-task interval under 1 hour', async () => {

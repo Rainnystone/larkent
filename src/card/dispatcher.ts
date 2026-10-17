@@ -406,7 +406,7 @@ async function dispatchAutoAction(
     await sendAutoInvalid(deps);
     return;
   }
-  const verified = deps.autoAuth.verify(token);
+  const verified = deps.autoAuth.verify(token, { consume: !isAutoEndAction(cmd) });
   if (!verified.ok || verified.payload.action !== cmd) {
     log.info('cardAction', 'skip-auto-auth-failed', {
       cmd,
@@ -444,7 +444,9 @@ async function dispatchAutoAction(
     }, registered, endAt, deps.evt.messageId);
     if (!result.ok) {
       await sendAutoHint(deps, result.message);
+      return;
     }
+    deps.autoAuth.consume(verified.payload.nonce);
     return;
   }
 

@@ -155,6 +155,7 @@ export interface CommandContext {
   autoAuth?: AutoActionAuth;
   automationsScheduler?: AutomationScheduler;
   now?: () => number;
+  isLinkDown?: () => boolean;
   onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 

@@ -13,7 +13,8 @@ const byMessageId = new Map<string, ManagedEntry>();
 
 export interface ManagedCardSendResult {
   messageId: string;
-  cardId: string;
+  cardId?: string;
+  kind: 'card-id' | 'raw-card';
 }
 
 /**
@@ -47,10 +48,10 @@ export async function sendManagedCard(
     });
     ({ messageId } = await channel.send(recipientId, { card }, sendOpts));
     byMessageId.set(messageId, { kind: 'raw-card', sequence: 0 });
-    return { messageId, cardId };
+    return { messageId, kind: 'raw-card' };
   }
   byMessageId.set(messageId, { kind: 'card-id', cardId, sequence: 0 });
-  return { messageId, cardId };
+  return { messageId, cardId, kind: 'card-id' };
 }
 
 /**

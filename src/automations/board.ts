@@ -146,7 +146,7 @@ class Board implements AutomationBoard {
     const next: AutomationBoardBinding = {
       chatId,
       messageId: sent.messageId,
-      cardId: sent.cardId,
+      ...(sent.kind === 'card-id' && sent.cardId ? { cardId: sent.cardId } : {}),
     };
     await this.store.setBoard(next);
     return next;

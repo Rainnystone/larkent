@@ -117,7 +117,7 @@ export function shouldHonorAutomationProposal(input: {
 }
 
 function hasProposalTag(text: string): boolean {
-  return text.includes(AUTOMATION_PROPOSAL_OPEN);
+  return /<automation_proposal>/i.test(text);
 }
 
 function parseLastProposal(text: string): AutomationProposalFields | undefined {
@@ -129,10 +129,18 @@ function parseLastProposal(text: string): AutomationProposalFields | undefined {
   return undefined;
 }
 
+function lastOpenTagIndex(text: string): number {
+  let openAt = -1;
+  for (const match of text.matchAll(/<automation_proposal>/gi)) {
+    if (match.index !== undefined) openAt = match.index;
+  }
+  return openAt;
+}
+
 function stripProposalTags(text: string): string {
   let out = text.replace(proposalBlockRe(), '');
-  const openAt = out.lastIndexOf(AUTOMATION_PROPOSAL_OPEN);
-  if (openAt >= 0 && !out.slice(openAt).includes(AUTOMATION_PROPOSAL_CLOSE)) {
+  const openAt = lastOpenTagIndex(out);
+  if (openAt >= 0 && !new RegExp(AUTOMATION_PROPOSAL_CLOSE, 'i').test(out.slice(openAt))) {
     out = out.slice(0, openAt);
   }
   return out

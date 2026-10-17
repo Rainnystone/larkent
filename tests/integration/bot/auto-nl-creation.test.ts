@@ -208,6 +208,33 @@ describe('A6 natural-language creation', () => {
     await expectStatusClean(h.statusPath, ['提醒我交周报', USER, 'oc_spoof']);
   }, 15_000);
 
+  it('defers the confirm card while the link is down and posts it after reconnect', async () => {
+    const h = await harness({
+      linkDown: true,
+      events: [
+        { type: 'text', delta: `${VISIBLE}\n${proposalXml({
+          taskType: 'reminder',
+          schedule: '10 分钟后',
+          name: '交周报',
+          taskText: '提醒我交周报',
+        })}` },
+        { type: 'done', terminationReason: 'normal' },
+      ],
+    });
+    await h.channel.handlers.message?.(mention('om_nl', '10 分钟后提醒我交周报'));
+    await waitFor(() => h.store.listDrafts().length === 1);
+    expect(h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+    expect(markdownSends(h).some((text) => text.includes(VISIBLE))).toBe(false);
+    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+
+    h.channel.connectionState = 'connected';
+    await h.bridge.tickLink();
+    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.confirm')));
+    const draft = h.store.listDrafts()[0];
+    expect(draft?.cardMessageId).toBeTypeOf('string');
+    expect(confirmCard(h)).toContain('交周报');
+  }, 15_000);
+
   it('asks for an end on a weekday proposal before any confirm card', async () => {
     const h = await harness({
       events: [{
@@ -240,6 +267,7 @@ async function harness(opts: {
   enabled?: boolean;
   replyMode?: 'text' | 'markdown' | 'card';
   agentKind?: 'claude' | 'codex';
+  linkDown?: boolean;
 } = {}) {
   const tmp = await createTmpProfile('auto-nl-');
   const mediaDir = join(tmp.profile, 'media');
@@ -292,6 +320,7 @@ async function harness(opts: {
     chatMode: 'group',
     botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
   });
+  if (opts.linkDown) channel.connectionState = 'reconnecting';
   sdk.channel = channel;
   const bridge = await startChannel({
     cfg,
@@ -333,6 +362,7 @@ async function harness(opts: {
     agent,
     statusPath,
     tmp,
+    bridge,
     setNow(next: number) {
       nowMs = next;
     },

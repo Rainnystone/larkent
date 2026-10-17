@@ -19,6 +19,11 @@ import {
 } from './store';
 import { consumeWakeRequests, watchWakeDir, type WakeWatch } from './wake-file';
 
+/** Late timers within one second are on-time, not 补跑. */
+export const ON_TIME_GRACE_MS = 1_000;
+/** Node clamps setTimeout above 2^31-1 ms to 1 ms; stay under that. */
+export const MAX_SCHEDULER_DELAY_MS = 24 * 24 * 60 * 60 * 1000;
+
 export interface FireSend {
   id: number;
   fireAt: number;
@@ -62,6 +67,7 @@ export interface AutomationSchedulerDeps {
   onChanged?: () => void | Promise<void>;
   /** Profile `automations-wake/` directory. A5 local wake transport. */
   wakeDir?: string;
+  agentTasks?: () => boolean;
 }
 
 export interface AutomationScheduler {
@@ -95,6 +101,7 @@ class Scheduler implements AutomationScheduler {
   private readonly enabled: () => boolean;
   private readonly onChanged?: () => void | Promise<void>;
   private readonly wakeDir?: string;
+  private readonly agentTasks: () => boolean;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   /** Crash leftovers are settled once, before the first fire in this process. */
@@ -115,6 +122,7 @@ class Scheduler implements AutomationScheduler {
     this.enabled = deps.enabled ?? (() => true);
     this.onChanged = deps.onChanged;
     this.wakeDir = deps.wakeDir;
+    this.agentTasks = deps.agentTasks ?? (() => true);
   }
 
   start(): Promise<void> {
@@ -279,6 +287,16 @@ class Scheduler implements AutomationScheduler {
     const schedule = readSchedule(live.schedule);
     if (!schedule) return;
     const now = this.now();
+    if (
+      live.nextFireAt > 0
+      && live.nextFireAt <= now
+      && now - live.nextFireAt <= ON_TIME_GRACE_MS
+      && live.lastFireAt < live.nextFireAt
+    ) {
+      if (!this.isLinkUp()) return;
+      await this.fireExact(live, live.nextFireAt, false, source, schedule);
+      return;
+    }
     if (!isMissed({
       id: live.id,
       paused: live.paused,
@@ -295,21 +313,22 @@ class Scheduler implements AutomationScheduler {
       schedule,
     }, now);
 
-    const newlyMissed: number[] = [];
-    for (const fireAt of plan.missedFires) {
-      const current = this.store.get(live.id);
-      if (current?.missedInstants.some((entry) => entry.fireAt === fireAt)) continue;
-      await this.store.recordMissedInstant(live.id, fireAt);
-      newlyMissed.push(fireAt);
-      await this.store.recordLog({
+    const current = this.store.get(live.id);
+    const already = new Set((current?.missedInstants ?? []).map((entry) => entry.fireAt));
+    const newlyMissed = plan.missedFires.filter((fireAt) => !already.has(fireAt));
+    if (newlyMissed.length > 0) {
+      await this.store.recordMissedInstants(live.id, newlyMissed);
+      await this.store.recordLogs(newlyMissed.map((fireAt) => ({
         id: live.id,
         taskType: live.taskType,
         scheduledAt: fireAt,
         decidedAt: now,
         triggerSource: source,
-        result: 'missed',
-      });
-      log.info('auto', 'missed', { id: live.id, fireAt, triggerSource: source });
+        result: 'missed' as const,
+      })));
+      for (const fireAt of newlyMissed) {
+        log.info('auto', 'missed', { id: live.id, fireAt, triggerSource: source });
+      }
     }
     if (newlyMissed.length > 0) {
       try {
@@ -360,6 +379,12 @@ class Scheduler implements AutomationScheduler {
     source: AutomationTriggerSource,
     schedule: Schedule,
   ): Promise<void> {
+    if (item.taskType === 'agent' && !this.agentTasks()) {
+      await this.store.pause(item.id);
+      log.info('auto', 'paused', { id: item.id });
+      await this.writeStatus();
+      return;
+    }
     const fireKey = formatFireKey(item.id, fireAt);
     const marked = await this.store.markStarted(fireKey);
     if (marked !== 'started') return;
@@ -424,7 +449,7 @@ class Scheduler implements AutomationScheduler {
         }
         log.fail('auto', error, { event: catchUp ? 'catch-up' : 'fire' });
         if (item.taskType !== 'agent') return;
-        void this.store.settleFire(item.id, 'failed').then(
+        void this.store.settleFire(item.id, 'failed', fireKey).then(
           (changed) => {
             if (changed) return this.writeStatus();
           },
@@ -457,7 +482,7 @@ class Scheduler implements AutomationScheduler {
       if (item.paused || item.nextFireAt <= 0 || item.nextFireAt > now) continue;
       const schedule = readSchedule(item.schedule);
       if (!schedule) continue;
-      if (item.nextFireAt < now) {
+      if (item.nextFireAt < now - ON_TIME_GRACE_MS) {
         await this.applyCatchUp(item, 'startup');
         continue;
       }
@@ -530,12 +555,12 @@ class Scheduler implements AutomationScheduler {
     if (Number.isFinite(nextFire)) {
       this.fireTimer = this.setTimeout(() => {
         void this.enqueue(() => this.handleDue());
-      }, Math.max(0, nextFire - now));
+      }, Math.min(MAX_SCHEDULER_DELAY_MS, Math.max(0, nextFire - now)));
     }
     if (Number.isFinite(nextExpire)) {
       this.expireTimer = this.setTimeout(() => {
         void this.enqueue(() => this.expireDue().then(() => this.armTimer()));
-      }, Math.max(0, nextExpire - now));
+      }, Math.min(MAX_SCHEDULER_DELAY_MS, Math.max(0, nextExpire - now)));
     }
   }
 

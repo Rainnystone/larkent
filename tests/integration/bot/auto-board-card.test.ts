@@ -236,6 +236,21 @@ describe('automation board card', () => {
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next.messageId]);
   });
 
+  it('omits cardId from the board binding after a raw-card fallback send', async () => {
+    const h = await harness({ rawCardFallback: true });
+    await confirmOne(h);
+    const binding = h.store.getBoard(CHAT);
+    expect(binding?.cardId).toBeUndefined();
+    expect(binding?.messageId).toBeTypeOf('string');
+    const board = latestBoard(h);
+    await h.channel.handlers.cardAction?.(
+      boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
+    );
+    expect(h.store.get(1)?.paused).toBe(true);
+    expect(h.channel.callLog.some((call) => call.op === 'updateCard')).toBe(true);
+    expect(h.channel.callLog.some((call) => call.op === 'updateCardById')).toBe(false);
+  });
+
   it('rejects p2p /auto and does not create a board when automations are off', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_dm', '/auto', { chatType: 'p2p' }));
@@ -248,7 +263,7 @@ describe('automation board card', () => {
   });
 });
 
-async function harness(opts: { enabled?: boolean; nowMs?: number } = {}) {
+async function harness(opts: { enabled?: boolean; nowMs?: number; rawCardFallback?: boolean } = {}) {
   const tmp = await createTmpProfile('auto-board-');
   const mediaDir = join(tmp.profile, 'media');
   await mkdir(mediaDir, { recursive: true });
@@ -289,6 +304,15 @@ async function harness(opts: { enabled?: boolean; nowMs?: number } = {}) {
     chatMode: 'group',
     botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
   });
+  if (opts.rawCardFallback) {
+    const origSend = channel.send.bind(channel);
+    channel.send = (async (recipientId, content, sendOpts) => {
+      if (content && typeof content === 'object' && 'cardId' in content && !('card' in content)) {
+        throw new Error('cardid is invalid');
+      }
+      return origSend(recipientId, content, sendOpts);
+    }) as typeof channel.send;
+  }
   sdk.channel = channel;
   let probeOk = true;
   const start = async () => startChannel({

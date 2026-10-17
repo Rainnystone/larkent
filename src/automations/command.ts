@@ -11,6 +11,7 @@ import {
   ONE_YEAR_MS,
   nextFireAfter,
   parseSchedule,
+  readSchedule,
   type LocalTime,
   type ParseScheduleResult,
   type PendingRecurring,
@@ -18,7 +19,7 @@ import {
   type ScheduleRejectReason,
   type TaskType,
 } from './schedule';
-import { addLocalDays, zonedLocalToUtc, zonedParts } from './zoned-time';
+import { addLocalDays, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
 import { formatAutomationListLine } from './board-card';
 import type { AutomationDraft, AutomationItem, AutomationTaskType, AutomationsStore } from './store';
 
@@ -109,7 +110,7 @@ export function parseEndAtText(text: string, timezone: string): number | undefin
   const year = Number(match[1]);
   const month = Number(match[2]);
   const day = Number(match[3]);
-  if (month < 1 || month > 12 || day < 1 || day > 31) return undefined;
+  if (!isValidCalendarDate(year, month, day)) return undefined;
   if (match[4] !== undefined) {
     const hour = Number(match[4]);
     const minute = Number(match[5]);
@@ -170,7 +171,7 @@ function parseAbsolute(text: string, timezone: string): number | undefined {
   const day = Number(match[3]);
   const hour = Number(match[4]);
   const minute = Number(match[5]);
-  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return undefined;
+  if (!isValidCalendarDate(year, month, day) || hour > 23 || minute > 59) return undefined;
   return zonedLocalToUtc(timezone, year, month, day, hour, minute);
 }
 
@@ -354,6 +355,7 @@ export type AutomationProposalContext = Pick<
   | 'automationsScheduler'
   | 'now'
   | 'controls'
+  | 'isLinkDown'
 >;
 
 export type ParsedAutoCommand =
@@ -466,7 +468,7 @@ export async function submitAutomationProposal(
       pendingRecurring: parsedSchedule.pending,
       ...(cwd ? { cwd } : {}),
     });
-    await postEndCard(ctx, draft);
+    if (!ctx.isLinkDown?.()) await postEndCard(ctx, draft);
     log.info('auto', 'draft', {
       draftId: draft.draftId,
       taskType: parsed.taskType,
@@ -492,12 +494,44 @@ export async function submitAutomationProposal(
     taskText: parsed.taskText,
     ...(cwd ? { cwd } : {}),
   });
-  await postConfirmCard(ctx, draft, parsedSchedule.schedule, now, ctx.msg.messageId);
+  if (!ctx.isLinkDown?.()) {
+    await postConfirmCard(ctx, draft, parsedSchedule.schedule, now, ctx.msg.messageId);
+  }
   log.info('auto', 'draft', {
     draftId: draft.draftId,
     taskType: parsed.taskType,
     chatId: ctx.msg.chatId,
   });
+}
+
+export async function flushPendingDraftCards(ctx: {
+  channel: CommandContext['channel'];
+  automations?: AutomationsStore;
+  autoAuth?: AutoActionAuth;
+  automationsScheduler?: CommandContext['automationsScheduler'];
+  now?: () => number;
+  isLinkDown?: () => boolean;
+}): Promise<void> {
+  if (!ctx.automations || !ctx.autoAuth || ctx.isLinkDown?.()) return;
+  const now = (ctx.now ?? Date.now)();
+  for (const draft of ctx.automations.listDrafts()) {
+    if (draft.cardMessageId) continue;
+    const cardCtx = {
+      channel: ctx.channel,
+      automations: ctx.automations,
+      autoAuth: ctx.autoAuth,
+      automationsScheduler: ctx.automationsScheduler,
+      chatMode: 'group' as const,
+      msg: { chatId: draft.chatId, messageId: '', threadId: undefined },
+    };
+    if (draft.pendingRecurring) {
+      await postEndCard(cardCtx, draft);
+      continue;
+    }
+    const schedule = readSchedule(draft.schedule);
+    if (!schedule) continue;
+    await postConfirmCard(cardCtx, draft, schedule, now, '');
+  }
 }
 
 export async function completeDraftEnd(
@@ -638,7 +672,14 @@ async function mutateAuto(
 }
 
 async function postEndCard(
-  ctx: Pick<CommandContext, 'channel' | 'automations' | 'autoAuth' | 'msg' | 'chatMode' | 'automationsScheduler'>,
+  ctx: {
+    channel: CommandContext['channel'];
+    automations?: AutomationsStore;
+    autoAuth?: AutoActionAuth;
+    automationsScheduler?: CommandContext['automationsScheduler'];
+    chatMode: CommandContext['chatMode'];
+    msg: { chatId: string; messageId?: string; threadId?: string };
+  },
   draft: AutomationDraft,
 ): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth) return;

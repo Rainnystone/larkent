@@ -8,12 +8,14 @@ import {
   type Schedule,
 } from '../../../src/automations/schedule';
 import {
+  MAX_SCHEDULER_DELAY_MS,
   createAutomationScheduler,
   type FireSend,
   type MissedNotify,
 } from '../../../src/automations/scheduler';
 import { AutomationsStore, type CreateAutomationInput } from '../../../src/automations/store';
 import { log } from '../../../src/core/logger';
+import * as atomicWrite from '../../../src/platform/atomic-write';
 import { axiosLike, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 
 const HOUR = 60 * 60_000;
@@ -80,6 +82,8 @@ class ManualClock {
 async function harness(nowMs: number, opts?: {
   isLinkUp?: () => boolean;
   send?: (fire: FireSend) => void | Promise<void>;
+  agentTasks?: () => boolean;
+  setTimeout?: (fn: () => void, delayMs: number) => unknown;
 }) {
   const dir = await mkdtemp(join(tmpdir(), 'automations-scheduler-'));
   dirs.push(dir);
@@ -103,10 +107,11 @@ async function harness(nowMs: number, opts?: {
     },
     notifier: { notify: async (notice) => { notices.push(notice); } },
     now: clock.now,
-    setTimeout: clock.setTimeout,
+    setTimeout: opts?.setTimeout ?? clock.setTimeout,
     clearTimeout: clock.clearTimeout,
     botDisplayName: () => 'Grok Bot',
     ...(opts?.isLinkUp ? { isLinkUp: opts.isLinkUp } : {}),
+    ...(opts?.agentTasks ? { agentTasks: opts.agentTasks } : {}),
   });
   schedulers.push(scheduler);
   return {
@@ -221,6 +226,111 @@ describe('automation scheduler', () => {
     await h.clock.advanceTo(endAt, () => h.scheduler.idle());
     expect(h.store.list()).toEqual([]);
     expect(await readStatus(h.statusPath)).toMatchObject({ items: [] });
+  });
+
+  it('does not label a 50ms-late timer fire as catch-up', async () => {
+    const h = await harness(t0 + 50);
+    await h.store.create(reminderInput({ nextFireAt: t0 }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.fires).toEqual([
+      expect.objectContaining({ fireAt: t0, catchUp: false }),
+    ]);
+    expect(await h.store.readLog()).toEqual([]);
+    expect(await readStatus(h.statusPath)).toMatchObject({
+      items: [expect.objectContaining({ lastFireAt: t0, lastStatus: 'ok', missed: 0 })],
+    });
+  });
+
+  it('arms a one-month reminder in bounded chunks instead of a 1ms spin', async () => {
+    const fireAt = t0 + 30 * 24 * HOUR;
+    const delays: number[] = [];
+    const NODE_MAX = 2_147_483_647;
+    const clockBox: { clock?: ManualClock } = {};
+    const h = await harness(t0, {
+      setTimeout: (fn, delayMs) => {
+        delays.push(delayMs);
+        return clockBox.clock!.setTimeout(fn, delayMs > NODE_MAX ? 1 : delayMs);
+      },
+    });
+    clockBox.clock = h.clock;
+    await h.store.create(reminderInput({
+      schedule: { kind: 'one-shot', fireAt },
+      startAt: t0,
+      endAt: fireAt,
+      nextFireAt: fireAt,
+      name: '一个月后',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(delays[0]).toBe(MAX_SCHEDULER_DELAY_MS);
+    expect(delays[0]).toBeLessThanOrEqual(NODE_MAX);
+    await h.clock.advanceTo(t0 + 5_000, () => h.scheduler.idle());
+    expect(h.fires).toEqual([]);
+    expect(delays.length).toBe(1);
+  });
+
+  it('pauses an existing agent task before markStarted when agentTasks is off', async () => {
+    const h = await harness(t0, { agentTasks: () => false });
+    await h.store.create(reminderInput({
+      taskType: 'agent',
+      cwd: h.dir,
+      nextFireAt: t0,
+      name: '汇总',
+      taskText: '每天总结本群',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([]);
+    expect(h.store.hasStarted(formatFireKey(1, t0))).toBe(false);
+    expect(h.store.get(1)).toMatchObject({
+      paused: true,
+      nextFireAt: t0,
+      lastFireAt: 0,
+    });
+    expect(h.store.get(1)?.lastStatus).not.toBe('running');
+    expect(await readStatus(h.statusPath)).toMatchObject({
+      items: [expect.objectContaining({ paused: true, lastFireAt: 0, lastStatus: 'ok' })],
+    });
+  });
+
+  it('persists a weekend of 10-minute misses in batches', async () => {
+    const ten = 10 * 60_000;
+    const writes = { doc: 0, log: 0 };
+    const actual = atomicWrite.writeFileAtomic;
+    const spy = vi.spyOn(atomicWrite, 'writeFileAtomic')
+      .mockImplementation(async (path, data, opts) => {
+        if (String(path).endsWith('automations.json')) writes.doc += 1;
+        if (String(path).endsWith('automations.log')) writes.log += 1;
+        return actual(path, data, opts);
+      });
+    try {
+      const h = await harness(t0 + 2 * 24 * HOUR + 1);
+      await h.store.create(reminderInput({
+        schedule: {
+          kind: 'interval',
+          timezone: 'UTC',
+          everyMs: ten,
+          startAt: t0,
+          endAt: t0 + 365 * 24 * HOUR,
+        },
+        nextFireAt: t0,
+      }));
+      writes.doc = 0;
+      writes.log = 0;
+      await h.scheduler.start();
+      await h.scheduler.idle();
+      expect(h.store.get(1)?.missed).toBeGreaterThan(200);
+      expect((await h.store.readLog()).filter((entry) => entry.result === 'missed').length)
+        .toBe(h.store.get(1)?.missed);
+      expect(writes.log).toBeGreaterThan(0);
+      expect(writes.log).toBeLessThan(5);
+      expect(writes.doc).toBeGreaterThan(0);
+      expect(writes.doc).toBeLessThan(20);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it('calls the sender exactly once when the fake clock reaches the instant, and not before', async () => {

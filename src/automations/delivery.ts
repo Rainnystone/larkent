@@ -1,4 +1,4 @@
-import { classify } from '../bot/feishu-error';
+import { classify, isNotInChat } from '../bot/feishu-error';
 import { redeliverStagedReply, type DeliveryChannel } from '../bot/feishu-delivery';
 import {
   replyDeliveryKey,
@@ -22,7 +22,7 @@ export interface AutomationDeliveryDeps {
   now?: () => number;
   deliver?: (entry: TurnJournalEntry) => Promise<boolean>;
   onUndelivered?: () => void;
-  agentTasks?: () => boolean;
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
   runAgentFire?: (fire: FireSend) => void | Promise<void>;
 }
 
@@ -71,7 +71,6 @@ export function createAutomationDelivery(deps: AutomationDeliveryDeps): {
               scope: `auto:${fireTurnId(fire.fireKey)}`,
             });
           case 'agent':
-            if (deps.agentTasks && !deps.agentTasks()) return;
             return deps.runAgentFire?.(fire);
           default: {
             const _exhaustive: never = fire.taskType;
@@ -153,6 +152,12 @@ export async function deliverAutomationMarkdown(input: AutomationDeliveryDeps & 
     }
     input.onUndelivered?.();
   } catch (error) {
+    if (isNotInChat(error)) {
+      input.journal.replyRejected(input.turnId);
+      await input.journal.flush();
+      await input.onNotInChat?.(input.chatId);
+      throw error;
+    }
     const kind = classify(error);
     switch (kind) {
       case 'rejected':

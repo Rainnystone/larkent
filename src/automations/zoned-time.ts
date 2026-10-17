@@ -21,6 +21,17 @@ export interface ZonedParts {
 
 const dtfCache = new Map<string, Intl.DateTimeFormat>();
 
+export function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (!Number.isInteger(year) || !Number.isInteger(month) || !Number.isInteger(day)) return false;
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const probe = new Date(Date.UTC(year, month - 1, day));
+  return (
+    probe.getUTCFullYear() === year
+    && probe.getUTCMonth() + 1 === month
+    && probe.getUTCDate() === day
+  );
+}
+
 export function isValidTimeZone(timeZone: string): boolean {
   try {
     dtfFor(timeZone);

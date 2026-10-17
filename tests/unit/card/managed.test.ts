@@ -17,7 +17,8 @@ describe('managed card sending', () => {
       { replyTo: 'om_parent', replyInThread: true },
     );
 
-    expect(result).toEqual({ messageId: 'om_raw', cardId: 'card_1' });
+    expect(result).toEqual({ messageId: 'om_raw', kind: 'raw-card' });
+    expect(result.cardId).toBeUndefined();
     expect(channel.send).toHaveBeenNthCalledWith(
       1,
       'oc_chat',
