@@ -77,11 +77,68 @@ export interface StatusInfo {
   activeScopes?: string[];
   activeCommentScopes?: string[];
   queue?: { active: number; waiting: number; cap: number };
+  /** True when this scope's chat flush is blocked (run or hung outbound). */
+  chatBusy?: boolean;
+  /** Messages waiting in this scope's chat debounce queue. */
+  chatWaiting?: number;
   ownerState: string;
   /** Session scope (= chatId or chatId:threadId in topic groups). */
   scope: string;
   /** Chat mode — used to label scope. */
   chatMode: 'p2p' | 'group' | 'topic';
+}
+
+export function formatLocalDateTime(ms: number, now: Date = new Date(ms)): string {
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}:${pad(now.getSeconds())}`;
+}
+
+export function formatStatusRuntimeAccess(access: {
+  label: string;
+  value: string;
+}): { label: string; value: string } {
+  const label =
+    access.label === 'permission' ? '权限' : access.label === 'sandbox' ? '沙箱' : access.label;
+  return { label, value: formatStatusRuntimeAccessValue(access.value) };
+}
+
+function formatStatusRuntimeAccessValue(value: string): string {
+  const stripped = value
+    .replace(/\s*\([^)]*--[^)]*\)/g, '')
+    .replace(/\s*\([^)]*\s-p\)/g, '')
+    .trim();
+  switch (stripped) {
+    case 'force':
+    case 'bypassPermissions':
+    case 'always-proceed':
+    case 'auto':
+      return '自动批准';
+    case 'plan':
+      return '计划模式';
+    case 'acceptEdits':
+      return '允许编辑';
+    default:
+      return stripped;
+  }
+}
+
+export function formatLarkCliStatus(
+  status: NonNullable<StatusInfo['larkCliStatus']>,
+): string {
+  switch (status) {
+    case 'app':
+      return '应用身份';
+    case 'user-ready':
+      return '用户身份已就绪';
+    case 'user-missing':
+      return '用户身份未配置';
+    case 'check-failed':
+      return '检查失败';
+    default: {
+      const _exhaustive: never = status;
+      return _exhaustive;
+    }
+  }
 }
 
 export function statusCard(info: StatusInfo): object {
@@ -98,15 +155,19 @@ export function statusCard(info: StatusInfo): object {
   const queueLine = info.queue
     ? `${info.queue.active}/${info.queue.cap} active, ${info.queue.waiting} waiting`
     : 'unknown';
+  const access = formatStatusRuntimeAccess(info.runtimeAccess);
   const lines = [
     `🧭 **scope**: ${scopeLine}`,
     `🧩 **profile**: ${escapeMd(info.profileName)}`,
     `📁 **cwd**: ${cwdLine}`,
     `🔗 **session**: ${sessionLine}`,
     `🤖 **agent**: ${escapeMd(info.agentName)}`,
-    `🛡 **${escapeMd(info.runtimeAccess.label)}**: ${escapeMd(info.runtimeAccess.value)}`,
-    ...(info.larkCliStatus ? [`🔐 **lark-cli**: ${info.larkCliStatus}`] : []),
-    `🏃 **active run**: ${info.activeRun ? 'yes' : 'no'}`,
+    `🛡 **${escapeMd(access.label)}**: ${escapeMd(access.value)}`,
+    ...(info.larkCliStatus ? [`🔐 **lark-cli**: ${formatLarkCliStatus(info.larkCliStatus)}`] : []),
+    `🏃 **active run**: ${info.activeRun || info.chatBusy ? 'yes' : 'no'}`,
+    ...(info.chatBusy || (info.chatWaiting ?? 0) > 0
+      ? [`📬 **chat queue**: ${info.chatBusy ? 'busy' : 'idle'}, ${info.chatWaiting ?? 0} waiting`]
+      : []),
     ...(info.activeScopes && info.activeScopes.length > 0
       ? [
           `🏃 **active scopes**: ${info.activeScopes.map((scope) => `\`${escapeCode(scope)}\``).join(', ')}`,
@@ -219,7 +280,7 @@ export function helpCard(agentName = 'Agent'): object {
         '- `/status` — 当前状态',
         '- `/stop` — 结束当前正在跑的任务（也可点卡片底部 ⏹ 终止 按钮）',
         '- `/stop comment:<scopeHash>` — 管理员停止云文档评论任务',
-        '- `/timeout [N|off|default]` — 当前 session 的探活分钟数,`/config` 改全局默认',
+        '- `/timeout [N|0|off|default]` — 当前 session 的探活分钟数,`/config` 改全局默认',
         '- `/timeout comment:<scopeHash> N` — 管理员设置云文档评论任务探活',
         '- `/ps` — 列出本机所有 bot,标识当前正在回复的那个',
         '- `/exit <id|#>` — 关掉指定 bot(用 `/ps` 看 id/序号)',

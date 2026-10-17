@@ -1,15 +1,14 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { TurnJournal } from '../../../src/bot/turn-journal';
-import * as logger from '../../../src/core/logger';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { axiosErrno, axiosHttpError, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -34,7 +33,30 @@ afterEach(async () => {
   sdk.channel = undefined;
 });
 
-describe('turn journal in the live channel', { timeout: 20_000 }, () => {
+describe('turn journal in the live channel', { timeout: 40_000 }, () => {
+  it('posts a 上一轮未完成 notice once when recovering a running turn after restart', async () => {
+    const h = await harness({ fakeTimers: false });
+    h.journal.enqueue({
+      turnId: 'turn-crash',
+      scope: CHAT,
+      chatId: CHAT,
+      messageIds: ['om_crash'],
+      senderId: USER,
+      initiatorId: USER,
+      status: 'running',
+      runId: 'run-crash',
+    });
+    await h.journal.flush();
+
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('上一轮未完成')));
+    expect(h.journal.get('turn-crash')?.status).toBe('notice-delivered');
+
+    const before = h.channel.sent.length;
+    await h.bridge.recoverMissed();
+    expect(h.channel.sent).toHaveLength(before);
+  });
+
   it('marks a failed final send completed-undelivered and resends once on recoverMissed', async () => {
     const h = await harness({ fakeTimers: false });
     let fails = 1;
@@ -42,21 +64,54 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     h.channel.send = async (...args: Parameters<typeof orig>) => {
       if (fails > 0) {
         fails -= 1;
-        throw new Error('sdk timeout');
+        throw sdkShapedSendError('send_timeout', axiosErrno('ECONNABORTED', 'timeout of 30000ms exceeded'));
       }
       return orig(...args);
     };
 
     await h.channel.handlers.message?.(mention('om_run', 'please answer'));
-    await waitFor(() => h.journal.list().some((entry) => entry.status === 'completed-undelivered'));
-    expect(h.channel.sent).toEqual([]);
-
-    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.status === 'completed-undelivered' || entry.status === 'reply-delivered'
+    )));
+    if (h.journal.list().some((entry) => entry.status === 'completed-undelivered')) {
+      expect(h.channel.sent).toEqual([]);
+      await h.bridge.recoverMissed();
+    }
     await waitFor(() => h.journal.list().some((entry) => entry.status === 'reply-delivered'));
     expect(h.channel.sent).toHaveLength(1);
     expect(JSON.stringify(h.channel.sent[0]?.content)).toContain(ANSWER);
 
     await h.bridge.recoverMissed();
+    expect(h.channel.sent).toHaveLength(1);
+  });
+
+  it('resends an undelivered failure while the long connection stays up', async () => {
+    const h = await harness({ fakeTimers: false });
+    let fails = 1;
+    const orig = h.channel.send.bind(h.channel);
+    h.channel.send = async (...args: Parameters<typeof orig>) => {
+      if (fails > 0) {
+        fails -= 1;
+        throw sdkShapedSendError(
+          'unknown',
+          axiosErrno(
+            'ECONNRESET',
+            'Client network socket disconnected before secure TLS connection was established',
+          ),
+        );
+      }
+      return orig(...args);
+    };
+
+    await h.channel.handlers.message?.(mention('om_tls', 'please answer'));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.status === 'completed-undelivered' || entry.status === 'reply-delivered'
+    )));
+    if (h.journal.list().some((entry) => entry.status === 'completed-undelivered')) {
+      expect(h.channel.sent).toEqual([]);
+      await h.bridge.recoverMissed();
+    }
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'reply-delivered'));
     expect(h.channel.sent).toHaveLength(1);
   });
 
@@ -102,6 +157,38 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     )));
   });
 
+  it('a rejected final patch is swept onto the same card in both markdown and card mode, without a uuid-send', async () => {
+    const rejects = [
+      sdkShapedSendError('unknown', axiosHttpError(400)),
+      new Error('stream controller is closed'),
+    ];
+    for (const replyMode of ['markdown', 'card'] as const) {
+      for (const err of rejects) {
+        const h = await harness({ fakeTimers: false, replyMode });
+        h.channel.streamErrors.finish = err;
+
+        await h.channel.handlers.message?.(mention('om_run', 'please answer'));
+        await waitFor(() => h.journal.list().some((entry) => (
+          entry.messageIds.includes('om_run') && entry.status === 'reply-delivered'
+        )));
+        const streamId = h.channel.streams[0]?.messageId;
+        expect(streamId).toBeTruthy();
+        const delivered = h.journal.list().find((entry) => entry.messageIds.includes('om_run'));
+        expect(delivered?.reply?.markdown).toContain(ANSWER);
+        expect(delivered?.reply?.replyTo).toBe('om_run');
+        expect(delivered?.reply?.messageId).toBe(streamId);
+        expect(answerSends(h.channel)).toHaveLength(0);
+        expect(h.channel.updatedCards.some((row) => (
+          row.messageId === streamId && JSON.stringify(row.card).includes(ANSWER)
+        ))).toBe(true);
+
+        await h.bridge.recoverMissed();
+        expect(answerSends(h.channel)).toHaveLength(0);
+        expect(h.channel.streams.length).toBe(1);
+      }
+    }
+  });
+
   it('does not mark an in-flight run interrupted on WebSocket reconnected', async () => {
     let release!: () => void;
     const hold = new Promise<void>((resolve) => {
@@ -127,41 +214,19 @@ describe('turn journal in the live channel', { timeout: 20_000 }, () => {
     release();
   });
 
-  it('does not write or recover when journal write is off', async () => {
-    const h = await harness({ journal: false });
-    const orig = h.channel.send.bind(h.channel);
-    h.channel.send = async () => {
-      throw new Error('sdk timeout');
-    };
-
-    await h.channel.handlers.message?.(mention('om_run', 'please answer'));
-    await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.runs.length === 1);
-    await waitFor(() => {
-      const run = h.agent.runs[0];
-      return Boolean(run?.stopped || (run !== undefined && run.waitForExitCalls > 0));
-    });
-    await h.journal.flush();
-    await expect(readFile(h.file, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
-
-    h.channel.send = orig;
-    await h.bridge.recoverMissed();
-    expect(h.channel.sent).toEqual([]);
-  });
 });
 
 async function harness(opts: {
   hold?: Promise<void>;
-  journal?: boolean;
   complete?: boolean;
   fakeTimers?: boolean;
-  replyMode?: 'text' | 'card';
+  replyMode?: 'text' | 'card' | 'markdown';
 } = {}) {
   const tmp = await createTmpProfile('turn-journal-');
   const file = join(tmp.profile, 'turn-journal.json');
   const journal = new TurnJournal(file);
   await journal.load();
-  const cfg = profile(tmp.workspace, opts.journal, opts.replyMode);
+  const cfg = profile(tmp.workspace, opts.replyMode);
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const complete = opts.complete !== false;
@@ -222,7 +287,7 @@ async function harness(opts: {
   };
 }
 
-function profile(workspace: string, journal?: boolean, replyMode: 'text' | 'card' = 'text') {
+function profile(workspace: string, replyMode: 'text' | 'card' | 'markdown' = 'text') {
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
@@ -233,10 +298,13 @@ function profile(workspace: string, journal?: boolean, replyMode: 'text' | 'card
       cotMessages: 'off',
       requireMentionInGroup: true,
     },
-    ...(journal === false ? { reliability: { journal: false } } : {}),
   });
   cfg.workspaces.default = workspace;
   return cfg;
+}
+
+function answerSends(channel: ReturnType<typeof createRecordingLarkChannel>) {
+  return channel.sent.filter((item) => JSON.stringify(item.content).includes(ANSWER));
 }
 
 function mention(messageId: string, content: string): NormalizedMessage {

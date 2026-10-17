@@ -2,8 +2,9 @@ import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadTestBridgeConfig } from '../config';
 import { down, killCli, up } from '../driver';
-import { armFault } from '../fault-state';
+import { armFault, clearFaults } from '../fault-state';
 import { DEFAULT_LOCAL_CONFIG, faultDirPath } from '../paths';
+import { runWithCleanup } from '../scenario-cleanup';
 import { readTesterMessages, sendTesterMessage } from '../tester';
 
 export interface JournalKillGroupResult {
@@ -24,28 +25,36 @@ export async function runJournalKillGroup(opts: {
   startBridge?: boolean;
 }): Promise<JournalKillGroupResult> {
   const config = await loadTestBridgeConfig(opts.configPath ?? DEFAULT_LOCAL_CONFIG);
+  const faultDir = faultDirPath(config.dataRoot);
   if (opts.startBridge) {
     await up({ config, realCli: opts.realCli === true });
   }
-  await armFault(faultDirPath(config.dataRoot), { mode: 'hang', sticky: true });
-  const token = `e2e-journal-${Date.now().toString(36)}`;
-  await sendTesterMessage(config, `continue ${token}`);
-  await sleep(2_000);
-  await killCli(config.dataRoot, 'process-group');
-  await sleep(1_000);
-  await down(config.dataRoot).catch(() => {});
-  await up({ config, realCli: opts.realCli === true });
-  await sleep(8_000);
-  const logText = await readBridgeLogs(config.dataRoot);
-  const recovered = countJournalRecovered(logText);
-  await readTesterMessages(config, { pageSize: 5 }).catch(() => []);
-  return {
-    recoveredLog: recovered === 1,
-    childSurvivedGroupKill: 'unknown',
-    note: recovered === 1
-      ? 'journal.recovered appeared once after process-group kill and restart.'
-      : `journal.recovered count=${recovered} after process-group kill and restart; inspect local logs.`,
-  };
+  return runWithCleanup(
+    async () => {
+      await armFault(faultDir, { mode: 'hang', sticky: true });
+      const token = `e2e-journal-${Date.now().toString(36)}`;
+      await sendTesterMessage(config, `continue ${token}`);
+      await sleep(2_000);
+      await killCli(config.dataRoot, 'process-group');
+      await sleep(1_000);
+      await down(config.dataRoot).catch(() => {});
+      await up({ config, realCli: opts.realCli === true });
+      await sleep(8_000);
+      const logText = await readBridgeLogs(config.dataRoot);
+      const recovered = countJournalRecovered(logText);
+      await readTesterMessages(config, { pageSize: 5 }).catch(() => []);
+      return {
+        recoveredLog: recovered === 1,
+        childSurvivedGroupKill: 'unknown',
+        note: recovered === 1
+          ? 'journal.recovered appeared once after process-group kill and restart.'
+          : `journal.recovered count=${recovered} after process-group kill and restart; inspect local logs.`,
+      };
+    },
+    async () => {
+      await clearFaults(faultDir).catch(() => {});
+    },
+  );
 }
 
 async function readBridgeLogs(dataRoot: string): Promise<string> {

@@ -6,6 +6,7 @@ import type { StartChannelDeps } from '../../../src/bot/channel';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store';
 import { resolveAppPaths } from '../../../src/config/app-paths';
+import { acquireAppRuntimeLock } from '../../../src/runtime/locks';
 import { Supervisor } from '../../../src/runtime/supervisor';
 import { writeVersionExecutable } from '../../helpers/fake-executable';
 
@@ -92,6 +93,57 @@ it('calls recoverMissed on the new bridge after the old disconnect finishes', as
   expect(recoveries).toHaveLength(2);
   expect(recoveries[0]).not.toHaveBeenCalled();
   expect(recoveries[1]).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the swapped bridge and new app lock when recoverMissed rejects', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'ledger-handoff-split-'));
+  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  const paths = resolveAppPaths({ rootDir: root, profile: 'test' });
+  await mkdir(paths.profileDir, { recursive: true });
+  const binary = await writeVersionExecutable(root, 'fake-claude', '1.0.0');
+  const profile = createDefaultProfileConfig({
+    agentKind: 'claude',
+    accounts: { app: { id: 'cli_ledger_a', secret: 'secret', tenant: 'feishu' } },
+  });
+  profile.agent.binaryPath = binary;
+  await saveRootConfig(createRootConfig('test', profile), paths.configFile);
+
+  let started = 0;
+  const startedApps: string[] = [];
+  const supervisor = new Supervisor({
+    configPath: paths.configFile,
+    rootDir: root,
+    runPreflight: false,
+    startChannelFn: async (deps) => {
+      started += 1;
+      startedApps.push(deps.cfg.accounts.app.id);
+      return {
+        channel: { botIdentity: { name: `bot-${deps.cfg.accounts.app.id}` } },
+        disconnect: async () => {},
+        recoverMissed: started === 2
+          ? async () => {
+            throw new Error('journal persist failed');
+          }
+          : async () => {},
+      } as never;
+    },
+  });
+  cleanups.push(() => supervisor.shutdown());
+
+  await supervisor.startProfile('test');
+  profile.accounts.app.id = 'cli_ledger_b';
+  await saveRootConfig(createRootConfig('test', profile), paths.configFile);
+  await expect(supervisor.restartProfile('test')).rejects.toThrow('journal persist failed');
+
+  expect(startedApps).toEqual(['cli_ledger_a', 'cli_ledger_b']);
+  expect(supervisor.controlsFor('test')?.cfg.accounts.app.id).toBe('cli_ledger_b');
+  expect(supervisor.isOnline('test')).toBe(true);
+
+  await expect(
+    acquireAppRuntimeLock(paths, 'cli_ledger_b', 'claude'),
+  ).rejects.toThrow(/already held/);
+  const oldLock = await acquireAppRuntimeLock(paths, 'cli_ledger_a', 'claude');
+  await oldLock.release();
 });
 
 it('fails reconnect when recoverMissed rejects', async () => {

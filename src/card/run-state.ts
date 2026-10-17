@@ -16,7 +16,7 @@ export interface ToolEntry {
 }
 
 export type Block =
-  | { kind: 'text'; content: string; streaming: boolean }
+  | { kind: 'text'; content: string; streaming: boolean; notice?: true }
   | { kind: 'tool'; tool: ToolEntry };
 
 export type FooterStatus = 'thinking' | 'tool_running' | 'streaming' | null;
@@ -67,8 +67,13 @@ export function seedRunState(input: {
   };
 }
 
-export function shouldSkipFinalReply(state: RunState, chatId: string): boolean {
-  return state.terminal === 'done' && state.directImSentChatIds.has(chatId);
+export function shouldSkipFinalReply(
+  state: RunState,
+  chatId: string,
+  extraSentChatIds?: ReadonlySet<string>,
+): boolean {
+  if (state.terminal !== 'done') return false;
+  return state.directImSentChatIds.has(chatId) || extraSentChatIds?.has(chatId) === true;
 }
 
 function closeStreamingText(blocks: Block[]): Block[] {

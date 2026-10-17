@@ -1,5 +1,6 @@
 import type { LarkChannel } from '@larksuite/channel';
 import { log } from '../core/logger';
+import { classify } from './feishu-error';
 
 /**
  * Recover a message's topic `thread_id` (omt_*) via the raw `im.v1.message.get`
@@ -16,8 +17,9 @@ import { log } from '../core/logger';
  * NormalizedMessage path rebuilds a synthetic raw event without `thread_id`, so
  * threadId always comes back undefined.
  *
- * Returns `undefined` on any error or when the message genuinely has no thread
- * (callers fall back to chat-level routing).
+ * Returns `undefined` on a local/rejected lookup error or when the message
+ * genuinely has no thread (callers fall back to chat-level routing). Link-class
+ * failures are rethrown so intake can release its claim.
  */
 export async function lookupMessageThreadId(
   channel: LarkChannel,
@@ -32,6 +34,7 @@ export async function lookupMessageThreadId(
       messageId,
       err: err instanceof Error ? err.message : String(err),
     });
+    if (classify(err) === 'link') throw err;
     return undefined;
   }
 }

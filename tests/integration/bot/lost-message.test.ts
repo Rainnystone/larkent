@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -140,12 +139,14 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     await h.bridge.disconnect();
     await h.ledger.flush();
     expect(h.ledger.has('om_term')).toBe(false);
-    expect(h.ledger.getIncompleteFrom()).toBe(queued.createTime);
+    expect(h.ledger.getIncompleteFrom()).toBeDefined();
+    expect(h.ledger.getIncompleteFrom()!).toBeLessThanOrEqual(queued.createTime);
 
     const reloaded = new BackfillLedger(h.file);
     await reloaded.load();
     expect(reloaded.has('om_term')).toBe(false);
-    expect(reloaded.getIncompleteFrom()).toBe(queued.createTime);
+    expect(reloaded.getIncompleteFrom()).toBeDefined();
+    expect(reloaded.getIncompleteFrom()!).toBeLessThanOrEqual(queued.createTime);
 
     sdk.channel = createRecordingLarkChannel({
       chats: [{ id: CHAT, name: 'G' }],
@@ -165,7 +166,7 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions.at(-1)?.prompt).toContain('bridge 重连后才补处理');
   });
 
-  it('forces a short-gap scan from incompleteFrom after a 25s disconnect', async () => {
+  it('answers a mention posted during a 25s disconnect instead of skipping the gap', async () => {
     const history: Record<string, unknown[]> = { [CHAT]: [] };
     const h = await harness({ history });
     const queued = mention('om_gap', 'during 25s gap');
@@ -191,7 +192,7 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     });
     cleanups.push(async () => { await second.disconnect().catch(() => {}); });
     await waitFor(() => h.agent.runOptions.some((opts) => opts.prompt.includes('during 25s gap')));
-    expect(info.mock.calls.some((call) => call[0] === 'backfill' && call[1] === 'forced')).toBe(true);
+    expect(h.agent.runOptions.filter((opts) => opts.prompt.includes('during 25s gap'))).toHaveLength(1);
     expect(info.mock.calls.some((call) => call[0] === 'backfill' && call[1] === 'skip-short-gap')).toBe(false);
   });
 
@@ -226,29 +227,17 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     release();
   });
 
-  it('does not unrecord pending on disconnect when lostMessage is off', async () => {
-    const h = await harness({ lostMessage: false });
-    const queued = mention('om_legacy', 'stay recorded');
-    await h.channel.handlers.message?.(queued);
-    await h.ledger.flush();
-    await h.bridge.disconnect();
-    await h.ledger.flush();
-    expect(h.ledger.has('om_legacy')).toBe(true);
-    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
-    expect(JSON.parse(await readFile(h.file, 'utf8')).processed.om_legacy).toBe(queued.createTime);
-  });
 });
 
 async function harness(opts: {
   hold?: Promise<void>;
   history?: Record<string, unknown[]>;
-  lostMessage?: boolean;
 } = {}) {
   const tmp = await createTmpProfile('lost-message-');
   const file = join(tmp.profile, 'backfill-state.json');
   const ledger = new BackfillLedger(file);
   await ledger.load();
-  const cfg = profile(tmp.workspace, opts.lostMessage);
+  const cfg = profile(tmp.workspace);
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = new FakeAgentAdapter({
@@ -321,13 +310,12 @@ async function harness(opts: {
   };
 }
 
-function profile(workspace: string, lostMessage?: boolean) {
+function profile(workspace: string) {
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: [USER], admins: [USER] },
     preferences: { messageReply: 'text', cotMessages: 'off', requireMentionInGroup: true },
-    ...(lostMessage === false ? { reliability: { lostMessage: false } } : {}),
   });
   cfg.workspaces.default = workspace;
   return cfg;

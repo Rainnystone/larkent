@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { chmod, mkdir, open, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, open, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createDefaultProfileConfig } from '../../src/config/profile-schema';
 import { createRootConfig, saveRootConfig, writeActiveProfile } from '../../src/config/profile-store';
@@ -10,7 +10,7 @@ import {
   readPidFile,
   readProcessCmdline,
   writePidFile,
-  PidFileError,
+  type TestBridgePidFile,
 } from './pidfile';
 import {
   readProxyState,
@@ -25,6 +25,21 @@ export interface UpOptions {
   config: TestBridgeConfig;
   realCli?: boolean;
   realCliPath?: string;
+  /** When true, regenerate config.json. Otherwise keep an existing file. */
+  resetConfig?: boolean;
+}
+
+export async function shouldRewriteTestBridgeConfig(
+  configPath: string,
+  resetConfig = false,
+): Promise<boolean> {
+  if (resetConfig) return true;
+  try {
+    await access(configPath);
+    return false;
+  } catch {
+    return true;
+  }
 }
 
 export interface RunningBridge {
@@ -54,27 +69,28 @@ export async function up(opts: UpOptions): Promise<RunningBridge> {
   const secretFile = join(config.dataRoot, 'app-secret');
   await writeFile(secretFile, config.appSecret, { mode: 0o600 });
 
-  const profile = createDefaultProfileConfig({
-    agentKind: config.agentKind,
-    binaryPath: SHIM_ENTRY,
-    accounts: {
-      app: {
-        id: config.appId,
-        secret: { source: 'file', id: secretFile },
-        tenant: config.tenant,
-      },
-    },
-    access: {
-      allowedUsers: config.allowedUsers,
-      allowedChats: config.allowedChats,
-      fence: { enabled: true },
-    },
-  });
-  profile.instance = 'test';
-  profile.workspaces = { ...profile.workspaces, default: workspace };
-
   const configPath = join(config.dataRoot, 'config.json');
-  await saveRootConfig(createRootConfig(config.profile, profile), configPath);
+  if (await shouldRewriteTestBridgeConfig(configPath, opts.resetConfig === true)) {
+    const profile = createDefaultProfileConfig({
+      agentKind: config.agentKind,
+      binaryPath: SHIM_ENTRY,
+      accounts: {
+        app: {
+          id: config.appId,
+          secret: { source: 'file', id: secretFile },
+          tenant: config.tenant,
+        },
+      },
+      access: {
+        allowedUsers: config.allowedUsers,
+        allowedChats: config.allowedChats,
+        fence: { enabled: true },
+      },
+    });
+    profile.instance = 'test';
+    profile.workspaces = { ...profile.workspaces, default: workspace };
+    await saveRootConfig(createRootConfig(config.profile, profile), configPath);
+  }
   await writeActiveProfile(config.dataRoot, config.profile);
 
   const env: NodeJS.ProcessEnv = {
@@ -123,18 +139,13 @@ export async function up(opts: UpOptions): Promise<RunningBridge> {
 
 export async function down(dataRoot: string): Promise<void> {
   assertPosix();
-  const file = await readPidFile(pidFilePath(dataRoot));
-  let cmdline: string;
+  let file: TestBridgePidFile;
   try {
-    cmdline = readProcessCmdline(file.pid);
+    file = await requireLiveBridge(dataRoot);
   } catch (err) {
-    if (err instanceof PidFileError) {
-      await stopDetachedProxy(dataRoot);
-      return;
-    }
+    await stopDetachedProxy(dataRoot);
     throw err;
   }
-  assertTestInstanceCmdline(cmdline, file.rootDir);
   await signalPid(file.pid, 'SIGTERM');
   const exited = await waitForPidExit(file.pid, 8_000);
   if (!exited) await signalPid(file.pid, 'SIGKILL');
@@ -167,7 +178,7 @@ export async function killCli(
   variant: 'child-only' | 'process-group',
 ): Promise<void> {
   assertPosix();
-  const file = await readPidFile(pidFilePath(dataRoot));
+  const file = await requireLiveBridge(dataRoot);
   const children = listChildPids(file.pid);
   if (variant === 'process-group') {
     try {
@@ -184,8 +195,15 @@ export async function killCli(
 
 export async function freezeBridge(dataRoot: string, frozen: boolean): Promise<void> {
   assertPosix();
-  const file = await readPidFile(pidFilePath(dataRoot));
+  const file = await requireLiveBridge(dataRoot);
   await signalPid(file.pid, frozen ? 'SIGSTOP' : 'SIGCONT');
+}
+
+async function requireLiveBridge(dataRoot: string): Promise<TestBridgePidFile> {
+  const file = await readPidFile(pidFilePath(dataRoot));
+  const cmdline = readProcessCmdline(file.pid);
+  assertTestInstanceCmdline(cmdline, file.rootDir);
+  return file;
 }
 
 function assertPosix(): void {

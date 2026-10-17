@@ -1,8 +1,29 @@
-import { describe, expect, it } from 'vitest';
-import { ActiveRuns } from '../../../src/bot/active-runs';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { ActiveRuns, noteRunEvent } from '../../../src/bot/active-runs';
 import type { AgentRun } from '../../../src/agent/types';
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe('ActiveRuns lifecycle', () => {
+  it('exposes lastEventAt on register and noteRunEvent advances it', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const active = new ActiveRuns();
+    const run: AgentRun = {
+      runId: 'a',
+      events: (async function* () {})(),
+      stop: async () => {},
+      waitForExit: async () => true,
+    };
+    const handle = active.register('a', run);
+    expect(handle.lastEventAt).toBe(1_700_000_000_000);
+    vi.setSystemTime(1_700_000_030_000);
+    noteRunEvent(handle);
+    expect(handle.lastEventAt).toBe(1_700_000_030_000);
+  });
+
   it('waitForAll reports cleanup failures after every wait has settled', async () => {
     const active = new ActiveRuns();
     const failure = new Error('cleanup failed');

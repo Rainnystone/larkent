@@ -19,6 +19,11 @@ const base: ConfigFormOpts = {
 };
 
 describe('configFormCard console URL', () => {
+  it('describes the 15-minute idle default and 0 as disable', () => {
+    expect(JSON.stringify(configFormCard(base))).toContain('默认 15,0 = 关闭');
+    expect(JSON.stringify(configFormCard(base))).not.toContain('0 = 关闭(默认)');
+  });
+
   it('shows the web console URL when one is running', () => {
     const url = 'http://127.0.0.1:53219/?token=abc123';
     const card = configFormCard({ ...base, consoleUrl: url });

@@ -126,7 +126,25 @@ describe('BackfillLedger', () => {
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
       schemaVersion: 1,
       lastLiveAt: 1_759_000_000_000,
+      processed: { om_old: now - 60_000, om_next: now - 1_000 },
+    });
+  });
+
+  it('loads an old lastBackfillEnd and drops it on the next save', async () => {
+    const now = 1_760_000_000_000;
+    const { file, ledger } = await fixture(() => now);
+    await writeFile(file, `${JSON.stringify({
+      schemaVersion: 1,
+      lastLiveAt: 1_759_000_000_000,
       lastBackfillEnd: 1_759_500_000_000,
+      processed: { om_old: now - 60_000 },
+    }, null, 2)}\n`);
+    await ledger.load();
+    ledger.record('om_next', now - 1_000);
+    await ledger.flush();
+    expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
+      schemaVersion: 1,
+      lastLiveAt: 1_759_000_000_000,
       processed: { om_old: now - 60_000, om_next: now - 1_000 },
     });
   });
@@ -299,15 +317,44 @@ describe('BackfillLedger', () => {
     const reloaded = new BackfillLedger(file, { now: () => now });
     await reloaded.load();
     expect(reloaded.getIncompleteFrom()).toBe(now - 60_000);
-    reloaded.markScanComplete(now, now);
+    reloaded.markScanComplete(now, now, now - 60_000);
     await reloaded.flush();
     expect(reloaded.getIncompleteFrom()).toBeUndefined();
+    expect(reloaded.getLastBackfillEnd()).toBe(now);
     expect(JSON.parse(await readFile(file, 'utf8'))).toEqual({
       schemaVersion: 1,
-      lastLiveAt: now,
-      lastBackfillEnd: now,
+      lastLiveAt: now - 60_000,
       processed: {},
     });
+  });
+
+  it('keeps an incompleteFrom that was set after the completing scan started', async () => {
+    const now = 1_760_000_000_000;
+    const { ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.touchLive(now - 60_000);
+    const epoch = ledger.getIncompleteEpoch();
+    ledger.markScanIncomplete(now - 5_000);
+    ledger.markScanComplete(now, now, undefined, epoch);
+    expect(ledger.getIncompleteFrom()).toBe(now - 5_000);
+  });
+
+  it('keeps incompleteFrom when a mid-scan mark does not change the numeric min', async () => {
+    const now = 1_760_000_000_000;
+    const { ledger } = await fixture(() => now);
+    await ledger.load();
+    ledger.markScanIncomplete(100);
+    const epoch = ledger.getIncompleteEpoch();
+    expect(ledger.getIncompleteFrom()).toBe(100);
+
+    ledger.markScanIncomplete(200);
+    ledger.markScanComplete(now, now, 100, epoch);
+    expect(ledger.getIncompleteFrom()).toBe(100);
+
+    const again = ledger.getIncompleteEpoch();
+    ledger.markScanIncomplete(100);
+    ledger.markScanComplete(now, now, 100, again);
+    expect(ledger.getIncompleteFrom()).toBe(100);
   });
 
   it('touchLive writes lastLiveAt, exposes getters, and persists at most once per 30s', async () => {

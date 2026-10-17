@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
+import { PendingQueue } from '../../../src/bot/pending-queue.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
@@ -22,6 +23,7 @@ interface Harness {
   workspaces: WorkspaceStore;
   activeRuns: ActiveRuns;
   pool: ProcessPool;
+  pending?: PendingQueue;
   agent: FakeAgentAdapter;
   controls: Controls;
   ledger?: BackfillLedger;
@@ -38,7 +40,7 @@ describe('/status and /doctor diagnostics', () => {
 
   it('shows passive status for active run, queue, stale session, and owner API state', async () => {
     const h = await createHarness({ configuredWorkspace: true });
-    h.sessions.set('chat-1', 'sess-old', '/old');
+    h.sessions.set('chat-1', 'sess-old', '/old', 'claude');
     const activeRun = h.agent.run({ runId: 'run-active', prompt: 'running' }) as FakeAgentRun;
     h.activeRuns.register('chat-1', activeRun);
     const release = await h.pool.acquire();
@@ -57,9 +59,27 @@ describe('/status and /doctor diagnostics', () => {
     expect(status).toContain('owner API');
     expect(status).toContain('profile');
     expect(status).toContain('claude');
-    expect(status).toContain('permission');
-    expect(status).toContain('plan');
+    expect(status).toContain('权限');
+    expect(status).toContain('计划模式');
     expect(status).not.toContain('bypassPermissions');
+  });
+
+  it('shows chat-queue busy and waiting when a flush is blocked after the run ends', async () => {
+    const h = await createHarness({ configuredWorkspace: true });
+    const pending = new PendingQueue(600, () => {});
+    pending.block('chat-1');
+    pending.push('chat-1', message('queued-one'));
+    pending.push('chat-1', message('queued-two'));
+    h.pending = pending;
+
+    await expect(h.run('/status')).resolves.toBe(true);
+
+    const status = JSON.stringify(lastContent(h.channel));
+    expect(status).toContain('active run');
+    expect(status).toContain('yes');
+    expect(status).toContain('chat queue');
+    expect(status).toContain('busy');
+    expect(status).toContain('2 waiting');
   });
 
   it('runs only self-checks when no cwd is selected', async () => {
@@ -71,7 +91,7 @@ describe('/status and /doctor diagnostics', () => {
     expect(lastMarkdownOrText(h.channel)).toContain('未设置工作目录');
     expect(lastMarkdownOrText(h.channel)).toContain('self-check');
     expect(lastMarkdownOrText(h.channel)).toContain(
-      'backfill: enabled=true dryRun=false lookbackMs=21600000 minGapMs=60000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
+      'backfill: enabled=true dryRun=false lookbackMs=21600000 maxChats=50 maxRawPerChat=200 maxMentionsPerChat=20 chats=all',
     );
     expect(lastMarkdownOrText(h.channel)).toContain(
       'self-heal: ledger=unavailable lastLiveAt=not yet recorded processed=0',
@@ -109,7 +129,6 @@ describe('/status and /doctor diagnostics', () => {
       enabled: false,
       dryRun: true,
       lookbackMs: 3_600_000,
-      minGapMs: 15_000,
       maxChats: 4,
       maxRawPerChat: 10,
       maxMentionsPerChat: 2,
@@ -120,7 +139,7 @@ describe('/status and /doctor diagnostics', () => {
     await expect(h.run('/doctor')).resolves.toBe(true);
 
     expect(lastMarkdownOrText(h.channel)).toContain(
-      'backfill: enabled=false dryRun=true lookbackMs=3600000 minGapMs=15000 maxChats=4 maxRawPerChat=10 maxMentionsPerChat=2 chats=oc_only',
+      'backfill: enabled=false dryRun=true lookbackMs=3600000 maxChats=4 maxRawPerChat=10 maxMentionsPerChat=2 chats=oc_only',
     );
   });
 
@@ -246,6 +265,7 @@ async function createHarness(options: {
         agent,
         activeRuns,
         processPool: pool,
+        pending: harness.pending,
         runExecutor: executor,
         controls,
         ledger: harness.ledger,

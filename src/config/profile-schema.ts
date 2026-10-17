@@ -31,65 +31,10 @@ export interface AccessFenceConfig {
 
 export interface ReliabilityConfig {
   /**
-   * Lost-message recovery. Default on (bugfix). Off matches master:
-   * accepted pending stays recorded if it is dropped.
-   */
-  lostMessage?: boolean;
-  /**
-   * Force a history scan even when the WS gap is below `minGapMs`.
-   * Default off (master skip-short-gap) until a live redelivery result
-   * says Feishu will not replay the gap.
-   */
-  shortGapScan?: boolean;
-  /**
-   * RunOutcome model: keep real terminal events after stop, and distinguish
-   * runner timeout from the idle watchdog on the card. Default on. Off
-   * matches master (drop non-system events after interrupt; timeout renders
-   * as idle_timeout).
-   */
-  runOutcome?: boolean;
-  /**
-   * CLI stderr signature matching and redacted card copy. Default on. Off
-   * matches master (no signature table; cards show truncated raw stderr).
-   */
-  cliSignatures?: boolean;
-  /**
-   * Turn journal writes. Default on. Off matches master (no `turn-journal.json`).
-   */
-  journal?: boolean;
-  /**
-   * Journal recovery (undelivered resend + orphan reaping). Default on when
-   * writes are on. Off skips those actions while still allowing writes.
-   */
-  journalRecover?: boolean;
-  /**
-   * Interruption notice card. Default off (matches ticket 4). On sends a
-   * new @-initiator continue/dismiss notice after a qualifying outcome.
+   * @deprecated Notices are always on. Old profiles may still contain
+   * `notice`; the loader strips it.
    */
   notice?: boolean;
-}
-
-export function getReliabilityConfig(
-  profile: Pick<ProfileConfig, 'reliability'>,
-): {
-  lostMessage: boolean;
-  shortGapScan: boolean;
-  runOutcome: boolean;
-  cliSignatures: boolean;
-  journal: boolean;
-  journalRecover: boolean;
-  notice: boolean;
-} {
-  const journal = profile.reliability?.journal !== false;
-  return {
-    lostMessage: profile.reliability?.lostMessage !== false,
-    shortGapScan: profile.reliability?.shortGapScan === true,
-    runOutcome: profile.reliability?.runOutcome !== false,
-    cliSignatures: profile.reliability?.cliSignatures !== false,
-    journal,
-    journalRecover: journal && profile.reliability?.journalRecover !== false,
-    notice: profile.reliability?.notice === true,
-  };
 }
 
 export interface ProfileAccess {
@@ -256,7 +201,7 @@ export interface ProfileConfig {
   /** In-meeting agent settings. See {@link MeetingConfig}. */
   meeting: MeetingConfig;
   larkCli: LarkCliConfig;
-  /** Run-reliability switches. Omitted keys use the defaults in {@link getReliabilityConfig}. */
+  /** Legacy key. Loaders strip it; interruption notices are always on. */
   reliability?: ReliabilityConfig;
 }
 
@@ -504,36 +449,10 @@ function logBackfillWarning(warning: BackfillNormalizeWarning): void {
   }
 }
 
-function normalizeReliability(input: unknown): ReliabilityConfig | undefined {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
-  const raw = input as Record<string, unknown>;
-  const lostMessage = raw.lostMessage === false ? false : undefined;
-  const shortGapScan = raw.shortGapScan === true ? true : undefined;
-  const runOutcome = raw.runOutcome === false ? false : undefined;
-  const cliSignatures = raw.cliSignatures === false ? false : undefined;
-  const journal = raw.journal === false ? false : undefined;
-  const journalRecover = raw.journalRecover === false ? false : undefined;
-  const notice = raw.notice === true ? true : undefined;
-  if (
-    lostMessage === undefined
-    && shortGapScan === undefined
-    && runOutcome === undefined
-    && cliSignatures === undefined
-    && journal === undefined
-    && journalRecover === undefined
-    && notice === undefined
-  ) {
-    return undefined;
-  }
-  return {
-    ...(lostMessage === false ? { lostMessage: false } : {}),
-    ...(shortGapScan === true ? { shortGapScan: true } : {}),
-    ...(runOutcome === false ? { runOutcome: false } : {}),
-    ...(cliSignatures === false ? { cliSignatures: false } : {}),
-    ...(journal === false ? { journal: false } : {}),
-    ...(journalRecover === false ? { journalRecover: false } : {}),
-    ...(notice === true ? { notice: true } : {}),
-  };
+function normalizeReliability(_input: unknown): ReliabilityConfig | undefined {
+  // Drop the leftover notice toggle and the six match-master flags.
+  // Notices are always on; old profiles load and save without the key.
+  return undefined;
 }
 
 function normalizeAccess(

@@ -1,6 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { CursorJsonlTranslator } from '../../../src/agent/cursor/jsonl';
 import type { AgentEvent } from '../../../src/agent/types';
+import { log } from '../../../src/core/logger';
 
 const SESSION = 'c6b62c6f-7ead-4fd6-9922-e952131177ff';
 
@@ -381,6 +382,29 @@ describe('CursorJsonlTranslator', () => {
       ]),
     ).toEqual([]);
     expect(t.protocolDrift()).toEqual({ unknownEvents: 1, anomalies: 2 });
+  });
+
+  it('treats connection and retry as known stream-reconnect events, not unknown_event', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const t = new CursorJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      { type: 'connection', attempt: 1 },
+      { type: 'retry', attempt: 2 },
+      { type: 'connection' },
+      { type: 'retry' },
+      RESULT,
+    ]);
+    expect(events).toEqual([
+      { type: 'system', resumeHandle: SESSION, cwd: '/Users/user/project', model: 'Composer 2.5' },
+      { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+    expect(warn.mock.calls.some((call) => call[0] === 'jsonl' && call[1] === 'unknown_event')).toBe(false);
+    expect(info.mock.calls.filter((call) => call[0] === 'jsonl' && call[1] === 'stream-reconnect')).toHaveLength(4);
+    info.mockRestore();
+    warn.mockRestore();
   });
 
   it('ignores thinking lines without counting them as protocol drift', () => {

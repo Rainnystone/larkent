@@ -38,7 +38,6 @@ describe('backfill on connect', () => {
     const h = await startHarness({ lastLiveAt: undefined });
     await waitFor(() => h.ledger.getLiveAt() !== undefined);
     expect(h.agent.runOptions).toHaveLength(0);
-    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
   it('hands missed mentions to intake and adds one lateness hint for a merged batch', async () => {

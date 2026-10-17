@@ -1,4 +1,4 @@
-import { descriptorFor } from '../agent/registry';
+import { descriptorFor, type AgentKind } from '../agent/registry';
 import { resolveModelArg } from '../agent/models';
 import type { AgentCapability } from '../agent/capability';
 import type { AgentEvent } from '../agent/types';
@@ -79,6 +79,34 @@ export interface RecordRunSessionEventInput {
   event: AgentEvent;
 }
 
+export interface ResolveRunResumeHandleInput {
+  sessionCatalog?: SessionCatalog;
+  sessions: SessionStore;
+  scopeId: string;
+  agentId: AgentKind;
+  cwdRealpath: string;
+  policyFingerprint: string;
+  allowSessionStore?: boolean;
+}
+
+/**
+ * Same source of truth `startRunFlow` uses: catalog first, then SessionStore
+ * only for session-resume CLIs. Thread-resume CLIs (Codex) keep their handle
+ * in the catalog, so a SessionStore lookup would miss an existing thread.
+ */
+export function resolveRunResumeHandle(input: ResolveRunResumeHandleInput): string | undefined {
+  const catalogHandle = input.sessionCatalog?.activeFor({
+    scopeId: input.scopeId,
+    agentId: input.agentId,
+    cwdRealpath: input.cwdRealpath,
+    policyFingerprint: input.policyFingerprint,
+  })?.resumeHandle;
+  if (catalogHandle) return catalogHandle;
+  if (input.allowSessionStore === false) return undefined;
+  if (descriptorFor(input.agentId).resume.label !== 'session') return undefined;
+  return input.sessions.resumeFor(input.scopeId, input.cwdRealpath, input.agentId);
+}
+
 export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFlowResult> {
   const requestedCwd =
     input.workspaces.cwdFor(input.scopeId) ?? input.profileConfig.workspaces.default ?? '';
@@ -126,20 +154,23 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   } else if (typeof forceHandle === 'string') {
     resumeFrom = forceHandle;
   } else {
-    if (input.sessionCatalog) {
-      const catalogEntry = input.sessionCatalog.activeFor({
-        scopeId: input.scopeId,
-        agentId: input.capability.agentId,
-        cwdRealpath: workspace.cwdRealpath,
-        policyFingerprint: policy.policyFingerprint,
-      });
-      resumeFrom = catalogEntry?.resumeHandle;
-    }
-    if (!resumeFrom && descriptorFor(input.capability.agentId).resume.label === 'session') {
-      resumeFrom = input.sessions.resumeFor(input.scopeId, workspace.cwdRealpath);
-      const stale = input.sessions.getRaw(input.scopeId);
-      if (!resumeFrom && stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
-        input.sessions.clear(input.scopeId);
+    resumeFrom = resolveRunResumeHandle({
+      sessionCatalog: input.sessionCatalog,
+      sessions: input.sessions,
+      scopeId: input.scopeId,
+      agentId: input.capability.agentId,
+      cwdRealpath: workspace.cwdRealpath,
+      policyFingerprint: policy.policyFingerprint,
+      allowSessionStore: input.forceResumeFingerprint === undefined,
+    });
+    if (
+      !resumeFrom
+      && input.forceResumeFingerprint === undefined
+      && descriptorFor(input.capability.agentId).resume.label === 'session'
+    ) {
+      const stale = input.sessions.getRaw(input.scopeId, input.profileConfig.agentKind);
+      if (stale?.cwd && stale.cwd !== workspace.cwdRealpath) {
+        input.sessions.clear(input.scopeId, input.profileConfig.agentKind);
       }
     }
   }
@@ -196,7 +227,7 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
   if (input.event.type !== 'system' || !input.event.resumeHandle) return;
   const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
   if (descriptorFor(input.capability.agentId).resume.label === 'session') {
-    input.sessions.set(input.scopeId, input.event.resumeHandle, cwdRealpath);
+    input.sessions.set(input.scopeId, input.event.resumeHandle, cwdRealpath, input.capability.agentId);
   }
   input.sessionCatalog?.upsertActive({
     scopeId: input.scopeId,

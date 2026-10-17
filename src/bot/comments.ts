@@ -252,8 +252,8 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
         : undefined;
       const storeHandle =
         canResumeAgentSession && descriptorFor(capability.agentId).resume.label === 'session'
-          ? sessions.resumeFor(docSessionScopeId, cwdRealpath) ??
-            sessions.resumeFor(legacyDocSessionScopeId, cwdRealpath)
+          ? sessions.resumeFor(docSessionScopeId, cwdRealpath, capability.agentId) ??
+            sessions.resumeFor(legacyDocSessionScopeId, cwdRealpath, capability.agentId)
           : undefined;
       const resumeHandle = canResumeAgentSession
         ? catalogEntry?.resumeHandle ?? storeHandle
@@ -342,7 +342,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             e.type === 'system' &&
             e.resumeHandle
           ) {
-            sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath);
+            sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath, capability.agentId);
           }
           // Preserve the final session event, but never post an interrupted answer.
           if (execution.handle.interrupted) continue;

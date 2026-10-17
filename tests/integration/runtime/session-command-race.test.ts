@@ -147,7 +147,7 @@ it('keeps a selected resume handle after the old stopped run drains', async () =
     selection = { nonce, identity };
     return nonce;
   });
-  h.sessions.set('oc_test', 'chosen-history-handle', h.root);
+  h.sessions.set('oc_test', 'chosen-history-handle', h.root, 'kimi');
   const command = {
     messageId: 'om_resume', chatId: 'oc_test', chatType: 'p2p', senderId: 'ou_user',
     content: '/resume', rawContentType: 'text', resources: [], mentionedBot: true,
@@ -241,7 +241,7 @@ it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished w
     selection = { nonce, identity };
     return nonce;
   });
-  h.sessions.set('oc_test', 'chosen-history-handle', h.root);
+  h.sessions.set('oc_test', 'chosen-history-handle', h.root, 'kimi');
   if (command === '/resume use') {
     vi.spyOn(h.channel as unknown as LarkChannel, 'getChatMode').mockResolvedValue('p2p');
     await sendCommand(h.channel, '/resume');
@@ -256,6 +256,7 @@ it.each(['/new', '/reset', '/cd', '/resume use'])('preserves %s after finished w
         await rendererRelease.promise;
       }
     } });
+    return { messageId: 'om_stream' };
   });
   try {
     await send(h.channel);

@@ -63,6 +63,7 @@ interface FakeLarkChannel {
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
   getConnectionStatus(): { state: 'connected'; reconnectAttempts: number };
+  getAppInfo(): Promise<{ ownerId: string }>;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<void>;
   addReaction(messageId: string, emojiType: string): Promise<string>;
@@ -125,8 +126,6 @@ describe('markdown stream startup failures', () => {
     const streamFailure = deferred<void>();
     let streamProducerStarted = false;
     const h = await createHarness({
-      // The first run has to stream something, or no progress stream is opened
-      // at all and there is no late failure to log.
       events: [
         [
           { type: 'text', delta: 'progress update' },
@@ -152,16 +151,8 @@ describe('markdown stream startup failures', () => {
     const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
     await startTestBridge(h);
 
-    await h.channel.handlers.message?.(message('om_first', 'first'));
+    void h.channel.handlers.message?.(message('om_first', 'first'));
     await waitFor(() => streamProducerStarted);
-    await waitFor(
-      () => h.channel.rawClient.im.v1.messageReaction.delete.mock.calls.length > 0,
-      4500,
-    );
-
-    await h.channel.handlers.message?.(message('om_second', 'second'));
-    await waitFor(() => h.agent.runOptions.length === 2);
-
     streamFailure.reject(new Error('late stream failed'));
 
     await waitFor(() =>
@@ -169,10 +160,14 @@ describe('markdown stream startup failures', () => {
         call[0] === 'stream' &&
         call[1] instanceof Error &&
         call[1].message === 'late stream failed' &&
-        (call[2] as { step?: string } | undefined)?.step === 'stream-terminal-late',
+        (call[2] as { step?: string } | undefined)?.step === 'final-patch',
       ),
+      10_000,
     );
-  }, 10_000);
+
+    await h.channel.handlers.message?.(message('om_second', 'second'));
+    await waitFor(() => h.agent.runOptions.length === 2);
+  }, 15_000);
 
   it('sends one dedicated non-streaming final reply after progress completes', async () => {
     const visibleProgress: string[] = [];
@@ -418,6 +413,117 @@ describe('markdown stream startup failures', () => {
     expect(setContent).not.toHaveBeenCalled();
   }, 15_000);
 
+  it('still sends a Claude streamed reply when the progress stream fails before producing', async () => {
+    const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
+    const h = await createHarness({
+      agentKind: 'claude',
+      messageReply: 'markdown',
+      events: [
+        { type: 'text', delta: 'STREAMED_AFTER_THROW' },
+        { type: 'done', terminationReason: 'normal' },
+      ],
+      stream: async () => {
+        throw new Error('progress stream failed');
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_stream_throw', 'run'));
+    await waitFor(() => h.channel.sent.length === 1);
+
+    expect(lastMarkdown(h.channel)).toContain('STREAMED_AFTER_THROW');
+    expect(
+      fail.mock.calls.some(
+        (call) =>
+          call[0] === 'stream' &&
+          call[1] instanceof Error &&
+          call[1].message === 'progress stream failed',
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    { name: 'stream rejects first', delayMs: 0 },
+    { name: 'agent finishes first', delayMs: 80 },
+  ])('sends one Claude markdown final when the first setContent fails ($name)', async ({ delayMs }) => {
+    const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
+    const h = await createHarness({
+      agentKind: 'claude',
+      messageReply: 'markdown',
+      events: [
+        { type: 'text', delta: 'RENDER_AFTER_FIRST_UPDATE_FAIL' },
+        { type: 'done', terminationReason: 'normal' },
+      ],
+      stream: async (_chatId, input) => {
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const producer = (input as {
+          markdown?: (ctrl: { setContent(markdown: string): Promise<void> }) => Promise<void>;
+        }).markdown;
+        await producer?.({
+          setContent: async () => {
+            throw new Error('first render failed');
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first_setcontent_fail', 'run'));
+    await waitFor(() => h.channel.sent.length === 1, 8000);
+
+    expect(h.channel.sent).toHaveLength(1);
+    expect(lastMarkdown(h.channel)).toContain('RENDER_AFTER_FIRST_UPDATE_FAIL');
+    expect(
+      fail.mock.calls.some(
+        (call) =>
+          call[0] === 'stream' &&
+          call[1] instanceof Error &&
+          call[1].message === 'first render failed',
+      ),
+    ).toBe(true);
+  });
+
+  it.each([
+    { name: 'stream rejects first', delayMs: 0 },
+    { name: 'agent finishes first', delayMs: 80 },
+  ])('sends one Claude card final when the first update fails ($name)', async ({ delayMs }) => {
+    const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
+    const h = await createHarness({
+      agentKind: 'claude',
+      messageReply: 'card',
+      events: [
+        { type: 'text', delta: 'CARD_AFTER_FIRST_UPDATE_FAIL' },
+        { type: 'done', terminationReason: 'normal' },
+      ],
+      stream: async (_chatId, input) => {
+        if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
+        const producer = (input as {
+          card?: { producer?: (ctrl: { update(next: unknown): Promise<void> }) => Promise<void> };
+        }).card?.producer;
+        await producer?.({
+          update: async () => {
+            throw new Error('first render failed');
+          },
+        });
+      },
+    });
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(message('om_first_update_fail', 'run'));
+    await waitFor(() => h.channel.sent.length === 1, 8000);
+
+    expect(h.channel.sent).toHaveLength(1);
+    expect(JSON.stringify(h.channel.sent[0]?.content)).toContain('CARD_AFTER_FIRST_UPDATE_FAIL');
+    expect(
+      fail.mock.calls.some(
+        (call) =>
+          call[0] === 'stream' &&
+          call[1] instanceof Error &&
+          call[1].message === 'first render failed',
+      ),
+    ).toBe(true);
+  });
+
   it('still sends the final reply when the progress stream fails at completion', async () => {
     const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
     const h = await createHarness({
@@ -446,7 +552,7 @@ describe('markdown stream startup failures', () => {
           call[0] === 'stream' &&
           call[1] instanceof Error &&
           call[1].message === 'progress stream failed' &&
-          (call[2] as { step?: string } | undefined)?.step === 'progress-stream',
+          (call[2] as { step?: string } | undefined)?.step === 'final-patch',
       ),
     ).toBe(true);
   });
@@ -665,6 +771,9 @@ function createFakeLarkChannel(harnessOptions: {
     },
     getConnectionStatus() {
       return { state: 'connected', reconnectAttempts: 0 };
+    },
+    async getAppInfo() {
+      return { ownerId: 'ou_owner' };
     },
     async send(chatId, content, options) {
       sent.push({ chatId, content, options });

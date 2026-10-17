@@ -28,7 +28,7 @@
               "tag": "div",
               "text": {
                 "tag": "lark_md",
-                "content": "🧭 **scope**: `chat-1`\n🧩 **profile**: antigravity\n📁 **cwd**: `<cwd>`\n🔗 **session**: `sess-sla…`\n🤖 **agent**: Antigravity CLI\n🛡 **permission**: always-proceed (agy --dangerously-skip-permissions)\n🔐 **lark-cli**: app\n🏃 **active run**: no\n🚦 **queue**: unknown\n👤 **owner API**: ok owner=present refreshed=2023-11-14T22:13:20.000Z"
+                "content": "🧭 **scope**: `chat-1`\n🧩 **profile**: antigravity\n📁 **cwd**: `<cwd>`\n🔗 **session**: `sess-sla…`\n🤖 **agent**: Antigravity CLI\n🛡 **权限**: 自动批准\n🔐 **lark-cli**: 应用身份\n🏃 **active run**: no\n🚦 **queue**: unknown\n👤 **owner API**: 正常 · 已绑定 刷新于 <local-time>"
               }
             },
             {

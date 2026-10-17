@@ -126,6 +126,131 @@ describe('static architecture contracts', () => {
     expect(read('src/agent/runner/jsonl-cli-runner.ts')).toMatch(/\bspawnProcess\b/);
   });
 
+  it('does not keep leftover in-process continuation maps on the channel', () => {
+    const forbidden = [
+      /\bpendingHintByScope\b/,
+      /\bcontinueByScope\b/,
+      /\bconsecutiveByScope\b/,
+      /\btakeContinueRequest\b/,
+      /\brebuildPendingHints\b/,
+      /\brebuildConsecutive\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+  });
+
+  it('does not keep journal delivery lock, live-notice set, or streamed staging skip', () => {
+    const forbidden = [
+      /\bwithDelivery\b/,
+      /\bisDelivering\b/,
+      /\bnoteDelivery\b/,
+      /\bliveNoticeSends\b/,
+      /\bstageOnly\b/,
+      /\balreadyStreamed\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(read('src/bot/turn-journal.ts')).not.toMatch(
+      /^\s+(async\s+)?update\s*\(\s*turnId/m,
+    );
+    expect(read('src/bot/turn-journal.ts')).toMatch(/\bstageReply\b/);
+    expect(read('src/bot/turn-journal.ts')).toMatch(/\bredeliver\b/);
+  });
+
+  it('does not keep the outbound UUID in-flight guard', () => {
+    const forbidden = [
+      /\binflightByUuid\b/,
+      /\boutboundInFlight\b/,
+      /\battachOutboundUuid\b/,
+      /\bstripOutboundUuid\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(read('src/bot/feishu-link.ts')).toMatch(/wrapChannelOutbound/);
+    expect(read('src/bot/channel.ts')).not.toMatch(/wrapChannelOutbound/);
+    expect(read('src/bot/self-message.ts')).toMatch(/'getChatMode'/);
+    expect(read('src/bot/self-message.ts')).toMatch(/'message\.list'/);
+    expect(read('src/bot/channel.ts')).not.toMatch(/outageEpoch: \(\) => 0/);
+    expect(read('src/bot/channel.ts')).toMatch(/streamReliability\(controls\.profileConfig, \(\) => link\)/);
+    expect(read('package.json')).toMatch(/"@larksuite\/channel@0\.7\.1": "patches\/@larksuite__channel@0\.7\.1\.patch"/);
+    expect(read('patches/@larksuite__channel@0.7.1.patch')).toMatch(/payload\.uuid = args\.uuid/);
+    expect(read('src/bot/feishu-delivery.ts')).toMatch(/\bupdateCard\b/);
+    expect(read('src/bot/feishu-delivery.ts')).not.toMatch(/\bupdateCardById\b/);
+  });
+
+  it('uses one Feishu error classifier and does not time the stream lifetime', () => {
+    const forbidden = [
+      /\bisBusiness4xx\b/,
+      /\bisLinkFailureError\b/,
+      /\bLINK_ERRNO\b/,
+      /\bLINK_MESSAGE\b/,
+    ];
+    const stray: string[] = [];
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(read('src/bot/feishu-error.ts')).toMatch(/\bexport function classify\b/);
+    expect(read('src/bot/feishu-link.ts')).toMatch(/\bclassify\b/);
+    expect(read('src/bot/channel.ts')).toMatch(/\bclassify\b/);
+    expect(read('src/bot/self-message.ts')).not.toMatch(
+      /const OUTBOUND_OPS = \[[^\]]*'stream'[^\]]*\] as const/,
+    );
+  });
+
+  it('does not keep leftover stream remainder or streamFinalized delivery signals', () => {
+    const forbidden = [
+      /\bdeliverUnseenStreamFallback\b/,
+      /\bremainderReplyState\b/,
+      /\bstreamedBody\b/,
+      /\blastStreamedText\b/,
+      /\bvisibleStreamText\b/,
+      /\bStreamPatchStatus\b/,
+      /\bthrowIfStreamPatchFailed\b/,
+      /\bliveStreamFinalize\b/,
+      /\blastStreamPatch\b/,
+      /\bnoteStreamFinalized\b/,
+      /\bstreamFinalized\b/,
+      /\bunseenStreamFallback\b/,
+      /\bfailStreamPatchesAfterFirst\b/,
+    ];
+    const files = [
+      ...collectTsFiles('src'),
+      ...collectTsFiles('tests').filter((file) => file !== 'tests/static/contracts.test.ts'),
+    ];
+    const stray: string[] = [];
+    for (const file of files) {
+      const source = read(file);
+      for (const pattern of forbidden) {
+        if (pattern.test(source)) stray.push(`${file}: ${pattern.source}`);
+      }
+    }
+    expect(stray, stray.join('\n')).toEqual([]);
+    expect(existsSync(join(root, 'src/bot/stream-fallback.ts'))).toBe(false);
+    expect(existsSync(join(root, 'tests/unit/bot/stream-fallback.test.ts'))).toBe(false);
+  });
+
   it('does not keep leftover usesNativeSessionId or usesFinalAnswerReply wrappers', () => {
     const forbidden = [/\busesNativeSessionId\b/, /\busesFinalAnswerReply\b/];
     const webFiles = collectTsFiles('web/src');

@@ -1,8 +1,22 @@
 import { spawn } from 'node:child_process';
-import { readFile, writeFile } from 'node:fs/promises';
+import { unlink, readFile, writeFile } from 'node:fs/promises';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { REPO_ROOT } from './paths';
 import { PROXY_MODES, type FaultProxyMode } from './proxy';
+
+const require = createRequire(import.meta.url);
+
+export function tsxCliPath(): string {
+  return require.resolve('tsx/cli');
+}
+
+export function faultProxySpawnArgv(stateDir: string): { command: string; args: string[] } {
+  return {
+    command: process.execPath,
+    args: [tsxCliPath(), join(REPO_ROOT, 'e2e', 'test-bridge', 'proxy-process.ts'), '--state-dir', stateDir],
+  };
+}
 
 export interface ProxyStateFile {
   pid: number;
@@ -65,15 +79,12 @@ export async function readProxyState(stateDir: string): Promise<ProxyStateFile |
 
 export async function startDetachedProxy(stateDir: string): Promise<ProxyStateFile> {
   await writeProxyMode(stateDir, 'off');
-  const child = spawn(
-    process.execPath,
-    [join(REPO_ROOT, 'node_modules', '.bin', 'tsx'), join(REPO_ROOT, 'e2e', 'test-bridge', 'proxy-process.ts'), '--state-dir', stateDir],
-    {
-      detached: true,
-      stdio: 'ignore',
-      env: process.env,
-    },
-  );
+  const { command, args } = faultProxySpawnArgv(stateDir);
+  const child = spawn(command, args, {
+    detached: true,
+    stdio: 'ignore',
+    env: process.env,
+  });
   child.unref();
   if (!child.pid) throw new Error('failed to spawn fault proxy');
   const state = await waitForProxyState(stateDir, 5_000);
@@ -82,11 +93,17 @@ export async function startDetachedProxy(stateDir: string): Promise<ProxyStateFi
 
 export async function stopDetachedProxy(stateDir: string): Promise<void> {
   const state = await readProxyState(stateDir);
-  if (!state) return;
+  if (state) {
+    try {
+      process.kill(state.pid, 'SIGTERM');
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
+    }
+  }
   try {
-    process.kill(state.pid, 'SIGTERM');
+    await unlink(proxyStatePath(stateDir));
   } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ESRCH') throw err;
+    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
   }
 }
 

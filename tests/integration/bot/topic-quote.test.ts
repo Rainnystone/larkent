@@ -3,6 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
+import { SessionCatalog } from '../../../src/session/catalog.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
@@ -52,6 +53,10 @@ interface FakeLarkChannel {
   getAppInfo: ReturnType<typeof vi.fn>;
   listChats: ReturnType<typeof vi.fn>;
   fetchRawMessage: ReturnType<typeof vi.fn>;
+  /** Identity of the vi.fn; wrapChannelOutbound replaces `fetchRawMessage`. */
+  fetchRawMessageMock: ReturnType<typeof vi.fn>;
+  /** Identity of the vi.fn; wrapMessageList replaces `rawClient.im.v1.message.list`. */
+  messageListMock: ReturnType<typeof vi.fn>;
   recallMessage: ReturnType<typeof vi.fn>;
   on(handlers: MessageHandlerMap): void;
   connect(): Promise<void>;
@@ -93,7 +98,7 @@ describe('topic message quote handling', () => {
     expect(prompt).toContain('"threadId":"omt_topic"');
     expect(prompt).not.toContain('<quoted_messages>');
     expect(prompt).not.toContain('topic root content');
-    expect(h.channel.fetchRawMessage).not.toHaveBeenCalled();
+    expect(h.channel.fetchRawMessageMock).not.toHaveBeenCalled();
   });
 
   it('treats messages with threadId as topic messages even when chat mode cache says group', async () => {
@@ -123,7 +128,7 @@ describe('topic message quote handling', () => {
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).toContain('"threadId":"omt_converted_topic"');
     expect(prompt).not.toContain('<quoted_messages>');
-    expect(h.channel.fetchRawMessage).not.toHaveBeenCalled();
+    expect(h.channel.fetchRawMessageMock).not.toHaveBeenCalled();
     await waitFor(() => h.channel.streams.length === 1);
     expect(h.channel.streams[0]?.options).toMatchObject({
       replyTo: 'om_converted_topic',
@@ -158,7 +163,7 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.fetchRawMessage).toHaveBeenCalledWith('om_topic_start');
+    expect(h.channel.fetchRawMessageMock).toHaveBeenCalledWith('om_topic_start');
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).toContain('"threadId":"omt_backfilled"');
 
@@ -192,7 +197,7 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.fetchRawMessage).toHaveBeenCalledWith('om_no_thread');
+    expect(h.channel.fetchRawMessageMock).toHaveBeenCalledWith('om_no_thread');
     await waitFor(() => h.channel.streams.length === 1);
     expect(h.channel.streams[0]?.options).not.toMatchObject({ replyInThread: true });
   });
@@ -237,7 +242,7 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.rawClient.im.v1.message.list).toHaveBeenCalledWith(
+    expect(h.channel.messageListMock).toHaveBeenCalledWith(
       expect.objectContaining({
         params: expect.objectContaining({
           container_id_type: 'thread',
@@ -270,8 +275,8 @@ describe('topic message quote handling', () => {
         },
       ],
     });
-    // Seed a session for the topic scope so it looks already-engaged.
-    h.sessions.set('oc_topic_chat:omt_existing', 'sess_existing', await realpath(h.tmp.workspace));
+    // Seed a session for this CLI on the topic scope so it looks already-engaged.
+    h.sessions.set('oc_topic_chat:omt_existing', 'sess_existing', await realpath(h.tmp.workspace), 'claude');
 
     await startTestBridge(h);
 
@@ -286,9 +291,159 @@ describe('topic message quote handling', () => {
     );
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(h.channel.rawClient.im.v1.message.list).not.toHaveBeenCalled();
+    expect(h.channel.messageListMock).not.toHaveBeenCalled();
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).not.toContain('<topic_context>');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBe('sess_existing');
+  });
+
+  it('injects topic context on the first turn after a CLI switch instead of resuming the previous CLI', async () => {
+    // Codex then Claude on the same topic: resume is scoped per CLI, so Claude
+    // has no handle. Treat it as a fresh session and inject the thread the
+    // same way a new topic would — otherwise the first turn is blind.
+    const h = await createHarness({
+      chatMode: 'topic',
+      threadMessages: [
+        {
+          message_id: 'om_topic_root',
+          msg_type: 'text',
+          body: { content: JSON.stringify({ text: 'the real upstream question' }) },
+          sender: { id: 'ou_asker', sender_type: 'user' },
+          create_time: '1760000000000',
+          thread_id: 'omt_cli_switch',
+        },
+        {
+          message_id: 'om_switch_at',
+          msg_type: 'text',
+          body: { content: JSON.stringify({ text: '@Bridge 换 CLI 继续' }) },
+          sender: { id: 'ou_user', sender_type: 'user' },
+          create_time: '1760000001000',
+          thread_id: 'omt_cli_switch',
+        },
+      ],
+    });
+    h.sessions.set(
+      'oc_topic_chat:omt_cli_switch',
+      'sess_stale_codex',
+      await realpath(h.tmp.workspace),
+      'codex',
+    );
+
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(
+      message({
+        messageId: 'om_switch_at',
+        rootId: 'om_topic_root',
+        parentId: 'om_topic_root',
+        threadId: 'omt_cli_switch',
+        content: '@Bridge 换 CLI 继续',
+      }),
+    );
+    await waitFor(() => h.agent.runOptions.length === 1);
+
+    expect(h.channel.messageListMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({
+          container_id_type: 'thread',
+          container_id: 'omt_cli_switch',
+        }),
+      }),
+    );
+    const prompt = h.agent.runOptions[0]?.prompt ?? '';
+    expect(prompt).toContain('<topic_context>');
+    expect(prompt).toContain('the real upstream question');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).not.toBe('sess_stale_codex');
+  });
+
+  it('injects topic context on the first Codex turn after Claude, then resumes without reinjecting', async () => {
+    // Claude's handle lives in SessionStore; Codex resume lives in the catalog.
+    // After a CLI switch the first Codex turn has no catalog thread, so it
+    // must inject the topic. The second turn resumes that thread and must
+    // not paste the same 40 messages on top of it.
+    const h = await createHarness({
+      chatMode: 'topic',
+      agentKind: 'codex',
+      threadMessages: [
+        {
+          message_id: 'om_topic_root',
+          msg_type: 'text',
+          body: { content: JSON.stringify({ text: 'the real upstream question' }) },
+          sender: { id: 'ou_asker', sender_type: 'user' },
+          create_time: '1760000000000',
+          thread_id: 'omt_claude_to_codex',
+        },
+        {
+          message_id: 'om_codex_first',
+          msg_type: 'text',
+          body: { content: JSON.stringify({ text: '@Bridge 换 Codex 继续' }) },
+          sender: { id: 'ou_user', sender_type: 'user' },
+          create_time: '1760000001000',
+          thread_id: 'omt_claude_to_codex',
+        },
+      ],
+      agentEvents: [
+        [
+          { type: 'system', resumeHandle: 'thread_codex_1' },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+        [
+          { type: 'system', resumeHandle: 'thread_codex_1' },
+          { type: 'done', terminationReason: 'normal' },
+        ],
+      ],
+    });
+    h.sessions.set(
+      'oc_topic_chat:omt_claude_to_codex',
+      'sess_claude_prior',
+      await realpath(h.tmp.workspace),
+      'claude',
+    );
+
+    await startTestBridge(h);
+
+    await h.channel.handlers.message?.(
+      message({
+        messageId: 'om_codex_first',
+        rootId: 'om_topic_root',
+        parentId: 'om_topic_root',
+        threadId: 'omt_claude_to_codex',
+        content: '@Bridge 换 Codex 继续',
+      }),
+    );
+    await waitFor(() => h.agent.runOptions.length === 1);
+    await waitFor(() =>
+      h.catalog.entries().some((entry) => (
+        entry.agentId === 'codex'
+        && entry.status === 'active'
+        && entry.resumeHandle === 'thread_codex_1'
+      )),
+    );
+
+    const firstPrompt = h.agent.runOptions[0]?.prompt ?? '';
+    expect(firstPrompt).toContain('<topic_context>');
+    expect(firstPrompt).toContain('the real upstream question');
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    expect(h.channel.messageListMock).toHaveBeenCalledTimes(1);
+
+    await waitFor(() => (h.agent.runs[0]?.waitForExitCalls ?? 0) >= 1);
+
+    await h.channel.handlers.message?.(
+      message({
+        messageId: 'om_codex_second',
+        rootId: 'om_topic_root',
+        parentId: 'om_codex_first',
+        threadId: 'omt_claude_to_codex',
+        content: '@Bridge 接着说',
+      }),
+    );
+    await waitFor(() => h.agent.runOptions.length === 2, 4000);
+
+    const secondPrompt = h.agent.runOptions[1]?.prompt ?? '';
+    expect(h.channel.messageListMock).toHaveBeenCalledTimes(1);
+    expect(secondPrompt).not.toContain('<topic_context>');
+    expect(h.agent.runOptions[1]?.resumeHandle).toBe('thread_codex_1');
   });
 
   it('does not open a progress stream when the agent produces no content', async () => {
@@ -380,7 +535,7 @@ describe('topic message quote handling', () => {
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).toContain('<quoted_messages>');
     expect(prompt).toContain('regular quoted content');
-    expect(h.channel.fetchRawMessage).toHaveBeenCalledWith(
+    expect(h.channel.fetchRawMessageMock).toHaveBeenCalledWith(
       'om_quote_target',
       expect.objectContaining({ cardContentType: 'user_card_content' }),
     );
@@ -409,7 +564,7 @@ describe('topic message quote handling', () => {
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).toContain('<quoted_messages>');
     expect(prompt).toContain('topic parent content');
-    expect(h.channel.fetchRawMessage).toHaveBeenCalledWith(
+    expect(h.channel.fetchRawMessageMock).toHaveBeenCalledWith(
       'om_topic_parent',
       expect.objectContaining({ cardContentType: 'user_card_content' }),
     );
@@ -469,20 +624,24 @@ async function createHarness(options: {
   quotedMessages?: Record<string, string>;
   rawThreadIds?: Record<string, string>;
   threadMessages?: Array<Record<string, unknown>>;
-  agentEvents?: AgentEvent[];
+  agentEvents?: AgentEvent[] | AgentEvent[][];
+  agentKind?: 'claude' | 'codex';
 } = {}):Promise<{
   tmp: TmpProfile;
   channel: FakeLarkChannel & { handlers: MessageHandlerMap };
   agent: FakeAgentAdapter;
   sessions: SessionStore;
+  catalog: SessionCatalog;
   workspaces: WorkspaceStore;
   profileConfig: ReturnType<typeof createDefaultProfileConfig>;
   controls: ReturnType<typeof createControls>;
 }> {
   const tmp = await createTmpProfile('topic-quote-');
   const workspace = await realpath(tmp.workspace);
+  const agentKind = options.agentKind ?? 'claude';
   const baseProfileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
+    agentKind,
+    ...(agentKind === 'codex' ? { codex: { binaryPath: '/usr/local/bin/codex' } } : {}),
     accounts: {
       app: {
         id: 'cli_test',
@@ -503,15 +662,18 @@ async function createHarness(options: {
     },
   };
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
+  const catalog = new SessionCatalog(join(tmp.profile, 'sessions.json.catalog.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = new FakeAgentAdapter({
+    id: agentKind,
+    displayName: agentKind,
     events: options.agentEvents ?? [{ type: 'done', terminationReason: 'normal' }],
   });
   const channel = createFakeLarkChannel(options);
   sdkMock.channel = channel;
   const controls = createControls(profileConfig);
   cleanups.push(async () => {
-    await Promise.all([sessions.flush(), workspaces.flush()]);
+    await Promise.all([sessions.flush(), catalog.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
   return {
@@ -519,6 +681,7 @@ async function createHarness(options: {
     channel,
     agent,
     sessions,
+    catalog,
     workspaces,
     profileConfig,
     controls,
@@ -529,6 +692,7 @@ async function startTestBridge(h: {
   profileConfig: ReturnType<typeof createDefaultProfileConfig>;
   agent: FakeAgentAdapter;
   sessions: SessionStore;
+  catalog: SessionCatalog;
   workspaces: WorkspaceStore;
   controls: ReturnType<typeof createControls>;
 }): Promise<void> {
@@ -536,6 +700,7 @@ async function startTestBridge(h: {
     cfg: h.profileConfig,
     agent: h.agent,
     sessions: h.sessions,
+    sessionCatalog: h.catalog,
     workspaces: h.workspaces,
     controls: h.controls,
   });
@@ -557,6 +722,21 @@ function createFakeLarkChannel(options: {
   };
   const rawThreadIds = options.rawThreadIds ?? {};
   const threadMessages = options.threadMessages ?? [];
+  const messageList = vi.fn(async () => ({ data: { items: threadMessages, has_more: false } }));
+  const fetchRawMessage = vi.fn(async (messageId: string) => [
+    {
+      message_id: messageId,
+      msg_type: 'text',
+      body: {
+        content: JSON.stringify({
+          text: quotedMessages[messageId] ?? 'quoted content',
+        }),
+      },
+      create_time: '1760000000000',
+      sender: { id: 'ou_quote_sender' },
+      ...(rawThreadIds[messageId] ? { thread_id: rawThreadIds[messageId] } : {}),
+    },
+  ]);
   return {
     handlers,
     sent,
@@ -567,7 +747,7 @@ function createFakeLarkChannel(options: {
       im: {
         v1: {
           message: {
-            list: vi.fn(async () => ({ data: { items: threadMessages, has_more: false } })),
+            list: messageList,
           },
           messageReaction: {
             create: vi.fn(async () => ({ data: { reaction_id: 'reaction_1' } })),
@@ -578,20 +758,9 @@ function createFakeLarkChannel(options: {
     },
     getAppInfo: vi.fn(async () => ({ ownerId: 'ou_owner' })),
     listChats: vi.fn(async () => []),
-    fetchRawMessage: vi.fn(async (messageId: string) => [
-      {
-        message_id: messageId,
-        msg_type: 'text',
-        body: {
-          content: JSON.stringify({
-            text: quotedMessages[messageId] ?? 'quoted content',
-          }),
-        },
-        create_time: '1760000000000',
-        sender: { id: 'ou_quote_sender' },
-        ...(rawThreadIds[messageId] ? { thread_id: rawThreadIds[messageId] } : {}),
-      },
-    ]),
+    fetchRawMessage,
+    fetchRawMessageMock: fetchRawMessage,
+    messageListMock: messageList,
     on(nextHandlers) {
       Object.assign(handlers, nextHandlers);
     },

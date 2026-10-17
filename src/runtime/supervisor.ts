@@ -88,6 +88,7 @@ class ManagedProfile {
     private workspaces: WorkspaceStore,
     private startChannelFn: StartChannelFn,
     private onExitCommand: (profile: string) => Promise<void>,
+    private readonly runPreflight: boolean,
   ) {
     this.ledger = new BackfillLedger(appPaths.backfillStateFile, {
       pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
@@ -253,7 +254,7 @@ class ManagedProfile {
     return currentControls;
   }
 
-  /** Connect-before-disconnect reconnect for this profile (e.g. after /account). */
+  /** `/reconnect` and `/account` only. Link failures must not call this. */
   private restart(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void> {
     if (this.stopOperation) return Promise.reject(new Error(`profile ${this.profile} is stopping`));
     if (this.stopped) return Promise.reject(new Error(`profile ${this.profile} is stopped`));
@@ -280,8 +281,10 @@ class ManagedProfile {
         ...nextRuntime.appPaths,
         configPath: nextRuntime.configPath,
       });
-      const availability = await checkRuntimeAgentAvailability(nextAgent);
-      if (!availability.ok) throw availability.error;
+      if (this.runPreflight) {
+        const availability = await checkRuntimeAgentAvailability(nextAgent);
+        if (!availability.ok) throw availability.error;
+      }
 
       const appChanged = next.accounts.app.id !== this.cfg.accounts.app.id;
       if (appChanged) {
@@ -327,7 +330,6 @@ class ManagedProfile {
         throw error;
       }
       this.bridge = nextBridge;
-      await this.bridge.recoverMissed?.();
       await updateEntry(
         this.entry.id,
         {
@@ -350,6 +352,16 @@ class ManagedProfile {
       this.agent = nextAgent;
       this.controls = nextControls;
       if (oldAppLock) await this.releaseOwnedLock(oldAppLock);
+      await Promise.all([
+        this.sessions.flush().catch(() => {}),
+        this.sessionCatalog.flush().catch(() => {}),
+        this.workspaces.flush().catch(() => {}),
+        this.journal.flush().catch(() => {}),
+        this.ledger.flush().catch(() => {}),
+      ]);
+      // Recovery runs after the swap is published. A reject here must not
+      // unwind the live bridge or drop the app lock it now needs.
+      await (this.bridge.recover ?? this.bridge.recoverMissed)?.();
     } catch (error) {
       if (nextAppLock) {
         try {
@@ -483,6 +495,7 @@ export class Supervisor {
       workspaces,
       this.startChannelFn,
       (p) => this.stopProfile(p),
+      this.opts.runPreflight !== false,
     );
     this.managed.set(appPaths.profile, managed);
     try {

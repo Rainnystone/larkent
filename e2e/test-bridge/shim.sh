@@ -30,56 +30,6 @@ if [ ! -s "$DECISION_FILE" ]; then
   exit 2
 fi
 
-ACTION=""
-MODE=""
-TARGET=""
-set --
-line_no=0
-while IFS= read -r line || [ -n "$line" ]; do
-  line_no=$((line_no + 1))
-  if [ "$line_no" -eq 1 ]; then
-    ACTION=$line
-  elif [ "$line_no" -eq 2 ]; then
-    if [ "$ACTION" = "EXEC" ]; then
-      TARGET=$line
-    else
-      MODE=$line
-    fi
-  elif [ "$line_no" -eq 3 ] && [ "$ACTION" = "FAULT" ]; then
-    TARGET=$line
-  else
-    set -- "$@" "$line"
-  fi
-done < "$DECISION_FILE"
-
-case "$ACTION" in
-  EXEC)
-    if [ -z "$TARGET" ]; then
-      echo "shim exec is missing a target" >&2
-      exit 2
-    fi
-    exec "$TARGET" "$@"
-    ;;
-  FAULT)
-    trap 'exit 143' TERM
-    trap 'exit 130' INT
-    trap 'exit 129' HUP
-    case "$MODE" in
-      delay:*)
-        SECONDS_STR="${MODE#delay:}"
-        sleep "$SECONDS_STR"
-        exec "$TARGET" "$@"
-        ;;
-      hang)
-        while true; do sleep 3600; done
-        ;;
-      *)
-        exec "$TSX" "$DIR/run-fault.ts" --mode "$MODE" -- "$TARGET" "$@"
-        ;;
-    esac
-    ;;
-  *)
-    echo "unknown shim action: $ACTION" >&2
-    exit 2
-    ;;
-esac
+# JSON decision keeps multiline prompts as one argv entry. exec-decision
+# reconstructs the real CLI spawn from that object.
+exec "$TSX" "$DIR/exec-decision.ts" "$DECISION_FILE"

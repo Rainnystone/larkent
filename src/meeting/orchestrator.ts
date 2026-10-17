@@ -331,8 +331,8 @@ async function runMeetingAgent(
   });
   const access = evaluated.ok
     ? evaluated
-    : admitted
-      ? { ok: true as const, reason: 'allowed-chat' as const }
+    : admitted && session.joinedWithAccessCheck
+      ? { ok: true as const, reason: 'admitted' as const }
       : evaluated;
   if (!access.ok) {
     log.info('meeting', 'skip-not-allowed-user', {

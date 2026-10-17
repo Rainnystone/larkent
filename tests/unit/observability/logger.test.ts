@@ -48,7 +48,7 @@ describe('profile logger observability', () => {
     expect(JSON.parse(text.trim()).ts).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{2}:\d{2}$/);
   });
 
-  it('prints topic scope, message id, run, COT, outbound, and fallback context on stdout', () => {
+  it('prints topic scope, message id, run, COT, and outbound context on stdout', () => {
     const out = vi.spyOn(console, 'log').mockImplementation(() => {});
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     configureLogger({ now: () => new Date('2026-05-25T12:34:56.000Z') });
@@ -80,7 +80,6 @@ describe('profile logger observability', () => {
       messageId: 'om_out_222222',
       replyInThread: true,
     });
-    log.warn('outbound', 'markdown-stream-fallback', { err: 'cardid is invalid' });
 
     expect(out.mock.calls.map((call) => String(call[0]))).toEqual([
       '▸ topic/- scope=abcdef sender=...123456 msg=654321: hello',
@@ -89,7 +88,7 @@ describe('profile logger observability', () => {
       '  ◇ cot created message=456789 cot=123456',
       '  ↗ sent markdown scope=abcdef thread=111111 msg=222222',
     ]);
-    expect(String(warn.mock.calls[0]?.[0])).toContain('markdown stream fallback');
+    expect(warn.mock.calls).toEqual([]);
 
     out.mockRestore();
     warn.mockRestore();

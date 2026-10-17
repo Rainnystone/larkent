@@ -69,7 +69,7 @@ export function accessPolicyDigest(access: ProfileConfig['access']): string {
     allowedChats: [...access.allowedChats].sort(),
     allowedUsers: [...access.allowedUsers].sort(),
     requireMentionInGroup: access.requireMentionInGroup,
-    fenceEnabled: access.fence?.enabled === true,
+    ...(access.fence?.enabled === true ? { fenceEnabled: true } : {}),
   });
 }
 

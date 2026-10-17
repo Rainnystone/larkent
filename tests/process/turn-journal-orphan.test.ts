@@ -54,17 +54,20 @@ describe('turn journal orphan reaper', () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     const recovered = new TurnJournal(file);
     await recovered.load();
-    await recovered.recover({ enabled: true, orphanGraceMs: 200 });
-    await recovered.recover({ enabled: true, orphanGraceMs: 200 });
+    await recovered.reapOrphans({ orphanGraceMs: 200 });
+    await recovered.redeliver({ orphanGraceMs: 200 });
+    await recovered.reapOrphans({ orphanGraceMs: 200 });
+    await recovered.redeliver({ orphanGraceMs: 200 });
 
     expect(recovered.get('turn-orphan')?.status).toBe('interrupted');
     if (verifiedStart === undefined) {
       // Windows (and any OS that cannot read start time) must fail closed:
-      // do not signal a PID we cannot identify, but still settle the journal.
+      // do not signal a PID we cannot identify, but still settle the journal
+      // and log the interrupted recovery so the user is not left silent.
       expect(isProcessAlive(child.pid)).toBe(true);
       expect(info.mock.calls.filter(([phase, event]) => (
         phase === 'journal' && event === 'recovered'
-      ))).toHaveLength(0);
+      ))).toHaveLength(1);
       return;
     }
     expect(isProcessAlive(child.pid)).toBe(false);
@@ -98,7 +101,8 @@ describe('turn journal orphan reaper', () => {
       const info = vi.spyOn(log, 'info').mockImplementation(() => {});
       const journal = new TurnJournal(file);
       await journal.load();
-      await journal.recover({ enabled: true, orphanGraceMs: 200 });
+      await journal.reapOrphans({ orphanGraceMs: 200 });
+      await journal.redeliver({ orphanGraceMs: 200 });
       expect(isProcessAlive(identity.childPid)).toBe(false);
       expect(journal.get('turn-orphan')?.status).toBe('interrupted');
       expect(info.mock.calls.filter(([phase, event]) => (

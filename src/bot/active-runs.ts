@@ -8,6 +8,20 @@ export interface RunHandle {
   interrupted: boolean;
   stopRequest?: StopRequest;
   outcome?: RunOutcome;
+  /** Last agent-stream event (or register time if none yet). */
+  lastEventAt: number;
+  /** True while the stream processor has a tool call in flight. */
+  hasOpenToolCall?: boolean;
+  /** Set by recovery when the run was silent before the outage. */
+  stallDeadlineMs?: number;
+  /** Set once a stall deadline is armed; later reviews must not extend it. */
+  stallArmedAt?: number;
+  /** Installed by the stream processor so recovery can shorten the idle bound. */
+  armStallDeadline?: (delayMs: number) => void;
+}
+
+export function noteRunEvent(handle: RunHandle, at = Date.now()): void {
+  handle.lastEventAt = at;
 }
 
 export interface ActiveRunsHooks {
@@ -39,7 +53,7 @@ export class ActiveRuns {
       throw new Error(`run already active for scope: ${chatId}`);
     }
     this.reservations.delete(chatId);
-    const handle: RunHandle = { run, interrupted: false };
+    const handle: RunHandle = { run, interrupted: false, lastEventAt: Date.now() };
     this.handles.set(chatId, handle);
     return handle;
   }

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +10,7 @@ import {
   writeScriptedJsonlExecutable,
   writeVersionExecutable,
 } from '../../helpers/fake-executable';
+import { parseShimDecision, serializeShimDecision } from '../../../e2e/test-bridge/decide';
 import { armFault, shimEntryPath } from '../../../e2e/test-bridge/shim';
 
 const posix = process.platform !== 'win32';
@@ -22,6 +23,15 @@ afterEach(async () => {
 });
 
 describe.skipIf(!posix)('test-bridge shim', () => {
+  it('passthrough keeps a multiline prompt as one argv entry', async () => {
+    const root = await tmp('shim-multiline-');
+    const target = await writeEchoArgv(root);
+    const prompt = 'line1\nline2 --flag\nthird';
+    const result = await runShim(root, target, ['--prompt', prompt]);
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual(['--prompt', prompt]);
+  });
+
   it('passthrough --version reaches the target executable', async () => {
     const root = await tmp('shim-version-');
     const target = await writeVersionExecutable(root, 'fake-cli', '9.9.9-shim-target');
@@ -109,10 +119,34 @@ describe.skipIf(!posix)('test-bridge shim', () => {
   });
 });
 
+describe('shim decision JSON', () => {
+  it('round-trips a multiline prompt without splitting it into extra args', () => {
+    const prompt = 'fix the bug\nthen run tests';
+    const text = serializeShimDecision({
+      action: 'exec',
+      target: '/bin/echo',
+      args: ['--prompt', prompt],
+    });
+    expect(text).not.toContain('\n--prompt');
+    expect(parseShimDecision(text)).toEqual({
+      action: 'exec',
+      target: '/bin/echo',
+      args: ['--prompt', prompt],
+    });
+  });
+});
+
 async function tmp(prefix: string): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), prefix));
   cleanups.push(dir);
   return dir;
+}
+
+async function writeEchoArgv(dir: string): Promise<string> {
+  const path = join(dir, 'echo-argv.mjs');
+  await writeFile(path, '#!/usr/bin/env node\nprocess.stdout.write(JSON.stringify(process.argv.slice(2)));\n');
+  await chmod(path, 0o755);
+  return path;
 }
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');

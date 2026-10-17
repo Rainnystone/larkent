@@ -6,7 +6,6 @@ import {
 import {
   createDefaultProfileConfig,
   effectiveLarkCliIdentity,
-  getReliabilityConfig,
   normalizeProfileConfig,
 } from '../../../src/config/profile-schema';
 import { getShowToolCalls } from '../../../src/config/schema';
@@ -656,51 +655,47 @@ describe('profile schema', () => {
     });
   });
 
-  it('defaults reliability.cliSignatures on and stores an explicit off flag', () => {
+  it('strips the six legacy reliability flags and the leftover notice toggle', () => {
     const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
-    expect(getReliabilityConfig(fresh).cliSignatures).toBe(true);
+    expect(fresh.reliability).toBeUndefined();
+    const onlyLegacy = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      reliability: {
+        lostMessage: false,
+        shortGapScan: true,
+        runOutcome: false,
+        cliSignatures: false,
+        journal: false,
+        journalRecover: false,
+      },
+    });
+    expect(onlyLegacy.reliability).toBeUndefined();
+  });
+
+  it('strips reliability.notice so old profiles load and save without the toggle', () => {
+    const stripped = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      reliability: {
+        notice: true,
+        lostMessage: false,
+        shortGapScan: true,
+        runOutcome: false,
+        cliSignatures: false,
+        journal: false,
+        journalRecover: false,
+      },
+    });
+    expect(stripped.reliability).toBeUndefined();
     const off = normalizeProfileConfig({
       schemaVersion: 3,
       agentKind: 'claude',
       accounts: { app },
-      reliability: { cliSignatures: false },
+      reliability: { notice: false },
     });
-    expect(off.reliability).toEqual({ cliSignatures: false });
-    expect(getReliabilityConfig(off).cliSignatures).toBe(false);
-  });
-
-  it('defaults journal write and recovery on, and stores explicit off flags', () => {
-    const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
-    expect(getReliabilityConfig(fresh).journal).toBe(true);
-    expect(getReliabilityConfig(fresh).journalRecover).toBe(true);
-    const off = normalizeProfileConfig({
-      schemaVersion: 3,
-      agentKind: 'claude',
-      accounts: { app },
-      reliability: { journal: false, journalRecover: false },
-    });
-    expect(off.reliability).toEqual({ journal: false, journalRecover: false });
-    expect(getReliabilityConfig(off).journal).toBe(false);
-    expect(getReliabilityConfig(off).journalRecover).toBe(false);
-    const writeOnly = normalizeProfileConfig({
-      schemaVersion: 3,
-      agentKind: 'claude',
-      accounts: { app },
-      reliability: { journalRecover: false },
-    });
-    expect(getReliabilityConfig(writeOnly)).toMatchObject({ journal: true, journalRecover: false });
-  });
-
-  it('defaults reliability.notice off and stores an explicit on flag', () => {
-    const fresh = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app } });
-    expect(getReliabilityConfig(fresh).notice).toBe(false);
-    const on = normalizeProfileConfig({
-      schemaVersion: 3,
-      agentKind: 'claude',
-      accounts: { app },
-      reliability: { notice: true },
-    });
-    expect(on.reliability).toEqual({ notice: true });
-    expect(getReliabilityConfig(on).notice).toBe(true);
+    expect(off.reliability).toBeUndefined();
   });
 });

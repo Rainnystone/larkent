@@ -191,7 +191,7 @@ describe('settled profile persistence', () => {
     });
     const h = await channelHarness(controlledAgent().agent, 'text', 3, 'kimi');
     vi.spyOn(h.channel as unknown as LarkChannel, 'getChatMode').mockResolvedValue('p2p');
-    h.sessions.set('oc_test', 'resume-before-close', h.root);
+    h.sessions.set('oc_test', 'resume-before-close', h.root, 'kimi');
     const command = {
       messageId: 'om_resume', chatId: 'oc_test', chatType: 'p2p', senderId: 'ou_user',
       content: '/resume', rawContentType: 'text', resources: [], mentionedBot: true,
@@ -227,6 +227,7 @@ describe('settled profile persistence', () => {
         if (updates === 1) producerReady.resolve();
         else { renderingBlocked.resolve(); await renderRelease.promise; }
       } });
+      return { messageId: 'om_stream' };
     };
     const run = controlledAgent({ beforeSecond: producerReady.promise });
     const h = await channelHarness(run.agent, 'card');
@@ -415,7 +416,13 @@ async function supervisorHarness(beforeReturn?: (bridge: BridgeChannel, index: n
   const sup = new Supervisor({ configPath: paths.configFile, runPreflight: false, startChannelFn: async deps => {
     const channel = createRecordingLarkChannel();
     const item = { profile: deps.controls.profile, bridge: undefined as unknown as BridgeChannel, fail: undefined as Error | undefined, attempts: 0, connected: true };
-    item.bridge = { channel: channel as unknown as BridgeChannel['channel'], disconnect: async () => { item.attempts++; if (item.fail) throw item.fail; item.connected = false; }, recoverMissed: async () => {} };
+    item.bridge = {
+      channel: channel as unknown as BridgeChannel['channel'],
+      disconnect: async () => { item.attempts++; if (item.fail) throw item.fail; item.connected = false; },
+      recover: async () => {},
+      recoverMissed: async () => {},
+      tickLink: async () => {},
+    };
     bridges.push(item);
     await beforeReturn?.(item.bridge, bridges.length - 1);
     return item.bridge;

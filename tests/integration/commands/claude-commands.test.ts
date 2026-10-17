@@ -143,7 +143,7 @@ describe('Claude slash command visible behavior', () => {
     await expect(h.run('/status')).resolves.toBe(true);
     expect(lastContent(h.channel)).toHaveProperty('card');
     expect(JSON.stringify(lastContent(h.channel))).toContain('lark-cli');
-    expect(JSON.stringify(lastContent(h.channel))).toContain('user-ready');
+    expect(JSON.stringify(lastContent(h.channel))).toContain('用户身份已就绪');
 
     await expect(h.run('/help')).resolves.toBe(true);
     expect(lastContent(h.channel)).toHaveProperty('card');
@@ -166,8 +166,8 @@ describe('Claude slash command visible behavior', () => {
 
     const status = JSON.stringify(lastContent(h.channel));
     expect(status).toContain('lark-cli');
-    expect(status).toContain('user-ready');
-    expect(status).not.toContain('user-missing');
+    expect(status).toContain('用户身份已就绪');
+    expect(status).not.toContain('用户身份未配置');
   });
 
   it('does not report lark-cli user-ready for display-only target user strings', async () => {
@@ -183,8 +183,8 @@ describe('Claude slash command visible behavior', () => {
 
     const status = JSON.stringify(lastContent(h.channel));
     expect(status).toContain('lark-cli');
-    expect(status).toContain('user-missing');
-    expect(status).not.toContain('user-ready');
+    expect(status).toContain('用户身份未配置');
+    expect(status).not.toContain('用户身份已就绪');
   });
 
   it('does not report lark-cli user-ready for damaged structured user entries', async () => {
@@ -200,8 +200,8 @@ describe('Claude slash command visible behavior', () => {
 
     const status = JSON.stringify(lastContent(h.channel));
     expect(status).toContain('lark-cli');
-    expect(status).toContain('user-missing');
-    expect(status).not.toContain('user-ready');
+    expect(status).toContain('用户身份未配置');
+    expect(status).not.toContain('用户身份已就绪');
   });
 
   it('does not report lark-cli user-ready when the profile is user-default but no user is authorized', async () => {
@@ -212,8 +212,8 @@ describe('Claude slash command visible behavior', () => {
 
     const status = JSON.stringify(lastContent(h.channel));
     expect(status).toContain('lark-cli');
-    expect(status).toContain('user-missing');
-    expect(status).not.toContain('user-ready');
+    expect(status).toContain('用户身份未配置');
+    expect(status).not.toContain('用户身份已就绪');
   });
 
   it('does not treat lark-cli display-only no-user text as authorized user state', async () => {
@@ -229,8 +229,8 @@ describe('Claude slash command visible behavior', () => {
 
     const status = JSON.stringify(lastContent(h.channel));
     expect(status).toContain('lark-cli');
-    expect(status).toContain('user-missing');
-    expect(status).not.toContain('user-ready');
+    expect(status).toContain('用户身份未配置');
+    expect(status).not.toContain('用户身份已就绪');
   });
 
   it('handles /timeout display, set, off, default, and invalid values', async () => {
@@ -238,18 +238,23 @@ describe('Claude slash command visible behavior', () => {
 
     await expect(h.run('/timeout')).resolves.toBe(true);
     expect(lastMarkdown(h.channel)).toContain('当前 session 探活');
+    expect(lastMarkdown(h.channel)).toContain('跟随全局(15 分钟)');
 
     await expect(h.run('/timeout 15')).resolves.toBe(true);
     expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBe(15);
     expect(lastMarkdown(h.channel)).toContain('已设为 15 分钟');
 
-    await expect(h.run('/timeout off')).resolves.toBe(true);
+    await expect(h.run('/timeout 0')).resolves.toBe(true);
     expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBe(0);
     expect(lastMarkdown(h.channel)).toContain('已关闭当前 session');
 
     await expect(h.run('/timeout default')).resolves.toBe(true);
     expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBeUndefined();
     expect(lastMarkdown(h.channel)).toContain('已清除 session 覆盖');
+
+    await expect(h.run('/timeout off')).resolves.toBe(true);
+    expect(h.sessions.getIdleTimeoutMinutes('chat-1')).toBe(0);
+    expect(lastMarkdown(h.channel)).toContain('已关闭当前 session');
 
     await expect(h.run('/timeout 999')).resolves.toBe(true);
     expect(lastMarkdown(h.channel)).toContain('用法:`/timeout <1-120>`');

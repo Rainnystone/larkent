@@ -1,8 +1,9 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { loadTestBridgeConfig } from '../config';
-import { armFault } from '../fault-state';
+import { armFault, clearFaults } from '../fault-state';
 import { DEFAULT_LOCAL_CONFIG, faultDirPath } from '../paths';
+import { runWithCleanup } from '../scenario-cleanup';
 import { readTesterMessages, sendTesterMessage } from '../tester';
 
 export interface CursorStallNoticeResult {
@@ -22,24 +23,32 @@ export async function runCursorStallNotice(opts: {
   configPath?: string;
 }): Promise<CursorStallNoticeResult> {
   const config = await loadTestBridgeConfig(opts.configPath ?? DEFAULT_LOCAL_CONFIG);
-  await armFault(faultDirPath(config.dataRoot), { mode: 'cursor-stall' });
-  const token = `e2e-stall-${Date.now().toString(36)}`;
-  await sendTesterMessage(config, `please run ${token}`);
-  await sleep(8_000);
-  const before = await readTesterMessages(config, { pageSize: 8 }).catch(() => []);
-  const cardSeen = before.some((item) => /继续|暂不|中断/.test(item.text ?? ''));
-  await sendTesterMessage(config, '@bot 继续');
-  await sleep(6_000);
-  const logText = await readBridgeLogs(config.dataRoot);
-  const noticeLogs = countNoticeSent(logText);
-  return {
-    cardSeen,
-    buttonContinue: noticeLogs >= 1,
-    atBotContinue: noticeLogs >= 1,
-    note: cardSeen
-      ? `notice card copy seen in tester history; notice.sent log count=${noticeLogs}. Button continue still needs a live card click.`
-      : `no notice copy in tester history; notice.sent log count=${noticeLogs}; enable profile.reliability.notice on the test instance.`,
-  };
+  const faultDir = faultDirPath(config.dataRoot);
+  return runWithCleanup(
+    async () => {
+      await armFault(faultDir, { mode: 'cursor-stall' });
+      const token = `e2e-stall-${Date.now().toString(36)}`;
+      await sendTesterMessage(config, `please run ${token}`);
+      await sleep(8_000);
+      const before = await readTesterMessages(config, { pageSize: 8 }).catch(() => []);
+      const cardSeen = before.some((item) => /继续|暂不|中断/.test(item.text ?? ''));
+      await sendTesterMessage(config, '@bot 继续');
+      await sleep(6_000);
+      const logText = await readBridgeLogs(config.dataRoot);
+      const noticeLogs = countNoticeSent(logText);
+      return {
+        cardSeen,
+        buttonContinue: noticeLogs >= 1,
+        atBotContinue: noticeLogs >= 1,
+        note: cardSeen
+          ? `notice card copy seen in tester history; notice.sent log count=${noticeLogs}. Button continue still needs a live card click.`
+          : `no notice copy in tester history; notice.sent log count=${noticeLogs}; notices are always on — check stall injection and notice.sent logs.`,
+      };
+    },
+    async () => {
+      await clearFaults(faultDir).catch(() => {});
+    },
+  );
 }
 
 async function readBridgeLogs(dataRoot: string): Promise<string> {

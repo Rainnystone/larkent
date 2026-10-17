@@ -25,7 +25,7 @@ import {
 import { GROUP_MSG_SCOPE, hasGroupMsgScope } from '../bot/app-scope';
 import { requestScopeGrantLink } from '../bot/wizard';
 import { forgetManagedCard, sendManagedCard, updateManagedCard } from '../card/managed';
-import { helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
+import { formatLocalDateTime, helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
 import type { AppConfig, AppPreferences, MessageReplyMode, TenantBrand } from '../config/schema';
 import {
   formatBackfillPreferences,
@@ -72,6 +72,7 @@ import type { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { evaluateRunPolicy } from '../policy/run-policy';
+import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
 import type { RunExecutor } from '../runtime/run-executor';
 import { RunRejected } from '../runtime/errors';
@@ -93,8 +94,8 @@ export interface Controls {
   ownerRefreshedAt?: number;
   ownerRefreshError?: string;
   refreshOwner(channel?: LarkChannel): Promise<void>;
-  /** Restart the bridge in-process: disconnect WS, kill claude runs, reload
-   * config, reconnect with the new credentials. */
+  /** `/reconnect` and `/account` only: disconnect, reload config, reconnect.
+   * Link failures must not call this. */
   restart(opts?: { wait?: boolean; stopReason?: StopRequest }): Promise<void>;
   /** Stop this whole process gracefully (disconnect + exit). Used by /exit
    * when the user targets the receiving process itself. */
@@ -136,6 +137,7 @@ export interface CommandContext {
   agent: AgentAdapter;
   activeRuns: ActiveRuns;
   processPool?: ProcessPool;
+  pending?: Pick<PendingQueue, 'isBlocked' | 'waitingCount'>;
   runExecutor?: RunExecutor;
   controls: Controls;
   resumeHistoryProvider?: (input: ResumeHistoryInput) => Promise<ResumeHistoryEntry[]>;
@@ -351,7 +353,7 @@ async function handleNew(args: string, ctx: CommandContext): Promise<void> {
       now: Date.now(),
     });
   }
-  ctx.sessions.clear(ctx.scope);
+  ctx.sessions.clear(ctx.scope, ctx.controls.profileConfig.agentKind);
   await reply(ctx, wasRunning ? '已中断当前任务并开始新会话。' : '已开始新会话。');
 }
 
@@ -411,8 +413,14 @@ async function handleCd(args: string, ctx: CommandContext): Promise<void> {
     return;
   }
   ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'cd' });
+  if (ctx.sessionCatalog && ctx.sessionCatalogIdentity) {
+    ctx.sessionCatalog.archiveActive({
+      ...ctx.sessionCatalogIdentity,
+      now: Date.now(),
+    });
+  }
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
-  ctx.sessions.clear(ctx.scope);
+  ctx.sessions.clear(ctx.scope, ctx.controls.profileConfig.agentKind);
   await reply(ctx, `✓ 已切换 cwd 到 \`${workspace.cwdRealpath}\`\n（session 已重置）`);
 }
 
@@ -477,7 +485,7 @@ async function handleWsUse(name: string, ctx: CommandContext): Promise<void> {
   }
   ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'ws' });
   ctx.workspaces.setCwd(ctx.scope, workspace.cwdRealpath);
-  ctx.sessions.clear(ctx.scope);
+  ctx.sessions.clear(ctx.scope, ctx.controls.profileConfig.agentKind);
   await reply(ctx, `✓ 已切换到 \`${name}\` (${workspace.cwdRealpath})\n（session 已重置）`);
 }
 
@@ -578,10 +586,20 @@ async function handleResume(args: string, ctx: CommandContext): Promise<void> {
   let currentHandle = catalogEntry?.resumeHandle;
   if (!currentHandle && resumeDescriptor.resume.label === 'session') {
     if (identity) {
-      currentHandle = ctx.sessions.resumeFor(ctx.scope, identity.cwdRealpath);
+      currentHandle = ctx.sessions.resumeFor(
+        ctx.scope,
+        identity.cwdRealpath,
+        ctx.controls.profileConfig.agentKind,
+      );
     } else {
       const workspace = await resolveWorkingDirectory(cwd);
-      if (workspace.ok) currentHandle = ctx.sessions.resumeFor(ctx.scope, workspace.cwdRealpath);
+      if (workspace.ok) {
+        currentHandle = ctx.sessions.resumeFor(
+          ctx.scope,
+          workspace.cwdRealpath,
+          ctx.controls.profileConfig.agentKind,
+        );
+      }
     }
   }
   const provider = ctx.resumeHistoryProvider ?? resumeDescriptor.listResumeHistory;
@@ -631,7 +649,12 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
         resumeHandle: resolved.resumeHandle,
       });
       if (descriptorFor(ctx.sessionCatalogIdentity.agentId).resume.label === 'session') {
-        ctx.sessions.set(ctx.scope, resolved.resumeHandle, ctx.sessionCatalogIdentity.cwdRealpath);
+        ctx.sessions.set(
+          ctx.scope,
+          resolved.resumeHandle,
+          ctx.sessionCatalogIdentity.cwdRealpath,
+          ctx.sessionCatalogIdentity.agentId,
+        );
       }
       await reply(ctx, RESUME_APPLIED_REPLY);
       return;
@@ -647,7 +670,12 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     }
     ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'resume' });
     if (descriptorFor(ctx.sessionCatalogIdentity.agentId).resume.label === 'session') {
-      ctx.sessions.set(ctx.scope, sessionId, ctx.sessionCatalogIdentity.cwdRealpath);
+      ctx.sessions.set(
+        ctx.scope,
+        sessionId,
+        ctx.sessionCatalogIdentity.cwdRealpath,
+        ctx.sessionCatalogIdentity.agentId,
+      );
     }
     await reply(ctx, RESUME_APPLIED_REPLY);
     return;
@@ -664,7 +692,7 @@ async function applyResume(sessionId: string, ctx: CommandContext): Promise<void
     return;
   }
   ctx.activeRuns.supersedeSession(ctx.scope, { type: 'superseded', by: 'resume' });
-  ctx.sessions.set(ctx.scope, sessionId, cwd);
+  ctx.sessions.set(ctx.scope, sessionId, cwd, ctx.controls.profileConfig.agentKind);
   await reply(ctx, RESUME_APPLIED_REPLY);
 }
 
@@ -722,7 +750,7 @@ async function larkCliStatus(ctx: CommandContext): Promise<'app' | 'user-ready' 
 
 async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
   const cwd = effectiveWorkspaceCwd(ctx);
-  const sess = ctx.sessions.getRaw(ctx.scope);
+  const sess = ctx.sessions.getRaw(ctx.scope, ctx.controls.profileConfig.agentKind);
   const isThreadResume = descriptorFor(ctx.controls.profileConfig.agentKind).resume.label === 'thread';
   const catalogEntry =
     isThreadResume && ctx.sessionCatalog && ctx.sessionCatalogIdentity
@@ -741,6 +769,8 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
     activeScopes: ctx.activeRuns.scopes().filter((scope) => !scope.startsWith('comment:')),
     activeCommentScopes: ctx.activeRuns.scopes().filter((scope) => scope.startsWith('comment:')),
     queue: ctx.processPool?.snapshot(),
+    chatBusy: ctx.pending?.isBlocked(ctx.scope) === true,
+    chatWaiting: ctx.pending?.waitingCount(ctx.scope) ?? 0,
     ownerState: formatOwnerState(ctx),
     scope: ctx.scope,
     chatMode: ctx.chatMode,
@@ -749,12 +779,17 @@ async function handleStatus(_args: string, ctx: CommandContext): Promise<void> {
 }
 
 function formatOwnerState(ctx: CommandContext): string {
-  const state = ctx.controls.ownerRefreshState;
-  const owner = ctx.controls.botOwnerId ? 'present' : 'missing';
+  const state =
+    ctx.controls.ownerRefreshState === 'ok'
+      ? '正常'
+      : ctx.controls.ownerRefreshState === 'failed'
+        ? '刷新失败'
+        : '未知';
+  const owner = ctx.controls.botOwnerId ? '已绑定' : '未绑定';
   const refreshed = ctx.controls.ownerRefreshedAt
-    ? ` refreshed=${new Date(ctx.controls.ownerRefreshedAt).toISOString()}`
+    ? ` 刷新于 ${formatLocalDateTime(ctx.controls.ownerRefreshedAt)}`
     : '';
-  return `${state} owner=${owner}${refreshed}`;
+  return `${state} · ${owner}${refreshed}`;
 }
 
 async function handleStop(args: string, ctx: CommandContext): Promise<void> {
@@ -803,7 +838,7 @@ async function handleTimeout(args: string, ctx: CommandContext): Promise<void> {
   if (!value) {
     const scopeMinutes = ctx.sessions.getIdleTimeoutMinutes(scope);
     const usage =
-      '\n\n用法:\n- `/timeout 15` 当前 session 设 15 分钟\n- `/timeout off` 当前 session 关闭探活\n- `/timeout default` 清除 session 覆盖,回退全局\n- `/timeout comment:<scopeHash> 15` 管理员设置 comment scope\n\n_注:`/new` 会清掉当前 session 的覆盖,回到全局_';
+      '\n\n用法:\n- `/timeout 15` 当前 session 设 15 分钟\n- `/timeout 0` 或 `/timeout off` 当前 session 关闭探活\n- `/timeout default` 清除 session 覆盖,回退全局\n- `/timeout comment:<scopeHash> 15` 管理员设置 comment scope\n\n_注:`/new` 会清掉当前 session 的覆盖,回到全局_';
     const scopeLabel = parsed.targeted ? ` (${scope})` : '';
     if (scopeMinutes !== undefined) {
       const effective =
@@ -2035,7 +2070,10 @@ async function handleMeeting(args: string, ctx: CommandContext): Promise<void> {
         return;
       }
       try {
-        const session = await manager.join(meetingNo, { originChatId: ctx.msg.chatId });
+        const session = await manager.join(meetingNo, {
+          originChatId: ctx.msg.chatId,
+          joinedWithAccessCheck: true,
+        });
         await reply(
           ctx,
           `✅ 已入会 **${session.topic ?? meetingNo}**\n` +

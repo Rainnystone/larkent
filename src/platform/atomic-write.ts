@@ -1,11 +1,7 @@
 import { randomBytes } from 'node:crypto';
-import { chmod, mkdir, open, rm } from 'node:fs/promises';
+import { chmod, mkdir, open, rename as fsRename, rm } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { setTimeout as nativeSetTimeout } from 'node:timers';
-import { promisify } from 'node:util';
-import gracefulFs from 'graceful-fs';
-
-const gracefulRename = promisify(gracefulFs.rename);
 
 export interface AtomicWriteOptions {
   mode?: number;
@@ -18,8 +14,18 @@ export interface AtomicWriteOptions {
   ) => Promise<void>;
 }
 
-const DEFAULT_RENAME_ATTEMPTS = 5;
-const DEFAULT_RETRY_DELAY_MS = 25;
+// graceful-fs.rename retries EPERM/EBUSY/EACCES for up to 60s on Windows when
+// the destination is missing (AV locking the directory). Session store and
+// journal startup writes hit that path, so tests die at 5s with no EPERM in
+// the log. Bound the retry ourselves instead.
+const DEFAULT_RENAME_ATTEMPTS_WINDOWS = 12;
+const DEFAULT_RENAME_ATTEMPTS_POSIX = 5;
+const DEFAULT_RETRY_DELAY_MS_WINDOWS = 40;
+const DEFAULT_RETRY_DELAY_MS_POSIX = 25;
+
+function isWindows(): boolean {
+  return process.platform === 'win32';
+}
 
 export async function writeFileAtomic(
   path: string,
@@ -35,11 +41,10 @@ export async function writeFileAtomic(
     const handle = await open(tmp, 'w', opts.mode ?? 0o600);
     try {
       await handle.writeFile(data);
-      try {
-        await handle.sync();
-      } catch (err) {
-        if (!isIgnorableWindowsFsyncError(err)) throw err;
-      }
+      // POSIX fsyncs before rename. Windows AV pins an open fsync handle, so
+      // the later rename hits EPERM/EBUSY and a second startup persist dies at
+      // the 5s test budget with no errno. Close first; durability is rename.
+      if (!isWindows()) await handle.sync();
     } finally {
       await handle.close();
     }
@@ -49,7 +54,7 @@ export async function writeFileAtomic(
       if (!isIgnorableWindowsPermError(err)) throw err;
     }
     await renameWithRetry(tmp, path, opts);
-    await fsyncDir(dirname(path));
+    if (!isWindows()) await fsyncDir(dirname(path));
   } catch (err) {
     await rm(tmp, { force: true }).catch(() => {});
     throw err;
@@ -61,18 +66,22 @@ async function renameWithRetry(
   to: string,
   opts: AtomicWriteOptions,
 ): Promise<void> {
-  const maxAttempts = opts.maxRenameAttempts ?? DEFAULT_RENAME_ATTEMPTS;
-  const delayMs = opts.retryDelayMs ?? DEFAULT_RETRY_DELAY_MS;
+  const maxAttempts = opts.maxRenameAttempts
+    ?? (isWindows() ? DEFAULT_RENAME_ATTEMPTS_WINDOWS : DEFAULT_RENAME_ATTEMPTS_POSIX);
+  const delayMs = opts.retryDelayMs
+    ?? (isWindows() ? DEFAULT_RETRY_DELAY_MS_WINDOWS : DEFAULT_RETRY_DELAY_MS_POSIX);
   const rename = opts.rename ?? ((src, dest, fallback) => fallback(src, dest));
   let lastErr: unknown;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      await rename(from, to, gracefulRename);
+      await rename(from, to, fsRename);
       return;
     } catch (err) {
       lastErr = err;
       if (!isTransientRenameError(err) || attempt === maxAttempts) break;
-      await sleep(delayMs * attempt);
+      // Constant delay: linear 40ms*attempt is 2.6s per write, so two startup
+      // persists (sessions then a repaired workspaces retry) exceed 5s.
+      await sleep(delayMs);
     }
   }
   throw lastErr;
@@ -84,13 +93,9 @@ export function isTransientRenameError(err: unknown): boolean {
 }
 
 function isIgnorableWindowsPermError(err: unknown): boolean {
-  if (process.platform !== 'win32') return false;
+  if (!isWindows()) return false;
   const code = (err as NodeJS.ErrnoException | undefined)?.code;
   return code === 'EPERM' || code === 'EACCES';
-}
-
-function isIgnorableWindowsFsyncError(err: unknown): boolean {
-  return isIgnorableWindowsPermError(err);
 }
 
 async function fsyncDir(path: string): Promise<void> {

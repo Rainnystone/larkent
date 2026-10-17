@@ -399,6 +399,7 @@ function legacyRegistryFile(path: string): string | undefined {
 }
 
 function fsyncDirSync(path: string): void {
+  if (process.platform === 'win32') return;
   try {
     const fd = openSync(path, 'r');
     try {

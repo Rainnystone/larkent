@@ -31,87 +31,65 @@ afterEach(async () => {
   sdk.channel = undefined;
 });
 
-describe('backfill on SDK reconnected', () => {
-  it('scans on reconnected after a real gap and logs trigger reconnected', async () => {
-    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+describe('backfill after FeishuLink recovers a reconnect', () => {
+  it('scans a 20-second reconnect and answers the missed mention', async () => {
     const h = await startHarness({ lastLiveAt: Date.now() - 1_000 });
     await settle();
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
     const listedAfterConnect = h.channel.listChatsCalls;
-    await rewindWatermark(h, 5 * 60_000);
     const created = Date.now() - 90_000;
     h.setMessages({
       [CHAT]: [mentionItem('om_blip', CHAT, 'missed during blip', created)],
     });
+    h.channel.connectionState = 'reconnecting';
     h.channel.emit('reconnecting');
+    await h.bridge.tickLink();
+    h.channel.connectionState = 'connected';
     h.channel.emit('reconnected');
-    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+    await h.bridge.tickLink();
     await waitForDebounce();
     await waitFor(() => h.agent.runOptions.length === 1);
 
-    expect(events(info, 'ws')).toContainEqual(expect.objectContaining({ event: 'reconnected' }));
-    expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({
-        event: 'trigger',
-        trigger: 'reconnected',
-        gapMs: expect.any(Number),
-        windowStart: expect.any(Number),
-        windowEnd: expect.any(Number),
-      }),
-    );
     expect(h.agent.runOptions[0]!.prompt).toContain('missed during blip');
     expect(h.channel.listChatsCalls).toBe(listedAfterConnect + 1);
   });
 
-  it('skips a short-gap reconnected without listing chats', async () => {
+  it('ten reconnect storms produce one in-flight scan plus coalesced recoveries', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const h = await startHarness({ lastLiveAt: Date.now() - 1_000 });
     await settle();
-    const listedAfterConnect = h.channel.listChatsCalls;
-    h.channel.emit('reconnected');
-    await settle();
-    expect(h.channel.listChatsCalls).toBe(listedAfterConnect);
-    expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'skip-short-gap' }),
-    );
-  });
-
-  it('ten reconnecteds after one 5 min gap produce one scan and nine coalesce or skip-short-gap lines', async () => {
-    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
-    const h = await startHarness({ lastLiveAt: Date.now() - 1_000 });
-    await settle();
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
     const baseline = h.channel.listChatsCalls;
     info.mockClear();
     const listHold = holdNext(h.channel, 'listChats');
-    await rewindWatermark(h, 5 * 60_000);
     for (let n = 0; n < 10; n++) {
+      h.channel.connectionState = 'reconnecting';
       h.channel.emit('reconnecting');
+      await h.bridge.tickLink();
+      h.channel.connectionState = 'connected';
       h.channel.emit('reconnected');
+      await h.bridge.tickLink();
     }
+    await waitFor(() => listHold.started >= 1);
     expect(listHold.started).toBe(1);
-    const storm = events(info, 'backfill').filter((row) => (
-      row.event === 'coalesced' || row.event === 'skip-short-gap' || row.event === 'trigger'
-    ));
-    expect(storm.filter((row) => row.event === 'trigger')).toHaveLength(1);
-    expect(storm.filter((row) => row.event === 'trigger')[0]).toEqual(
-      expect.objectContaining({ trigger: 'reconnected' }),
-    );
-    expect(storm.filter((row) => row.event === 'coalesced' || row.event === 'skip-short-gap')).toHaveLength(9);
     listHold.release();
     await waitFor(() => events(info, 'backfill').some((row) => row.event === 'done'));
-    expect(h.channel.listChatsCalls).toBe(baseline + 1);
-    expect(events(info, 'backfill').filter((row) => row.event === 'trigger')).toHaveLength(1);
+    // One in-flight scan during the storm, then Recovery's single queued
+    // follow-up may run after the hold releases.
+    expect(h.channel.listChatsCalls).toBeGreaterThanOrEqual(baseline + 1);
+    expect(h.channel.listChatsCalls).toBeLessThanOrEqual(baseline + 2);
   });
 
-  it('B2: late WS after reconnected backfill loses the claim with source ws', async () => {
+  it('B2: late WS after recovered backfill loses the claim with source ws', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const created = Date.now() - 90_000;
     const h = await startHarness({ lastLiveAt: Date.now() - 1_000 });
     await settle();
-    await rewindWatermark(h, 5 * 60_000);
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
     h.setMessages({
       [CHAT]: [mentionItem('om_race_ws', CHAT, 'late blip', created, 'omt_race')],
     });
-    h.channel.emit('reconnected');
+    await recoverReconnect(h);
     await waitFor(() => h.ledger.has('om_race_ws'));
     await h.channel.handlers.message?.(liveMention('om_race_ws', 'late blip', created, 'omt_race'));
     await waitForDebounce();
@@ -122,19 +100,19 @@ describe('backfill on SDK reconnected', () => {
     ]);
   });
 
-  it('B2: live WS then reconnected backfill loses the claim with source backfill', async () => {
+  it('B2: live WS then recovered backfill loses the claim with source backfill', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const created = Date.now() - 90_000;
     const h = await startHarness({ lastLiveAt: Date.now() - 1_000 });
     await settle();
-    await rewindWatermark(h, 5 * 60_000);
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
     h.setMessages({
       [CHAT]: [mentionItem('om_race_bf', CHAT, 'live first', created, 'omt_race')],
     });
     const modeHold = holdNext(h.channel, 'getChatMode');
     const live = h.channel.handlers.message?.(liveMention('om_race_bf', 'live first', created, 'omt_race'));
     await settle();
-    h.channel.emit('reconnected');
+    await recoverReconnect(h);
     await waitFor(() => intakeDuplicates(info).some((row) => row.source === 'backfill'));
     modeHold.release();
     await live;
@@ -209,6 +187,7 @@ async function startHarness(opts: {
     channel,
     agent,
     ledger,
+    bridge,
     setMessages(next: Record<string, unknown[]>) {
       for (const key of Object.keys(messagesByChat)) delete messagesByChat[key];
       Object.assign(messagesByChat, next);
@@ -216,8 +195,16 @@ async function startHarness(opts: {
   };
 }
 
-function rewindWatermark(h: { ledger: BackfillLedger }, gapMs: number) {
-  h.ledger.touchLive(Date.now() - gapMs);
+async function recoverReconnect(h: {
+  channel: ReturnType<typeof createRecordingLarkChannel>;
+  bridge: { tickLink(): Promise<void> };
+}): Promise<void> {
+  h.channel.connectionState = 'reconnecting';
+  h.channel.emit('reconnecting');
+  await h.bridge.tickLink();
+  h.channel.connectionState = 'connected';
+  h.channel.emit('reconnected');
+  await h.bridge.tickLink();
 }
 
 function holdNext<K extends 'listChats' | 'getChatMode'>(
@@ -311,7 +298,8 @@ async function settle() {
 }
 
 async function waitFor(predicate: () => boolean) {
-  for (let n = 0; n < 10_000; n++) {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
     if (predicate()) return;
     await yieldIO();
   }

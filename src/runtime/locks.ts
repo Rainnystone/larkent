@@ -1,12 +1,14 @@
 import { createHash } from 'node:crypto';
-import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, rm, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { setTimeout as nativeSetTimeout } from 'node:timers';
 import * as lockfile from 'proper-lockfile';
 import type { AppPaths } from '../config/app-paths';
 import { RUNTIME_LOCK_SCHEMA_VERSION } from '../config/migrations';
 import type { AgentKind } from '../config/profile-schema';
 import { isAgentKind } from '../agent/registry';
+import { isProcessAlive } from '../platform/process-info';
 
 export type RuntimeLockKind = 'profile' | 'app';
 
@@ -142,6 +144,10 @@ export function runtimeLockMetaFile(target: string): string {
   return `${target}.meta.json`;
 }
 
+export function runtimeLockPidFile(target: string): string {
+  return `${target}.pid`;
+}
+
 export async function readRuntimeLockMeta(target: string): Promise<RuntimeLockMeta | undefined> {
   try {
     const parsed = JSON.parse(await readFile(runtimeLockMetaFile(target), 'utf8')) as unknown;
@@ -185,11 +191,7 @@ async function acquireRuntimeLock(
 
   let release: () => Promise<void>;
   try {
-    release = await lockfile.lock(meta.target, {
-      realpath: false,
-      stale: 30_000,
-      update: 10_000,
-    });
+    release = await lockWithDeadHolderTakeover(meta);
   } catch (err) {
     throw new RuntimeLockConflictError(meta.kind, meta.target, await readRuntimeLockMeta(meta.target), err);
   }
@@ -200,6 +202,11 @@ async function acquireRuntimeLock(
     pid: process.pid,
     startedAt: new Date().toISOString(),
   };
+  // Sidecar only — never rewrite the lock target after acquire. Machine app
+  // targets are already named `*.lock`; replacing that file on Windows can
+  // leave proper-lockfile's directory lock stuck for the rest of the worker.
+  const pidFile = runtimeLockPidFile(meta.target);
+  await writeFile(pidFile, `${process.pid}\n`, { mode: 0o600 });
   const metaFile = runtimeLockMetaFile(meta.target);
   await writeFile(metaFile, `${JSON.stringify(fullMeta, null, 2)}\n`, {
     mode: 0o600,
@@ -210,10 +217,79 @@ async function acquireRuntimeLock(
     kind: meta.kind,
     target: meta.target,
     async release() {
+      await unlink(pidFile).catch(() => {});
       await unlink(metaFile).catch(() => {});
       await release();
     },
   };
+}
+
+async function lockWithDeadHolderTakeover(
+  meta: Omit<RuntimeLockMeta, 'schemaVersion' | 'pid' | 'startedAt'>,
+): Promise<() => Promise<void>> {
+  try {
+    return await lockfile.lock(meta.target, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+      retries: 0,
+    });
+  } catch (err) {
+    const pid = await readLockHolderPid(meta.target);
+    // Unknown holder: do not steal — a live second instance may own the lock
+    // without a readable sidecar. Dead recorded pid: reclaim immediately.
+    if (pid === undefined || pid === process.pid || isProcessAlive(pid)) {
+      throw err;
+    }
+    await stealDeadHolderLock(meta.target);
+    return await lockfile.lock(meta.target, {
+      realpath: false,
+      stale: 30_000,
+      update: 10_000,
+      retries: 0,
+    });
+  }
+}
+
+async function readLockHolderPid(target: string): Promise<number | undefined> {
+  const holder = await readRuntimeLockMeta(target);
+  if (isUsablePid(holder?.pid)) return holder.pid;
+  try {
+    const raw = (await readFile(runtimeLockPidFile(target), 'utf8')).trim();
+    const pid = Number(raw);
+    return isUsablePid(pid) ? pid : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function isUsablePid(pid: number | undefined): pid is number {
+  return typeof pid === 'number' && Number.isInteger(pid) && pid > 0;
+}
+
+async function stealDeadHolderLock(target: string): Promise<void> {
+  // proper-lockfile.unlock from another process often leaves `${target}.lock`
+  // in place after kill -9. Force-remove that leftover so we do not wait
+  // for the 30s stale timer.
+  await rm(`${target}.lock`, { recursive: true, force: true }).catch(() => {});
+  try {
+    await lockfile.unlock(target, { realpath: false });
+  } catch {
+    // Lock file may already be gone; still drop the stale pid sidecar.
+  }
+  await unlink(runtimeLockPidFile(target)).catch(() => {});
+  const metaFile = runtimeLockMetaFile(target);
+  for (let attempt = 1; attempt <= 8; attempt++) {
+    try {
+      await unlink(metaFile);
+      return;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'ENOENT') return;
+      if ((code !== 'EPERM' && code !== 'EBUSY' && code !== 'EACCES') || attempt === 8) return;
+      await new Promise((resolve) => nativeSetTimeout(resolve, 20 * attempt));
+    }
+  }
 }
 
 function isRuntimeLockMeta(value: unknown): value is RuntimeLockMeta {

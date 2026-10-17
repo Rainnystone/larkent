@@ -44,7 +44,7 @@ function fakeRun(text: string) {
   };
 }
 
-function makeSession(config: MeetingConfig, originChatId?: string) {
+function makeSession(config: MeetingConfig, originChatId?: string, joinedWithAccessCheck = false) {
   const s = new MeetingSession({
     client: noopClient,
     meetingId: '70001',
@@ -52,6 +52,7 @@ function makeSession(config: MeetingConfig, originChatId?: string) {
     topic: '周会',
     config,
     ...(originChatId ? { originChatId } : {}),
+    ...(joinedWithAccessCheck ? { joinedWithAccessCheck: true } : {}),
   });
   s.ingest({
     event_id: 'e1',
@@ -172,7 +173,7 @@ describe('summarizeEndedMeeting', () => {
     pc.access.allowedChats = ['oc_team'];
     pc.access.allowedUsers = ['ou_inviter'];
     const sent: unknown[] = [];
-    const session = makeSession(config, 'oc_team');
+    const session = makeSession(config, 'oc_team', true);
     await summarizeEndedMeeting({
       session,
       channel: { send: vi.fn(async () => { sent.push(1); return {} as never; }) },
@@ -183,7 +184,31 @@ describe('summarizeEndedMeeting', () => {
       workspaces: {},
     } as never);
     expect(mocks.startRunFlow).toHaveBeenCalledTimes(1);
+    expect(mocks.startRunFlow.mock.calls[0]?.[0]).toMatchObject({
+      access: { ok: true, reason: 'admitted' },
+    });
     expect(sent).toHaveLength(1);
+  });
+
+  it('does not admit a console-joined meeting that never passed an access check', async () => {
+    const config = cfg({ summaryOnEnd: true });
+    const pc = profileConfig(config);
+    pc.access.fence = { enabled: true };
+    pc.access.allowedChats = ['oc_team'];
+    pc.access.allowedUsers = ['ou_inviter'];
+    const sent: unknown[] = [];
+    const session = makeSession(config, 'oc_team', false);
+    await summarizeEndedMeeting({
+      session,
+      channel: { send: vi.fn(async () => { sent.push(1); return {} as never; }) },
+      controls: { profile: 'claude', profileConfig: pc },
+      executor: {},
+      activeRuns: { interrupt: vi.fn() },
+      sessions: {},
+      workspaces: {},
+    } as never);
+    expect(mocks.startRunFlow).not.toHaveBeenCalled();
+    expect(sent).toHaveLength(0);
   });
 
   it('still works after the meeting ended (transcript survives markEnded)', async () => {

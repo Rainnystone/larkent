@@ -10,7 +10,6 @@ export type StopRequest =
   | { type: 'user-stop' }
   | { type: 'superseded'; by: SupersedeBy }
   | { type: 'reconnect-command' }
-  | { type: 'keepalive-restart' }
   | { type: 'account-restart' }
   | { type: 'shutdown-signal' }
   | { type: 'exit-command' }
@@ -40,6 +39,8 @@ export interface DeriveRunOutcomeInput {
   terminalEvent?: AgentEvent;
   stderrTail?: string;
   signatures?: readonly CliSignature[];
+  /** True when the Feishu link's outage epoch changed during the run. */
+  outageOverlapped?: boolean;
 }
 
 export interface StoppableHandle {
@@ -80,22 +81,40 @@ export function noteTerminalStop(handle: StoppableHandle, event: AgentEvent): bo
   return reason ? requestStop(handle, reason) : false;
 }
 
-/** System events always pass. With runOutcome on, a real terminal still lands after stop. */
+/** System events always pass. A real terminal still lands after stop. */
 export function shouldDeliverAgentEvent(
   handle: StoppableHandle,
   event: AgentEvent,
-  runOutcomeEnabled: boolean,
 ): boolean {
   if (event.type === 'system') return true;
   if (!handle.interrupted) return true;
-  if (!runOutcomeEnabled) return false;
   return event.type === 'done' || event.type === 'error';
 }
 
 export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
+  return applyOutageOverlap(deriveRunOutcomeShape(input), input);
+}
+
+export function runOverlappedOutage(
+  link: { outageEpoch(): number } | undefined,
+  startedEpoch: number,
+  startedDown = false,
+): boolean {
+  if (!link) return false;
+  if (startedDown) return true;
+  return link.outageEpoch() !== startedEpoch;
+}
+
+function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
   const signed = matchCliSignature(input.stderrTail, input.signatures);
-  if (signed && !input.stopRequest) {
-    return signed.classify;
+  if (signed && signatureApplies(signed.classify, input)) {
+    return applySignatureOverlay(signed.classify);
+  }
+  // agy prints `error: interrupted` and exits 1 on SIGTERM, which the runner
+  // surfaces as a failed terminal. Keep an earlier user-stop (or other stop)
+  // instead of letting that failed exit become unclassified.
+  if (signed?.classify.kind === 'interrupted' && input.stopRequest) {
+    return interrupted(input.stopRequest);
   }
 
   const terminal = input.terminalEvent;
@@ -127,6 +146,49 @@ export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
   return completed();
 }
 
+/** Signatures pick card wording and `needsHuman`; retriable follows the cause. */
+function applySignatureOverlay(classify: RunOutcome): RunOutcome {
+  if (classify.kind !== 'failed') return classify;
+  if (classify.needsHuman) {
+    return { ...classify, retriable: false };
+  }
+  return failed(classify.cause);
+}
+
+function applyOutageOverlap(outcome: RunOutcome, input: DeriveRunOutcomeInput): RunOutcome {
+  if (outcome.kind !== 'failed') return outcome;
+  if (outcome.needsHuman) return outcome;
+  if (outcome.cause !== 'unclassified') return outcome;
+  if (input.outageOverlapped) return failed('transient-upstream');
+  return failed('unclassified');
+}
+
+function signatureApplies(
+  classify: RunOutcome,
+  input: DeriveRunOutcomeInput,
+): boolean {
+  if (!input.stopRequest) return true;
+  switch (classify.kind) {
+    case 'failed':
+      return (
+        input.terminalEvent?.type === 'error'
+        && input.terminalEvent.terminationReason === 'failed'
+      );
+    case 'partial':
+      return (
+        input.terminalEvent?.type === 'done'
+        && input.terminalEvent.terminationReason === 'normal'
+      );
+    case 'completed':
+    case 'interrupted':
+      return false;
+    default: {
+      const _exhaustive: never = classify;
+      return _exhaustive;
+    }
+  }
+}
+
 function completed(): RunOutcome {
   return { kind: 'completed', retriable: false, needsHuman: false };
 }
@@ -151,7 +213,7 @@ function failed(cause: FailedCause): RunOutcome {
     case 'killed-externally':
       return { kind: 'failed', cause, retriable: true, needsHuman: false };
     case 'unclassified':
-      return { kind: 'failed', cause, retriable: false, needsHuman: false };
+      return { kind: 'failed', cause, retriable: true, needsHuman: false };
     default: {
       const _exhaustive: never = cause;
       return _exhaustive;
@@ -167,7 +229,6 @@ function interruptedRetriable(reason: StopRequest): boolean {
     case 'account-restart':
       return false;
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'shutdown-signal':
     case 'bridge-idle-watchdog':
     case 'runner-timeout':
@@ -196,7 +257,6 @@ export function formatStopRequest(reason: StopRequest): string {
       return `superseded:${reason.by}`;
     case 'user-stop':
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'account-restart':
     case 'shutdown-signal':
     case 'exit-command':
@@ -230,6 +290,74 @@ export function formatRunOutcome(outcome: RunOutcome): string {
   }
 }
 
+/** User-facing Chinese reason. Logs keep {@link formatRunOutcome}. */
+export function describeRunOutcome(outcome: RunOutcome): string {
+  switch (outcome.kind) {
+    case 'completed':
+      return '已完成';
+    case 'partial':
+      return '输出不完整';
+    case 'interrupted':
+      return describeStopRequest(outcome.reason);
+    case 'failed':
+      return describeFailedCause(outcome.cause);
+    default: {
+      const _exhaustive: never = outcome;
+      return _exhaustive;
+    }
+  }
+}
+
+function describeStopRequest(reason: StopRequest): string {
+  switch (reason.type) {
+    case 'user-stop':
+      return '用户停止';
+    case 'superseded':
+      return '会话已切换';
+    case 'reconnect-command':
+      return '重连';
+    case 'account-restart':
+      return '账号切换';
+    case 'shutdown-signal':
+      return '进程退出';
+    case 'exit-command':
+      return '退出命令';
+    case 'bridge-idle-watchdog':
+      return '空闲超时';
+    case 'runner-timeout':
+      return '运行超时';
+    case 'meeting':
+      return '会议占用';
+    case 'subscriber-abandoned':
+      return '订阅已结束';
+    case 'external-signal':
+      return '外部信号中断';
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+function describeFailedCause(cause: FailedCause): string {
+  switch (cause) {
+    case 'transient-upstream':
+      return '上游网络中断';
+    case 'auth-required':
+      return '登录已失效';
+    case 'quota':
+      return '额度不足';
+    case 'killed-externally':
+      return '进程被外部终止';
+    case 'unclassified':
+      return '出错';
+    default: {
+      const _exhaustive: never = cause;
+      return _exhaustive;
+    }
+  }
+}
+
 export function cardTerminalFromOutcome(outcome: RunOutcome): Terminal {
   switch (outcome.kind) {
     case 'completed':
@@ -255,7 +383,6 @@ function interruptedCardTerminal(reason: StopRequest): Terminal {
     case 'user-stop':
     case 'superseded':
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'account-restart':
     case 'shutdown-signal':
     case 'exit-command':

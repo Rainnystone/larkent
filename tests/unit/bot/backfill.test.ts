@@ -40,14 +40,13 @@ afterEach(async () => {
 
 describe('resolveBackfillWindow', () => {
   it('B5: 3 h freeze uses watermark minus 2 min, not the 6 h cap', () => {
-    const lastLiveAt = NOW - 3 * HOUR;
+    const since = NOW - 3 * HOUR;
     expect(resolveBackfillWindow({
       now: NOW,
-      lastLiveAt,
+      since,
       lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
     })).toEqual({
-      gapMs: 3 * HOUR,
-      windowStart: lastLiveAt - WATERMARK_MARGIN_MS,
+      windowStart: since - WATERMARK_MARGIN_MS,
       windowEnd: NOW,
     });
   });
@@ -55,30 +54,18 @@ describe('resolveBackfillWindow', () => {
   it('B5: 9 h freeze is capped at lookbackMs', () => {
     expect(resolveBackfillWindow({
       now: NOW,
-      lastLiveAt: NOW - 9 * HOUR,
+      since: NOW - 9 * HOUR,
       lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
     })).toEqual({
-      gapMs: 9 * HOUR,
       windowStart: NOW - DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
       windowEnd: NOW,
     });
   });
 
-  it('resumes from the earlier of lastLiveAt and lastBackfillEnd', () => {
-    const lastLiveAt = NOW - HOUR;
-    const lastBackfillEnd = NOW - 2 * HOUR;
+  it('keeps an incomplete origin after since has advanced', () => {
     expect(resolveBackfillWindow({
       now: NOW,
-      lastLiveAt,
-      lastBackfillEnd,
-      lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
-    }).windowStart).toBe(lastBackfillEnd - WATERMARK_MARGIN_MS);
-  });
-
-  it('keeps an incomplete origin after lastLiveAt has advanced', () => {
-    expect(resolveBackfillWindow({
-      now: NOW,
-      lastLiveAt: NOW,
+      since: NOW,
       incompleteFrom: NOW - HOUR,
       lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
     }).windowStart).toBe(NOW - HOUR - WATERMARK_MARGIN_MS);
@@ -86,57 +73,15 @@ describe('resolveBackfillWindow', () => {
 });
 
 describe('runBackfill', () => {
-  it('B5: absent watermark initializes and does not scan', async () => {
-    const h = await harness({ lastLiveAt: undefined });
-    const info = spyInfo();
-    await runBackfill(await deps(h));
-    expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'watermark-initialized' }),
-    );
-    expect(h.listed).toHaveLength(0);
-    expect(h.intake).toHaveLength(0);
-    expect(h.ledger.getLiveAt()).toBe(NOW);
-    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
-  });
-
-  it('B5: gap below minGapMs skips without listing chats', async () => {
-    const h = await harness({ lastLiveAt: NOW - 30_000 });
-    const info = spyInfo();
-    await runBackfill(await deps(h));
-    expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'skip-short-gap', gapMs: 30_000 }),
-    );
-    expect(h.listed).toHaveLength(0);
-    expect(h.intake).toHaveLength(0);
-  });
-
-  it('logs backfill.forced and scans when incompleteFrom is set on a short gap', async () => {
+  it('scans a 20-second gap instead of skipping it', async () => {
     const h = await harness({
-      lastLiveAt: NOW - 25_000,
-      chats: [{ id: CHAT_A, name: 'A' }],
-      messages: { [CHAT_A]: [mentionItem('om_late', CHAT_A, 'continue', NOW - 10_000)] },
-    });
-    h.ledger.markScanIncomplete(NOW - 20_000);
-    const info = spyInfo();
-    await runBackfill(await deps(h));
-    expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'forced', gapMs: 25_000, reason: 'incomplete' }),
-    );
-    expect(events(info, 'backfill').filter((row) => row.event === 'skip-short-gap')).toEqual([]);
-    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_late']);
-  });
-
-  it('scans a short gap when forceShortGapScan is on and logs backfill.forced', async () => {
-    const h = await harness({
-      lastLiveAt: NOW - 25_000,
+      lastLiveAt: NOW - 20_000,
       chats: [{ id: CHAT_A, name: 'A' }],
       messages: { [CHAT_A]: [mentionItem('om_gap', CHAT_A, 'during gap', NOW - 10_000)] },
     });
     const info = spyInfo();
-    await runBackfill(await deps({ ...h, forceShortGapScan: true }));
-    expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'forced', gapMs: 25_000, reason: 'short-gap-scan' }),
-    );
+    await runBackfill(await deps(h));
+    expect(events(info, 'backfill').filter((row) => row.event === 'skip-short-gap')).toEqual([]);
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_gap']);
   });
 
@@ -161,17 +106,6 @@ describe('runBackfill', () => {
       expect.objectContaining({ event: 'skip-no-identity' }),
     );
     expect(h.listed).toHaveLength(0);
-  });
-
-  it('B5: clock skew rewrites the watermark and does not scan', async () => {
-    const h = await harness({ lastLiveAt: NOW + 60_000 });
-    const warn = spyWarn();
-    await runBackfill(await deps(h));
-    expect(events(warn, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'clock-skew' }),
-    );
-    expect(h.listed).toHaveLength(0);
-    expect(h.ledger.getLiveAt()).toBe(NOW);
   });
 
   it('B1: a second trigger with the same history enqueues nothing', async () => {
@@ -310,7 +244,7 @@ describe('runBackfill', () => {
     );
     expect(events(info, 'backfill').filter((row) => row.event === 'enqueued')).toEqual([]);
     expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
-    expect(h.ledger.getLiveAt()).toBe(NOW);
+    expect(h.ledger.getLiveAt()).toBe(NOW - 5 * 60_000);
   });
 
   it('listChats failure aborts without advancing the watermark', async () => {
@@ -421,35 +355,88 @@ describe('runBackfill', () => {
     });
     let closing = false;
     const info = spyInfo();
-    await runBackfill(await deps({
+    const ok = await runBackfill(await deps({
       ...h,
       isClosing: () => closing,
       onIntake: () => {
         closing = true;
       },
     }));
+    expect(ok).toBe(false);
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_1']);
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({ event: 'aborted' }),
     );
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+    expect(h.ledger.getIncompleteFrom()).toBeDefined();
+
+    closing = false;
+    const resumed = await runBackfill(await deps({ ...h, isClosing: () => false }));
+    expect(resumed).toBe(true);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_1', 'om_2']);
   });
 
-  it('logs trigger reconnected with gap and window bounds', async () => {
+  it('marks the scan incomplete before listing chats so a crash keeps the window', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_1', CHAT_A, 'hi', NOW - 10_000)] },
+    });
+    const pending = runBackfill(await deps({ ...h, listChatsHold: hold }));
+    await waitUntil(() => h.listed.length >= 1);
+    expect(h.ledger.getIncompleteFrom()).toBeDefined();
+    release();
+    expect(await pending).toBe(true);
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
+  });
+
+  it('answers a missed mention once after a crash mid-scan', async () => {
+    const hold = new Promise<void>(() => {});
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_crash', CHAT_A, 'missed', NOW - 10_000)] },
+    });
+    void runBackfill(await deps({ ...h, listChatsHold: hold }));
+    await waitUntil(() => h.listed.length >= 1);
+    await h.ledger.flush();
+
+    const restarted = new BackfillLedger(h.ledger.getFilePath(), { now: () => NOW });
+    ledgers.push(restarted);
+    await restarted.load();
+    expect(restarted.getIncompleteFrom()).toBeDefined();
+
+    const intake: NormalizedMessage[] = [];
+    const second = {
+      ...h,
+      ledger: restarted,
+      listed: [] as typeof h.listed,
+      list: [] as string[],
+      intake,
+      requests: [] as Record<string, unknown>[],
+    };
+    expect(await runBackfill(await deps(second))).toBe(true);
+    expect(intake.map((msg) => msg.messageId)).toEqual(['om_crash']);
+    expect(restarted.has('om_crash')).toBe(true);
+    expect(restarted.getIncompleteFrom()).toBeUndefined();
+    expect(h.intake).toEqual([]);
+  });
+
+  it('logs trigger with window bounds', async () => {
     const lastLiveAt = NOW - 5 * 60_000;
     const h = await harness({ lastLiveAt, chats: [{ id: CHAT_A, name: 'A' }] });
     const info = spyInfo();
-    await runBackfill(await deps({ ...h, trigger: 'reconnected' }));
+    await runBackfill(await deps(h));
     const window = resolveBackfillWindow({
       now: NOW,
-      lastLiveAt,
+      since: lastLiveAt,
       lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
     });
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({
         event: 'trigger',
-        trigger: 'reconnected',
-        gapMs: window.gapMs,
         windowStart: window.windowStart,
         windowEnd: window.windowEnd,
       }),
@@ -716,26 +703,6 @@ describe('runBackfill', () => {
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_cap_0', 'om_cap_1']);
   });
 
-  it('records truncated mentions when lostMessage is off', async () => {
-    const humans = Array.from({ length: 4 }, (_, i) =>
-      humanItem(`om_legacy_${i}`, CHAT_P2P, `ask ${i}`, NOW - 40_000 + i * 100),
-    );
-    const h = await harness({
-      chats: [],
-      messages: { [CHAT_P2P]: humans },
-    });
-    await runBackfill(await deps({
-      ...h,
-      sessionChatIds: [CHAT_P2P],
-      chatModes: { [CHAT_P2P]: 'p2p' },
-      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, maxMentionsPerChat: 2 },
-      lostMessage: false,
-    }));
-    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_legacy_2', 'om_legacy_3']);
-    expect(h.ledger.has('om_legacy_0')).toBe(true);
-    expect(h.ledger.has('om_legacy_1')).toBe(true);
-  });
-
   it('keeps group @mention enqueue and still drops group messages without mentionedBot', async () => {
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
@@ -945,7 +912,7 @@ describe('runBackfill', () => {
     expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
   });
 
-  it('completes an open incomplete scan when session p2p mode lookup returns HTTP 400, then skips a short gap', async () => {
+  it('completes an open incomplete scan when session p2p mode lookup returns HTTP 400, then still scans a short gap', async () => {
     const incompleteFrom = NOW - 6 * HOUR;
     const lastLiveAt = NOW - 11_000;
     let now = NOW;
@@ -976,20 +943,19 @@ describe('runBackfill', () => {
     );
 
     now = NOW + 11_000;
-    const listedBeforeSkip = h.listed.length;
+    const listedBefore = h.listed.length;
     const second = spyInfo();
+    h.intake.length = 0;
     await runBackfill(await deps({
       ...h,
       now: () => now,
       sessionChatIds: [CHAT_P2P],
       chatModeErrors: { [CHAT_P2P]: httpStatusError(400) },
     }));
-    expect(events(second, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'skip-short-gap', gapMs: 11_000 }),
-    );
-    expect(h.listed).toHaveLength(listedBeforeSkip);
+    expect(events(second, 'backfill').filter((row) => row.event === 'skip-short-gap')).toEqual([]);
+    expect(h.listed.length).toBeGreaterThan(listedBefore);
+    expect(h.intake).toEqual([]);
     expect(h.ledger.getIncompleteFrom()).toBeUndefined();
-    expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
   });
 
   it('keeps the incomplete scan when session p2p mode lookup returns HTTP 500', async () => {
@@ -1161,7 +1127,7 @@ describe('runBackfill', () => {
     );
     expect(h.ledger.getIncompleteFrom()).toBeUndefined();
     expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
-    expect(h.ledger.getLiveAt()).toBe(NOW);
+    expect(h.ledger.getLiveAt()).toBe(lastLiveAt);
   });
 
   it('keeps the scan incomplete when one chat history fetch returns HTTP 500', async () => {
@@ -1389,7 +1355,7 @@ describe('runBackfill', () => {
     await runBackfill(await deps(h));
     const window = resolveBackfillWindow({
       now: NOW,
-      lastLiveAt,
+      since: lastLiveAt,
       lookbackMs: DEFAULT_BACKFILL_PREFERENCES.lookbackMs,
     });
     expect(h.requests[0]).toEqual({
@@ -1414,12 +1380,13 @@ describe('createBackfillRun coalescing mutex', () => {
       messages: { [CHAT_A]: [mentionItem('om_1', CHAT_A, 'late', NOW - 10_000)] },
     });
     const run = createBackfillRun();
-    const firstDeps = await deps({ ...h, listChatsHold: hold, trigger: 'reconnected' });
-    const secondDeps = await deps({ ...h, listChatsHold: hold, trigger: 'connect' });
+    const firstDeps = await deps({ ...h, listChatsHold: hold });
+    const secondDeps = await deps({ ...h, listChatsHold: hold });
     const info = spyInfo();
     const first = run(firstDeps);
     const second = run(secondDeps);
     expect(second).toBe(first);
+    await waitUntil(() => h.listed.length >= 1);
     expect(h.listed).toHaveLength(1);
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({ event: 'coalesced' }),
@@ -1430,39 +1397,30 @@ describe('createBackfillRun coalescing mutex', () => {
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_1']);
   });
 
-  it('queues a follow-up scan when a handoff coalesces onto an in-flight connect', async () => {
-    let release: () => void = () => {};
-    const hold = new Promise<void>((resolve) => {
-      release = resolve;
+  it('coalesced scans do not start a second list while one is in flight', async () => {
+    let releaseList: () => void = () => {};
+    const listHold = new Promise<void>((resolve) => {
+      releaseList = resolve;
     });
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
       messages: { [CHAT_A]: [mentionItem('om_connect', CHAT_A, 'first', NOW - 10_000)] },
     });
     const run = createBackfillRun();
+    const info = spyInfo();
     const first = run(await deps({
       ...h,
-      listChatsHold: hold,
-      trigger: 'connect',
-      forceShortGapScan: true,
+      listChatsHold: listHold,
     }));
-    h.intake.length = 0;
-    h.messages[CHAT_A] = [mentionItem('om_handoff', CHAT_A, 'late', NOW - 5_000)];
-    const info = spyInfo();
-    const handoff = run(await deps({
-      ...h,
-      listChatsHold: hold,
-      trigger: 'handoff',
-      forceShortGapScan: true,
-    }));
-    expect(handoff).toBe(first);
+    const second = run(await deps(h));
+    expect(second).toBe(first);
     expect(events(info, 'backfill')).toContainEqual(
       expect.objectContaining({ event: 'coalesced' }),
     );
-    release();
+    releaseList();
     await first;
-    expect(h.listed.length).toBeGreaterThanOrEqual(2);
-    expect(h.intake.map((msg) => msg.messageId)).toContain('om_handoff');
+    expect(h.listed).toHaveLength(1);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_connect']);
   });
 
   it('starts a fresh scan after the in-flight one completes', async () => {
@@ -1478,11 +1436,11 @@ describe('createBackfillRun coalescing mutex', () => {
     now = NOW + 5 * 60_000;
     h.intake.length = 0;
     const info = spyInfo();
-    const next = await deps({ ...h, now: () => now, trigger: 'reconnected' });
+    const next = await deps({ ...h, now: () => now });
     await run(next);
     expect(h.listed).toHaveLength(2);
     expect(events(info, 'backfill')).toContainEqual(
-      expect.objectContaining({ event: 'trigger', trigger: 'reconnected' }),
+      expect.objectContaining({ event: 'trigger' }),
     );
     expect(events(info, 'backfill').filter((row) => row.event === 'coalesced')).toEqual([]);
   });
@@ -1500,6 +1458,7 @@ describe('createBackfillRun coalescing mutex', () => {
     const first = left(await deps({ ...leftH, listChatsHold: hold }));
     const second = right(await deps({ ...rightH, listChatsHold: hold }));
     expect(second).not.toBe(first);
+    await waitUntil(() => leftH.listed.length >= 1 && rightH.listed.length >= 1);
     expect(leftH.listed).toHaveLength(1);
     expect(rightH.listed).toHaveLength(1);
     expect(events(info, 'backfill').filter((row) => row.event === 'coalesced')).toEqual([]);
@@ -1579,7 +1538,8 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   profile?: { mode: 'team' | 'personal'; access: { allowedChats: string[] } };
   botOpenId?: string | null;
   botAppId?: string;
-  trigger?: RunBackfillDeps['trigger'];
+  fromMs?: number;
+  since?: number;
   now?: () => number;
   refreshKnownChats?: (chats: Array<{ id: string; name: string }>) => void;
   isClosing?: () => boolean;
@@ -1589,9 +1549,9 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   chatModeErrors?: Record<string, Error>;
   modeLookups?: string[];
   onGetChatMode?: (chatId: string) => Promise<void>;
-  forceShortGapScan?: boolean;
   requireMentionForChat?: (chatId: string) => boolean;
-  lostMessage?: boolean;
+  listMessagesHold?: Promise<void>;
+  onListMessages?: (chatId: string) => Promise<void>;
 }): Promise<RunBackfillDeps> {
   const channel = fakeChannel({
     identity: input.botOpenId === null ? undefined : { openId: input.botOpenId ?? BOT, name: 'Bot' },
@@ -1607,23 +1567,32 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     chatModeErrors: input.chatModeErrors,
     modeLookups: input.modeLookups,
     onGetChatMode: input.onGetChatMode,
+    listMessagesHold: input.listMessagesHold,
+    onListMessages: input.onListMessages,
   });
   const marks = new Map<string, { detectedAt: number }>();
+  const now = input.now ?? (() => NOW);
+  const since = input.since ?? input.ledger.getLiveAt() ?? now();
+  const fromMs = input.fromMs ?? resolveBackfillWindow({
+    now: now(),
+    since,
+    incompleteFrom: input.ledger.getIncompleteFrom(),
+    lookbackMs: (input.prefs ?? DEFAULT_BACKFILL_PREFERENCES).lookbackMs,
+  }).windowStart;
   return {
-    trigger: input.trigger ?? 'connect',
+    fromMs,
+    since,
     channel,
     ledger: input.ledger,
     prefs: input.prefs ?? DEFAULT_BACKFILL_PREFERENCES,
     profile: input.profile ?? { mode: 'team', access: { allowedChats: [] } },
-    now: input.now ?? (() => NOW),
+    now,
     marks,
     isClosing: input.isClosing ?? (() => false),
     refreshKnownChats: input.refreshKnownChats,
     sessionChatIds: input.sessionChatIds,
     ...(input.botAppId !== undefined ? { botAppId: input.botAppId } : {}),
-    ...(input.forceShortGapScan !== undefined ? { forceShortGapScan: input.forceShortGapScan } : {}),
     ...(input.requireMentionForChat ? { requireMentionForChat: input.requireMentionForChat } : {}),
-    ...(input.lostMessage !== undefined ? { lostMessage: input.lostMessage } : {}),
     intake: async (msg) => {
       input.intake.push(msg);
       input.onIntake?.(msg);
@@ -1646,6 +1615,8 @@ function fakeChannel(opts: {
   chatModeErrors?: Record<string, Error>;
   modeLookups?: string[];
   onGetChatMode?: (chatId: string) => Promise<void>;
+  listMessagesHold?: Promise<void>;
+  onListMessages?: (chatId: string) => Promise<void>;
 }): BackfillChannel {
   return {
     botIdentity: opts.identity,
@@ -1677,6 +1648,8 @@ function fakeChannel(opts: {
               const error = opts.listErrors[chatId];
               if (error) throw error;
               const items = [...(opts.messages[chatId] ?? [])];
+              await opts.onListMessages?.(chatId);
+              if (opts.listMessagesHold) await opts.listMessagesHold;
               if (params.sort_type === 'ByCreateTimeDesc') items.reverse();
               const chatPages = chunk(items, 50);
               const token = typeof params.page_token === 'string' ? Number(params.page_token) : 0;
@@ -1766,6 +1739,15 @@ function chunk<T>(items: T[], size: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size));
   return out.length > 0 ? out : [[]];
+}
+
+async function waitUntil(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error('timed out waiting for backfill condition');
 }
 
 function spyInfo() {

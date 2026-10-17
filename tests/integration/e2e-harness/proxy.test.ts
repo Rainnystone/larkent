@@ -16,7 +16,7 @@ afterEach(async () => {
 }, 15_000);
 
 describe('test-bridge fault proxy', () => {
-  it('disconnect resets the tunneled socket with ECONNRESET', async () => {
+  it('disconnect resets the tunneled socket with ECONNRESET', { timeout: 15_000 }, async () => {
     const target = await localHttpsTarget();
     const proxy = await startFaultProxy({ mode: 'disconnect' });
     cleanups.push(() => proxy.close());
@@ -58,7 +58,17 @@ describe('test-bridge fault proxy', () => {
     cleanups.push(() => proxy.close());
 
     await expect(connectThroughProxy(proxy.url, target, 800)).rejects.toSatisfy((err: unknown) => {
-      expect(['EAI_AGAIN', 'ENOTFOUND']).toContain(errorCode(err));
+      const code = errorCode(err);
+      const text = String(err);
+      // Some resolvers surface NXDOMAIN immediately; others stall until the
+      // client CONNECT timer fires. Both are the unresolvable-host path.
+      expect(
+        code === 'EAI_AGAIN'
+        || code === 'ENOTFOUND'
+        || code === 'ETIMEDOUT'
+        || code === 'ETIMEOUT'
+        || /timeout|ENOTFOUND|EAI_AGAIN/i.test(text),
+      ).toBe(true);
       return true;
     });
   });

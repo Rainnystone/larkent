@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { claudeCapability } from '../../../src/agent/capability';
+import { claudeCapability, grokCapability } from '../../../src/agent/capability';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { startRunFlow } from '../../../src/bot/run-flow';
 import { ProcessPool } from '../../../src/bot/process-pool';
@@ -49,7 +49,7 @@ describe('IM run flow', () => {
     const h = await createHarness();
     const workspaceRealpath = await realpath(h.tmp.workspace);
     h.workspaces.setCwd('chat-1', h.tmp.workspace);
-    h.sessions.set('chat-1', 'sess-1', workspaceRealpath);
+    h.sessions.set('chat-1', 'sess-1', workspaceRealpath, 'claude');
 
     const result = await startRunFlow({
       scopeId: 'chat-1',
@@ -158,7 +158,9 @@ describe('IM run flow', () => {
     const h = await createHarness();
     const workspaceRealpath = await realpath(h.tmp.workspace);
     h.workspaces.setCwd('chat-1', h.tmp.workspace);
-    h.sessions.set('chat-1', 'sess-live', workspaceRealpath);
+    // Same handle the journal would force — the hole is the fingerprint-blind
+    // SessionStore fallback, not a different live session.
+    h.sessions.set('chat-1', 'sess-journal', workspaceRealpath);
 
     const result = await startRunFlow({
       scopeId: 'chat-1',
@@ -178,7 +180,8 @@ describe('IM run flow', () => {
 
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error('expected run flow to start');
-    expect(result.resumeFrom).not.toBe('sess-journal');
+    expect(result.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
   });
 
   it('promises recovery instead of a later retry when reconnect is in progress', async () => {
@@ -227,6 +230,38 @@ describe('IM run flow', () => {
       },
     });
     expect(agent.runOptions).toEqual([]);
+  });
+
+  it('does not resume a previous CLI session after switching agentKind', async () => {
+    const h = await createHarness();
+    const workspaceRealpath = await realpath(h.tmp.workspace);
+    h.workspaces.setCwd('chat-1', h.tmp.workspace);
+    h.sessions.set('chat-1', 'cursor-sess', workspaceRealpath, 'cursor');
+    const grokProfile = createDefaultProfileConfig({
+      agentKind: 'grok',
+      accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
+    });
+    grokProfile.workspaces.default = h.tmp.workspace;
+
+    const result = await startRunFlow({
+      scopeId: 'chat-1',
+      scope: { source: 'im', chatId: 'chat-1', actorId: 'ou_user' },
+      prompt: 'hello',
+      attachments: [],
+      access: { ok: true, reason: 'allowed-user' },
+      capability: grokCapability(grokProfile),
+      profileConfig: grokProfile,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      executor: h.executor,
+      now: 1000,
+    });
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('expected run flow to start');
+    expect(result.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[0]?.resumeHandle).toBeUndefined();
+    expect(h.sessions.resumeFor('chat-1', workspaceRealpath, 'cursor')).toBe('cursor-sess');
   });
 
 });

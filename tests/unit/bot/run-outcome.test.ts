@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import {
   cardTerminalFromOutcome,
   deriveRunOutcome,
+  describeRunOutcome,
   formatRunOutcome,
   formatStopRequest,
   noteTerminalStop,
   requestStop,
+  runOverlappedOutage,
   shouldDeliverAgentEvent,
   type CliSignature,
   type RunOutcome,
@@ -20,7 +22,6 @@ const STOP_REQUESTS = [
   { type: 'superseded', by: 'ws' },
   { type: 'superseded', by: 'resume' },
   { type: 'reconnect-command' },
-  { type: 'keepalive-restart' },
   { type: 'account-restart' },
   { type: 'shutdown-signal' },
   { type: 'exit-command' },
@@ -152,9 +153,48 @@ describe('deriveRunOutcome', () => {
         exit: 1,
         terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
       },
-      expected: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: false },
+      expected: { kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false },
       terminal: 'error',
       formatted: 'failed:unclassified',
+    },
+    {
+      name: 'stop plus a real failed terminal keeps a matching signature',
+      input: {
+        stopRequest: { type: 'user-stop' } as const,
+        terminalEvent: { type: 'error' as const, message: 'auth', terminationReason: 'failed' as const },
+        exit: 1,
+        stderrTail: "Your stored authentication is invalid. Please run 'agent login'.",
+        signatures: [
+          {
+            pattern: /stored authentication is invalid/i,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+            userMessage: 'auth',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+      terminal: 'error',
+      formatted: 'failed:auth-required',
+    },
+    {
+      name: 'stop plus a real done terminal keeps a matching partial signature',
+      input: {
+        stopRequest: { type: 'user-stop' } as const,
+        terminalEvent: { type: 'done' as const, terminationReason: 'normal' as const },
+        stderrTail: '[agy] print timeout after 5m0s with turn in progress; returning partial output',
+        signatures: [
+          {
+            pattern: /print timeout after .* returning partial output/,
+            cliVersion: 'test',
+            classify: { kind: 'partial', retriable: true, needsHuman: false },
+            userMessage: 'partial',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'partial', retriable: true, needsHuman: false },
+      terminal: 'done',
+      formatted: 'partial',
     },
     {
       name: 'real error terminal beats a stop request',
@@ -163,7 +203,7 @@ describe('deriveRunOutcome', () => {
         terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
         exit: 1,
       },
-      expected: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: false },
+      expected: { kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false },
       terminal: 'error',
       formatted: 'failed:unclassified',
     },
@@ -230,6 +270,56 @@ describe('deriveRunOutcome', () => {
       terminal: 'done',
       formatted: 'completed',
     },
+    {
+      name: 'unclassified overlapping an outage becomes transient-upstream',
+      input: {
+        exit: 1,
+        terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
+        outageOverlapped: true,
+      },
+      expected: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+      terminal: 'error',
+      formatted: 'failed:transient-upstream',
+    },
+    {
+      name: 'auth signature stays needs-human even when an outage overlapped',
+      input: {
+        exit: 1,
+        terminalEvent: { type: 'error' as const, message: 'auth', terminationReason: 'failed' as const },
+        stderrTail: "Your stored authentication is invalid. Please run 'agent login'.",
+        outageOverlapped: true,
+        signatures: [
+          {
+            pattern: /stored authentication is invalid/i,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+            userMessage: 'auth',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'failed', cause: 'auth-required', retriable: false, needsHuman: true },
+      terminal: 'error',
+      formatted: 'failed:auth-required',
+    },
+    {
+      name: 'quota signature stays needs-human even when an outage overlapped',
+      input: {
+        exit: 1,
+        stderrTail: 'rate limit exceeded for this API key',
+        outageOverlapped: true,
+        signatures: [
+          {
+            pattern: /rate limit exceeded/i,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'quota', retriable: false, needsHuman: true },
+            userMessage: 'quota',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'failed', cause: 'quota', retriable: false, needsHuman: true },
+      terminal: 'error',
+      formatted: 'failed:quota',
+    },
   ] as const)('$name', ({ input, expected, terminal, formatted }) => {
     const outcome = deriveRunOutcome(input);
     expect(outcome).toEqual(expected);
@@ -248,15 +338,45 @@ describe('deriveRunOutcome', () => {
     expect(outcome).toEqual(expected);
     expect(formatRunOutcome(outcome)).toBe(`interrupted:${formatStopRequest(stopRequest)}`);
   });
+
+  it('maps user-facing notices to Chinese without internal codes', () => {
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'bridge-idle-watchdog' },
+      retriable: true,
+      needsHuman: false,
+    })).toBe('空闲超时');
+    expect(describeRunOutcome({
+      kind: 'failed',
+      cause: 'transient-upstream',
+      retriable: true,
+      needsHuman: false,
+    })).toBe('上游网络中断');
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'runner-timeout' },
+      retriable: true,
+      needsHuman: false,
+    })).toBe('运行超时');
+    for (const stopRequest of STOP_REQUESTS) {
+      const text = describeRunOutcome({
+        kind: 'interrupted',
+        reason: stopRequest,
+        retriable: true,
+        needsHuman: false,
+      });
+      expect(text).not.toMatch(/interrupted:|failed:/);
+      expect(text.length).toBeGreaterThan(0);
+    }
+  });
 });
 
 describe('shouldDeliverAgentEvent', () => {
-  it('still delivers a terminal event after stop when runOutcome is on', () => {
+  it('still delivers a terminal event after stop', () => {
     const handle = { interrupted: true, stopRequest: { type: 'user-stop' as const } };
-    expect(shouldDeliverAgentEvent(handle, { type: 'done', terminationReason: 'normal' }, true)).toBe(true);
-    expect(shouldDeliverAgentEvent(handle, { type: 'text', delta: 'x' }, true)).toBe(false);
-    expect(shouldDeliverAgentEvent(handle, { type: 'done', terminationReason: 'normal' }, false)).toBe(false);
-    expect(shouldDeliverAgentEvent(handle, { type: 'system' }, false)).toBe(true);
+    expect(shouldDeliverAgentEvent(handle, { type: 'done', terminationReason: 'normal' })).toBe(true);
+    expect(shouldDeliverAgentEvent(handle, { type: 'text', delta: 'x' })).toBe(false);
+    expect(shouldDeliverAgentEvent(handle, { type: 'system' })).toBe(true);
   });
 });
 
@@ -282,6 +402,20 @@ describe('requestStop first-writer-wins', () => {
   });
 });
 
+describe('runOverlappedOutage', () => {
+  it('is true only when the outage epoch changed', () => {
+    expect(runOverlappedOutage(undefined, 0)).toBe(false);
+    expect(runOverlappedOutage({ outageEpoch: () => 0 }, 0)).toBe(false);
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 0)).toBe(true);
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 1)).toBe(false);
+  });
+
+  it('counts a run that started while the link was already down as overlapping', () => {
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 1, true)).toBe(true);
+    expect(runOverlappedOutage({ outageEpoch: () => 1 }, 1, false)).toBe(false);
+  });
+});
+
 describe('stop request formatting', () => {
   it('covers every stop request variant', () => {
     const seen = new Set(STOP_REQUESTS.map((reason) => formatStopRequest(reason)));
@@ -292,7 +426,6 @@ describe('stop request formatting', () => {
       'superseded:ws',
       'superseded:resume',
       'reconnect-command',
-      'keepalive-restart',
       'account-restart',
       'shutdown-signal',
       'exit-command',
@@ -313,7 +446,6 @@ function interruptedRetriable(reason: StopRequest): boolean {
     case 'account-restart':
       return false;
     case 'reconnect-command':
-    case 'keepalive-restart':
     case 'shutdown-signal':
     case 'bridge-idle-watchdog':
     case 'runner-timeout':
