@@ -69,6 +69,8 @@ export class AutoActionAuth {
   private readonly nonceStore: CallbackNonceStore;
   private readonly now: () => number;
   private readonly createNonce: () => string;
+  /** In-flight end-card submits. Memory only: a validation miss must stay retryable. */
+  private readonly claimedNonces = new Set<string>();
 
   constructor(options: {
     secret: string;
@@ -118,6 +120,21 @@ export class AutoActionAuth {
 
   consume(nonce: string): boolean {
     return this.nonceStore.consume(nonce);
+  }
+
+  /**
+   * Exclusive in-flight claim for one nonce.
+   * Fails closed when the nonce is already used, revoked, or claimed.
+   */
+  claimNonce(nonce: string): boolean {
+    if (this.nonceStore.state(nonce) !== undefined) return false;
+    if (this.claimedNonces.has(nonce)) return false;
+    this.claimedNonces.add(nonce);
+    return true;
+  }
+
+  releaseNonce(nonce: string): void {
+    this.claimedNonces.delete(nonce);
   }
 }
 

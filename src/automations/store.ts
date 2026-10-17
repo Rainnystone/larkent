@@ -192,12 +192,40 @@ export class AutomationsStore {
     return this.items.map((item) => this.viewItem(item));
   }
 
-  hasAgedMissedInstants(): boolean {
+  /**
+   * Delete missed and skipped rows whose TTL has passed.
+   * Readers already hide them; leaving them in the document keeps the
+   * scheduler rewriting status on every segment wake.
+   */
+  async dropAgedInstants(): Promise<boolean> {
+    this.assertMutable();
     const cutoff = this.now() - AUTOMATIONS_MISSED_TTL_MS;
-    return this.items.some((item) =>
-      item.missedInstants.some((entry) => entry.recordedAt < cutoff)
-      || item.skippedInstants.some((entry) => entry.recordedAt < cutoff),
-    );
+    let changed = false;
+    for (const item of this.items) {
+      const missed = item.missedInstants.filter((entry) => entry.recordedAt >= cutoff);
+      const skipped = item.skippedInstants.filter((entry) => entry.recordedAt >= cutoff);
+      if (
+        missed.length === item.missedInstants.length
+        && skipped.length === item.skippedInstants.length
+      ) continue;
+      item.missedInstants = missed;
+      item.skippedInstants = skipped;
+      changed = true;
+    }
+    if (changed) await this.persistNow();
+    return changed;
+  }
+
+  /** Wall-clock instant when the oldest started fire key leaves the 48h window. */
+  earliestStartedKeyExpiry(): number | undefined {
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const key of this.started) {
+      const parsed = parseFireKey(key);
+      if (!parsed) continue;
+      const expiry = parsed.fireAt + AUTOMATIONS_STARTED_KEY_WINDOW_MS + 1;
+      if (expiry < earliest) earliest = expiry;
+    }
+    return Number.isFinite(earliest) ? earliest : undefined;
   }
 
   get(id: number): AutomationItem | undefined {

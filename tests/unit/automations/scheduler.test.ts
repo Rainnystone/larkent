@@ -15,6 +15,8 @@ import {
   type MissedNotify,
 } from '../../../src/automations/scheduler';
 import {
+  AUTOMATIONS_MISSED_TTL_MS,
+  AUTOMATIONS_STARTED_KEY_WINDOW_MS,
   AutomationsStore,
   type AutomationsStatusSnapshot,
   type CreateAutomationInput,
@@ -66,6 +68,10 @@ class ManualClock {
     if (typeof id === 'number') this.timers.delete(id);
   };
 
+  pendingCount(): number {
+    return this.timers.size;
+  };
+
   /** Wall-clock jump. Pending timers stay on their original deadlines. */
   jump(ms: number): void {
     this.nowMs += ms;
@@ -94,6 +100,7 @@ async function harness(nowMs: number, opts?: {
   send?: (fire: FireSend) => void | Promise<void>;
   agentTasks?: () => boolean;
   setTimeout?: (fn: () => void, delayMs: number) => unknown;
+  onChanged?: () => void | Promise<void>;
 }) {
   const dir = await mkdtemp(join(tmpdir(), 'automations-scheduler-'));
   dirs.push(dir);
@@ -122,6 +129,7 @@ async function harness(nowMs: number, opts?: {
     botDisplayName: () => 'Grok Bot',
     ...(opts?.isLinkUp ? { isLinkUp: opts.isLinkUp } : {}),
     ...(opts?.agentTasks ? { agentTasks: opts.agentTasks } : {}),
+    ...(opts?.onChanged ? { onChanged: opts.onChanged } : {}),
   });
   schedulers.push(scheduler);
   return {
@@ -1021,5 +1029,215 @@ describe('automation scheduler', () => {
     await h.scheduler.idle();
     expect(h.store.list()).toHaveLength(1);
     expect(h.store.get(1)?.lastFireAt).toBe(t0);
+  });
+
+  it('fires the remaining due agent slot when the previous run settles during the first skip', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const delays: number[] = [];
+    const clockBox: { clock?: ManualClock } = {};
+    const h = await harness(t0, {
+      send: () => hold,
+      setTimeout: (fn, delayMs) => {
+        delays.push(delayMs);
+        return clockBox.clock!.setTimeout(fn, delayMs);
+      },
+    });
+    clockBox.clock = h.clock;
+    await h.store.create(reminderInput({
+      taskType: 'agent',
+      cwd: h.dir,
+      schedule: hourly,
+      nextFireAt: t0,
+      name: '汇总',
+      taskText: '每天总结本群',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([expect.objectContaining({ fireAt: t0, catchUp: false })]);
+    expect(h.store.get(1)?.lastStatus).toBe('running');
+
+    let settled = false;
+    const actual = atomicWrite.writeFileAtomic;
+    const spy = vi.spyOn(atomicWrite, 'writeFileAtomic').mockImplementation(async (path, data, opts) => {
+      const skipping = String(path).endsWith('automations.json')
+        && String(data).includes('"reason": "previous-run-unsettled"');
+      if (!settled && skipping) {
+        settled = true;
+        void h.store.settleFire(1, 'ok', formatFireKey(1, t0));
+      }
+      return actual(path, data, opts);
+    });
+    try {
+      const armedAt = t0 + (delays.at(-1) ?? 0);
+      h.clock.jump(2 * HOUR + 1);
+      await h.clock.advanceTo(armedAt, () => h.scheduler.idle());
+    } finally {
+      spy.mockRestore();
+      release();
+    }
+
+    expect(settled).toBe(true);
+    expect(h.fires.map((fire) => ({ fireAt: fire.fireAt, catchUp: fire.catchUp }))).toEqual([
+      { fireAt: t0, catchUp: false },
+      { fireAt: t0 + 2 * HOUR, catchUp: false },
+    ]);
+    expect(h.notices).toEqual([]);
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        id: 1,
+        taskType: 'agent',
+        scheduledAt: t0 + HOUR,
+        result: 'skipped',
+        skipReason: 'previous-run-unsettled',
+      }),
+    ]);
+    expect(h.store.get(1)).toMatchObject({
+      lastStatus: 'running',
+      lastFireAt: t0 + 2 * HOUR,
+      nextFireAt: t0 + 3 * HOUR,
+    });
+    const status = await readStatus(h.statusPath);
+    expect(status.items).toEqual([
+      expect.objectContaining({
+        id: 1,
+        lastStatus: 'running',
+        lastFireAt: t0 + 2 * HOUR,
+        nextFireAt: t0 + 3 * HOUR,
+      }),
+    ]);
+    const item = h.store.get(1);
+    const rendered = automationBoardCard({
+      items: item ? [item] : [],
+      status: status as AutomationsStatusSnapshot,
+      auth: new BoardActionAuth({ secret: 'board-secret', now: () => h.clock.now() }),
+    }) as { elements: Array<{ content?: string; text?: { content?: string } }> };
+    const lines = rendered.elements.map((element) => element.text?.content ?? element.content ?? '');
+    expect(lines.join('\n')).toContain('已跳过 原定 2026-01-02 13:00');
+    expect(lines.join('\n')).toContain('"lastStatus":"running"');
+    expect(h.clock.pendingCount()).toBe(1);
+    expect(delays.at(-1)).toBe(60_000);
+  });
+
+  it('prunes started fire keys on the 60s wake after the last task is gone', async () => {
+    const delays: number[] = [];
+    const clockBox: { clock?: ManualClock } = {};
+    const h = await harness(t0, {
+      setTimeout: (fn, delayMs) => {
+        delays.push(delayMs);
+        return clockBox.clock!.setTimeout(fn, delayMs);
+      },
+    });
+    clockBox.clock = h.clock;
+    const staleAt = t0 - AUTOMATIONS_STARTED_KEY_WINDOW_MS + 30_000;
+    const freshAt = t0 - AUTOMATIONS_STARTED_KEY_WINDOW_MS + 90_000;
+    const stale = formatFireKey(1, staleAt);
+    const fresh = formatFireKey(1, freshAt);
+    await h.store.create(reminderInput({ nextFireAt: t0 + HOUR, paused: true }));
+    await h.store.markStarted(stale);
+    await h.store.markStarted(fresh);
+    await h.store.delete(1);
+    await h.scheduler.start();
+    await h.scheduler.idle();
+
+    expect(h.store.list()).toEqual([]);
+    expect(h.fires).toEqual([]);
+    expect(h.store.hasStarted(stale)).toBe(true);
+    expect(h.store.hasStarted(fresh)).toBe(true);
+    expect(h.clock.pendingCount()).toBe(1);
+    expect(delays.at(-1)).toBeLessThanOrEqual(60_000);
+    expect(delays.at(-1)).toBeGreaterThan(1);
+
+    await h.clock.advanceTo(t0 + 60_000, () => h.scheduler.idle());
+    expect(h.store.hasStarted(stale)).toBe(false);
+    expect(h.store.hasStarted(fresh)).toBe(true);
+    expect(h.clock.pendingCount()).toBe(1);
+    expect(delays.at(-1)).toBeLessThanOrEqual(60_000);
+
+    await h.clock.advanceTo(t0 + 120_000, () => h.scheduler.idle());
+    expect(h.store.hasStarted(fresh)).toBe(false);
+    expect(h.clock.pendingCount()).toBe(0);
+    const onDisk = JSON.parse(await readFile(join(h.dir, 'automations.json'), 'utf8')) as { started: string[] };
+    expect(onDisk.started).toEqual([]);
+  });
+
+  it('deletes aged skip rows and then does not rewrite status or the board', async () => {
+    const delays: number[] = [];
+    const clockBox: { clock?: ManualClock } = {};
+    let boardUpdates = 0;
+    const h = await harness(t0, {
+      onChanged: () => { boardUpdates += 1; },
+      setTimeout: (fn, delayMs) => {
+        delays.push(delayMs);
+        return clockBox.clock!.setTimeout(fn, delayMs);
+      },
+    });
+    clockBox.clock = h.clock;
+    const nextFireAt = t0 + AUTOMATIONS_MISSED_TTL_MS + 2 * HOUR;
+    await h.store.create(reminderInput({ nextFireAt }));
+    const skippedAt = t0 - HOUR;
+    await h.store.recordSkippedFire(1, skippedAt, 'previous-run-unsettled', nextFireAt);
+    await h.store.recordLog({
+      id: 1,
+      taskType: 'reminder',
+      scheduledAt: skippedAt,
+      decidedAt: t0,
+      triggerSource: 'startup',
+      result: 'skipped',
+      skipReason: 'previous-run-unsettled',
+    });
+    h.clock.jump(AUTOMATIONS_MISSED_TTL_MS - 30_000);
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([]);
+    expect(h.notices).toEqual([]);
+    const before = JSON.parse(await readFile(join(h.dir, 'automations.json'), 'utf8')) as {
+      items: Array<{ skippedInstants: Array<{ fireAt: number }> }>;
+    };
+    expect(before.items[0]?.skippedInstants.map((entry) => entry.fireAt)).toEqual([skippedAt]);
+
+    const writes = { doc: 0, status: 0 };
+    const actual = atomicWrite.writeFileAtomic;
+    const spy = vi.spyOn(atomicWrite, 'writeFileAtomic').mockImplementation(async (path, data, opts) => {
+      if (String(path).endsWith('automations.json')) writes.doc += 1;
+      if (String(path).endsWith('automations-status.json')) writes.status += 1;
+      return actual(path, data, opts);
+    });
+    try {
+      boardUpdates = 0;
+      await h.clock.advanceTo(h.clock.now() + 60_000, () => h.scheduler.idle());
+      const aged = JSON.parse(await readFile(join(h.dir, 'automations.json'), 'utf8')) as {
+        items: Array<{ skippedInstants: unknown[] }>;
+      };
+      expect(aged.items[0]?.skippedInstants).toEqual([]);
+      expect(h.store.get(1)?.skippedInstants).toEqual([]);
+      expect(await h.store.readLog()).toEqual([
+        expect.objectContaining({
+          scheduledAt: skippedAt,
+          result: 'skipped',
+          skipReason: 'previous-run-unsettled',
+        }),
+      ]);
+      const status = await readStatus(h.statusPath);
+      expect(status.items).toEqual([
+        expect.objectContaining({ id: 1, lastStatus: 'ok', nextFireAt }),
+      ]);
+
+      writes.doc = 0;
+      writes.status = 0;
+      boardUpdates = 0;
+      const updatedAt = status.updatedAt;
+      await h.clock.advanceTo(h.clock.now() + 3 * 60_000, () => h.scheduler.idle());
+      expect(writes).toEqual({ doc: 0, status: 0 });
+      expect(boardUpdates).toBe(0);
+      expect((await readStatus(h.statusPath)).updatedAt).toBe(updatedAt);
+      expect(h.fires).toEqual([]);
+      expect(h.notices).toEqual([]);
+      expect(delays.every((delay) => delay <= 60_000 && delay > 1)).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

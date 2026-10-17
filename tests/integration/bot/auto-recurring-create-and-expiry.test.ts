@@ -3,8 +3,10 @@ import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  AUTO_END_BUSY,
   AUTO_INTERVAL_TOO_SMALL,
   AUTO_INVALID_END,
+  AUTO_INVALID_HINT,
 } from '../../../src/automations/command';
 import { AutomationsStore } from '../../../src/automations/store';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
@@ -135,6 +137,68 @@ describe('A2 recurring creation and expiry', () => {
     ));
     expect(confirmCard(h)).toContain('auto.confirm');
     expect(h.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
+  });
+
+  it('lets one of two concurrent end-card taps win and keeps a typo retryable', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
+    const endCard = cardContaining(h, 'auto.end.');
+    const token = tokenFor(endCard, 'auto.end.custom');
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const click = (operatorId: string, endAt: string) => h.channel.handlers.cardAction?.(cardClick(
+      operatorId,
+      token,
+      messageId,
+      'auto.end.custom',
+      { end_at: endAt },
+    ));
+
+    await Promise.all([
+      click(MATE, '2026-10-21'),
+      click(USER, '2026-11-21'),
+    ]);
+
+    const bodies = h.channel.sent.map((item) => JSON.stringify(item.content));
+    expect(bodies.filter((body) => body.includes('auto.confirm'))).toHaveLength(1);
+    expect(bodies.some((body) => body.includes(AUTO_END_BUSY))).toBe(true);
+    expect(h.store.listDrafts()).toHaveLength(1);
+    expect(h.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
+    const confirm = confirmCard(h);
+    const winners = [confirm.includes('2026-10-21'), confirm.includes('2026-11-21')].filter(Boolean);
+    expect(winners).toHaveLength(1);
+
+    await h.channel.handlers.cardAction?.(cardClick(
+      MATE,
+      token,
+      messageId,
+      'auto.end.custom',
+      { end_at: '2026-12-21' },
+    ));
+    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+
+    const retry = await harness();
+    await retry.channel.handlers.message?.(mention('om_typo', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
+    const retryCard = cardContaining(retry, 'auto.end.');
+    const retryToken = tokenFor(retryCard, 'auto.end.custom');
+    const retryMessage = retry.store.listDrafts()[0]!.cardMessageId!;
+    await retry.channel.handlers.cardAction?.(cardClick(
+      MATE,
+      retryToken,
+      retryMessage,
+      'auto.end.custom',
+      { end_at: '2026-02-31' },
+    ));
+    expect(lastMarkdown(retry.channel)).toBe(AUTO_INVALID_END);
+    await retry.channel.handlers.cardAction?.(cardClick(
+      USER,
+      retryToken,
+      retryMessage,
+      'auto.end.custom',
+      { end_at: '2026-10-21' },
+    ));
+    expect(confirmCard(retry)).toContain('auto.confirm');
+    expect(retry.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
   });
 
   it('rejects a reminder interval under 10 minutes and an agent-task interval under 1 hour', async () => {

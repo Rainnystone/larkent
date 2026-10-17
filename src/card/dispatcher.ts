@@ -14,6 +14,7 @@ import {
 import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth';
 import { abandonIfNotInChat } from '../automations/chat-lifecycle';
 import {
+  AUTO_END_BUSY,
   AUTO_INVALID_END,
   AUTO_INVALID_HINT,
   completeDraftEnd,
@@ -423,30 +424,38 @@ async function dispatchAutoAction(
     return;
   }
   if (isAutoEndAction(cmd)) {
-    const now = (deps.now ?? Date.now)();
-    const customText = readEndInput(payload, formValue);
-    const endAt = resolveEndAt(cmd, {
-      timezone: registered.timezone,
-      now,
-      startAt: registered.startAt,
-      ...(customText ? { customText } : {}),
-    });
-    if (endAt === undefined) {
-      await sendAutoHint(deps, AUTO_INVALID_END);
+    const nonce = verified.payload.nonce;
+    if (!deps.autoAuth.claimNonce(nonce)) {
+      await sendAutoHint(deps, AUTO_END_BUSY);
       return;
     }
-    const result = await completeDraftEnd({
-      automations: deps.automations,
-      autoAuth: deps.autoAuth,
-      automationsScheduler: deps.automationsScheduler,
-      channel: deps.channel,
-      now: deps.now,
-    }, registered, endAt, deps.evt.messageId);
-    if (!result.ok) {
-      await sendAutoHint(deps, result.message);
-      return;
+    let failure: string | undefined;
+    try {
+      const now = (deps.now ?? Date.now)();
+      const customText = readEndInput(payload, formValue);
+      const endAt = resolveEndAt(cmd, {
+        timezone: registered.timezone,
+        now,
+        startAt: registered.startAt,
+        ...(customText ? { customText } : {}),
+      });
+      if (endAt === undefined) {
+        failure = AUTO_INVALID_END;
+      } else {
+        const result = await completeDraftEnd({
+          automations: deps.automations,
+          autoAuth: deps.autoAuth,
+          automationsScheduler: deps.automationsScheduler,
+          channel: deps.channel,
+          now: deps.now,
+        }, registered, endAt, deps.evt.messageId);
+        if (!result.ok) failure = result.message;
+        else if (!deps.autoAuth.consume(nonce)) failure = AUTO_INVALID_HINT;
+      }
+    } finally {
+      deps.autoAuth.releaseNonce(nonce);
     }
-    deps.autoAuth.consume(verified.payload.nonce);
+    if (failure) await sendAutoHint(deps, failure);
     return;
   }
 

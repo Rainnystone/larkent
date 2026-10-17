@@ -36,6 +36,7 @@ export const AUTO_INVALID_SCHEDULE = '无法解析时间表。';
 export const AUTO_UNKNOWN_ID = '没有这个编号。';
 export const AUTO_LIST_EMPTY = '暂无';
 export const AUTO_INVALID_END = '无法解析结束时间。';
+export const AUTO_END_BUSY = '该结束时间正在处理。';
 
 export interface ParsedAutoNew {
   taskType: AutomationTaskType;

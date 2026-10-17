@@ -284,12 +284,12 @@ class Scheduler implements AutomationScheduler {
   }
 
   private async applyCatchUp(item: AutomationItem, source: AutomationTriggerSource): Promise<void> {
-    const live = this.store.get(item.id);
-    if (!live || live.paused) return;
+    const state = await this.skipUnsettledAgentSlots(item, source);
+    const live = state.item;
+    if (!live || live.paused || state.unsettled) return;
     const schedule = readSchedule(live.schedule);
     if (!schedule) return;
     const now = this.now();
-    if (await this.skipUnsettledAgentSlots(live, source)) return;
     if (
       live.nextFireAt > 0
       && live.nextFireAt <= now
@@ -466,34 +466,32 @@ class Scheduler implements AutomationScheduler {
   }
 
   /**
-   * Skip every due slot of an agent task whose previous run has not settled.
-   * Does not send, so it runs even while the link is down and does not leave
-   * the slot queued for later.
+   * Skip due slots of an agent task whose previous run has not settled.
+   * Re-reads after every skip. `unsettled` is true only while that run is
+   * still in flight; a settle mid-skip leaves the latest item for the caller
+   * to fire or catch up. Does not send, so it runs while the link is down.
    */
   private async skipUnsettledAgentSlots(
     item: AutomationItem,
     source: AutomationTriggerSource,
-  ): Promise<boolean> {
-    if (item.paused || item.taskType !== 'agent' || item.lastStatus !== 'running') return false;
-    let live: AutomationItem | undefined = item;
-    let skippedAny = false;
+  ): Promise<{ item: AutomationItem | undefined; unsettled: boolean }> {
+    let live = this.store.get(item.id);
+    if (!live || live.paused || live.taskType !== 'agent' || live.lastStatus !== 'running') {
+      return { item: live, unsettled: false };
+    }
     const seen = new Set<number>();
-    while (
-      live
-      && live.lastStatus === 'running'
-      && live.nextFireAt > 0
-      && live.nextFireAt <= this.now()
-    ) {
-      if (seen.has(live.nextFireAt)) return skippedAny;
+    while (live.lastStatus === 'running' && live.nextFireAt > 0 && live.nextFireAt <= this.now()) {
+      if (seen.has(live.nextFireAt)) break;
       seen.add(live.nextFireAt);
       const schedule = readSchedule(live.schedule);
-      if (!schedule) return skippedAny;
+      if (!schedule) break;
       const skipped = await this.skipUnsettledAgent(live, live.nextFireAt, source, schedule);
-      if (!skipped) return skippedAny;
-      skippedAny = true;
-      live = this.store.get(item.id);
+      const refreshed = this.store.get(item.id);
+      if (!refreshed) return { item: undefined, unsettled: false };
+      live = refreshed;
+      if (!skipped) break;
     }
-    return skippedAny;
+    return { item: live, unsettled: live.lastStatus === 'running' };
   }
 
   /**
@@ -551,18 +549,24 @@ class Scheduler implements AutomationScheduler {
       if (item.paused || item.nextFireAt <= 0 || item.nextFireAt > now) continue;
       const schedule = readSchedule(item.schedule);
       if (!schedule) continue;
-      if (await this.skipUnsettledAgentSlots(item, 'startup')) continue;
-      if (item.nextFireAt < now - ON_TIME_GRACE_MS) {
-        await this.applyCatchUp(item, 'startup');
+      const state = await this.skipUnsettledAgentSlots(item, 'startup');
+      const live = state.item;
+      if (!live || live.paused || state.unsettled) continue;
+      if (live.nextFireAt <= 0 || live.nextFireAt > now) continue;
+      const liveSchedule = readSchedule(live.schedule);
+      if (!liveSchedule) continue;
+      if (live.nextFireAt < now - ON_TIME_GRACE_MS) {
+        await this.applyCatchUp(live, 'startup');
         continue;
       }
-      await this.fireExact(item, item.nextFireAt, false, 'startup', schedule);
+      await this.fireExact(live, live.nextFireAt, false, 'startup', liveSchedule);
     }
     await this.expireDue();
     this.armTimer();
   }
 
   private async expireDue(): Promise<void> {
+    const dropped = await this.store.dropAgedInstants();
     const now = this.now();
     let changed = false;
     for (const item of this.store.list()) {
@@ -585,7 +589,7 @@ class Scheduler implements AutomationScheduler {
         changed = true;
       }
     }
-    if (changed || this.store.hasAgedMissedInstants()) await this.writeStatus();
+    if (changed || dropped) await this.writeStatus();
   }
 
   private expiryAt(item: AutomationItem): number {
@@ -622,6 +626,14 @@ class Scheduler implements AutomationScheduler {
       if (!item.paused && item.nextFireAt > 0) {
         if (item.nextFireAt > now || (linkUp && item.nextFireAt === now)) {
           next = Math.min(next, item.nextFireAt);
+        } else if (
+          item.taskType === 'agent'
+          && item.lastStatus !== 'running'
+          && readSchedule(item.schedule)
+        ) {
+          // A settle during skip can leave this slot overdue. Arm a segment
+          // so it is not stuck until an unrelated nudge.
+          next = Math.min(next, now + SCHEDULER_SEGMENT_MS);
         }
       }
       const expiry = this.expiryAt(item);
@@ -633,6 +645,8 @@ class Scheduler implements AutomationScheduler {
         next = Math.min(next, entry.recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1);
       }
     }
+    const startedExpiry = this.store.earliestStartedKeyExpiry();
+    if (startedExpiry !== undefined) next = Math.min(next, startedExpiry);
     return Number.isFinite(next) ? next : undefined;
   }
 
