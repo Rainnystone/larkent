@@ -439,6 +439,25 @@ describe('automation scheduler', () => {
     expect(restarted.store.hasStarted(fireKey)).toBe(true);
   });
 
+  it('rewrites status when missed instants age off the 24 h board window', async () => {
+    const caughtUpAt = t0 + 2 * HOUR + 1;
+    const h = await harness(caughtUpAt);
+    await h.store.create(reminderInput());
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.store.get(1)?.missedInstants.map((entry) => entry.fireAt)).toEqual([t0, t0 + HOUR]);
+    await h.scheduler.pause(1);
+    await h.scheduler.idle();
+    const updatedAt = (await readStatus(h.statusPath)).updatedAt as number;
+
+    await h.clock.advanceTo(caughtUpAt + CATCH_UP_WINDOW_MS, () => h.scheduler.idle());
+    expect(h.store.get(1)?.missedInstants).toHaveLength(2);
+
+    await h.clock.advanceTo(caughtUpAt + CATCH_UP_WINDOW_MS + 1, () => h.scheduler.idle());
+    expect(h.store.get(1)?.missedInstants).toEqual([]);
+    expect((await readStatus(h.statusPath)).updatedAt).toBeGreaterThan(updatedAt);
+  });
+
   it('never catches up a paused item; resume recomputes nextFireAt from now', async () => {
     const h = await harness(t0 + 2 * HOUR + 1);
     const item = await h.store.create(reminderInput({ nextFireAt: t0, paused: true }));

@@ -20,6 +20,11 @@ export interface FakeRawClientRequest {
   params: unknown;
 }
 
+export interface FakePin {
+  messageId: string;
+  chatId: string;
+}
+
 export interface FakeChannelOptions {
   botAppId?: string;
   now?: () => number;
@@ -54,6 +59,11 @@ export interface FakeChannel {
           delete(params: unknown): Promise<unknown>;
           list(params: unknown): Promise<unknown>;
         };
+        readonly pin: {
+          create(params: unknown): Promise<unknown>;
+          list(params: unknown): Promise<unknown>;
+          delete(params: unknown): Promise<unknown>;
+        };
       };
     };
   };
@@ -61,6 +71,9 @@ export interface FakeChannel {
   updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void>;
   updateCard(messageId: string, cardJson: unknown): Promise<void>;
   readonly updatedCards: Array<{ messageId: string; card: unknown }>;
+  readonly pins: FakePin[];
+  readonly cardErrors: { update?: unknown };
+  dropPins(): void;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<{ messageId: string }>;
   /**
@@ -96,13 +109,29 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
   const updatedCards: Array<{ messageId: string; card: unknown }> = [];
   const rawThreadIds = new Map<string, string>();
   const cardById = new Map<string, unknown>();
+  const messageByCard = new Map<string, string>();
   const byUuid = new Map<string, StoredChatMessage>();
   const byId = new Map<string, StoredChatMessage>();
   const chat: StoredChatMessage[] = [];
+  const pins: FakePin[] = [];
   let nextCard = 1;
   let nextMessage = 1;
 
   const streamErrors: { open?: unknown; finish?: unknown; hangFinish?: boolean } = {};
+  const cardErrors: { update?: unknown } = {};
+
+  const throwCardUpdateIfArmed = (): void => {
+    if (cardErrors.update === undefined) return;
+    const err = cardErrors.update;
+    cardErrors.update = undefined;
+    throw err;
+  };
+
+  const applyCardToMessage = (messageId: string, cardJson: unknown): void => {
+    updatedCards.push({ messageId, card: cardJson });
+    const stored = byId.get(messageId);
+    if (stored) stored.content = { card: cardJson };
+  };
   const land = (input: {
     chatId: string;
     content: unknown;
@@ -165,7 +194,12 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
     sent,
     streams,
     streamErrors,
+    cardErrors,
     updatedCards,
+    pins,
+    dropPins() {
+      pins.splice(0);
+    },
     rawThreadIds,
     async fetchRawMessage(messageId: string): Promise<Array<{ thread_id?: string }>> {
       const threadId = rawThreadIds.get(messageId);
@@ -211,6 +245,39 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
               return listMessages(params);
             },
           },
+          pin: {
+            async create(params: unknown): Promise<unknown> {
+              requests.push({ method: 'im.v1.pin.create', params });
+              const messageId = stringField(nestedData(params), 'message_id') ?? '';
+              const stored = byId.get(messageId);
+              const chatId = stored?.chatId ?? '';
+              if (!pins.some((pin) => pin.messageId === messageId)) {
+                pins.push({ messageId, chatId });
+              }
+              return { data: { pin: { message_id: messageId, chat_id: chatId } } };
+            },
+            async list(params: unknown): Promise<unknown> {
+              requests.push({ method: 'im.v1.pin.list', params });
+              const nested = asRecord(asRecord(params)?.params) ?? asRecord(params) ?? {};
+              const chatId = typeof nested.chat_id === 'string' ? nested.chat_id : '';
+              return {
+                data: {
+                  items: pins
+                    .filter((pin) => !chatId || pin.chatId === chatId)
+                    .map((pin) => ({ message_id: pin.messageId, chat_id: pin.chatId })),
+                  has_more: false,
+                },
+              };
+            },
+            async delete(params: unknown): Promise<unknown> {
+              requests.push({ method: 'im.v1.pin.delete', params });
+              const path = asRecord(asRecord(params)?.path) ?? {};
+              const messageId = typeof path.message_id === 'string' ? path.message_id : '';
+              const index = pins.findIndex((pin) => pin.messageId === messageId);
+              if (index >= 0) pins.splice(index, 1);
+              return { data: {} };
+            },
+          },
         },
       },
     },
@@ -220,13 +287,16 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
       return { cardId };
     },
     async updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void> {
+      throwCardUpdateIfArmed();
       requests.push({ method: 'cardkit.v1.card.update', params: { cardId, cardJson, sequence } });
+      cardById.set(cardId, cardJson);
+      const messageId = messageByCard.get(cardId);
+      if (messageId) applyCardToMessage(messageId, cardJson);
     },
     async updateCard(messageId: string, cardJson: unknown): Promise<void> {
-      updatedCards.push({ messageId, card: cardJson });
+      throwCardUpdateIfArmed();
       requests.push({ method: 'im.v1.message.patch', params: { messageId, cardJson } });
-      const stored = byId.get(messageId);
-      if (stored) stored.content = { card: cardJson };
+      applyCardToMessage(messageId, cardJson);
     },
     async send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }> {
       const cardId = (content as { cardId?: unknown } | undefined)?.cardId;
@@ -242,6 +312,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
         parentId: outboundReplyTo(options),
         msgType: inferMsgType(resolved),
       });
+      if (typeof cardId === 'string') messageByCard.set(cardId, landed.message_id);
       return { messageId: landed.message_id };
     },
     getConnectionStatus() {

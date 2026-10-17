@@ -55,6 +55,7 @@ export interface AutomationSchedulerDeps {
   clearTimeout?: (id: unknown) => void;
   isLinkUp?: () => boolean;
   enabled?: () => boolean;
+  onChanged?: () => void | Promise<void>;
 }
 
 export interface AutomationScheduler {
@@ -63,6 +64,7 @@ export interface AutomationScheduler {
   idle(): Promise<void>;
   onLinkRecovered(): Promise<void>;
   wake(fireKey: string): Promise<void>;
+  notifyChanged(): Promise<void>;
   /** Re-arm after an in-process create/confirm so new nextFireAt / endAt take effect. */
   nudge(): Promise<void>;
   pause(id: number): Promise<boolean>;
@@ -84,6 +86,7 @@ class Scheduler implements AutomationScheduler {
   private readonly clearTimeout: (id: unknown) => void;
   private readonly isLinkUp: () => boolean;
   private readonly enabled: () => boolean;
+  private readonly onChanged?: () => void | Promise<void>;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   private fireTimer: unknown;
@@ -99,6 +102,7 @@ class Scheduler implements AutomationScheduler {
     this.clearTimeout = deps.clearTimeout ?? ((id) => clearTimeout(id as NodeJS.Timeout));
     this.isLinkUp = deps.isLinkUp ?? (() => true);
     this.enabled = deps.enabled ?? (() => true);
+    this.onChanged = deps.onChanged;
   }
 
   start(): Promise<void> {
@@ -106,6 +110,7 @@ class Scheduler implements AutomationScheduler {
     return this.enqueue(async () => {
       await this.catchUp('startup');
       await this.handleDue();
+      await this.writeStatus();
     });
   }
 
@@ -123,6 +128,14 @@ class Scheduler implements AutomationScheduler {
       if (this.closed) return;
       await this.catchUp('link-recovered');
       await this.handleDue();
+    });
+  }
+
+  notifyChanged(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.closed) return;
+      await this.writeStatus();
+      this.armTimer();
     });
   }
 
@@ -383,7 +396,7 @@ class Scheduler implements AutomationScheduler {
         changed = true;
       }
     }
-    if (changed) await this.writeStatus();
+    if (changed || this.store.hasAgedMissedInstants()) await this.writeStatus();
   }
 
   private expiryAt(item: AutomationItem): number {
@@ -415,6 +428,9 @@ class Scheduler implements AutomationScheduler {
       }
       const expiry = this.expiryAt(item);
       if (expiry > 0) nextExpire = Math.min(nextExpire, expiry);
+      for (const entry of item.missedInstants) {
+        nextExpire = Math.min(nextExpire, entry.recordedAt + AUTOMATIONS_MISSED_TTL_MS + 1);
+      }
     }
     if (Number.isFinite(nextFire)) {
       this.fireTimer = this.setTimeout(() => {
@@ -437,5 +453,10 @@ class Scheduler implements AutomationScheduler {
 
   private async writeStatus(): Promise<void> {
     await this.store.writeStatus(this.botDisplayName());
+    try {
+      await this.onChanged?.();
+    } catch (error) {
+      log.fail('auto', error, { event: 'board' });
+    }
   }
 }

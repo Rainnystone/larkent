@@ -237,6 +237,29 @@ describe('AutomationsStore', () => {
     expect(restarted.listDrafts().map((draft) => draft.name)).toEqual(['still-fresh']);
   });
 
+  it('persists a per-chat board binding across restart', async () => {
+    const { path, logPath, statusPath, store } = await fixture();
+    await store.load();
+    await store.setBoard({
+      chatId: 'oc_group',
+      messageId: 'om_board',
+      cardId: 'card_1',
+      sequence: 2,
+    });
+    expect(store.getBoard('oc_group')).toEqual({
+      chatId: 'oc_group',
+      messageId: 'om_board',
+      cardId: 'card_1',
+      sequence: 2,
+    });
+    expect(store.findBoardByMessageId('om_board')?.chatId).toBe('oc_group');
+
+    const restarted = new AutomationsStore({ path, logPath, statusPath, now: () => 1_760_000_000_000 });
+    await restarted.load();
+    expect(restarted.getBoard('oc_group')?.messageId).toBe('om_board');
+    expect(restarted.findBoardByMessageId('om_other')).toBeUndefined();
+  });
+
   it('binds a card id onto a draft and takeDraft removes it', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     await store.load();

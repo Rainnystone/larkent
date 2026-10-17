@@ -85,6 +85,31 @@ export interface AutomationsLogEntry {
   result: AutomationLogResult;
 }
 
+export interface AutomationBoardBinding {
+  chatId: string;
+  messageId: string;
+  cardId?: string;
+  sequence?: number;
+  pinFailedHinted?: boolean;
+}
+
+export interface AutomationsStatusItem {
+  id: number;
+  paused: boolean;
+  nextFireAt: number;
+  lastFireAt: number;
+  lastStatus: AutomationLastStatus;
+  endAt: number;
+  missed: number;
+}
+
+export interface AutomationsStatusSnapshot {
+  v: 1;
+  bot: string;
+  updatedAt: number;
+  items: AutomationsStatusItem[];
+}
+
 export interface AutomationsStoreOptions {
   path: string;
   logPath: string;
@@ -97,6 +122,7 @@ interface AutomationsDocument {
   items: AutomationItem[];
   drafts: AutomationDraft[];
   started: string[];
+  boards: AutomationBoardBinding[];
 }
 
 export class AutomationsStore {
@@ -108,6 +134,7 @@ export class AutomationsStore {
   private items: AutomationItem[] = [];
   private drafts: AutomationDraft[] = [];
   private started = new Set<string>();
+  private boards: AutomationBoardBinding[] = [];
   private logEntries: AutomationsLogEntry[] = [];
   private queue = new PersistenceQueue();
   private logQueue = new PersistenceQueue();
@@ -147,6 +174,13 @@ export class AutomationsStore {
 
   list(): AutomationItem[] {
     return this.items.map((item) => this.viewItem(item));
+  }
+
+  hasAgedMissedInstants(): boolean {
+    const cutoff = this.now() - AUTOMATIONS_MISSED_TTL_MS;
+    return this.items.some((item) =>
+      item.missedInstants.some((entry) => entry.recordedAt < cutoff),
+    );
   }
 
   get(id: number): AutomationItem | undefined {
@@ -296,21 +330,46 @@ export class AutomationsStore {
 
   async writeStatus(botDisplayName: string): Promise<void> {
     this.assertMutable();
-    const snapshot = `${JSON.stringify({
-      v: 1,
-      bot: botDisplayName,
-      updatedAt: this.now(),
-      items: this.items.map((item) => ({
-        id: item.id,
-        paused: item.paused,
-        nextFireAt: item.nextFireAt,
-        lastFireAt: item.lastFireAt,
-        lastStatus: item.lastStatus,
-        endAt: item.endAt,
-        missed: item.missed,
-      })),
-    })}\n`;
+    const snapshot = `${JSON.stringify(this.statusSnapshot(botDisplayName))}\n`;
     await writeFileAtomic(this.statusPath, snapshot, { mode: 0o600 });
+  }
+
+  async readStatus(): Promise<AutomationsStatusSnapshot | undefined> {
+    try {
+      return parseStatusDocument(await readFile(this.statusPath, 'utf8'));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return undefined;
+      throw error;
+    }
+  }
+
+  getBoard(chatId: string): AutomationBoardBinding | undefined {
+    const board = this.boards.find((entry) => entry.chatId === chatId);
+    return board ? { ...board } : undefined;
+  }
+
+  findBoardByMessageId(messageId: string): AutomationBoardBinding | undefined {
+    const board = this.boards.find((entry) => entry.messageId === messageId);
+    return board ? { ...board } : undefined;
+  }
+
+  listBoards(): AutomationBoardBinding[] {
+    return this.boards.map((board) => ({ ...board }));
+  }
+
+  async setBoard(binding: AutomationBoardBinding): Promise<void> {
+    this.assertMutable();
+    const index = this.boards.findIndex((entry) => entry.chatId === binding.chatId);
+    const next: AutomationBoardBinding = {
+      chatId: binding.chatId,
+      messageId: binding.messageId,
+      ...(binding.cardId ? { cardId: binding.cardId } : {}),
+      ...(typeof binding.sequence === 'number' ? { sequence: binding.sequence } : {}),
+      ...(binding.pinFailedHinted ? { pinFailedHinted: true } : {}),
+    };
+    if (index >= 0) this.boards[index] = next;
+    else this.boards.push(next);
+    await this.persistNow();
   }
 
   async markStarted(fireKey: string): Promise<MarkStartedResult> {
@@ -402,6 +461,7 @@ export class AutomationsStore {
     this.items = document.items.map(cloneItem);
     this.drafts = document.drafts.map((draft) => ({ ...draft }));
     this.started = new Set(document.started);
+    this.boards = document.boards.map((board) => ({ ...board }));
     this.persistenceDisabled = persistenceDisabled;
     this.hasDocument = hasDocument;
     this.persistScheduled = false;
@@ -487,12 +547,30 @@ export class AutomationsStore {
     });
   }
 
+  private statusSnapshot(botDisplayName: string): AutomationsStatusSnapshot {
+    return {
+      v: 1,
+      bot: botDisplayName,
+      updatedAt: this.now(),
+      items: this.items.map((item) => ({
+        id: item.id,
+        paused: item.paused,
+        nextFireAt: item.nextFireAt,
+        lastFireAt: item.lastFireAt,
+        lastStatus: item.lastStatus,
+        endAt: item.endAt,
+        missed: item.missed,
+      })),
+    };
+  }
+
   private serialize(): {
     schemaVersion: typeof AUTOMATIONS_SCHEMA_VERSION;
     nextId: number;
     items: AutomationItem[];
     drafts: AutomationDraft[];
     started: string[];
+    boards: AutomationBoardBinding[];
   } {
     return {
       schemaVersion: AUTOMATIONS_SCHEMA_VERSION,
@@ -500,12 +578,13 @@ export class AutomationsStore {
       items: this.items.map(cloneItem),
       drafts: this.drafts.map((draft) => ({ ...draft })),
       started: [...this.started],
+      boards: this.boards.map((board) => ({ ...board })),
     };
   }
 }
 
 function emptyDocument(): AutomationsDocument {
-  return { nextId: 1, items: [], drafts: [], started: [] };
+  return { nextId: 1, items: [], drafts: [], started: [], boards: [] };
 }
 
 function cloneItem(item: AutomationItem): AutomationItem {
@@ -540,12 +619,63 @@ function parseAutomationsDocument(text: string): AutomationsDocument {
   const started = Array.isArray(raw.started)
     ? raw.started.filter((key): key is string => typeof key === 'string' && key.length > 0)
     : [];
+  const boards = Array.isArray(raw.boards)
+    ? raw.boards.flatMap((entry) => {
+      const board = parseBoard(entry);
+      return board ? [board] : [];
+    })
+    : [];
   const maxItemId = items.reduce((max, item) => Math.max(max, item.id), 0);
   return {
     nextId: Math.max(nextId, maxItemId + 1),
     items,
     drafts,
     started,
+    boards,
+  };
+}
+
+function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
+  if (!isObject(raw)) return undefined;
+  if (typeof raw.chatId !== 'string' || !raw.chatId) return undefined;
+  if (typeof raw.messageId !== 'string' || !raw.messageId) return undefined;
+  return {
+    chatId: raw.chatId,
+    messageId: raw.messageId,
+    ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
+    ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
+    ...(raw.pinFailedHinted === true ? { pinFailedHinted: true } : {}),
+  };
+}
+
+function parseStatusDocument(text: string): AutomationsStatusSnapshot {
+  const raw: unknown = JSON.parse(text);
+  if (!isObject(raw) || raw.v !== 1 || typeof raw.bot !== 'string' || !isFiniteNumber(raw.updatedAt)) {
+    throw new Error('Invalid automations status document');
+  }
+  const items = Array.isArray(raw.items)
+    ? raw.items.flatMap((entry) => {
+      const item = parseStatusItem(entry);
+      return item ? [item] : [];
+    })
+    : [];
+  return { v: 1, bot: raw.bot, updatedAt: raw.updatedAt, items };
+}
+
+function parseStatusItem(raw: unknown): AutomationsStatusItem | undefined {
+  if (!isObject(raw) || !isPositiveInt(raw.id)) return undefined;
+  if (!isFiniteNumber(raw.nextFireAt) || !isFiniteNumber(raw.lastFireAt) || !isFiniteNumber(raw.endAt)) {
+    return undefined;
+  }
+  if (!isFiniteNumber(raw.missed) || !isLastStatus(raw.lastStatus)) return undefined;
+  return {
+    id: raw.id,
+    paused: raw.paused === true,
+    nextFireAt: raw.nextFireAt,
+    lastFireAt: raw.lastFireAt,
+    lastStatus: raw.lastStatus,
+    endAt: raw.endAt,
+    missed: raw.missed,
   };
 }
 
