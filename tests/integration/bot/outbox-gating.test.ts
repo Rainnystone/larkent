@@ -67,6 +67,27 @@ describe('per-item outbox gating', { timeout: 20_000 }, () => {
     expect(h.channel.streams.length).toBe(1);
   });
 
+  it('delivers fallback text once when a card patch is format_error on redelivery', async () => {
+    const h = await harness({ replyMode: 'card' });
+    h.channel.streamErrors.finish = sdkShapedSendError('format_error', new Error('bad card'));
+    h.channel.updateCard = async () => {
+      throw sdkShapedSendError('format_error', new Error('bad card'));
+    };
+
+    await h.channel.handlers.message?.(mention('om_fmt', 'please answer'));
+    await waitFor(() => answerSends(h.channel).length === 1);
+
+    expect(answerSends(h.channel)).toHaveLength(1);
+    expect(answerSends(h.channel)[0]?.content).toEqual({ text: ANSWER });
+    expect(h.channel.streams.length).toBe(1);
+    expect(h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_fmt') && entry.reply?.state === 'sent'
+    ))).toBe(true);
+
+    await h.bridge.recoverMissed();
+    expect(answerSends(h.channel)).toHaveLength(1);
+  });
+
   it('uuid-sends the stored deliveryId when a gone card can never be patched', async () => {
     const h = await harness({ replyMode: 'card' });
     h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
@@ -144,6 +165,31 @@ describe('per-item outbox gating', { timeout: 20_000 }, () => {
       entry.messageIds.includes('om_400') && (entry.reply?.state === 'sent' || entry.reply?.state === 'rejected')
     ))).toBe(true);
     expect(recovered).toHaveLength(0);
+  });
+
+  it('does not hot-loop a persistent local outbox error', async () => {
+    const h = await harness({ replyMode: 'text' });
+    const orig = h.channel.send.bind(h.channel);
+    let attempts = 0;
+    h.channel.send = async () => {
+      attempts += 1;
+      throw new TypeError('x is not a function');
+    };
+
+    await h.channel.handlers.message?.(mention('om_local_loop', 'please answer'));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_local_loop') && entry.reply?.state === 'staged'
+    )));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(attempts).toBeLessThan(8);
+    expect(h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_local_loop') && entry.reply?.state === 'staged'
+    ))).toBe(true);
+
+    h.channel.send = orig;
+    await h.bridge.recoverMissed();
+    await waitFor(() => answerSends(h.channel).length === 1);
+    expect(answerSends(h.channel)).toHaveLength(1);
   });
 
   it('retries a local non-stream send while the link stays up until one complete reply lands', async () => {

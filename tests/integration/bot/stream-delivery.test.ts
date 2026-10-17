@@ -10,7 +10,6 @@ import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import {
   axiosErrno,
-  axiosHttpError,
   sdkShapedSendError,
 } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
@@ -88,33 +87,21 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     expect(answerSends(h.channel)).toHaveLength(0);
   });
 
-  it('drops a permanently rejected live-sweep patch after one attempt without a uuid-send', async () => {
+  it('falls back to one plain-text send when a card patch is format_error on redelivery', async () => {
     const h = await harness({ replyMode: 'card' });
-    h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
-    const origUpdate = h.channel.updateCard.bind(h.channel);
-    let patches = 0;
-    h.channel.updateCard = async (messageId, card) => {
-      patches += 1;
-      if (patches === 1) {
-        throw sdkShapedSendError('unknown', axiosHttpError(400));
-      }
-      return origUpdate(messageId, card);
+    h.channel.streamErrors.finish = sdkShapedSendError('format_error', new Error('bad card'));
+    h.channel.updateCard = async () => {
+      throw sdkShapedSendError('format_error', new Error('bad card'));
     };
 
-    await h.channel.handlers.message?.(mention('om_400', 'please answer'));
-    await waitFor(() => h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_400') && entry.reply?.state === 'rejected'
-    )));
-    const patchesWhenDropped = patches;
-    expect(patchesWhenDropped).toBe(1);
-    expect(answerSends(h.channel)).toHaveLength(0);
+    await h.channel.handlers.message?.(mention('om_fmt', 'please answer'));
+    await waitFor(() => answerSends(h.channel).length === 1);
+    expect(answerSends(h.channel)).toHaveLength(1);
+    expect(answerSends(h.channel)[0]?.content).toEqual({ text: ANSWER });
     expect(h.channel.streams.length).toBe(1);
 
     await h.bridge.recoverMissed();
-    await h.bridge.recoverMissed();
-    expect(patches).toBe(patchesWhenDropped);
-    expect(answerSends(h.channel)).toHaveLength(0);
-    expect(h.channel.streams.length).toBe(1);
+    expect(answerSends(h.channel)).toHaveLength(1);
   });
 
   it('uuid-sends the full answer after recovery when stream open creates no message', async () => {

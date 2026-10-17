@@ -207,13 +207,20 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     expect(noticeSends(h.channel)).toHaveLength(1);
   });
 
-  it('keeps sweeping a staged notice after more than eight failed passes', async () => {
+  it('does not hot-loop a persistently failing notice in the live sweep', async () => {
     const h = await harness({
       fakeTimers: false,
       events: [[{ type: 'done', terminationReason: 'interrupted' }]],
     });
-    failNoticeSends(h.channel, { remaining: 12 });
+    const fails = { remaining: 12 };
+    failNoticeSends(h.channel, fails);
     await h.channel.handlers.message?.(mention('om_run', SECRET));
+    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending'));
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(h.journal.list().some((entry) => entry.status === 'notice-pending')).toBe(true);
+    expect(fails.remaining).toBeGreaterThan(4);
+    fails.remaining = 0;
+    await h.bridge.recoverMissed();
     await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
     expect(noticeSends(h.channel)).toHaveLength(1);
   });

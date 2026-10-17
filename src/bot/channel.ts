@@ -145,8 +145,10 @@ import {
 const DEBOUNCE_MS = 600;
 const STREAM_TERMINAL_GRACE_MS = 3000;
 const REACTION_CLEANUP_GRACE_MS = 1000;
-/** Retry delay for staged 4xx/local cards while the link stays up (I1). */
+/** Retry delay while a live sweep pass is still draining staged items. */
 const OUTBOX_SWEEP_MS = 50;
+/** When a pass delivers nothing, wait for a new trigger instead of spinning. */
+const OUTBOX_IDLE_MS = 60_000;
 
 /** Single handshake attempt. Also the force-reconnect budget via connectTimeoutMs. */
 export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
@@ -635,16 +637,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       return sweepTail;
     }
     sweepInFlight = true;
+    const stagedBefore = stagedOutboxCount(journal);
     sweepTail = trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal').then(() => {
       if (sweepStopped || link.isDown()) return;
-      const pending = journal.list().some((entry) => (
-        replyState(entry) === 'staged' || noticeState(entry) === 'staged'
-      ));
-      if (!pending) {
+      const stagedAfter = stagedOutboxCount(journal);
+      if (stagedAfter === 0) {
         sweepDelayMs = OUTBOX_SWEEP_MS;
         return;
       }
-      armSweepTimer(OUTBOX_SWEEP_MS);
+      armSweepTimer(stagedAfter === stagedBefore ? OUTBOX_IDLE_MS : OUTBOX_SWEEP_MS);
     }, (error: unknown) => {
       if (sweepStopped) return;
       const delay = rateLimitResetDelayMs(error) ?? sweepDelayMs;
@@ -2416,28 +2417,75 @@ async function resendJournalReply(input: {
     });
     return true;
   }
-  const result = await redeliverStagedReply({
-    channel: input.channel,
-    entry,
-    botAppId: input.botAppId,
-    ...(input.now ? { now: input.now } : {}),
+  const reply = entry.reply;
+  if (!reply?.markdown.trim()) return false;
+  let delivered = false;
+  let messageId: string | undefined;
+  const settled = await sendOrWait({
+    send: async () => {
+      const result = await redeliverStagedReply({
+        channel: input.channel,
+        entry,
+        botAppId: input.botAppId,
+        ...(input.now ? { now: input.now } : {}),
+      });
+      delivered = result.delivered;
+      messageId = result.messageId;
+      if (!result.delivered) return undefined;
+      return result.messageId ? { messageId: result.messageId } : {};
+    },
+    fallback: async () => {
+      const sent = await sendPlainTextReply({
+        channel: input.channel,
+        chatId: entry.chatId,
+        body: reply.markdown,
+        sendOpts: {
+          replyTo: reply.replyTo,
+          ...(reply.replyInThread ? { replyInThread: true } : {}),
+        },
+        deliveryId: reply.deliveryId,
+      });
+      delivered = Boolean(sent?.messageId);
+      messageId = sent?.messageId;
+      return sent;
+    },
+    journal: input.journal,
+    turnId: entry.turnId,
+    replyMode: journalReplyMode(reply.replyMode),
   });
-  if (result.messageId) {
-    input.journal.noteReplyReceipt(
-      entry.turnId,
-      result.messageId,
-      result.messageId === entry.reply?.messageId,
-    );
+  if (settled.kind === 'wait') {
+    if (settled.error !== undefined) throw settled.error;
+    return false;
   }
-  if (result.delivered) {
+  if (delivered) {
     log.info('outbound', 'journal-resend', {
       scope: entry.scope,
       turnId: entry.turnId,
       chatId: entry.chatId,
-      messageId: result.messageId,
+      messageId,
     });
   }
-  return result.delivered;
+  return delivered;
+}
+
+function journalReplyMode(mode: string | undefined): ReturnType<typeof getMessageReplyMode> {
+  switch (mode) {
+    case 'card':
+    case 'markdown':
+    case 'text':
+      return mode;
+    default:
+      return 'text';
+  }
+}
+
+function stagedOutboxCount(journal: TurnJournal): number {
+  let count = 0;
+  for (const entry of journal.list()) {
+    if (replyState(entry) === 'staged') count += 1;
+    if (noticeState(entry) === 'staged') count += 1;
+  }
+  return count;
 }
 
 async function sendFinalReply(input: {
