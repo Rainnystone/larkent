@@ -118,9 +118,19 @@ describe('automation monitor wake hook', () => {
     const sentBefore = h.channel.sent.length;
     const fireKey = formatFireKey(1, fireAt);
     await enqueueWakeRequest(h.wakeDir, fireKey);
-    await waitFor(async () => (await readLog(h)).some((entry) =>
-      entry.result === 'catch-up' && entry.scheduledAt === fireAt && entry.triggerSource === 'wake',
-    ));
+    await waitFor(async () => {
+      const logReady = (await readLog(h)).some((entry) =>
+        entry.result === 'catch-up' && entry.scheduledAt === fireAt && entry.triggerSource === 'wake',
+      );
+      if (!logReady || h.store.get(1) !== undefined) return false;
+      try {
+        const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as { items: unknown[] };
+        if (status.items.length !== 0) return false;
+        return latestBoard(h).text.includes('暂无');
+      } catch {
+        return false;
+      }
+    });
 
     const logAfter = await readLog(h);
     expect(logAfter.filter((entry) => entry.result === 'catch-up')).toEqual([
@@ -211,9 +221,22 @@ describe('automation monitor wake hook', () => {
     h.setNow(fireAt + CATCH_UP_WINDOW_MS + 1);
 
     await enqueueWakeRequest(h.wakeDir, formatFireKey(1, fireAt));
-    await waitFor(async () => (await readLog(h)).some((entry) =>
-      entry.result === 'missed' && entry.scheduledAt === fireAt,
-    ));
+    await waitFor(async () => {
+      const logReady = (await readLog(h)).some((entry) =>
+        entry.result === 'missed' && entry.scheduledAt === fireAt,
+      );
+      if (!logReady) return false;
+      try {
+        const board = latestBoard(h);
+        if (!board.text.includes('已错过 原定 2026-01-02 12:00')) return false;
+        const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
+          items: Array<{ lastStatus?: string; missed?: number }>;
+        };
+        return status.items[0]?.lastStatus === 'missed' && status.items[0]?.missed === 1;
+      } catch {
+        return false;
+      }
+    });
 
     expect(h.store.hasStarted(formatFireKey(1, fireAt))).toBe(false);
     const logEntries = await readLog(h);

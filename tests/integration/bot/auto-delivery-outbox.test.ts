@@ -51,7 +51,15 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
   it('posts exactly one reminder text when the fake clock reaches the instant', async () => {
     const h = await harness({ nowMs: t0, seed: true });
 
-    await waitFor(() => reminderBodies(h.channel).length === 1);
+    await waitFor(async () => {
+      if (reminderBodies(h.channel).length !== 1) return false;
+      try {
+        const status = await readStatus(h.statusPath);
+        return status.items[0]?.lastStatus === 'ok' && status.items[0]?.lastFireAt === t0;
+      } catch {
+        return false;
+      }
+    });
 
     expect(reminderBodies(h.channel)).toEqual(['⏰ hourly ping：ping']);
     expect(outboxSends(h.channel)).toHaveLength(1);
@@ -108,7 +116,15 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     h.setNow(t0 + 60_000);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
-    await waitFor(() => reminderBodies(h.channel).length === 1);
+    await waitFor(async () => {
+      if (reminderBodies(h.channel).length !== 1) return false;
+      try {
+        const status = await readStatus(h.statusPath);
+        return status.items[0]?.lastStatus === 'ok' && status.items[0]?.lastFireAt === t0;
+      } catch {
+        return false;
+      }
+    });
 
     expect(reminderBodies(h.channel)).toEqual(['⏰ hourly ping：ping（补跑，原定 12:00）']);
     expect(outboxSends(h.channel)).toHaveLength(1);
@@ -150,7 +166,15 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     h.setNow(t0 + CATCH_UP_WINDOW_MS + 1);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
-    await waitFor(() => missedBodies(h.channel).length === 1);
+    await waitFor(async () => {
+      if (missedBodies(h.channel).length !== 1) return false;
+      try {
+        const status = await readStatus(h.statusPath);
+        return status.items[0]?.lastStatus === 'missed' && status.items[0]?.missed === 1;
+      } catch {
+        return false;
+      }
+    });
 
     expect(reminderBodies(h.channel)).toEqual([]);
     expect(missedBodies(h.channel)).toEqual(['已错过：hourly ping\n原定 12:00']);
@@ -418,10 +442,10 @@ async function readStatus(path: string) {
   };
 }
 
-async function waitFor(predicate: () => boolean) {
+async function waitFor(predicate: () => boolean | Promise<boolean>) {
   const deadline = Date.now() + 8_000;
   while (Date.now() < deadline) {
-    if (predicate()) return;
+    if (await predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 25));
     await yieldIO();
   }
