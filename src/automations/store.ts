@@ -63,6 +63,7 @@ export interface CreateAutomationInput {
 export interface AutomationDraft extends CreateAutomationInput {
   draftId: string;
   createdAt: number;
+  cardMessageId?: string;
 }
 
 export interface AutomationsLogEntry {
@@ -233,6 +234,39 @@ export class AutomationsStore {
   listDrafts(): AutomationDraft[] {
     this.pruneDrafts();
     return this.drafts.map((draft) => ({ ...draft }));
+  }
+
+  getDraft(draftId: string): AutomationDraft | undefined {
+    this.pruneDrafts();
+    const draft = this.drafts.find((entry) => entry.draftId === draftId);
+    return draft ? { ...draft } : undefined;
+  }
+
+  findDraftByCardMessageId(cardMessageId: string): AutomationDraft | undefined {
+    this.pruneDrafts();
+    const draft = this.drafts.find((entry) => entry.cardMessageId === cardMessageId);
+    return draft ? { ...draft } : undefined;
+  }
+
+  async bindDraftCard(draftId: string, cardMessageId: string): Promise<boolean> {
+    this.assertMutable();
+    this.pruneDrafts();
+    const draft = this.drafts.find((entry) => entry.draftId === draftId);
+    if (!draft) return false;
+    draft.cardMessageId = cardMessageId;
+    await this.persistNow();
+    return true;
+  }
+
+  async takeDraft(draftId: string): Promise<AutomationDraft | undefined> {
+    this.assertMutable();
+    this.pruneDrafts();
+    const index = this.drafts.findIndex((entry) => entry.draftId === draftId);
+    if (index < 0) return undefined;
+    const [draft] = this.drafts.splice(index, 1);
+    if (!draft) return undefined;
+    await this.persistNow();
+    return { ...draft };
   }
 
   async writeStatus(botDisplayName: string): Promise<void> {
@@ -524,6 +558,7 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
     taskText: raw.taskText,
     ...(typeof raw.cwd === 'string' && raw.cwd ? { cwd: raw.cwd } : {}),
     ...(raw.paused === true ? { paused: true } : {}),
+    ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
   };
 }
 

@@ -237,6 +237,25 @@ describe('AutomationsStore', () => {
     expect(restarted.listDrafts().map((draft) => draft.name)).toEqual(['still-fresh']);
   });
 
+  it('binds a card id onto a draft and takeDraft removes it', async () => {
+    const { path, logPath, statusPath, store } = await fixture();
+    await store.load();
+    const draft = await store.saveDraft(reminderInput({ name: 'bind' }));
+    expect(await store.bindDraftCard(draft.draftId, 'om_card')).toBe(true);
+    expect(store.getDraft(draft.draftId)?.cardMessageId).toBe('om_card');
+    expect(store.findDraftByCardMessageId('om_card')?.draftId).toBe(draft.draftId);
+    expect(store.findDraftByCardMessageId('om_other')).toBeUndefined();
+
+    const restarted = new AutomationsStore({ path, logPath, statusPath, now: () => 1_760_000_000_000 });
+    await restarted.load();
+    expect(restarted.findDraftByCardMessageId('om_card')?.draftId).toBe(draft.draftId);
+
+    const taken = await restarted.takeDraft(draft.draftId);
+    expect(taken?.cardMessageId).toBe('om_card');
+    expect(restarted.getDraft(draft.draftId)).toBeUndefined();
+    expect(await restarted.takeDraft(draft.draftId)).toBeUndefined();
+  });
+
   it('keeps missed instants on the item for 24 hours after they are recorded', async () => {
     const now = { t: 1_760_000_000_000 };
     const { store } = await fixture(() => now.t);

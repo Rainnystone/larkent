@@ -88,6 +88,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **已错过**: a planned instant that will not run (older than 24 hours, or displaced by a later catch-up). Traced on the board, in chat, and in the automations log.
 - **automations log**: an append-only file in the profile data dir. One entry per 已错过 instant and one per catch-up. Permanent: not truncated, not removed when the item expires or is deleted. No task text, no Feishu ID.
 - **draft**: an automation waiting for confirm-card acceptance; TTL 24 hours.
+- **confirm card**: the bridge-rendered 是/否 card for `/auto new`. Signed like an interruption notice (`AutoActionAuth`): draft + chat + action + expiry + one-time nonce, no operator. Any allowed group member may tap. Stale, duplicate, or forged taps reply 此确认已失效. Registration is the draft's persisted `cardMessageId` (in-memory `isManaged` does not survive restart).
 - **scheduler**: the profile-owned timer that produces fires from `nextFireAt`. Startup, link recovery, and the local wake entry run the same catch-up rule. It is not a recovery poller and is not backfill.
 - **automation creator** (`createdBy`): the person whose message created the automation. **bot owner** is `isBotOwner()` (formerly `isCreator()`).
 

@@ -5,6 +5,9 @@ import type { BackfillLedger } from '../bot/backfill-ledger';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
+import type { AutoActionAuth, AutoCardAction } from '../automations/action-auth';
+import { AUTO_INVALID_HINT, confirmAutomationDraft } from '../automations/command';
+import type { AutomationItem, AutomationsStore } from '../automations/store';
 import type { CallbackAuth } from './callback-auth';
 import type { Continuations } from '../bot/continuation';
 import {
@@ -53,6 +56,10 @@ export interface CardDispatchDeps {
   callbackPolicyFingerprintForScope?: (scope: string) => string | undefined;
   journal?: TurnJournal;
   noticeAuth?: NoticeActionAuth;
+  autoAuth?: AutoActionAuth;
+  automations?: AutomationsStore;
+  now?: () => number;
+  onAutomationConfirmed?: (item: AutomationItem) => void;
   continuations?: Continuations;
   onNoticeAction?: (input: {
     action: NoticeAction;
@@ -112,6 +119,10 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   const cmd = typeof payload.cmd === 'string' ? payload.cmd : '';
   if (cmd === 'notice.continue' || cmd === 'notice.dismiss') {
     await dispatchNoticeAction(deps, payload, cmd, scope, threadId, mode, accessDecision);
+    return;
+  }
+  if (cmd === 'auto.confirm' || cmd === 'auto.reject') {
+    await dispatchAutoAction(deps, payload, cmd, accessDecision);
     return;
   }
   if (cmd) {
@@ -344,6 +355,90 @@ async function dispatchNoticeAction(
     mode,
     messageId: deps.evt.messageId,
   });
+}
+
+async function dispatchAutoAction(
+  deps: CardDispatchDeps,
+  payload: Record<string, unknown>,
+  cmd: AutoCardAction,
+  access: ReturnType<typeof evaluateAccess>,
+): Promise<void> {
+  if (!access.ok) return;
+  const botOpenId = deps.channel.botIdentity?.openId;
+  if (botOpenId && deps.evt.operator.openId === botOpenId) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
+  if (!deps.autoAuth || !deps.automations || !token) {
+    log.info('cardAction', 'skip-auto-auth-missing', { cmd });
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const registered = deps.automations.findDraftByCardMessageId(deps.evt.messageId);
+  if (!registered) {
+    log.info('cardAction', 'skip-auto-unregistered', { cmd, messageId: deps.evt.messageId });
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (!deps.controls.profileConfig.automations.enabled) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const verified = deps.autoAuth.verify(token);
+  if (!verified.ok || verified.payload.action !== cmd) {
+    log.info('cardAction', 'skip-auto-auth-failed', {
+      cmd,
+      reason: verified.ok ? 'action-mismatch' : verified.reason,
+    });
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (
+    verified.payload.chatId !== deps.evt.chatId
+    || verified.payload.draftId !== registered.draftId
+  ) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const taken = await deps.automations.takeDraft(registered.draftId);
+  if (!taken) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  switch (cmd) {
+    case 'auto.reject':
+      log.info('auto', 'rejected', { draftId: taken.draftId, chatId: taken.chatId });
+      await sendAutoHint(deps, '已取消该草稿。');
+      return;
+    case 'auto.confirm': {
+      const item = await confirmAutomationDraft(deps, taken);
+      if (!item) {
+        await sendAutoInvalid(deps);
+        return;
+      }
+      await sendAutoHint(deps, `已确认：#${item.id} ${item.name}`);
+      return;
+    }
+    default: {
+      const _exhaustive: never = cmd;
+      return _exhaustive;
+    }
+  }
+}
+
+async function sendAutoInvalid(deps: CardDispatchDeps): Promise<void> {
+  await sendAutoHint(deps, AUTO_INVALID_HINT);
+}
+
+async function sendAutoHint(deps: CardDispatchDeps, markdown: string): Promise<void> {
+  try {
+    await deps.channel.send(deps.evt.chatId, { markdown }, { replyTo: deps.evt.messageId });
+  } catch (error) {
+    log.warn('auto', 'invalid-hint-failed', {
+      err: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function sendNoticeInvalid(deps: CardDispatchDeps): Promise<void> {

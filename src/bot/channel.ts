@@ -124,7 +124,8 @@ import {
   type TurnJournalEntry,
   type TurnJournalResource,
 } from './turn-journal';
-import type { AutomationsStore } from '../automations/store';
+import { AutoActionAuth } from '../automations/action-auth';
+import type { AutomationItem, AutomationsStore } from '../automations/store';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
@@ -260,6 +261,7 @@ export interface StartChannelDeps {
   ledger?: BackfillLedger;
   journal?: TurnJournal;
   automations?: AutomationsStore;
+  onAutomationConfirmed?: (item: AutomationItem) => void;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
   now?: () => number;
@@ -328,6 +330,13 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     : undefined;
   const noticeAuth = callbackNonceStore
     ? new NoticeActionAuth({ secret: appSecret, nonceStore: callbackNonceStore })
+    : undefined;
+  const autoAuth = callbackNonceStore
+    ? new AutoActionAuth({
+        secret: appSecret,
+        nonceStore: callbackNonceStore,
+        ...(deps.now ? { now: deps.now } : {}),
+      })
     : undefined;
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model
@@ -521,6 +530,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         logThreadModeOverride,
         executor,
         pool,
+        automations: deps.automations,
+        autoAuth,
+        ...(deps.now ? { now: deps.now } : {}),
+        onAutomationConfirmed: deps.onAutomationConfirmed,
       }),
     ).catch((err) => {
       log.fail('intake', err);
@@ -782,6 +795,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
           journal,
           noticeAuth,
+          autoAuth,
+          automations: deps.automations,
+          ...(deps.now ? { now: deps.now } : {}),
+          onAutomationConfirmed: deps.onAutomationConfirmed,
           continuations,
           onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
             if (action !== 'notice.continue') return;
@@ -965,10 +982,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       // Both must settle before flush observes the last queued session write.
       const saved = await Promise.allSettled([
         sessions.flush(), sessionCatalog?.flush(), callbackNonceStore?.flush(), workspaces.flush(),
-        ledger?.flush(), journal?.flush(),
+        ledger?.flush(), journal?.flush(), deps.automations?.flush(),
       ]);
       const steps = ['channel', 'stopAll', ...consumers.map(() => 'run-consumer'),
-        'sessions', 'catalog', 'callback-nonces', 'workspaces', 'ledger', 'journal'];
+        'sessions', 'catalog', 'callback-nonces', 'workspaces', 'ledger', 'journal', 'automations'];
       const failures: unknown[] = [];
       for (const [index, result] of [...first, ...saved].entries()) {
         if (result.status === 'rejected') {
@@ -1067,6 +1084,10 @@ interface IntakeDeps {
   logThreadModeOverride: LogThreadModeOverride;
   executor: RunExecutor;
   pool: ProcessPool;
+  automations?: AutomationsStore;
+  autoAuth?: AutoActionAuth;
+  now?: () => number;
+  onAutomationConfirmed?: (item: AutomationItem) => void;
 }
 
 type LogThreadModeOverride = (input: {
@@ -1112,6 +1133,10 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     logThreadModeOverride,
     executor,
     pool,
+    automations,
+    autoAuth,
+    now,
+    onAutomationConfirmed,
   } = deps;
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
@@ -1246,6 +1271,10 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     processPool: pool,
     pending,
     controls,
+    automations,
+    autoAuth,
+    ...(now ? { now } : {}),
+    onAutomationConfirmed,
   });
   if (handled) {
     if (commandClearsPending(emsg.content)) {
