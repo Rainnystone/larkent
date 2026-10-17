@@ -1,6 +1,6 @@
 # Link recovery tickets
 
-Spec: [../../link-recovery.md](../../link-recovery.md) (see *Delivery invariants*). T11–T16 come from the 2026-10-16 failure-mode audit of the code branch. One ticket per session; each starts with a failing regression test and ends with `pnpm ci:local` passing.
+Spec: [../../link-recovery.md](../../link-recovery.md) (see *Delivery invariants*). T11–T16 come from the 2026-10-16 failure-mode audit of the code branch; T17–T18 from the 2026-10-17 loop audit. One ticket per session; each starts with a failing regression test and ends with `pnpm ci:local` passing.
 
 | Ticket | Title | Blocked by | Status |
 |---|---|---|---|
@@ -20,6 +20,8 @@ Spec: [../../link-recovery.md](../../link-recovery.md) (see *Delivery invariants
 | [T13](T13-per-item-outbox-and-gating.md) | Per-item reply/notice state; no sends while down | T12 | ready |
 | [T14](T14-link-before-connect.md) | Link and outbound wrapper before connect | T13 | ready |
 | [T15](T15-recovery-hardening-probe-cleanup.md) | Recovery hardening, suspend-only tool-call review, simpler probe, channel cleanups, CONTEXT.md | T14 | ready |
+| [T17](T17-outbox-local-failure-budget.md) | Bounded outbox retries for failures with no HTTP status (loop audit B2) | none (on #47 `cc6d435`) | ready |
+| [T18](T18-send-failure-not-link-evidence.md) | A failing send does not take the link down; recovery minimum interval (loop audit B3) | T17 | ready |
 | [T9](T9-e2e-disconnect-then-recover.md) | E2E round 4: disconnect then recover | T0–T8, T11–T16 | blocked (last) |
 
 ## Blocking graph
@@ -32,6 +34,7 @@ T0 ──► T1 ──► T2 ──► T3
   ├──► T4
   └──► T6
 T10 ──► T11 ──► T16 ──► T12 ──► T13 ──► T14 ──► T15
+T17 ──► T18   (2026-10-17 loop audit B2/B3; on top of #47 cc6d435)
 all (T0–T8, T11–T16) ──► T9
 ```
 
@@ -39,4 +42,5 @@ all (T0–T8, T11–T16) ──► T9
 - T1 blocks T2, T7, T8. T2 blocks T3, T5. T4 blocks T8.
 - Strict sequence: T11 → T16 → T12 → T13 → T14 → T15. T16 is mandatory (exactly-once, I1, user decision 2026-10-17); it comes before T12/T13 because both build on its uuid sender, same-card patch and read-back.
 - T0–T8 and T11–T16 block T9; T9 runs last.
+- T17 → T18 come from the 2026-10-17 loop audit (B2, B3). Both list verified facts and unverified assumptions, plus items that need user approval before they are adopted (I1 loss exception, spec §2/I5 change, minimum interval value).
 - After T0, T1, T4 and T6 can start in parallel.
