@@ -37,7 +37,7 @@ export interface EvaluateAccessInput {
   chatMode?: 'p2p' | 'group';
 }
 
-export function isCreator(controls: RuntimeControls, senderId: string): boolean {
+export function isBotOwner(controls: RuntimeControls, senderId: string): boolean {
   if (controls.ownerRefreshState === 'unknown') return false;
   return Boolean(controls.botOwnerId) && controls.botOwnerId === senderId;
 }
@@ -112,7 +112,7 @@ export function canRunAdminCommand(
   controls: RuntimeControls,
   senderId: string,
 ): AccessDecision {
-  if (isCreator(controls, senderId)) return allow('owner');
+  if (isBotOwner(controls, senderId)) return allow('owner');
   if (profile.access.admins.includes(senderId)) return allow('allowed-admin');
   return deny('denied-admin');
 }
@@ -137,7 +137,7 @@ function evaluateDm(
   controls: RuntimeControls,
   senderId: string,
 ): AccessDecision {
-  if (isCreator(controls, senderId)) return allow('owner');
+  if (isBotOwner(controls, senderId)) return allow('owner');
   // Team mode opens up *usage* to everyone — no allowlist gating. Admin
   // commands stay owner/admin-gated via canRunAdminCommand (unchanged).
   if (profile.mode === 'team') return allow('allowed-team');
@@ -152,7 +152,7 @@ function evaluateGroup(
   chatId: string,
   senderId: string,
 ): AccessDecision {
-  if (isCreator(controls, senderId)) return allow('owner');
+  if (isBotOwner(controls, senderId)) return allow('owner');
   if (profile.mode === 'team') return allow('allowed-team');
   if (profile.access.admins.includes(senderId)) return allow('allowed-admin');
   if (profile.access.allowedChats.includes(chatId)) return allow('allowed-chat');

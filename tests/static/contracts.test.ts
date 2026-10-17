@@ -93,8 +93,21 @@ describe('static architecture contracts', () => {
     }
   });
 
+  it('does not keep isCreator in src/; bot owner is isBotOwner', () => {
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      expect(source, file).not.toMatch(/\bisCreator\b/);
+    }
+    expect(read('src/policy/access.ts')).toMatch(/\bisBotOwner\b/);
+  });
+
   it('persists profile runtime state through atomic 0600 writes', () => {
-    for (const file of ['src/session/store.ts', 'src/workspace/store.ts', 'src/card/callback-store.ts']) {
+    for (const file of [
+      'src/session/store.ts',
+      'src/workspace/store.ts',
+      'src/card/callback-store.ts',
+      'src/automations/store.ts',
+    ]) {
       const source = read(file);
       expect(source, file).toContain('writeFileAtomic');
       expect(source, file).toContain('mode: 0o600');

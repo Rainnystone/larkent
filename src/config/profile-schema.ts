@@ -20,6 +20,7 @@ import {
 import { isAgentKind, unknownAgentKindMessage, descriptorFor, type AgentKind } from '../agent/registry';
 import { omitEmptyAgentOptions } from '../agent/types';
 import { PROFILE_SCHEMA_VERSION, upgradeProfileRecord } from './migrations';
+import { isValidTimeZone } from '../automations/zoned-time';
 
 export type { AgentKind } from '../agent/registry';
 export type SandboxMode = CodexSandboxMode;
@@ -137,6 +138,21 @@ export interface MeetingConfig {
 
 export type LarkCliIdentityPreset = 'bot-only' | 'user-default';
 
+/** Profile-level automations flags. Off by default; timezone is IANA. */
+export interface AutomationsConfig {
+  enabled: boolean;
+  agentTasks: boolean;
+  timezone: string;
+}
+
+export const DEFAULT_AUTOMATION_TIMEZONE = 'Asia/Shanghai';
+
+export const AUTOMATIONS_DEFAULTS: AutomationsConfig = {
+  enabled: false,
+  agentTasks: false,
+  timezone: DEFAULT_AUTOMATION_TIMEZONE,
+};
+
 /**
  * Deployment mode — a single switch that binds two behaviors together
  * (see the "团队版 Bot 权限调整" spec):
@@ -201,6 +217,8 @@ export interface ProfileConfig {
   /** In-meeting agent settings. See {@link MeetingConfig}. */
   meeting: MeetingConfig;
   larkCli: LarkCliConfig;
+  /** In-group automations. Own normalizer; not nested under reliability. */
+  automations: AutomationsConfig;
   /** Legacy key. Loaders strip it; interruption notices are always on. */
   reliability?: ReliabilityConfig;
 }
@@ -298,6 +316,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     meeting?: unknown;
     larkCli?: unknown;
     instance?: unknown;
+    automations?: unknown;
     reliability?: unknown;
   };
 
@@ -331,6 +350,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const comments = normalizeComments(raw.comments);
   const meeting = normalizeMeeting(raw.meeting);
   const larkCli = normalizeLarkCli(raw.larkCli);
+  const automations = normalizeAutomations(raw.automations);
   const reliability = normalizeReliability(raw.reliability);
 
   const binaryPath =
@@ -383,6 +403,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     comments,
     meeting,
     larkCli,
+    automations,
     ...(reliability ? { reliability } : {}),
   };
 }
@@ -564,6 +585,24 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+function normalizeAutomations(input: unknown): AutomationsConfig {
+  const raw = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as {
+    enabled?: unknown;
+    agentTasks?: unknown;
+    timezone?: unknown;
+  };
+  const timezone = typeof raw.timezone === 'string'
+    && raw.timezone.trim() === raw.timezone
+    && isValidTimeZone(raw.timezone)
+    ? raw.timezone
+    : AUTOMATIONS_DEFAULTS.timezone;
+  return {
+    enabled: raw.enabled === true,
+    agentTasks: raw.agentTasks === true,
+    timezone,
+  };
 }
 
 function normalizeLarkCli(input: unknown): LarkCliConfig {

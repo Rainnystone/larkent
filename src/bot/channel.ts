@@ -124,6 +124,7 @@ import {
   type TurnJournalEntry,
   type TurnJournalResource,
 } from './turn-journal';
+import type { AutomationsStore } from '../automations/store';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
@@ -258,6 +259,7 @@ export interface StartChannelDeps {
   workspaces: WorkspaceStore;
   ledger?: BackfillLedger;
   journal?: TurnJournal;
+  automations?: AutomationsStore;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
   now?: () => number;

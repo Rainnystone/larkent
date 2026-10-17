@@ -20,7 +20,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 
 ## Runs and sessions
 
-- **run**: one invocation of an agent for one Feishu message.
+- **run**: one Feishu message or one fire.
 - **idle bound** (`runIdleTimeoutMinutes`): default **15** minutes of stream silence ends the run as `idle_timeout` so the queue can drain. `0` or `/timeout 0` disables the watchdog. An open tool call pauses that bound for at most **60** minutes. Run handles expose `lastEventAt` (register time, then each stream event). After recovery, `runs.review(outage)` gives a silent run a **2-minute** stall deadline, then stops it with the idle-watchdog reason through the normal outcome + notice path. A silent run with an open tool call gets that deadline only when `outage.hostSuspended`; otherwise the 60-minute tool-call cap still bounds it.
 - **run options** (`AgentRunOptions`): run id, prompt, cwd, optional resume handle, model, images and adapter options. The executor maps the run's effective access into validated options; the profile adapter receives its bot identity through `setBotIdentity`.
 - **resume handle**: the opaque string that continues an **agent** conversation. Codex's thread id and everyone else's session id are both resume handles. Shared agent code has no other name for that handle.
@@ -43,6 +43,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - SessionStore uses v2 `{ schemaVersion, entries }`; entries use `resumeHandle`, preserve cwd/timestamps and allow idle-only preferences. The loader upgrades the legacy unversioned scope map and its `sessionId`.
 - WorkspaceStore uses v2 `{ schemaVersion, chats, named }`, preserving chat and named workspace mappings. Its loader upgrades legacy v1 documents.
 - Loaders validate supported formats, atomically persist required upgrades and expose the current shape. Unsupported future versions are rejected without replacing the original. Store flush and shutdown propagate persistence failures.
+- Automations (`automations.json`, schema v1) are supervisor-owned like the turn journal. Future versions are refused without replacing the original. The automations log is a separate append-only file. `automations-status.json` is the monitor-hook snapshot (no Feishu IDs, task text, or creator).
 - New-profile bootstrap resolves binary env settings into `agent.binaryPath`; stored profile paths take precedence afterward. Bridge data roots do not replace `HOME` or CLI login state.
 - A code rollback does not downgrade data. Restore matching data backups before running an older version.
 
@@ -75,12 +76,25 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **kill switch**: `preferences.backfill.enabled: false`. No scan; the live watermark still advances.
 - **dry-run**: `preferences.backfill.dryRun: true`. The scan runs and logs `backfill.would-enqueue`; nothing is handed to intake.
 - **coalesce**: a second recovery signal while a scan is in-flight returns the same promise and logs `backfill.coalesced`.
-- **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`).
+- **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`). An agent-task fire's result post is the same kind of authoritative post for that fire.
+
+## Automations
+
+- **automation**: a persistent task bound to one group chat and one bot profile. `taskType` is `reminder` or `agent` (agent 任务). The field is not `kind`: **agent kind** already means the CLI adapter (`AgentKind`).
+- **agent task** (agent 任务): a fire that runs the profile's agent once on the captured cwd and task text. Distinct from agent kind.
+- **fire**: one absolute instant on an automation's schedule.
+- **fire key**: `id@fireAt` (short per-profile id plus the planned UTC millis), the idempotency key across restart, link recovery, and monitor wake.
+- **catch-up**: run the latest missed fire at most once within 24 hours, marked 补跑. Every other missed instant is 已错过.
+- **已错过**: a planned instant that will not run (older than 24 hours, or displaced by a later catch-up). Traced on the board, in chat, and in the automations log.
+- **automations log**: an append-only file in the profile data dir. One entry per 已错过 instant and one per catch-up. Permanent: not truncated, not removed when the item expires or is deleted. No task text, no Feishu ID.
+- **draft**: an automation waiting for confirm-card acceptance; TTL 24 hours.
+- **scheduler**: the profile-owned timer that produces fires from `nextFireAt`. Startup, link recovery, and the local wake entry run the same catch-up rule. It is not a recovery poller and is not backfill.
+- **automation creator** (`createdBy`): the person whose message created the automation. **bot owner** is `isBotOwner()` (formerly `isCreator()`).
 
 ## Words we do not use
 
 - "default agent". There is none.
-- "poller" or "patrol" for recovery. Backfill runs on recovery signals, never on a schedule.
+- "poller" or "patrol" for recovery. Backfill runs on recovery signals, never on a schedule. The automations scheduler is a timer for fires, not a recovery poller.
 - Agent resume fields named `sessionId` or `threadId` outside an adapter or a migration. Shared agent code says `resumeHandle`.
 - "built-in" versus "added" agents. All registered kinds are equal.
 

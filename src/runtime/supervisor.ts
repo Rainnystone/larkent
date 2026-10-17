@@ -1,5 +1,6 @@
 import pkg from '../../package.json';
 import { BackfillLedger } from '../bot/backfill-ledger';
+import { AutomationsStore } from '../automations/store';
 import { TurnJournal } from '../bot/turn-journal';
 import { startChannel as realStartChannel, type BridgeChannel } from '../bot/channel';
 import type { Controls } from '../commands';
@@ -75,6 +76,7 @@ class ManagedProfile {
   private readonly pendingDisconnects = new Set<BridgeChannel>();
   private readonly ledger: BackfillLedger;
   private readonly journal: TurnJournal;
+  private readonly automations: AutomationsStore;
 
   constructor(
     readonly profile: string,
@@ -94,6 +96,11 @@ class ManagedProfile {
       pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
     });
     this.journal = new TurnJournal(appPaths.turnJournalFile);
+    this.automations = new AutomationsStore({
+      path: appPaths.automationsFile,
+      logPath: appPaths.automationsLogFile,
+      statusPath: appPaths.automationsStatusFile,
+    });
   }
 
   get appId(): string {
@@ -123,6 +130,7 @@ class ManagedProfile {
     await this.workspaces.load();
     await this.ledger.load();
     await this.journal.load();
+    await this.automations.load();
     this.entry = await register({
       appId: this.appId,
       tenant: this.cfg.accounts.app.tenant,
@@ -141,6 +149,7 @@ class ManagedProfile {
       workspaces: this.workspaces,
       ledger: this.ledger,
       journal: this.journal,
+      automations: this.automations,
       controls: this.controls,
       appPaths: this.appPaths,
     });
@@ -304,6 +313,7 @@ class ManagedProfile {
         workspaces: this.workspaces,
         ledger: this.ledger,
         journal: this.journal,
+        automations: this.automations,
         controls: nextControls,
         appPaths: nextRuntime.appPaths,
       });
@@ -358,6 +368,7 @@ class ManagedProfile {
         this.workspaces.flush().catch(() => {}),
         this.journal.flush().catch(() => {}),
         this.ledger.flush().catch(() => {}),
+        this.automations.flush().catch(() => {}),
       ]);
       // Recovery runs after the swap is published. A reject here must not
       // unwind the live bridge or drop the app lock it now needs.
