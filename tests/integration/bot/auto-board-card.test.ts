@@ -298,7 +298,13 @@ describe('automation board card', () => {
     h.channel.cardErrors.create = new CardSchemaError();
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
-    await waitFor(() => h.store.listDrafts().length === 1 && Boolean(h.store.listDrafts()[0]?.cardMessageId));
+    await waitFor(() => {
+      const drafts = h.store.listDrafts();
+      return drafts.length === 1
+        && drafts[0]?.name === '乙'
+        && Boolean(drafts[0]?.cardMessageId)
+        && order.at(-1) === 'update';
+    });
 
     expect(h.store.listDrafts().map((draft) => draft.name)).toEqual(['乙']);
     expect(markdowns(h.channel)).toContain('确认卡片发送失败（飞书错误 200610），未创建任务。请稍后重试。');
