@@ -46,6 +46,8 @@ describe('confirm card copy', () => {
     expect(card).toContain('是');
     expect(describeEnd(weekday(), TZ)).toMatch(/2026-11-16/);
     expect(describeIdentity('agent', '/tmp/ws')).toContain('已快照工作目录');
+    expect(describeIdentity('agent', '/tmp/ws')).toContain('仅 bot 身份');
+    expect(describeIdentity('agent')).toContain('纵深防御不是安全边界');
   });
 });
 

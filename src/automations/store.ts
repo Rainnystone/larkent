@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import type { PolicyGuardReason } from './policy-guard';
 import { parseFireKey, type PendingRecurring } from './schedule';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
@@ -12,7 +13,8 @@ export const AUTOMATIONS_FIRE_HISTORY_MAX = 20;
 export type AutomationTaskType = 'reminder' | 'agent';
 export type AutomationLastStatus = 'ok' | 'missed' | 'failed' | 'running';
 export type AutomationTriggerSource = 'startup' | 'link-recovered' | 'wake';
-export type AutomationLogResult = 'missed' | 'catch-up';
+export type AutomationLogResult = 'missed' | 'catch-up' | 'policy-guard';
+export type AutomationPolicyGuardReason = PolicyGuardReason;
 export type MarkStartedResult = 'started' | 'already-started';
 
 export interface AutomationFireRecord {
@@ -81,8 +83,9 @@ export interface AutomationsLogEntry {
   taskType: AutomationTaskType;
   scheduledAt: number;
   decidedAt: number;
-  triggerSource: AutomationTriggerSource;
+  triggerSource?: AutomationTriggerSource;
   result: AutomationLogResult;
+  reason?: AutomationPolicyGuardReason;
 }
 
 export interface AutomationBoardBinding {
@@ -267,8 +270,9 @@ export class AutomationsStore {
       taskType: entry.taskType,
       scheduledAt: entry.scheduledAt,
       decidedAt: entry.decidedAt,
-      triggerSource: entry.triggerSource,
       result: entry.result,
+      ...(entry.triggerSource ? { triggerSource: entry.triggerSource } : {}),
+      ...(entry.reason ? { reason: entry.reason } : {}),
     });
     await this.persistLogNow();
   }
@@ -820,18 +824,42 @@ function parseLogEntry(raw: unknown): AutomationsLogEntry | undefined {
   if (!isPositiveInt(raw.id)) return undefined;
   if (raw.taskType !== 'reminder' && raw.taskType !== 'agent') return undefined;
   if (!isFiniteNumber(raw.scheduledAt) || !isFiniteNumber(raw.decidedAt)) return undefined;
-  if (raw.triggerSource !== 'startup' && raw.triggerSource !== 'link-recovered' && raw.triggerSource !== 'wake') {
+  if (raw.result !== 'missed' && raw.result !== 'catch-up' && raw.result !== 'policy-guard') {
     return undefined;
   }
-  if (raw.result !== 'missed' && raw.result !== 'catch-up') return undefined;
+  const triggerSource =
+    raw.triggerSource === 'startup'
+    || raw.triggerSource === 'link-recovered'
+    || raw.triggerSource === 'wake'
+      ? raw.triggerSource
+      : undefined;
+  if (raw.result !== 'policy-guard' && !triggerSource) return undefined;
+  const reason = parsePolicyGuardReason(raw.reason);
+  if (raw.result === 'policy-guard' && raw.reason !== undefined && !reason) return undefined;
   return {
     id: raw.id,
     taskType: raw.taskType,
     scheduledAt: raw.scheduledAt,
     decidedAt: raw.decidedAt,
-    triggerSource: raw.triggerSource,
     result: raw.result,
+    ...(triggerSource ? { triggerSource } : {}),
+    ...(reason ? { reason } : {}),
   };
+}
+
+function parsePolicyGuardReason(value: unknown): AutomationPolicyGuardReason | undefined {
+  switch (value) {
+    case 'members':
+    case 'chat-create':
+    case 'leave':
+    case 'chat-settings':
+    case 'contacts':
+    case 'hr':
+    case 'user-identity':
+      return value;
+    default:
+      return undefined;
+  }
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {

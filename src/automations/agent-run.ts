@@ -44,7 +44,9 @@ import {
   formatScheduledHm,
   type AutomationDeliveryDeps,
 } from './delivery';
+import { inspectAutomationToolUse, type PolicyGuardReason } from './policy-guard';
 import type { FireSend } from './scheduler';
+import type { AutomationsStore } from './store';
 
 export const AGENT_RESULT_FOOTER = '在本消息话题里追问';
 
@@ -108,6 +110,8 @@ export interface AgentFireRuntime extends AutomationDeliveryDeps {
   cfg: AppConfig;
   botOwnerId?: string;
   ownerRefreshState: OwnerRefreshState;
+  automations?: AutomationsStore;
+  pauseItem?: (id: number) => Promise<boolean>;
 }
 
 export async function runAutomationAgentFire(
@@ -174,6 +178,7 @@ export async function runAutomationAgentFire(
     cwdOverride: cwd,
     forceResumeHandle: null,
     bypassPool: true,
+    promptVariant: 'automation',
     stopGraceMs: getAgentStopGraceMs(runtime.cfg),
     observability: {
       profile: runtime.profile,
@@ -204,7 +209,7 @@ export async function runAutomationAgentFire(
       event,
     });
   };
-  const state = await drainFireRun({
+  const { state, policyGuard } = await drainFireRun({
     handle: flow.execution.handle,
     events: flow.execution.subscribe(),
     idleTimeoutMs: getRunIdleTimeoutMs(runtime.cfg),
@@ -212,6 +217,9 @@ export async function runAutomationAgentFire(
     chatId: fire.chatId,
   });
   const outcome = flow.execution.handle.outcome;
+  if (policyGuard && runtime.automations) {
+    await applyPolicyGuard(runtime, fire, policyGuard);
+  }
   if (journal && outcome) journal.markSettled(turnId, outcome);
   log.info('auto', 'result', {
     id: fire.id,
@@ -272,13 +280,35 @@ async function postFireMarkdown(
   });
 }
 
+async function applyPolicyGuard(
+  runtime: AgentFireRuntime,
+  fire: FireSend,
+  reason: PolicyGuardReason,
+): Promise<void> {
+  const store = runtime.automations;
+  if (!store) return;
+  if (runtime.pauseItem) await runtime.pauseItem(fire.id);
+  else await store.pause(fire.id);
+  const decidedAt = (runtime.now ?? Date.now)();
+  await store.recordLog({
+    id: fire.id,
+    taskType: fire.taskType,
+    scheduledAt: fire.fireAt,
+    decidedAt,
+    result: 'policy-guard',
+    reason,
+  });
+  log.info('auto', 'policy-guard', { id: fire.id, fireAt: fire.fireAt, reason });
+  log.info('auto', 'paused', { id: fire.id });
+}
+
 async function drainFireRun(input: {
   handle: RunHandle;
   events: AsyncIterable<AgentEvent>;
   idleTimeoutMs: number | undefined;
   recordSession: (event: AgentEvent) => void;
   chatId: string;
-}): Promise<RunState> {
+}): Promise<{ state: RunState; policyGuard?: PolicyGuardReason }> {
   let state = seedRunState({ currentChatId: input.chatId });
   let lastTerminal: AgentEvent | undefined;
   let timer: NodeJS.Timeout | undefined;
@@ -296,6 +326,7 @@ async function drainFireRun(input: {
     }, input.idleTimeoutMs);
   };
   armIdleWatchdog();
+  let policyGuard: PolicyGuardReason | undefined;
   try {
     for await (const event of input.events) {
       noteRunEvent(input.handle);
@@ -305,6 +336,15 @@ async function drainFireRun(input: {
         continue;
       }
       if (!shouldDeliverAgentEvent(input.handle, event)) continue;
+      if (event.type === 'tool_use') {
+        const hit = inspectAutomationToolUse(event);
+        if (hit) {
+          requestStop(input.handle, { type: 'policy-guard' });
+          policyGuard = hit.reason;
+          void input.handle.run.stop().catch(() => {});
+          break;
+        }
+      }
       armIdleWatchdog();
       if (event.type === 'done' || event.type === 'error') {
         lastTerminal = event;
@@ -333,7 +373,7 @@ async function drainFireRun(input: {
   }
   input.handle.outcome = outcome;
   if (input.handle.interrupted) await input.handle.run.stop();
-  return state;
+  return policyGuard ? { state, policyGuard } : { state };
 }
 
 function applyFireOutcome(

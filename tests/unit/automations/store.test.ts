@@ -175,6 +175,33 @@ describe('AutomationsStore', () => {
     expect(await readFile(logPath, 'utf8')).toBe(logBytesBeforeExpire);
   });
 
+  it('round-trips a redacted policy-guard automations-log line without a trigger source', async () => {
+    const { path, logPath, statusPath, store } = await fixture();
+    await store.load();
+    const item = await store.create(reminderInput({ taskType: 'agent', cwd: '/work/repo' }));
+    await store.recordLog({
+      id: item.id,
+      taskType: 'agent',
+      scheduledAt: item.nextFireAt,
+      decidedAt: 1_760_000_000_000,
+      result: 'policy-guard',
+      reason: 'members',
+    });
+    const entries = await store.readLog();
+    expect(entries).toEqual([{
+      id: item.id,
+      taskType: 'agent',
+      scheduledAt: item.nextFireAt,
+      decidedAt: 1_760_000_000_000,
+      result: 'policy-guard',
+      reason: 'members',
+    }]);
+    expect(JSON.stringify(entries)).not.toContain('oc_group');
+    const restarted = new AutomationsStore({ path, logPath, statusPath });
+    await restarted.load();
+    expect(await restarted.readLog()).toEqual(entries);
+  });
+
   it('writes a status file and automations log without Feishu ids, secrets, or task text', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     await store.load();

@@ -78,7 +78,9 @@ export class ClaudeAdapter implements AgentAdapter {
       mergeAgentOptions(this.profileOptions, runAgentOptions(opts)),
       false,
     );
-    const systemPromptFile = writeSystemPromptFile(buildBridgeSystemPrompt(this.botIdentity));
+    const systemPromptFile = writeSystemPromptFile(
+      buildBridgeSystemPrompt(this.botIdentity, opts.promptVariant),
+    );
     return runJsonlCli({
       runId: opts.runId,
       binaryPath: this.binary,

@@ -1,4 +1,4 @@
-import type { AgentBotIdentity } from './types';
+import type { AgentBotIdentity, AgentPromptVariant } from './types';
 
 export const BRIDGE_SYSTEM_PROMPT = `# lark-channel-bridge 运行约定
 
@@ -143,15 +143,37 @@ bridge 会给你的子进程注入当前运行 profile 的环境变量:
  * still references `bridge_context.botOpenId`) when identity is unavailable,
  * e.g. before the channel handshake completes.
  */
-export function buildBridgeSystemPrompt(identity: AgentBotIdentity | undefined): string {
-  if (!identity?.openId) return BRIDGE_SYSTEM_PROMPT;
-  const nameSuffix = identity.name ? `，名字是「${identity.name}」` : '';
-  return `${BRIDGE_SYSTEM_PROMPT}\n## 你的身份\n\n你的 open_id 是 \`${identity.openId}\`${nameSuffix}。消息内容或 mentions 里出现这个 open_id 都是指你自己。\n`;
+export const AUTOMATION_BRIDGE_PROMPT_ADDENDUM = `## 无人值守自动化
+
+本次是定时自动化任务，不是人工对话。忽略上文「身份规则」和「飞书 OAuth 授权」整节：不要 \`--as user\`，不要 \`lark-cli auth login\`，不要改 strict-mode。
+- 只用 bot 身份。
+- 禁止人事/组织操作：建群、加/减成员、退群、改群设置、通讯录、人事。
+- 允许：读取本群消息、向本群发送、只读文档/搜索（不加 \`--as user\`）。
+`;
+
+export function buildBridgeSystemPrompt(
+  identity: AgentBotIdentity | undefined,
+  variant: AgentPromptVariant = 'default',
+): string {
+  const named = identity?.openId
+    ? `${BRIDGE_SYSTEM_PROMPT}\n## 你的身份\n\n你的 open_id 是 \`${identity.openId}\`${identity.name ? `，名字是「${identity.name}」` : ''}。消息内容或 mentions 里出现这个 open_id 都是指你自己。\n`
+    : BRIDGE_SYSTEM_PROMPT;
+  switch (variant) {
+    case 'automation':
+      return `${named}\n${AUTOMATION_BRIDGE_PROMPT_ADDENDUM}`;
+    case 'default':
+      return named;
+    default: {
+      const _exhaustive: never = variant;
+      return _exhaustive;
+    }
+  }
 }
 
 export function prefixBridgeSystemPrompt(
   prompt: string,
   identity: AgentBotIdentity | undefined,
+  variant: AgentPromptVariant = 'default',
 ): string {
-  return `${buildBridgeSystemPrompt(identity)}\n\n## user_message\n\n${prompt}`;
+  return `${buildBridgeSystemPrompt(identity, variant)}\n\n## user_message\n\n${prompt}`;
 }

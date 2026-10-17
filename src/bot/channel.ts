@@ -822,6 +822,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
   if (deps.automations && controls.profileConfig.automations.enabled) {
+    const automations = deps.automations;
     automationsCtl.boardAuth = new BoardActionAuth({
       secret: appSecret,
       ...(deps.now ? { now: deps.now } : {}),
@@ -869,6 +870,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           cfg: controls.cfg,
           ...(controls.botOwnerId ? { botOwnerId: controls.botOwnerId } : {}),
           ownerRefreshState: controls.ownerRefreshState,
+          automations,
+          pauseItem: (id) => automationsCtl.scheduler?.pause(id) ?? automations.pause(id),
         }), 'auto'),
       }),
       botDisplayName: () => channel.botIdentity?.name ?? 'bot',

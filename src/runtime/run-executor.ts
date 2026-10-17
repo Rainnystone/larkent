@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { CliSignature } from '../agent/cli-signatures';
 import { descriptorFor, isAgentKind } from '../agent/registry';
-import { mergeAgentOptions, type AgentAdapter, type AgentEvent, type AgentRun } from '../agent/types';
+import {
+  mergeAgentOptions,
+  type AgentAdapter,
+  type AgentEvent,
+  type AgentPromptVariant,
+  type AgentRun,
+} from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
 import {
   deriveRunOutcome,
@@ -44,6 +50,7 @@ export interface SubmitRunInput {
    * Link-down is gated by the scheduler, not here.
    */
   bypassPool?: boolean;
+  promptVariant?: AgentPromptVariant;
   observability?: {
     profile: string;
     agent: string;
@@ -147,6 +154,7 @@ export class RunExecutor {
       sandbox: input.policy.sandbox,
       permissionMode: input.policy.permissionMode,
       stopGraceMs: input.stopGraceMs,
+      ...(input.promptVariant ? { promptVariant: input.promptVariant } : {}),
     };
     let run: AgentRun;
     try {

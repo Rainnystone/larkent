@@ -36,6 +36,12 @@ describe('agent-task result copy and follow-up mapping', () => {
       retriable: true,
       needsHuman: false,
     })).toBe(`自动化任务中断：进程退出\n\n${AGENT_RESULT_FOOTER}`);
+    expect(formatAgentFailureNotice({
+      kind: 'interrupted',
+      reason: { type: 'policy-guard' },
+      retriable: false,
+      needsHuman: false,
+    })).toBe(`自动化任务中断：策略拦截\n\n${AGENT_RESULT_FOOTER}`);
     expect(formatAgentResultPost({
       body: '  ',
       catchUp: false,

@@ -1,7 +1,7 @@
 import { descriptorFor, type AgentKind } from '../agent/registry';
 import { resolveModelArg } from '../agent/models';
 import type { AgentCapability } from '../agent/capability';
-import type { AgentEvent } from '../agent/types';
+import type { AgentEvent, AgentPromptVariant } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
 import type { AccessDecision } from '../policy/access';
 import {
@@ -44,6 +44,8 @@ export interface StartRunFlowInput {
   cwdOverride?: string;
   /** Automation fires skip the process pool and reconnect pause (ADR-011). */
   bypassPool?: boolean;
+  /** Automation fires use the unattended bot-only system-prompt variant. */
+  promptVariant?: AgentPromptVariant;
   observability?: {
     profile: string;
     agent: string;
@@ -201,6 +203,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
           : undefined,
       stopGraceMs: input.stopGraceMs,
       ...(input.bypassPool ? { bypassPool: true } : {}),
+      ...(input.promptVariant ? { promptVariant: input.promptVariant } : {}),
       observability: input.observability,
     });
   } catch (err) {
