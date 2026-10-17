@@ -125,6 +125,7 @@ import {
   type TurnJournalResource,
 } from './turn-journal';
 import { AutoActionAuth } from '../automations/action-auth';
+import { createAutomationDelivery } from '../automations/delivery';
 import {
   createAutomationScheduler,
   type AutomationScheduler,
@@ -755,8 +756,24 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     deps.automations && controls.profileConfig.automations.enabled
       ? createAutomationScheduler({
           store: deps.automations,
-          sender: { send: async () => {} },
-          notifier: { notify: async () => {} },
+          ...createAutomationDelivery({
+            journal,
+            channel,
+            botAppId: cfg.accounts.app.id,
+            botOpenId: () => channel.botIdentity?.openId ?? '',
+            isLinkDown: () => closing || started.isDown(),
+            ...(deps.now ? { now: deps.now } : {}),
+            ...(journal ? {
+              deliver: (entry) => resendJournalReply({
+                channel,
+                journal,
+                entry,
+                botAppId: cfg.accounts.app.id,
+                now: deps.now,
+              }),
+            } : {}),
+            onUndelivered: () => outboxSweep.schedule(),
+          }),
           botDisplayName: () => channel.botIdentity?.name ?? 'bot',
           ...(deps.now ? { now: deps.now } : {}),
           isLinkUp: () => !closing && !started.isDown(),
@@ -2620,10 +2637,14 @@ async function sendPlainTextReply(input: {
   deliveryId?: string;
 }): Promise<{ messageId?: string } | undefined> {
   if (!input.body.trim()) return undefined;
+  const replyTo = input.sendOpts.replyTo.trim();
   const result = await input.channel.send(
     input.chatId,
     { text: input.body },
-    withDeliveryUuid(input.sendOpts, input.deliveryId),
+    withDeliveryUuid({
+      ...(replyTo ? { replyTo } : {}),
+      ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+    }, input.deliveryId),
   );
   requireMessageReceipt(result, 'text');
   return result;
