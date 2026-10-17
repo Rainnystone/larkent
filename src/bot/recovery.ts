@@ -51,6 +51,8 @@ export interface RecoveryDeps {
   lookbackMs: () => number;
   now?: () => number;
   incompleteFrom?: () => number | undefined;
+  /** Flush `incompleteFrom = outage.since` before reap/redeliver/backfill. */
+  preserveOutage?: (since: number) => Promise<void>;
 }
 
 export interface Recovery {
@@ -58,7 +60,7 @@ export interface Recovery {
   stop(): Promise<void>;
 }
 
-type RecoveryStep = 'reap' | 'redeliver' | 'backfill' | 'review';
+type RecoveryStep = 'preserve' | 'reap' | 'redeliver' | 'backfill' | 'review';
 
 export function createRecovery(deps: RecoveryDeps): Recovery {
   let inFlight: Promise<void> | undefined;
@@ -95,6 +97,10 @@ export function createRecovery(deps: RecoveryDeps): Recovery {
         lookbackMs,
         windowStart: window.windowStart,
       });
+    }
+    if (deps.preserveOutage) {
+      const preserved = await runStep('preserve', outage, () => deps.preserveOutage?.(outage.since));
+      if (!preserved) return false;
     }
     if (stopped) return false;
     const reapOk = await runStep('reap', outage, () => deps.journal.reapOrphans());

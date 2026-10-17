@@ -1,6 +1,7 @@
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
+import { WATERMARK_MARGIN_MS } from '../../../src/bot/backfill';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import { FEISHU_LINK_SILENT_PROBE_MS, FEISHU_LINK_TICK_MS } from '../../../src/bot/feishu-link';
 import { TurnJournal } from '../../../src/bot/turn-journal';
@@ -255,6 +256,88 @@ describe('FeishuLink recovery through the bridge', () => {
     expect(h.ledger.getLiveAt()).toBe(liveAt);
     expect(h.agent.runOptions).toHaveLength(0);
   });
+
+  it('backfills an outage after shutdown between recover and backfill', async () => {
+    let now = NOW;
+    const history: Record<string, unknown[]> = { [CHAT]: [] };
+    const h = await startHarness({
+      now: () => now,
+      probe: async () => true,
+      lastLiveAt: NOW,
+      history,
+      withJournal: true,
+    });
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+
+    let releaseRedeliver!: () => void;
+    const holdRedeliver = new Promise<void>((resolve) => {
+      releaseRedeliver = resolve;
+    });
+    const orig = h.journal!.redeliver.bind(h.journal);
+    let redeliverStarted = false;
+    h.journal!.redeliver = async (opts) => {
+      redeliverStarted = true;
+      await holdRedeliver;
+      return orig(opts);
+    };
+
+    h.channel.connectionState = 'reconnecting';
+    await h.bridge.tickLink();
+    const postedAt = now + 1_000;
+    history[CHAT] = [mentionItem('om_mid_recover', CHAT, 'posted during outage', postedAt)];
+
+    h.channel.connectionState = 'connected';
+    // Advance past the 2-minute scan margin so a restart that only has the
+    // new lastLiveAt cannot still see this message.
+    now += WATERMARK_MARGIN_MS + FEISHU_LINK_TICK_MS;
+    await h.bridge.tickLink();
+    await waitFor(() => redeliverStarted);
+    expect(h.agent.runOptions).toHaveLength(0);
+    await h.ledger.flush();
+
+    const ledgerFile = h.ledger.getFilePath();
+    const stopping = h.bridge.disconnect();
+    releaseRedeliver();
+    await stopping;
+
+    const reloaded = new BackfillLedger(ledgerFile, { now: () => now });
+    await reloaded.load();
+    expect(reloaded.getLiveAt()!).toBeGreaterThan(postedAt + WATERMARK_MARGIN_MS);
+
+    sdk.channel = createRecordingLarkChannel({
+      botIdentity: { openId: BOT, name: 'Bot' },
+      chats: [{ id: CHAT, name: 'Group' }],
+      messagesByChat: history,
+    });
+    honorHistoryListWindow(sdk.channel, history);
+    const second = await startChannel({
+      cfg: h.cfg,
+      agent: h.agent,
+      sessions: h.sessions,
+      workspaces: h.workspaces,
+      ledger: reloaded,
+      now: () => now,
+      probe: async () => true,
+      controls: {
+        profile: 'test',
+        profileConfig: h.cfg,
+        cfg: h.cfg,
+        ownerRefreshState: 'ok',
+        botOwnerId: USER,
+        async refreshOwner() {},
+        async restart() {},
+        async exit() {},
+        configPath: `${h.tmp.root}/config.json`,
+        processId: 'test-feishu-link-restart',
+      },
+    });
+    cleanups.push(async () => {
+      await second.disconnect().catch(() => {});
+    });
+    await waitForDebounce();
+    await waitFor(() => h.agent.runOptions.some((opts) => opts.prompt.includes('posted during outage')));
+    expect(h.agent.runOptions.filter((opts) => opts.prompt.includes('posted during outage'))).toHaveLength(1);
+  });
 });
 
 async function startHarness(opts: {
@@ -333,7 +416,7 @@ async function startHarness(opts: {
     await bridge.disconnect().catch(() => {});
     await tmp.cleanup();
   });
-  return { channel, agent, ledger, bridge, journal };
+  return { channel, agent, ledger, bridge, journal, cfg, sessions, workspaces, tmp };
 }
 
 function mention(messageId: string, content: string): NormalizedMessage {
@@ -349,6 +432,31 @@ function mention(messageId: string, content: string): NormalizedMessage {
     mentionedBot: true,
     createTime: NOW,
   } as unknown as NormalizedMessage;
+}
+
+function honorHistoryListWindow(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+  history: Record<string, unknown[]>,
+): void {
+  channel.rawClient.im.v1.message.list = async (params: unknown) => {
+    const nested = isRecord(params) && isRecord(params.params) ? params.params : isRecord(params) ? params : {};
+    const chatId = typeof nested.container_id === 'string' ? nested.container_id : undefined;
+    const startSec = typeof nested.start_time === 'string' || typeof nested.start_time === 'number'
+      ? Number(nested.start_time)
+      : Number.NaN;
+    const items = (chatId ? history[chatId] : undefined) ?? [];
+    const filtered = Number.isFinite(startSec)
+      ? items.filter((item) => {
+          const created = Number((item as { create_time?: string | number }).create_time);
+          return Number.isFinite(created) && created >= startSec * 1000;
+        })
+      : items;
+    return { data: { items: filtered, has_more: false } };
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function mentionItem(

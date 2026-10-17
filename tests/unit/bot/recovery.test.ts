@@ -14,6 +14,38 @@ describe('Recovery', () => {
     vi.useRealTimers();
   });
 
+  it('flushes the outage origin before reap', async () => {
+    const steps: string[] = [];
+    const recovery = createRecovery({
+      preserveOutage: async (since) => {
+        steps.push(`preserve:${since}`);
+      },
+      journal: {
+        reapOrphans: async () => {
+          steps.push('reap');
+        },
+        redeliver: async () => {
+          steps.push('redeliver');
+        },
+      },
+      backfill: {
+        scan: async () => {
+          steps.push('scan');
+        },
+      },
+      runs: {
+        review: () => {
+          steps.push('review');
+        },
+      },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+
+    await recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    expect(steps).toEqual(['preserve:1000', 'reap', 'redeliver', 'scan', 'review']);
+  });
+
   it('redelivers, then scans the outage window, then reviews runs', async () => {
     const steps: string[] = [];
     const scanned: number[] = [];

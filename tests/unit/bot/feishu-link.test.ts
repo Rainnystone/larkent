@@ -856,6 +856,40 @@ describe('FeishuLink', () => {
     expect(link.isDown()).toBe(false);
   });
 
+  it('records the outage origin before advancing the live watermark', async () => {
+    let now = 1_700_000_000_000;
+    const events: string[] = [];
+    let live = now;
+    let state: 'connected' | 'reconnecting' = 'connected';
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: {
+        get: () => live,
+        holdOutage: (since) => {
+          events.push(`hold:${since}`);
+        },
+        set: (at) => {
+          events.push(`set:${at}`);
+          live = at;
+        },
+      },
+      now: () => now,
+    });
+    await link.tick();
+    events.length = 0;
+
+    state = 'reconnecting';
+    await link.tick();
+    now += FEISHU_LINK_TICK_MS;
+    state = 'connected';
+    await link.tick();
+
+    expect(events[0]).toMatch(/^hold:/);
+    expect(events[1]).toMatch(/^set:/);
+    expect(Number(events[0]!.slice('hold:'.length))).toBeLessThan(Number(events[1]!.slice('set:'.length)));
+  });
+
   it('does not advance the watermark on connected ticks without evidence', async () => {
     let now = 1_700_000_000_000;
     const watermark = memoryWatermark(now);

@@ -692,6 +692,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     lookbackMs: () => getBackfillPreferences(controls.cfg).lookbackMs,
     ...(deps.now ? { now: deps.now } : {}),
     incompleteFrom: () => ledger?.getIncompleteFrom(),
+    preserveOutage: async (since) => {
+      if (!ledger) return;
+      ledger.markScanIncomplete(since);
+      await ledger.flush();
+    },
   });
 
   const recover = async (outage?: Outage): Promise<void> => {
@@ -711,6 +716,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     probe: deps.probe ?? createFeishuProbe(channel),
     watermark: {
       get: () => ledger?.getLiveAt(),
+      holdOutage: (since) => {
+        ledger?.markScanIncomplete(since);
+      },
       set: (at) => {
         ledger?.touchLive(at);
       },

@@ -43,7 +43,12 @@ export type FeishuProbeResult = boolean | 'unknown';
 export interface FeishuLinkDeps {
   channel: LarkChannel;
   probe: (signal?: AbortSignal) => Promise<FeishuProbeResult>;
-  watermark: { get(): number | undefined; set(at: number): void };
+  watermark: {
+    get(): number | undefined;
+    set(at: number): void;
+    /** Persist the outage origin before `set` advances lastLiveAt. */
+    holdOutage?(since: number): void;
+  };
   now?: () => number;
   heartbeatPath?: string;
   outbound?: OutboundMessageIds;
@@ -199,6 +204,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     if (!down) return;
     down = false;
     lastEvidenceAt = until;
+    deps.watermark.holdOutage?.(downSince);
     deps.watermark.set(until);
     const outage: Outage = {
       since: downSince,
