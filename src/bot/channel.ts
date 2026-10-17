@@ -2528,7 +2528,11 @@ async function deliverFinalReply(input: {
       notice: input.notice,
     });
   }
-  if (input.journal) await input.journal.flush();
+  // The stream card is already on screen. Persist the journal after the
+  // in-memory delivery mark so a slow fsync cannot leave readers on
+  // `completed-undelivered` for the whole write.
+  const deferJournalFlush = stream.kind === 'confirmed' && !dedicatedFinal;
+  if (input.journal && !deferJournalFlush) await input.journal.flush();
   if (skipCli) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
@@ -2539,6 +2543,7 @@ async function deliverFinalReply(input: {
   } else if (skip && stream.kind === 'none') {
     log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
   } else if (input.link?.isDown()) {
+    if (deferJournalFlush && input.journal) await input.journal.flush();
     await applyAutomationProposal();
     return;
   } else {
@@ -2565,16 +2570,19 @@ async function deliverFinalReply(input: {
         dedicatedFinal,
       });
       if (settled.kind === 'wait') {
+        if (deferJournalFlush && input.journal) await input.journal.flush();
         input.onWait?.(rateLimitResetDelayMs(settled.error));
         await applyAutomationProposal();
         return;
       }
     } catch (error) {
+      if (deferJournalFlush && input.journal) await input.journal.flush();
       if (!isNotInChat(error)) throw error;
       return;
     }
   }
   if (input.journal && input.turnId) input.journal.replyDelivered(input.turnId);
+  if (deferJournalFlush && input.journal) await input.journal.flush();
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
       channel: input.channel,
@@ -2611,7 +2619,7 @@ async function settleStreamDelivery(input: {
         } else {
           input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
         }
-        await input.journal.flush();
+        if (input.dedicatedFinal) await input.journal.flush();
       }
       return input.dedicatedFinal ? sendOrWait(input) : { kind: 'done' };
     case 'none':
