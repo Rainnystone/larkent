@@ -1,45 +1,9 @@
+import { buttonRow, callbackButton, card2, hr, md, note } from '../card/v2';
 import { describeEnd, formatZonedDateTime } from './confirm-card';
 import { readSchedule } from './schedule';
 import type { AutomationItem, AutomationsStatusSnapshot } from './store';
 import type { BoardActionAuth } from './board-auth';
 import { BOARD_CARD_TTL_MS } from './board-auth';
-
-interface ButtonSpec {
-  text: string;
-  value: Record<string, unknown>;
-  style?: 'primary' | 'danger' | 'default';
-}
-
-function button(spec: ButtonSpec): object {
-  return {
-    tag: 'button',
-    text: { tag: 'plain_text', content: spec.text },
-    type: spec.style ?? 'default',
-    value: spec.value,
-  };
-}
-
-function divMd(content: string): object {
-  return { tag: 'div', text: { tag: 'lark_md', content } };
-}
-
-function actions(buttons: ButtonSpec[]): object {
-  return { tag: 'action', actions: buttons.map(button) };
-}
-
-function noteMd(content: string): object {
-  return { tag: 'markdown', content, text_size: 'notation' };
-}
-
-const HR: object = { tag: 'hr' };
-
-function shell(title: string, elements: object[]): object {
-  return {
-    config: { wide_screen_mode: true, update_multi: true },
-    header: { title: { tag: 'plain_text', content: title } },
-    elements,
-  };
-}
 
 function escapeMd(s: string): string {
   return s.replace(/([*_`\\])/g, '\\$1');
@@ -76,27 +40,27 @@ export function automationBoardCard(input: {
 }): object {
   const elements: object[] = [];
   if (input.items.length === 0) {
-    elements.push(divMd('暂无'));
+    elements.push(md('暂无'));
   } else {
     input.items.forEach((item, index) => {
-      elements.push(divMd(formatTaskRow(item)));
-      elements.push(actions(taskButtons(item, input.auth)));
+      elements.push(md(formatTaskRow(item)));
+      elements.push(buttonRow(taskButtons(item, input.auth)));
       for (const missed of [...item.missedInstants].sort((a, b) => a.fireAt - b.fireAt)) {
-        elements.push(divMd(
+        elements.push(md(
           `已错过 原定 ${formatZonedDateTime(item.timezone, missed.fireAt)}`,
         ));
       }
       for (const skipped of [...item.skippedInstants].sort((a, b) => a.fireAt - b.fireAt)) {
-        elements.push(divMd(
+        elements.push(md(
           `已跳过 原定 ${formatZonedDateTime(item.timezone, skipped.fireAt)}`,
         ));
       }
-      if (index < input.items.length - 1) elements.push(HR);
+      if (index < input.items.length - 1) elements.push(hr);
     });
   }
-  elements.push(HR);
-  elements.push(noteMd(JSON.stringify(input.status)));
-  return shell('本群自动化', elements);
+  elements.push(hr);
+  elements.push(note(JSON.stringify(input.status)));
+  return card2({ title: '本群自动化', summary: '本群自动化', elements });
 }
 
 function formatTaskRow(item: AutomationItem): string {
@@ -135,9 +99,9 @@ function describeItemStatus(item: AutomationItem): string {
   }
 }
 
-function taskButtons(item: AutomationItem, auth: BoardActionAuth): ButtonSpec[] {
-  const mutate: ButtonSpec = item.paused
-    ? {
+function taskButtons(item: AutomationItem, auth: BoardActionAuth): object[] {
+  const mutate = item.paused
+    ? callbackButton({
         text: '恢复',
         value: {
           cmd: 'auto.resume',
@@ -149,8 +113,8 @@ function taskButtons(item: AutomationItem, auth: BoardActionAuth): ButtonSpec[] 
           }),
         },
         style: 'primary',
-      }
-    : {
+      })
+    : callbackButton({
         text: '暂停',
         value: {
           cmd: 'auto.pause',
@@ -161,10 +125,10 @@ function taskButtons(item: AutomationItem, auth: BoardActionAuth): ButtonSpec[] 
             ttlMs: BOARD_CARD_TTL_MS,
           }),
         },
-      };
+      });
   return [
     mutate,
-    {
+    callbackButton({
       text: '删除',
       value: {
         cmd: 'auto.delete',
@@ -176,6 +140,6 @@ function taskButtons(item: AutomationItem, auth: BoardActionAuth): ButtonSpec[] 
         }),
       },
       style: 'danger',
-    },
+    }),
   ];
 }

@@ -1,39 +1,7 @@
+import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
 import { monthlyFireCount, nextFires, type Schedule } from './schedule';
 import { zonedParts } from './zoned-time';
 import type { AutomationTaskType } from './store';
-
-interface ButtonSpec {
-  text: string;
-  value: Record<string, unknown>;
-  style?: 'primary' | 'danger' | 'default';
-}
-
-function button(spec: ButtonSpec): object {
-  return {
-    tag: 'button',
-    text: { tag: 'plain_text', content: spec.text },
-    type: spec.style ?? 'default',
-    value: spec.value,
-  };
-}
-
-function divMd(content: string): object {
-  return { tag: 'div', text: { tag: 'lark_md', content } };
-}
-
-function actions(buttons: ButtonSpec[]): object {
-  return { tag: 'action', actions: buttons.map(button) };
-}
-
-const HR: object = { tag: 'hr' };
-
-function shell(title: string, elements: object[]): object {
-  return {
-    config: { wide_screen_mode: true, update_multi: true },
-    header: { title: { tag: 'plain_text', content: title } },
-    elements,
-  };
-}
 
 function escapeMd(s: string): string {
   return s.replace(/([*_`\\])/g, '\\$1');
@@ -131,19 +99,23 @@ export function automationConfirmCard(input: {
     `约每月 ${monthly} 次`,
   ].join('\n\n');
 
-  return shell('确认自动化', [
-    divMd(body),
-    HR,
-    actions([
-      {
-        text: '是',
-        value: { cmd: 'auto.confirm', auto_token: input.confirmToken },
-        style: 'primary',
-      },
-      {
-        text: '否',
-        value: { cmd: 'auto.reject', auto_token: input.rejectToken },
-      },
-    ]),
-  ]);
+  return card2({
+    title: '确认自动化',
+    summary: '确认自动化',
+    elements: [
+      md(body),
+      hr,
+      buttonRow([
+        callbackButton({
+          text: '是',
+          value: { cmd: 'auto.confirm', auto_token: input.confirmToken },
+          style: 'primary',
+        }),
+        callbackButton({
+          text: '否',
+          value: { cmd: 'auto.reject', auto_token: input.rejectToken },
+        }),
+      ]),
+    ],
+  });
 }

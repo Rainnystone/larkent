@@ -1,4 +1,5 @@
 import { FEISHU_UUID_WINDOW_MS } from '../../src/bot/feishu-delivery';
+import { assertCardSchema2 } from './card-schema2';
 
 export interface FakeChannelMessage {
   chatId: string;
@@ -72,7 +73,7 @@ export interface FakeChannel {
   updateCard(messageId: string, cardJson: unknown): Promise<void>;
   readonly updatedCards: Array<{ messageId: string; card: unknown }>;
   readonly pins: FakePin[];
-  readonly cardErrors: { update?: unknown };
+  readonly cardErrors: { update?: unknown; create?: unknown };
   readonly sendErrors: { send?: unknown };
   dropPins(): void;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
@@ -119,7 +120,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
   let nextMessage = 1;
 
   const streamErrors: { open?: unknown; finish?: unknown; hangFinish?: boolean } = {};
-  const cardErrors: { update?: unknown } = {};
+  const cardErrors: { update?: unknown; create?: unknown } = {};
   const sendErrors: { send?: unknown } = {};
 
   const throwCardUpdateIfArmed = (): void => {
@@ -285,12 +286,19 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
       },
     },
     async createCard(cardJson: unknown): Promise<{ cardId: string }> {
+      if (cardErrors.create !== undefined) {
+        const err = cardErrors.create;
+        cardErrors.create = undefined;
+        throw err;
+      }
+      assertCardSchema2(cardJson);
       const cardId = `card_fake_${nextCard++}`;
       cardById.set(cardId, cardJson);
       return { cardId };
     },
     async updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void> {
       throwCardUpdateIfArmed();
+      assertCardSchema2(cardJson);
       requests.push({ method: 'cardkit.v1.card.update', params: { cardId, cardJson, sequence } });
       cardById.set(cardId, cardJson);
       const messageId = messageByCard.get(cardId);

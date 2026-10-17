@@ -1,4 +1,5 @@
 import type { LarkChannel } from '@larksuite/channel';
+import { readCardApiError } from './card-api-error';
 import { log } from '../core/logger';
 
 interface ManagedEntry {
@@ -33,7 +34,18 @@ export async function sendManagedCard(
   card: object,
   opts: { replyTo?: string; replyInThread?: boolean } = {},
 ): Promise<ManagedCardSendResult> {
-  const { cardId } = await channel.createCard(card);
+  let cardId: string;
+  try {
+    ({ cardId } = await channel.createCard(card));
+  } catch (err) {
+    const api = readCardApiError(err);
+    log.fail('card', err, {
+      step: 'managed-create',
+      ...(api.code !== undefined ? { code: api.code } : {}),
+      ...(api.msg !== undefined ? { msg: api.msg } : {}),
+    });
+    throw err;
+  }
   const sendOpts = opts.replyTo
     ? { replyTo: opts.replyTo, ...(opts.replyInThread ? { replyInThread: true } : {}) }
     : undefined;

@@ -9,6 +9,7 @@ import { FEISHU_LINK_SILENT_PROBE_MS, FEISHU_LINK_TICK_MS } from '../../../src/b
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
+import { CardSchemaError } from '../../helpers/card-schema2';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import { axiosHttpError } from '../../helpers/sdk-feishu-errors';
@@ -251,6 +252,59 @@ describe('automation board card', () => {
     expect(h.channel.callLog.some((call) => call.op === 'updateCardById')).toBe(false);
   });
 
+  it('pauses, resumes, and deletes through board callbacks', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    const board = latestBoard(h);
+    await h.channel.handlers.cardAction?.(
+      boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
+    );
+    expect(h.store.get(1)?.paused).toBe(true);
+
+    const paused = latestBoard(h);
+    await h.channel.handlers.cardAction?.(
+      boardClick(MATE, boardToken(paused.text, 'auto.resume'), paused.messageId, 'auto.resume'),
+    );
+    expect(h.store.get(1)?.paused).toBe(false);
+
+    const live = latestBoard(h);
+    await h.channel.handlers.cardAction?.(
+      boardClick(USER, boardToken(live.text, 'auto.delete'), live.messageId, 'auto.delete'),
+    );
+    expect(h.store.list()).toEqual([]);
+    expect(latestBoard(h).text).toContain('暂无');
+  });
+
+  it('still refreshes the board when the first cardless draft fails on link recovery', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    h.channel.connectionState = 'reconnecting';
+    await h.bridge.tickLink();
+    await h.channel.handlers.message?.(mention('om_a', '/auto new in 15m | 甲 | 提醒甲'));
+    await h.channel.handlers.message?.(mention('om_b', '/auto new in 20m | 乙 | 提醒乙'));
+    expect(h.store.listDrafts().map((draft) => draft.cardMessageId)).toEqual([undefined, undefined]);
+
+    const order: string[] = [];
+    const origCreate = h.channel.createCard.bind(h.channel);
+    h.channel.createCard = async (card) => {
+      order.push('create');
+      return origCreate(card);
+    };
+    const origUpdate = h.channel.updateCardById.bind(h.channel);
+    h.channel.updateCardById = async (cardId, card, sequence) => {
+      order.push('update');
+      return origUpdate(cardId, card, sequence);
+    };
+    h.channel.cardErrors.create = new CardSchemaError();
+    h.channel.connectionState = 'connected';
+    await h.bridge.tickLink();
+    await waitFor(() => h.store.listDrafts().length === 1 && Boolean(h.store.listDrafts()[0]?.cardMessageId));
+
+    expect(h.store.listDrafts().map((draft) => draft.name)).toEqual(['乙']);
+    expect(markdowns(h.channel)).toContain('确认卡片发送失败（飞书错误 200610），未创建任务。请稍后重试。');
+    expect(order.at(-1)).toBe('update');
+  });
+
   it('rejects p2p /auto and does not create a board when automations are off', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_dm', '/auto', { chatType: 'p2p' }));
@@ -414,9 +468,20 @@ function confirmToken(cardJson: string): string {
 }
 
 function pauseToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.pause","auto_token":"(auto_board\.v1\.[^"]+)"/);
-  expect(match?.[1], 'expected auto.pause token').toBeDefined();
+  return boardToken(cardJson, 'auto.pause');
+}
+
+function boardToken(cardJson: string, cmd: 'auto.pause' | 'auto.resume' | 'auto.delete'): string {
+  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_board\\.v1\\.[^"]+)"`));
+  expect(match?.[1], `expected ${cmd} token`).toBeDefined();
   return match![1]!;
+}
+
+function markdowns(channel: ReturnType<typeof createRecordingLarkChannel>): string[] {
+  return channel.sent.flatMap((item) => {
+    const content = item.content as { markdown?: unknown };
+    return typeof content?.markdown === 'string' ? [content.markdown] : [];
+  });
 }
 
 function cardClick(operatorId: string, token: string, messageId: string): CardActionEvent {

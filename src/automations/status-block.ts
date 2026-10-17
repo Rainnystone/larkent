@@ -80,7 +80,9 @@ function walkVisible(node: unknown, out: string[]): void {
       break;
   }
   if (rec.card) walkVisible(rec.card, out);
+  if (rec.body) walkVisible(rec.body, out);
   if (rec.elements) walkVisible(rec.elements, out);
+  if (rec.columns) walkVisible(rec.columns, out);
   if (rec.header) walkVisible(rec.header, out);
   if (rec.title) walkVisible(rec.title, out);
 }

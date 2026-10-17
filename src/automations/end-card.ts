@@ -1,37 +1,5 @@
+import { buttonRow, callbackButton, card2, form, hr, md } from '../card/v2';
 import type { AutoCardAction } from './action-auth';
-
-interface ButtonSpec {
-  text: string;
-  value: Record<string, unknown>;
-  style?: 'primary' | 'danger' | 'default';
-}
-
-function button(spec: ButtonSpec): object {
-  return {
-    tag: 'button',
-    text: { tag: 'plain_text', content: spec.text },
-    type: spec.style ?? 'default',
-    value: spec.value,
-  };
-}
-
-function divMd(content: string): object {
-  return { tag: 'div', text: { tag: 'lark_md', content } };
-}
-
-function actions(buttons: ButtonSpec[]): object {
-  return { tag: 'action', actions: buttons.map(button) };
-}
-
-const HR: object = { tag: 'hr' };
-
-function shell(title: string, elements: object[]): object {
-  return {
-    config: { wide_screen_mode: true, update_multi: true },
-    header: { title: { tag: 'plain_text', content: title } },
-    elements,
-  };
-}
 
 export const END_CARD_PRESETS = [
   { cmd: 'auto.end.1m', text: '一个月' },
@@ -50,29 +18,39 @@ export type EndCardTokens = {
 };
 
 export function automationEndCard(tokens: EndCardTokens): object {
-  return shell('指定结束时间', [
-    divMd('周期任务必须指定结束时间。请选择常用时长，或输入结束日期。'),
-    actions(END_CARD_PRESETS.map((preset, index) => ({
-      text: preset.text,
-      value: { cmd: preset.cmd, auto_token: tokens[preset.cmd] },
-      style: index === 0 ? 'primary' : 'default',
-    }))),
-    HR,
-    {
-      tag: 'input',
-      name: 'end_at',
-      placeholder: { tag: 'plain_text', content: 'YYYY-MM-DD 或 YYYY-MM-DD HH:MM' },
-    },
-    actions([
-      {
-        text: '提交',
-        value: { cmd: 'auto.end.custom', auto_token: tokens['auto.end.custom'] },
-        style: 'primary',
-      },
-      {
-        text: '取消',
-        value: { cmd: 'auto.reject', auto_token: tokens['auto.reject'] },
-      },
-    ]),
-  ]);
+  return card2({
+    title: '指定结束时间',
+    summary: '指定结束时间',
+    elements: [
+      md('周期任务必须指定结束时间。请选择常用时长，或输入结束日期。'),
+      buttonRow(END_CARD_PRESETS.map((preset, index) => callbackButton({
+        text: preset.text,
+        value: { cmd: preset.cmd, auto_token: tokens[preset.cmd] },
+        style: index === 0 ? 'primary' : 'default',
+      }))),
+      hr,
+      form('auto_end', [
+        {
+          tag: 'input',
+          name: 'end_at',
+          placeholder: { tag: 'plain_text', content: 'YYYY-MM-DD 或 YYYY-MM-DD HH:MM' },
+        },
+        buttonRow([
+          callbackButton({
+            text: '提交',
+            name: 'submit_end',
+            value: { cmd: 'auto.end.custom', auto_token: tokens['auto.end.custom'] },
+            style: 'primary',
+            formAction: 'submit',
+          }),
+        ]),
+      ]),
+      buttonRow([
+        callbackButton({
+          text: '取消',
+          value: { cmd: 'auto.reject', auto_token: tokens['auto.reject'] },
+        }),
+      ]),
+    ],
+  });
 }

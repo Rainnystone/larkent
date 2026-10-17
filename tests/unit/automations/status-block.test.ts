@@ -115,4 +115,41 @@ describe('monitor status-block contract', () => {
     expect(statusBlockIsMissed({ ...hookItem, lastFireAt: FIRE }, FIRE + 1)).toBe(false);
     expect(statusBlockIsMissed({ ...hookItem, nextFireAt: 0 }, FIRE + 1)).toBe(false);
   });
+
+  it('reads v1 from a schema 2.0 board object and from the message readback shape', () => {
+    const live = item({ id: 7, paused: true });
+    const updatedAt = FIRE + 50;
+    const card = automationBoardCard({
+      items: [live],
+      status: snapshotFor(live, updatedAt),
+      auth: new BoardActionAuth({ secret: 'board-secret', now: () => updatedAt }),
+    });
+    const fromObject = parseStatusBlock(simplifiedBoardRender(card));
+    expect(fromObject).toMatchObject({ v: 1, updatedAt, items: [{ id: 7, paused: true }] });
+
+    const status = JSON.stringify(snapshotFor(live, updatedAt));
+    const readback = JSON.stringify({
+      body: {
+        elements: [
+          {
+            tag: 'form',
+            name: 'ignored',
+            elements: [
+              {
+                tag: 'column_set',
+                columns: [
+                  {
+                    tag: 'column',
+                    elements: [{ tag: 'markdown', content: status, text_size: 'notation' }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const fromReadback = parseStatusBlock(simplifiedBoardRender(readback));
+    expect(fromReadback).toMatchObject({ v: 1, updatedAt, items: [{ id: 7, paused: true }] });
+  });
 });

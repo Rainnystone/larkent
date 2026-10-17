@@ -2,6 +2,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import type { LarkChannel } from '@larksuite/channel';
 import * as lockfile from 'proper-lockfile';
+import { readCardApiError } from '../card/card-api-error';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { classify, isGoneMessage, isNotInChat } from '../bot/feishu-error';
@@ -42,6 +43,8 @@ class Board implements AutomationBoard {
   private tail: Promise<void> = Promise.resolve();
   private queued = false;
   private running = false;
+  /** Non-link create/update failures, keyed by chat and card content. */
+  private readonly failedAttempt = new Map<string, string>();
 
   constructor(deps: AutomationBoardDeps) {
     this.store = deps.store;
@@ -77,7 +80,14 @@ class Board implements AutomationBoard {
     });
     this.tail = run.then(
       () => {},
-      (error) => { log.fail('auto', error, { event: 'board' }); },
+      (error) => {
+        const api = readCardApiError(error);
+        log.fail('auto', error, {
+          event: 'board',
+          ...(api.code !== undefined ? { code: api.code } : {}),
+          ...(api.msg !== undefined ? { msg: api.msg } : {}),
+        });
+      },
     );
     return run;
   }
@@ -93,6 +103,7 @@ class Board implements AutomationBoard {
 
   private async renderChat(chatId: string): Promise<void> {
     await withBoardLock(this.lockPath, async () => {
+      let attemptKey: string | undefined;
       try {
         const items = this.store.list().filter((item) => item.chatId === chatId);
         const binding = this.store.getBoard(chatId);
@@ -103,7 +114,10 @@ class Board implements AutomationBoard {
           updatedAt: this.now(),
         });
         const card = automationBoardCard({ items, status, auth: this.auth });
+        attemptKey = boardAttemptKey(card);
+        if (this.failedAttempt.get(chatId) === attemptKey) return;
         const next = await this.patchOrResend(chatId, binding, card);
+        this.failedAttempt.delete(chatId);
         if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
           return;
         }
@@ -120,7 +134,18 @@ class Board implements AutomationBoard {
           });
           return;
         }
-        throw error;
+        if (classify(error) === 'link') throw error;
+        const api = readCardApiError(error);
+        // A Feishu code means the card request itself was rejected. Persist and
+        // pin failures have no code and must be retried on the next refresh.
+        if (api.code === undefined) throw error;
+        if (attemptKey !== undefined) this.failedAttempt.set(chatId, attemptKey);
+        log.fail('auto', error, {
+          event: 'board',
+          chatId,
+          code: api.code,
+          ...(api.msg !== undefined ? { msg: api.msg } : {}),
+        });
       }
     });
   }
@@ -207,6 +232,28 @@ class Board implements AutomationBoard {
     }
     await this.store.setBoard({ ...binding, pinFailedHinted: true });
   }
+}
+
+function boardAttemptKey(card: object): string {
+  return JSON.stringify(redactBoardAttempt(card));
+}
+
+function redactBoardAttempt(node: unknown): unknown {
+  if (Array.isArray(node)) return node.map((entry) => redactBoardAttempt(entry));
+  if (!node || typeof node !== 'object') return node;
+  const rec: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(node as Record<string, unknown>)) {
+    if (key === 'auto_token' && typeof value === 'string') {
+      rec[key] = '';
+      continue;
+    }
+    if (key === 'content' && typeof value === 'string' && value.includes('"v":1')) {
+      rec[key] = value.replace(/"updatedAt":\d+/g, '"updatedAt":0');
+      continue;
+    }
+    rec[key] = redactBoardAttempt(value);
+  }
+  return rec;
 }
 
 async function withBoardLock(path: string, fn: () => Promise<void>): Promise<void> {

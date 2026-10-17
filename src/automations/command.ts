@@ -2,6 +2,8 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { senderTypeFromRaw } from '../bot/self-message';
+import { classify, isNotInChat } from '../bot/feishu-error';
+import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
@@ -470,12 +472,14 @@ export async function submitAutomationProposal(
       ...(cwd ? { cwd } : {}),
     });
     if (!ctx.isLinkDown?.()) await postEndCard(ctx, draft);
-    log.info('auto', 'draft', {
-      draftId: draft.draftId,
-      taskType: parsed.taskType,
-      chatId: ctx.msg.chatId,
-      waiting: 'end',
-    });
+    if (ctx.automations.getDraft(draft.draftId)) {
+      log.info('auto', 'draft', {
+        draftId: draft.draftId,
+        taskType: parsed.taskType,
+        chatId: ctx.msg.chatId,
+        waiting: 'end',
+      });
+    }
     return;
   }
 
@@ -498,11 +502,13 @@ export async function submitAutomationProposal(
   if (!ctx.isLinkDown?.()) {
     await postConfirmCard(ctx, draft, parsedSchedule.schedule, now, ctx.msg.messageId);
   }
-  log.info('auto', 'draft', {
-    draftId: draft.draftId,
-    taskType: parsed.taskType,
-    chatId: ctx.msg.chatId,
-  });
+  if (ctx.automations.getDraft(draft.draftId)) {
+    log.info('auto', 'draft', {
+      draftId: draft.draftId,
+      taskType: parsed.taskType,
+      chatId: ctx.msg.chatId,
+    });
+  }
 }
 
 export async function flushPendingDraftCards(ctx: {
@@ -525,13 +531,17 @@ export async function flushPendingDraftCards(ctx: {
       chatMode: 'group' as const,
       msg: { chatId: draft.chatId, messageId: '', threadId: undefined },
     };
-    if (draft.pendingRecurring) {
-      await postEndCard(cardCtx, draft);
-      continue;
+    try {
+      if (draft.pendingRecurring) {
+        await postEndCard(cardCtx, draft);
+        continue;
+      }
+      const schedule = readSchedule(draft.schedule);
+      if (!schedule) continue;
+      await postConfirmCard(cardCtx, draft, schedule, now, '');
+    } catch (error) {
+      log.fail('auto', error, { event: 'draft.flush', draftId: draft.draftId });
     }
-    const schedule = readSchedule(draft.schedule);
-    if (!schedule) continue;
-    await postConfirmCard(cardCtx, draft, schedule, now, '');
   }
 }
 
@@ -685,18 +695,17 @@ async function postEndCard(
 ): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth) return;
   const tokens = signEndTokens(ctx.autoAuth, draft);
+  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    const sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, automationEndCard(tokens), {
+    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, automationEndCard(tokens), {
       replyTo: ctx.msg.messageId,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
-    await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
   } catch (error) {
-    if (await abandonIfNotInChat(error, ctx.msg.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
-      return;
-    }
-    throw error;
+    await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
+    return;
   }
+  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
 }
 
 async function postConfirmCard(
@@ -737,17 +746,98 @@ async function postConfirmCard(
     rejectToken,
     ...(draft.cwd ? { cwd: draft.cwd } : {}),
   });
+  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    const sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
       replyTo,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
-    await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
   } catch (error) {
-    if (await abandonIfNotInChat(error, draft.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
+    await settleDraftCardFailure(ctx, draft, error, replyTo);
+    return;
+  }
+  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
+}
+
+async function settleDraftCardFailure(
+  ctx: {
+    channel: CommandContext['channel'];
+    automations?: AutomationsStore;
+    automationsScheduler?: CommandContext['automationsScheduler'];
+    chatMode: CommandContext['chatMode'];
+    msg: { chatId: string; messageId?: string; threadId?: string };
+  },
+  draft: AutomationDraft,
+  error: unknown,
+  replyTo: string,
+): Promise<void> {
+  if (await abandonIfNotInChat(error, draft.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
+    return;
+  }
+  if (isNotInChat(error)) throw error;
+  const kind = classify(error);
+  const { code } = readCardApiError(error);
+  switch (kind) {
+    case 'link':
+      log.info('auto', 'draft.card-deferred', {
+        draftId: draft.draftId,
+        ...(code !== undefined ? { code } : {}),
+      });
+      return;
+    case 'rejected':
+    case 'local': {
+      const notice = await replyDraftCardFailed(ctx, replyTo, code);
+      if (notice === 'deferred') {
+        log.info('auto', 'draft.card-deferred', {
+          draftId: draft.draftId,
+          ...(code !== undefined ? { code } : {}),
+        });
+        return;
+      }
+      await ctx.automations?.takeDraft(draft.draftId);
+      log.warn('auto', 'draft.card-failed', {
+        draftId: draft.draftId,
+        ...(code !== undefined ? { code } : {}),
+      });
       return;
     }
-    throw error;
+    default: {
+      const _exhaustive: never = kind;
+      return _exhaustive;
+    }
+  }
+}
+
+async function replyDraftCardFailed(
+  ctx: {
+    channel: CommandContext['channel'];
+    automationsScheduler?: CommandContext['automationsScheduler'];
+    chatMode: CommandContext['chatMode'];
+    msg: { chatId: string; threadId?: string };
+  },
+  replyTo: string,
+  code: number | undefined,
+): Promise<'sent' | 'deferred' | 'dropped'> {
+  const shown = code === undefined ? 'unknown' : String(code);
+  const markdown = `确认卡片发送失败（飞书错误 ${shown}），未创建任务。请稍后重试。`;
+  try {
+    await ctx.channel.send(
+      ctx.msg.chatId,
+      { markdown },
+      {
+        ...(replyTo ? { replyTo } : {}),
+        ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+      },
+    );
+    return 'sent';
+  } catch (err) {
+    if (await abandonIfNotInChat(err, ctx.msg.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
+      return 'dropped';
+    }
+    if (isNotInChat(err)) throw err;
+    if (classify(err) === 'link') return 'deferred';
+    log.warn('auto', 'reply-failed', { err: err instanceof Error ? err.message : String(err) });
+    return 'dropped';
   }
 }
 

@@ -9,6 +9,7 @@ import {
 } from '../../../src/automations/schedule';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { automationBoardCard } from '../../../src/automations/board-card';
+import { simplifiedBoardRender } from '../../../src/automations/status-block';
 import {
   createAutomationScheduler,
   type FireSend,
@@ -867,14 +868,13 @@ describe('automation scheduler', () => {
       expect.objectContaining({ id: 1, lastStatus: 'running', lastFireAt: t0 }),
     ]);
     const item = h.store.get(1);
-    const rendered = automationBoardCard({
+    const rendered = simplifiedBoardRender(automationBoardCard({
       items: item ? [item] : [],
       status: status as AutomationsStatusSnapshot,
       auth: new BoardActionAuth({ secret: 'board-secret', now: () => h.clock.now() }),
-    }) as { elements: Array<{ content?: string; text?: { content?: string } }> };
-    const lines = rendered.elements.map((element) => element.text?.content ?? element.content ?? '');
-    expect(lines.join('\n')).toContain('已跳过 原定 2026-01-02 13:00');
-    expect(lines.join('\n')).toContain('"lastStatus":"running"');
+    }));
+    expect(rendered).toContain('已跳过 原定 2026-01-02 13:00');
+    expect(rendered).toContain('"lastStatus":"running"');
     release();
   });
 
@@ -1109,14 +1109,13 @@ describe('automation scheduler', () => {
       }),
     ]);
     const item = h.store.get(1);
-    const rendered = automationBoardCard({
+    const rendered = simplifiedBoardRender(automationBoardCard({
       items: item ? [item] : [],
       status: status as AutomationsStatusSnapshot,
       auth: new BoardActionAuth({ secret: 'board-secret', now: () => h.clock.now() }),
-    }) as { elements: Array<{ content?: string; text?: { content?: string } }> };
-    const lines = rendered.elements.map((element) => element.text?.content ?? element.content ?? '');
-    expect(lines.join('\n')).toContain('已跳过 原定 2026-01-02 13:00');
-    expect(lines.join('\n')).toContain('"lastStatus":"running"');
+    }));
+    expect(rendered).toContain('已跳过 原定 2026-01-02 13:00');
+    expect(rendered).toContain('"lastStatus":"running"');
     expect(h.clock.pendingCount()).toBe(1);
     expect(delays.at(-1)).toBe(60_000);
   });

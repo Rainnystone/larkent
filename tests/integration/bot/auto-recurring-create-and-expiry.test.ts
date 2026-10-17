@@ -201,6 +201,22 @@ describe('A2 recurring creation and expiry', () => {
     expect(retry.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
   });
 
+  it('turns one preset tap into a confirm card and ignores a second tap on the same card', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
+    const endCard = cardContaining(h, 'auto.end.1m');
+    const token = tokenFor(endCard, 'auto.end.1m');
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+
+    await h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId, 'auto.end.1m'));
+    expect(confirmCard(h)).toContain('auto.confirm');
+    expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+
+    await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId, 'auto.end.1m'));
+    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+  });
+
   it('rejects a reminder interval under 10 minutes and an agent-task interval under 1 hour', async () => {
     const h = await harness({ agentTasks: true });
     await h.channel.handlers.message?.(mention('om_soon', '/auto new every 5m | 吵 | ping'));
