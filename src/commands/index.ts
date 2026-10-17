@@ -87,6 +87,7 @@ import type { MeetingSession } from '../meeting/session';
 import { hasStructuredLarkCliUserAuth } from '../lark-cli/identity-policy';
 import type { AutoActionAuth } from '../automations/action-auth';
 import { handleAutoCommand } from '../automations/command';
+import type { AutomationScheduler } from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
 
 export interface Controls {
@@ -152,8 +153,9 @@ export interface CommandContext {
   fromCardAction?: boolean;
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
+  automationsScheduler?: AutomationScheduler;
   now?: () => number;
-  onAutomationConfirmed?: (item: AutomationItem) => void;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 
 type Handler = (args: string, ctx: CommandContext) => Promise<void>;

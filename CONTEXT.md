@@ -90,6 +90,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **draft**: an automation waiting for confirm-card acceptance; TTL 24 hours. A recurring draft without `endAt` waits on the scripted end card first.
 - **scripted card**: a bridge-rendered fixed card (missing end, or a validation message). It does not go through the agent.
 - **confirm card**: the bridge-rendered 是/否 card for `/auto new`. Signed like an interruption notice (`AutoActionAuth`): draft + chat + action + expiry + one-time nonce, no operator. Any allowed group member may tap. Stale, duplicate, or forged taps reply 此确认已失效. Registration is the draft's persisted `cardMessageId` (in-memory `isManaged` does not survive restart). The weekday line states 工作日不计调休 and lists the next 3 fires.
+- **board**: per-bot per-group pinned card listing this bot's tasks with Pause/Resume and Delete. Anyone in the group may tap. Buttons use reusable signed actions (`BoardActionAuth`, no nonce). Status block v1 is rendered from `automations-status.json` (A0c snapshot). `/auto` list and `/auto pause|resume|delete <id>` are the fallback.
 - **scheduler**: the profile-owned timer that produces fires from `nextFireAt`. Startup, link recovery, and the local wake entry run the same catch-up rule. It is not a recovery poller and is not backfill.
 - **automation creator** (`createdBy`): the person whose message created the automation. **bot owner** is `isBotOwner()` (formerly `isCreator()`).
 

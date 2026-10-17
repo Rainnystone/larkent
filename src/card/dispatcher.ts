@@ -5,8 +5,13 @@ import type { BackfillLedger } from '../bot/backfill-ledger';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
-import type { AutoActionAuth, AutoCardAction } from '../automations/action-auth';
-import { isAutoCardAction, isAutoEndAction } from '../automations/action-auth';
+import {
+  isAutoCardAction,
+  isAutoEndAction,
+  type AutoActionAuth,
+  type AutoCardAction,
+} from '../automations/action-auth';
+import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth';
 import {
   AUTO_INVALID_END,
   AUTO_INVALID_HINT,
@@ -14,6 +19,7 @@ import {
   confirmAutomationDraft,
   resolveEndAt,
 } from '../automations/command';
+import type { AutomationScheduler } from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
 import type { CallbackAuth } from './callback-auth';
 import type { Continuations } from '../bot/continuation';
@@ -64,9 +70,11 @@ export interface CardDispatchDeps {
   journal?: TurnJournal;
   noticeAuth?: NoticeActionAuth;
   autoAuth?: AutoActionAuth;
+  boardAuth?: BoardActionAuth;
   automations?: AutomationsStore;
+  automationsScheduler?: AutomationScheduler;
   now?: () => number;
-  onAutomationConfirmed?: (item: AutomationItem) => void;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
   continuations?: Continuations;
   onNoticeAction?: (input: {
     action: NoticeAction;
@@ -130,6 +138,10 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   }
   if (isAutoCardAction(cmd)) {
     await dispatchAutoAction(deps, payload, cmd, accessDecision, formValue);
+    return;
+  }
+  if (cmd === 'auto.pause' || cmd === 'auto.resume' || cmd === 'auto.delete') {
+    await dispatchBoardAction(deps, payload, cmd, accessDecision);
     return;
   }
   if (cmd) {
@@ -453,6 +465,69 @@ async function dispatchAutoAction(
       await sendAutoHint(deps, `已确认：#${item.id} ${item.name}`);
       return;
     }
+    default: {
+      const _exhaustive: never = cmd;
+      return _exhaustive;
+    }
+  }
+}
+
+async function dispatchBoardAction(
+  deps: CardDispatchDeps,
+  payload: Record<string, unknown>,
+  cmd: BoardCardAction,
+  access: ReturnType<typeof evaluateAccess>,
+): Promise<void> {
+  if (!access.ok) return;
+  const botOpenId = deps.channel.botIdentity?.openId;
+  if (botOpenId && deps.evt.operator.openId === botOpenId) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
+  if (!deps.boardAuth || !deps.automations || !deps.automationsScheduler || !token) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (!deps.controls.profileConfig.automations.enabled) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const registered = deps.automations.findBoardByMessageId(deps.evt.messageId);
+  if (!registered) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const verified = deps.boardAuth.verify(token);
+  if (!verified.ok || verified.payload.action !== cmd) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (
+    verified.payload.chatId !== deps.evt.chatId
+    || verified.payload.chatId !== registered.chatId
+  ) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const item = deps.automations.get(verified.payload.itemId);
+  if (!item || item.chatId !== registered.chatId) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  switch (cmd) {
+    case 'auto.pause':
+      await deps.automationsScheduler.pause(item.id);
+      log.info('auto', 'paused', { id: item.id });
+      return;
+    case 'auto.resume':
+      await deps.automationsScheduler.resume(item.id);
+      log.info('auto', 'resumed', { id: item.id });
+      return;
+    case 'auto.delete':
+      await deps.automationsScheduler.delete(item.id);
+      log.info('auto', 'deleted', { id: item.id });
+      return;
     default: {
       const _exhaustive: never = cmd;
       return _exhaustive;
