@@ -108,14 +108,16 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { classify } from './feishu-error';
+import { classify, rateLimitResetDelayMs } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import { createRecovery, reviewActiveRuns, type Outage } from './recovery';
 import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
+  noticeState,
   replyDeliveryKey,
   replyState,
+  streamDeliveryKey,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnJournalResource,
@@ -273,7 +275,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     },
   });
   const outboxSweep = {
-    schedule() {},
+    schedule(_delayMs?: number) {},
     stop() {},
   };
   const activeRuns = new ActiveRuns({
@@ -407,8 +409,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   let closing = false;
   const backfillMarks = new Map<string, BackfillMark>();
   const runScheduledBackfill = createBackfillRun();
-  const runConsumers = new Set<Promise<void>>();
-  const trackConsumer = (work: Promise<void>, phase: string): Promise<void> => {
+  const runConsumers = new Set<Promise<unknown>>();
+  const trackConsumer = <T>(work: Promise<T>, phase: string): Promise<T> => {
     if (runConsumers.has(work)) return work;
     runConsumers.add(work);
     void work.then(
@@ -479,7 +481,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           continuations,
           cliSelfSent,
           link,
-          onDeliveryWait: () => outboxSweep.schedule(),
+          onDeliveryWait: (delayMs) => outboxSweep.schedule(delayMs),
         });
       } finally {
         sessionWriter.release();
@@ -516,8 +518,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       log.fail('intake', err);
     });
 
-  const launchBackfill = (fromMs: number, since?: number): Promise<void> => {
-    if (!ledger) return Promise.resolve();
+  const launchBackfill = (fromMs: number, since?: number): Promise<boolean> => {
+    if (!ledger) return Promise.resolve(true);
     return trackConsumer(runScheduledBackfill({
       fromMs,
       ...(since !== undefined ? { since } : {}),
@@ -614,27 +616,50 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   let sweepStopped = false;
   let sweepPasses = 0;
   let sweepInFlight = false;
-  const runOutboxSweep = (): void => {
-    if (sweepStopped || sweepInFlight || !journal || link.isDown()) return;
+  let sweepQueued = false;
+  let sweepTail: Promise<void> = Promise.resolve();
+  const runOutboxSweep = (): Promise<void> => {
+    if (sweepStopped || !journal || link.isDown()) return Promise.resolve();
+    if (sweepInFlight) {
+      sweepQueued = true;
+      return sweepTail;
+    }
     sweepInFlight = true;
     sweepPasses += 1;
-    void trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal').then(() => {
+    sweepTail = trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal').then(() => {
       if (sweepStopped || link.isDown()) return;
-      const pending = journal.list().some((entry) => replyState(entry) === 'staged');
+      const pending = journal.list().some((entry) => (
+        replyState(entry) === 'staged' || noticeState(entry) === 'staged'
+      ));
       if (!pending || sweepPasses >= OUTBOX_SWEEP_MAX) return;
       sweepTimer = setTimeout(() => {
         sweepTimer = undefined;
-        runOutboxSweep();
+        void runOutboxSweep();
       }, OUTBOX_SWEEP_MS);
     }, () => {
       // Logged by trackConsumer. Do not reschedule a failed pass as success.
     }).finally(() => {
       sweepInFlight = false;
+      if (!sweepQueued) return;
+      sweepQueued = false;
+      return runOutboxSweep();
     });
+    return sweepTail;
   };
-  outboxSweep.schedule = () => {
+  outboxSweep.schedule = (delayMs = 0) => {
     sweepPasses = 0;
-    runOutboxSweep();
+    if (delayMs > 0) {
+      if (sweepTimer) {
+        clearTimeout(sweepTimer);
+        sweepTimer = undefined;
+      }
+      sweepTimer = setTimeout(() => {
+        sweepTimer = undefined;
+        void runOutboxSweep();
+      }, delayMs);
+      return;
+    }
+    void runOutboxSweep();
   };
   outboxSweep.stop = () => {
     sweepStopped = true;
@@ -670,8 +695,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       since: outage?.since ?? ledger?.getLiveAt() ?? now,
       until: outage?.until ?? now,
       hostSuspended: outage?.hostSuspended === true,
+      ...(outage?.suspendStartedAt !== undefined ? { suspendStartedAt: outage.suspendStartedAt } : {}),
     });
-    outboxSweep.schedule();
+    sweepPasses = 0;
+    await runOutboxSweep();
   };
 
   const started = startFeishuLink({
@@ -897,6 +924,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     tickLink: () => started.tick(),
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
+      recovery.stop();
       outboxSweep.stop();
       resumeCandidates.clear();
       // Commands can themselves call disconnect, so track run consumers only,
@@ -1304,7 +1332,7 @@ interface RunBatchDeps {
   continuations: Continuations;
   cliSelfSent?: CliSelfSendTracker;
   link?: { outageEpoch(): number; isDown(): boolean };
-  onDeliveryWait?: () => void;
+  onDeliveryWait?: (delayMs?: number) => void;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1721,6 +1749,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             scope,
             sendOpts,
             reason: cotPublisher.degradedReason,
+            journal,
+            turnId,
           });
         }
         await deliverFinalReply({
@@ -1769,7 +1799,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               },
             },
           },
-          sendOpts,
+          withDeliveryUuid(sendOpts, turnId ? streamDeliveryKey(turnId) : undefined),
         ),
       );
       const renderDone = processAgentStream(
@@ -1843,7 +1873,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               await renderDone;
             },
           },
-          sendOpts,
+          withDeliveryUuid(sendOpts, turnId ? streamDeliveryKey(turnId) : undefined),
         ),
       );
       const renderDone = processAgentStream(
@@ -2127,7 +2157,7 @@ async function deliverFinalReply(input: {
   };
   cliSelfSent?: CliSelfSendTracker;
   link?: { isDown(): boolean };
-  onWait?: () => void;
+  onWait?: (delayMs?: number) => void;
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
     input.journal.markSettled(input.turnId, input.handle.outcome);
@@ -2149,14 +2179,18 @@ async function deliverFinalReply(input: {
     ? input.journal?.get(input.turnId)?.reply?.deliveryId ?? replyDeliveryKey(input.turnId)
     : undefined;
   const stream = input.stream ?? { kind: 'none' as const };
+  const dedicatedFinal = input.dedicatedFinal === true && Boolean(body.trim());
   const streamMessageId = stream.kind === 'none' ? undefined : stream.messageId;
+  if (dedicatedFinal && streamMessageId && input.journal && input.turnId) {
+    input.journal.noteNonAnswerId(input.turnId, streamMessageId);
+  }
   const reply = {
     markdown: visibleBody,
     replyTo: input.sendOpts.replyTo,
     replyMode: input.replyMode,
     ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
     ...(deliveryId ? { deliveryId } : {}),
-    ...(streamMessageId ? { messageId: streamMessageId, interactive: true as const } : {}),
+    ...(!dedicatedFinal && streamMessageId ? { messageId: streamMessageId, interactive: true as const } : {}),
   };
   if (input.journal && input.turnId && !skip) {
     input.journal.stageReply(input.turnId, reply);
@@ -2171,7 +2205,6 @@ async function deliverFinalReply(input: {
     });
   }
   if (input.journal) await input.journal.flush();
-  const dedicatedFinal = input.dedicatedFinal === true && Boolean(body.trim());
   if (skipCli) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
@@ -2205,12 +2238,12 @@ async function deliverFinalReply(input: {
       replyMode: input.replyMode,
       dedicatedFinal,
     });
-    if (settled === 'wait') {
-      input.onWait?.();
+    if (settled.kind === 'wait') {
+      input.onWait?.(rateLimitResetDelayMs(settled.error));
       return;
     }
   }
-  if (input.journal && input.turnId && !willNotice) input.journal.replyDelivered(input.turnId);
+  if (input.journal && input.turnId) input.journal.replyDelivered(input.turnId);
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
       channel: input.channel,
@@ -2220,9 +2253,12 @@ async function deliverFinalReply(input: {
       outcome,
       notice: input.notice,
       link: input.link,
+      onWait: input.onWait,
     });
   }
 }
+
+type OutboundSettle = { kind: 'done' } | { kind: 'wait'; error?: unknown };
 
 async function settleStreamDelivery(input: {
   stream: StreamDelivery;
@@ -2234,28 +2270,37 @@ async function settleStreamDelivery(input: {
   turnId?: string;
   replyMode: ReturnType<typeof getMessageReplyMode>;
   dedicatedFinal: boolean;
-}): Promise<'done' | 'wait'> {
+}): Promise<OutboundSettle> {
   switch (input.stream.kind) {
     case 'confirmed':
       if (input.stream.messageId && input.journal && input.turnId) {
-        input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
+        if (input.dedicatedFinal) {
+          input.journal.noteNonAnswerId(input.turnId, input.stream.messageId);
+        } else {
+          input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
+        }
         await input.journal.flush();
       }
-      return input.dedicatedFinal ? sendOrWait(input) : 'done';
+      return input.dedicatedFinal ? sendOrWait(input) : { kind: 'done' };
     case 'none':
       return sendOrWait(input);
     case 'failed':
       log.fail('stream', input.stream.err, { mode: input.replyMode, step: 'final-patch' });
       if (input.stream.messageId && input.journal && input.turnId) {
-        input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
+        if (input.dedicatedFinal) {
+          input.journal.noteNonAnswerId(input.turnId, input.stream.messageId);
+        } else {
+          input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
+        }
         await input.journal.flush();
       }
-      if (input.stream.messageId) return 'wait';
+      if (input.dedicatedFinal) return sendOrWait(input);
+      if (input.stream.messageId) return { kind: 'wait', error: input.stream.err };
       {
         const kind = classify(input.stream.err);
         switch (kind) {
           case 'link':
-            return 'wait';
+            return { kind: 'wait', error: input.stream.err };
           case 'rejected':
           case 'local':
             return sendOrWait(input);
@@ -2278,7 +2323,7 @@ async function sendOrWait(input: {
   journal?: TurnJournal;
   turnId?: string;
   replyMode: ReturnType<typeof getMessageReplyMode>;
-}): Promise<'done' | 'wait'> {
+}): Promise<OutboundSettle> {
   try {
     return await recordSend(input);
   } catch (err) {
@@ -2286,19 +2331,19 @@ async function sendOrWait(input: {
     const kind = classify(err);
     switch (kind) {
       case 'link':
-        return 'wait';
+        return { kind: 'wait', error: err };
       case 'rejected': {
         if (!input.fallback) {
           if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
-          return 'done';
+          return { kind: 'done' };
         }
         try {
           return await recordSend({ ...input, send: input.fallback });
         } catch (retryErr) {
           log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
-          if (classify(retryErr) === 'link') return 'wait';
+          if (classify(retryErr) === 'link') return { kind: 'wait', error: retryErr };
           if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
-          return 'done';
+          return { kind: 'done' };
         }
       }
       case 'local':
@@ -2306,7 +2351,7 @@ async function sendOrWait(input: {
           return await recordSend(input);
         } catch (retryErr) {
           log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
-          return 'wait';
+          return { kind: 'wait', error: retryErr };
         }
       default: {
         const _exhaustive: never = kind;
@@ -2321,12 +2366,12 @@ async function recordSend(input: {
   journal?: TurnJournal;
   turnId?: string;
   replyMode: ReturnType<typeof getMessageReplyMode>;
-}): Promise<'done'> {
+}): Promise<{ kind: 'done' }> {
   const sent = await input.send();
   if (input.journal && input.turnId && sent?.messageId) {
     input.journal.noteReplyReceipt(input.turnId, sent.messageId, input.replyMode === 'card');
   }
-  return 'done';
+  return { kind: 'done' };
 }
 
 async function resendJournalReply(input: {
@@ -2454,6 +2499,8 @@ async function sendCotDegradedNotice(input: {
   scope: string;
   sendOpts: { replyTo: string; replyInThread?: boolean };
   reason: string;
+  journal?: TurnJournal;
+  turnId?: string;
 }): Promise<void> {
   log.warn('cot', 'degraded', {
     scope: input.scope,
@@ -2461,11 +2508,15 @@ async function sendCotDegradedNotice(input: {
     replyInThread: input.sendOpts.replyInThread === true,
   });
   try {
-    await input.channel.send(
+    const result = await input.channel.send(
       input.chatId,
       { markdown: 'COT 过程消息更新失败，已停止展示过程；最终答案仍会继续发送。' },
       input.sendOpts,
     );
+    const messageId = outboundMessageId(result);
+    if (messageId && input.journal && input.turnId) {
+      input.journal.noteNonAnswerId(input.turnId, messageId);
+    }
   } catch (err) {
     log.warn('cot', 'degraded-notice-failed', {
       scope: input.scope,
@@ -2977,13 +3028,15 @@ async function sendTurnNotice(input: {
     requireBotMention: boolean;
   };
   link?: { isDown(): boolean };
+  onWait?: (delayMs?: number) => void;
 }): Promise<void> {
   if (planInterruptionNotice(input.outcome).kind === 'none') return;
   if (input.link?.isDown()) return;
-  await deliverInterruptionNotice({
+  const result = await deliverInterruptionNotice({
     send: (chatId, content, options) => input.channel.send(chatId, content, options),
     ...noticeArgs(input),
   });
+  if (!result.delivered) input.onWait?.();
 }
 
 function delay(ms: number): Promise<void> {

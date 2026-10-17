@@ -167,11 +167,11 @@ export function wrapChannelOutbound(
     if (typeof current !== 'function') continue;
     const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(channel);
     mutable[op] = (...args: unknown[]) => {
-      const callArgs = op === 'stream'
-        ? [args[0], wrapStreamProducer(args[1], outbound), ...args.slice(2)]
-        : args;
-      const work = orig(...callArgs).then((result) => {
-        if (op === 'send' || op === 'stream') outbound.add(outboundMessageId(result));
+      if (op === 'stream') {
+        return timedStreamCall(orig, args, outbound, timeoutMs, opts.onResult);
+      }
+      const work = orig(...args).then((result) => {
+        if (op === 'send') outbound.add(outboundMessageId(result));
         return result;
       });
       const pending = isTimedChannelOp(op) ? withOutboundTimeout(op, work, timeoutMs) : work;
@@ -193,13 +193,62 @@ function isTimedChannelOp(op: (typeof WRAPPED_CHANNEL_OPS)[number]): boolean {
   return (TIMED_CHANNEL_OPS as readonly string[]).includes(op);
 }
 
-function wrapStreamProducer(input: unknown, outbound: OutboundMessageIds): unknown {
+function timedStreamCall(
+  orig: (...args: unknown[]) => Promise<unknown>,
+  args: unknown[],
+  outbound: OutboundMessageIds,
+  timeoutMs: number,
+  onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
+): Promise<unknown> {
+  const producerStarted = createGate();
+  const producerDone = createGate();
+  const wrappedInput = wrapStreamProducer(args[1], outbound, timeoutMs, {
+    onStart: () => producerStarted.resolve(),
+    onDone: () => producerDone.resolve(),
+  });
+  const work = orig(args[0], wrappedInput, ...args.slice(2)).then((result) => {
+    outbound.add(outboundMessageId(result));
+    return result;
+  });
+  void work.then(() => {}, () => {});
+
+  return (async () => {
+    try {
+      const opened = await withOutboundTimeout(
+        'stream.open',
+        Promise.race([
+          work.then((value) => ({ phase: 'done' as const, value })),
+          producerStarted.promise.then(() => ({ phase: 'producer' as const })),
+        ]),
+        timeoutMs,
+      );
+      if (opened.phase === 'done') {
+        onResult?.({ ok: true });
+        return opened.value;
+      }
+      await producerDone.promise;
+      const closed = await withOutboundTimeout('stream.close', work, timeoutMs);
+      onResult?.({ ok: true });
+      return closed;
+    } catch (error: unknown) {
+      onResult?.({ ok: false, error });
+      throw error;
+    }
+  })();
+}
+
+function wrapStreamProducer(
+  input: unknown,
+  outbound: OutboundMessageIds,
+  timeoutMs: number,
+  hooks: { onStart(): void; onDone(): void },
+): unknown {
   if (!input || typeof input !== 'object') return input;
   const rec = input as Record<string, unknown>;
   if (rec.card && typeof rec.card === 'object' && rec.card !== null) {
     const card = rec.card as {
       initial?: unknown;
-      producer?: (ctrl: { messageId?: string }) => Promise<void> | void;
+      producer?: (ctrl: StreamCtrl) => Promise<void> | void;
     };
     if (typeof card.producer === 'function') {
       const producer = card.producer;
@@ -207,23 +256,71 @@ function wrapStreamProducer(input: unknown, outbound: OutboundMessageIds): unkno
         ...rec,
         card: {
           ...card,
-          producer: async (ctrl: { messageId?: string }) => {
+          producer: async (ctrl: StreamCtrl) => {
+            hooks.onStart();
             outbound.add(ctrl.messageId);
-            return producer(ctrl);
+            try {
+              return await producer(timedStreamCtrl(ctrl, timeoutMs));
+            } finally {
+              hooks.onDone();
+            }
           },
         },
       };
     }
   }
   if (typeof rec.markdown === 'function') {
-    const markdown = rec.markdown as (ctrl: { messageId?: string }) => Promise<void> | void;
+    const markdown = rec.markdown as (ctrl: StreamCtrl) => Promise<void> | void;
     return {
       ...rec,
-      markdown: async (ctrl: { messageId?: string }) => {
+      markdown: async (ctrl: StreamCtrl) => {
+        hooks.onStart();
         outbound.add(ctrl.messageId);
-        return markdown(ctrl);
+        try {
+          return await markdown(timedStreamCtrl(ctrl, timeoutMs));
+        } finally {
+          hooks.onDone();
+        }
       },
     };
   }
   return input;
+}
+
+type StreamCtrl = {
+  messageId?: string;
+  update?(card: unknown): Promise<void> | void;
+  setContent?(markdown: string): Promise<void> | void;
+};
+
+function timedStreamCtrl(ctrl: StreamCtrl, timeoutMs: number): StreamCtrl {
+  return {
+    ...ctrl,
+    ...(typeof ctrl.update === 'function'
+      ? {
+          update: (card: unknown) => withOutboundTimeout(
+            'stream.update',
+            Promise.resolve(ctrl.update!(card)),
+            timeoutMs,
+          ),
+        }
+      : {}),
+    ...(typeof ctrl.setContent === 'function'
+      ? {
+          setContent: (markdown: string) => withOutboundTimeout(
+            'stream.setContent',
+            Promise.resolve(ctrl.setContent!(markdown)),
+            timeoutMs,
+          ),
+        }
+      : {}),
+  };
+}
+
+function createGate(): { promise: Promise<void>; resolve(): void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }

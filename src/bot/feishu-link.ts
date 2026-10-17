@@ -18,6 +18,8 @@ export interface Outage {
   until: number;
   /** True when a tick gap over 30s (sleep/freeze/clock jump) fell inside the outage. */
   hostSuspended: boolean;
+  /** Last local tick before a host-suspend gap. Review uses this, not `since`. */
+  suspendStartedAt?: number;
 }
 
 export interface FeishuLink {
@@ -148,6 +150,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let probeSeq = 0;
   let probeAbort: AbortController | undefined;
   let hostSuspended = false;
+  let suspendStartedAt: number | undefined;
   let wsDownTicks = 0;
 
   const touchHeartbeat = (): void => {
@@ -164,8 +167,15 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     for (const listener of listeners) listener(outage);
   };
 
-  const goDown = (since: number, opts?: { hostSuspended?: boolean }): void => {
-    if (opts?.hostSuspended) hostSuspended = true;
+  const goDown = (since: number, opts?: { hostSuspended?: boolean; suspendStartedAt?: number }): void => {
+    if (opts?.hostSuspended) {
+      hostSuspended = true;
+      if (opts.suspendStartedAt !== undefined) {
+        suspendStartedAt = suspendStartedAt === undefined
+          ? opts.suspendStartedAt
+          : Math.min(suspendStartedAt, opts.suspendStartedAt);
+      }
+    }
     if (down) {
       downSince = Math.min(downSince, since);
       return;
@@ -180,9 +190,20 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     down = false;
     lastEvidenceAt = until;
     deps.watermark.set(until);
-    const outage = { since: downSince, until, hostSuspended };
+    const outage: Outage = {
+      since: downSince,
+      until,
+      hostSuspended,
+      ...(hostSuspended && suspendStartedAt !== undefined ? { suspendStartedAt } : {}),
+    };
     hostSuspended = false;
-    log.info('link', 'recovered', outage);
+    suspendStartedAt = undefined;
+    log.info('link', 'recovered', {
+      since: outage.since,
+      until: outage.until,
+      hostSuspended: outage.hostSuspended,
+      ...(outage.suspendStartedAt !== undefined ? { suspendStartedAt: outage.suspendStartedAt } : {}),
+    });
     emitRecovered(outage);
   };
 
@@ -201,7 +222,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     const sinceLast = lastTickAt > 0 ? at - lastTickAt : 0;
     if (sinceLast <= FEISHU_LINK_SLEEP_MS) return;
     log.info('link', 'sleep', { sleptMs: sinceLast });
-    goDown(lastTickAt, { hostSuspended: true });
+    goDown(lastTickAt, { hostSuspended: true, suspendStartedAt: lastTickAt });
     probeSeq += 1;
     probing = false;
     probeAbort?.abort();

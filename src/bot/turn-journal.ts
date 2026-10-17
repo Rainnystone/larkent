@@ -92,6 +92,8 @@ export interface TurnJournalEntry {
   resources?: TurnJournalResource[];
   reply?: TurnReply;
   cliAlreadySent?: boolean;
+  /** Bot message ids for this turn that are not the final answer (notices, CoT, dedicated-final progress). */
+  nonAnswerIds?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -297,6 +299,16 @@ export class TurnJournal {
 
   noteCliAlreadySent(turnId: string): void {
     this.patch(turnId, { cliAlreadySent: true });
+  }
+
+  noteNonAnswerId(turnId: string, messageId: string): void {
+    const id = messageId.trim();
+    if (!id) return;
+    const entry = this.entries.find((item) => item.turnId === turnId);
+    if (!entry) return;
+    const existing = entry.nonAnswerIds ?? [];
+    if (existing.includes(id)) return;
+    this.patch(turnId, { nonAnswerIds: [...existing, id] });
   }
 
   noteCliAlreadySentForScope(scope: string, turnId: string): void {
@@ -725,9 +737,16 @@ function parseEntry(raw: unknown): TurnJournalEntry | undefined {
     ...(parseResources(raw.resources) ? { resources: parseResources(raw.resources) } : {}),
     ...(parseReply(raw.reply) ? { reply: parseReply(raw.reply) } : {}),
     ...(raw.cliAlreadySent === true ? { cliAlreadySent: true } : {}),
+    ...(parseIdList(raw.nonAnswerIds) ? { nonAnswerIds: parseIdList(raw.nonAnswerIds) } : {}),
     createdAt: raw.createdAt,
     updatedAt: raw.updatedAt,
   };
+}
+
+function parseIdList(raw: unknown): string[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const ids = raw.filter((id): id is string => typeof id === 'string' && id.length > 0);
+  return ids.length > 0 ? ids : undefined;
 }
 
 function parseContinuation(raw: unknown): TurnContinuation | undefined {
@@ -987,6 +1006,10 @@ export function noticeDeliveryKey(turnId: string): string {
 
 export function noticeOwnerDeliveryKey(turnId: string): string {
   return clipDeliveryId(`notice-owner:${turnId}`);
+}
+
+export function streamDeliveryKey(turnId: string): string {
+  return clipDeliveryId(`stream:${turnId}`);
 }
 
 function clipDeliveryId(id: string): string {

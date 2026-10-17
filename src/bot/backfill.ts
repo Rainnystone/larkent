@@ -76,9 +76,9 @@ export function formatBackfillLatenessHint(input: {
   );
 }
 
-export function createBackfillRun(): (deps: RunBackfillDeps) => Promise<void> {
-  let inFlight: Promise<void> | undefined;
-  const launch = (deps: RunBackfillDeps): Promise<void> => {
+export function createBackfillRun(): (deps: RunBackfillDeps) => Promise<boolean> {
+  let inFlight: Promise<boolean> | undefined;
+  const launch = (deps: RunBackfillDeps): Promise<boolean> => {
     if (inFlight) {
       log.info('backfill', 'coalesced');
       return inFlight;
@@ -91,17 +91,17 @@ export function createBackfillRun(): (deps: RunBackfillDeps) => Promise<void> {
   return launch;
 }
 
-export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
+export async function runBackfill(deps: RunBackfillDeps): Promise<boolean> {
   const now = (deps.now ?? Date.now)();
   const startedAt = Date.now();
   const identity = deps.channel.botIdentity;
   if (!deps.prefs.enabled) {
     log.info('backfill', 'skip-disabled', gapFields(deps.ledger, now));
-    return;
+    return true;
   }
   if (!identity?.openId) {
     log.info('backfill', 'skip-no-identity', gapFields(deps.ledger, now));
-    return;
+    return true;
   }
   const incompleteFrom = deps.ledger.getIncompleteFrom();
   const incompleteEpoch = deps.ledger.getIncompleteEpoch();
@@ -191,7 +191,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
 
   if (aborted) {
     log.info('backfill', 'aborted');
-    return;
+    return true;
   }
 
   const durationMs = Date.now() - startedAt;
@@ -207,7 +207,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
     reportMetric('backfill_enqueued', enqueuedTotal);
     reportMetric('backfill_duration_ms', durationMs);
     if (fetchFailures > 0) reportMetric('backfill_chat_fetch_failed', fetchFailures);
-    return;
+    return false;
   }
 
   deps.ledger.markScanComplete(window.windowEnd, now, incompleteFrom, incompleteEpoch);
@@ -220,6 +220,7 @@ export async function runBackfill(deps: RunBackfillDeps): Promise<void> {
   });
   reportMetric('backfill_enqueued', enqueuedTotal);
   reportMetric('backfill_duration_ms', durationMs);
+  return true;
 }
 
 function selectInScopeChats(

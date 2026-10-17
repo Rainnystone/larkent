@@ -545,6 +545,7 @@ function persistNoticeMessageId(
   if (!journal || !messageId?.trim()) return;
   const current = journal.get(turnId)?.notice ?? notice;
   journal.recordNotice(turnId, { ...current, messageId });
+  journal.noteNonAnswerId(turnId, messageId);
 }
 
 function sendOpts(

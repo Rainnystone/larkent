@@ -98,6 +98,9 @@ export async function redeliverStagedReply(input: {
       botAppId: input.botAppId,
       afterMs: input.entry.createdAt,
       receiptId: reply.messageId,
+      replyInThread: reply.replyInThread === true,
+      threadId: input.entry.threadId,
+      excludeIds: excludedReadBackIds(input.entry),
     });
     switch (found.kind) {
       case 'none':
@@ -134,13 +137,17 @@ export async function readBackBotReply(input: {
   botAppId: string;
   afterMs: number;
   receiptId?: string;
+  replyInThread?: boolean;
+  threadId?: string;
+  excludeIds?: ReadonlySet<string>;
 }): Promise<ReadBackMatch> {
   let pageToken: string | undefined;
+  const inThread = input.replyInThread === true;
   for (let page = 0; page < FEISHU_READBACK_MAX_PAGES; page += 1) {
     const res = await input.channel.rawClient.im.v1.message.list({
       params: {
-        container_id_type: 'chat',
-        container_id: input.chatId,
+        container_id_type: inThread ? 'thread' : 'chat',
+        container_id: inThread ? (input.threadId ?? input.parentId) : input.chatId,
         start_time: String(Math.floor(input.afterMs / 1000)),
         sort_type: 'ByCreateTimeDesc',
         page_size: FEISHU_READBACK_PAGE_SIZE,
@@ -175,6 +182,7 @@ function matchListedReply(
     botAppId: string;
     afterMs: number;
     receiptId?: string;
+    excludeIds?: ReadonlySet<string>;
   },
 ): ReadBackMatch {
   const item = asRecord(raw);
@@ -184,12 +192,19 @@ function matchListedReply(
   if (input.receiptId && messageId === input.receiptId) {
     return listedKind(item, messageId);
   }
+  if (input.excludeIds?.has(messageId)) return { kind: 'none' };
   const parentId = typeof item.parent_id === 'string' ? item.parent_id : undefined;
   if (parentId !== input.parentId) return { kind: 'none' };
   const sender = asRecord(item.sender);
   if (typeof sender?.id !== 'string' || sender.id !== input.botAppId) return { kind: 'none' };
   if (createTimeMs(item.create_time) < input.afterMs) return { kind: 'none' };
   return listedKind(item, messageId);
+}
+
+function excludedReadBackIds(entry: TurnJournalEntry): Set<string> {
+  const ids = new Set<string>(entry.nonAnswerIds ?? []);
+  if (entry.notice?.messageId) ids.add(entry.notice.messageId);
+  return ids;
 }
 
 function listedKind(item: Record<string, unknown>, messageId: string): ReadBackMatch {
