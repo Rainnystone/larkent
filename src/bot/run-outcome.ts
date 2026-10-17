@@ -17,7 +17,8 @@ export type StopRequest =
   | { type: 'runner-timeout' }
   | { type: 'meeting' }
   | { type: 'subscriber-abandoned' }
-  | { type: 'external-signal' };
+  | { type: 'external-signal' }
+  | { type: 'policy-guard' };
 
 export type FailedCause =
   | 'transient-upstream'
@@ -236,6 +237,8 @@ function interruptedRetriable(reason: StopRequest): boolean {
     case 'subscriber-abandoned':
     case 'external-signal':
       return true;
+    case 'policy-guard':
+      return false;
     default: {
       const _exhaustive: never = reason;
       return _exhaustive;
@@ -265,6 +268,7 @@ export function formatStopRequest(reason: StopRequest): string {
     case 'meeting':
     case 'subscriber-abandoned':
     case 'external-signal':
+    case 'policy-guard':
       return reason.type;
     default: {
       const _exhaustive: never = reason;
@@ -332,6 +336,8 @@ function describeStopRequest(reason: StopRequest): string {
       return '订阅已结束';
     case 'external-signal':
       return '外部信号中断';
+    case 'policy-guard':
+      return '策略拦截';
     default: {
       const _exhaustive: never = reason;
       return _exhaustive;
@@ -389,6 +395,7 @@ function interruptedCardTerminal(reason: StopRequest): Terminal {
     case 'meeting':
     case 'subscriber-abandoned':
     case 'external-signal':
+    case 'policy-guard':
       return 'interrupted';
     default: {
       const _exhaustive: never = reason;

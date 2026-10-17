@@ -30,6 +30,7 @@ const STOP_REQUESTS = [
   { type: 'meeting' },
   { type: 'subscriber-abandoned' },
   { type: 'external-signal' },
+  { type: 'policy-guard' },
 ] as const satisfies readonly StopRequest[];
 
 describe('deriveRunOutcome', () => {
@@ -139,6 +140,18 @@ describe('deriveRunOutcome', () => {
       },
       terminal: 'interrupted',
       formatted: 'interrupted:user-stop',
+    },
+    {
+      name: 'policy-guard stop without a terminal is interrupted and not retriable',
+      input: { stopRequest: { type: 'policy-guard' as const } },
+      expected: {
+        kind: 'interrupted',
+        reason: { type: 'policy-guard' },
+        retriable: false,
+        needsHuman: false,
+      },
+      terminal: 'interrupted',
+      formatted: 'interrupted:policy-guard',
     },
     {
       name: 'failed(killed-externally) on SIGKILL without a stop request',
@@ -358,6 +371,12 @@ describe('deriveRunOutcome', () => {
       retriable: true,
       needsHuman: false,
     })).toBe('运行超时');
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'policy-guard' },
+      retriable: false,
+      needsHuman: false,
+    })).toBe('策略拦截');
     for (const stopRequest of STOP_REQUESTS) {
       const text = describeRunOutcome({
         kind: 'interrupted',
@@ -434,6 +453,7 @@ describe('stop request formatting', () => {
       'meeting',
       'subscriber-abandoned',
       'external-signal',
+      'policy-guard',
     ]));
   });
 });
@@ -453,6 +473,8 @@ function interruptedRetriable(reason: StopRequest): boolean {
     case 'subscriber-abandoned':
     case 'external-signal':
       return true;
+    case 'policy-guard':
+      return false;
     default: {
       const _exhaustive: never = reason;
       return _exhaustive;

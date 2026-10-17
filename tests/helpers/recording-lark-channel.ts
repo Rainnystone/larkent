@@ -13,7 +13,9 @@ export interface RecordingLarkChannel extends FakeChannel {
   readonly callLog: RecordingCall[];
   readonly listChatsCalls: number;
   on(handlers: RecordingLarkChannel['handlers']): void;
+  onRawEvent(eventType: string, handler: (data: unknown) => void): () => void;
   emit(event: 'reconnecting' | 'reconnected'): void;
+  emitRaw(eventType: string, data: unknown): void;
   connect(): Promise<void>;
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
@@ -37,6 +39,7 @@ export type RecordingCall =
   | { op: 'send'; chatId: string; content: unknown; options: unknown }
   | { op: 'stream'; chatId: string; inputKind: 'card' | 'markdown' | 'other'; cardUpdates: unknown[]; markdownContents: string[] }
   | { op: 'updateCard'; messageId: string; card: unknown }
+  | { op: 'updateCardById'; cardId: string; card: unknown }
   | { op: 'reaction.create'; messageId: string; emojiType: string }
   | { op: 'reaction.delete'; messageId: string; reactionId: string }
   | { op: 'recall'; messageId: string }
@@ -52,12 +55,14 @@ export function createRecordingLarkChannel(options: {
   const inner = createFakeChannel();
   const callLog: RecordingCall[] = [];
   const handlers: RecordingLarkChannel['handlers'] = {};
+  const rawHandlers = new Map<string, Set<(data: unknown) => void>>();
   let reactionSeq = 1;
   let listChatsCalls = 0;
 
   const origSend = inner.send.bind(inner);
   const origStream = inner.stream.bind(inner);
   const origUpdateCard = inner.updateCard.bind(inner);
+  const origUpdateCardById = inner.updateCardById.bind(inner);
 
   inner.send = async (chatId, content, options) => {
     const result = await origSend(chatId, content, options);
@@ -79,6 +84,11 @@ export function createRecordingLarkChannel(options: {
   inner.updateCard = async (messageId, cardJson) => {
     await origUpdateCard(messageId, cardJson);
     callLog.push({ op: 'updateCard', messageId, card: cardJson });
+  };
+
+  inner.updateCardById = async (cardId, cardJson, sequence) => {
+    await origUpdateCardById(cardId, cardJson, sequence);
+    callLog.push({ op: 'updateCardById', cardId, card: cardJson });
   };
 
   inner.stream = async (chatId, input, options) => {
@@ -112,6 +122,7 @@ export function createRecordingLarkChannel(options: {
     send: inner.send,
     stream: inner.stream,
     updateCard: inner.updateCard,
+    updateCardById: inner.updateCardById,
     botIdentity: { ...(options.botIdentity ?? { openId: 'ou_bot', name: 'Pin Bot' }) },
     handlers,
     callLog,
@@ -121,8 +132,20 @@ export function createRecordingLarkChannel(options: {
     on(next) {
       Object.assign(handlers, next);
     },
+    onRawEvent(eventType, handler) {
+      let set = rawHandlers.get(eventType);
+      if (!set) {
+        set = new Set();
+        rawHandlers.set(eventType, set);
+      }
+      set.add(handler);
+      return () => { set.delete(handler); };
+    },
     emit(event) {
       handlers[event]?.();
+    },
+    emitRaw(eventType, data) {
+      for (const handler of rawHandlers.get(eventType) ?? []) handler(data);
     },
     async connect() {},
     async disconnect() {},

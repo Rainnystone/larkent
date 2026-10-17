@@ -144,7 +144,7 @@ export class CodexAdapter implements AgentAdapter {
       }),
       cwd: opts.cwd,
       env: mergeProcessEnv(process.env, envOverrides),
-      stdin: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
+      stdin: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity, opts.promptVariant),
       translator: wrapParsedTranslator(new CodexJsonlTranslator(), 'codex'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'codex',

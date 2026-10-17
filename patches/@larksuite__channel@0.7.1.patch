@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 989d2fcaee8d47d01d7e235c6995d538771404ec..d5532454d1f026e6b32374ff61f454d0ad4c1db7 100644
+index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745852f277c 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -3840,6 +3840,7 @@ function detectReceiveIdType(to) {
@@ -238,7 +238,30 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..d5532454d1f026e6b32374ff61f454d0
  			})).data?.message_id;
  			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
  			return id;
-@@ -4543,7 +4580,8 @@ var OutboundSender = class {
+@@ -4522,11 +4559,19 @@ var OutboundSender = class {
+ 	* native streaming APIs (cardElement.content for typewriter effect).
+ 	*/
+ 	async createCardInstance(spec) {
+-		const cardId = (await this.client.cardkit.v1.card.create({ data: {
++		const created = await this.client.cardkit.v1.card.create({ data: {
+ 			type: "card_json",
+ 			data: JSON.stringify(spec)
+-		} })).data?.card_id;
+-		if (!cardId) throw new LarkChannelError("unknown", "cardkit.card.create returned no card_id");
++		} });
++		const cardId = created?.data?.card_id;
++		if (!cardId) {
++			const data = {};
++			if (typeof created?.code === "number") data.code = created.code;
++			if (typeof created?.msg === "string") data.msg = created.msg;
++			throw new LarkChannelError("unknown", "cardkit.card.create returned no card_id", {
++				cause: { response: { data } }
++			});
++		}
+ 		return cardId;
+ 	}
+ 	/**
+@@ -4543,7 +4588,8 @@ var OutboundSender = class {
  				data: { card_id: cardId }
  			},
  			replyTo: opts.replyTo,
@@ -283,7 +306,7 @@ index 8ebb5c0be3f6c5f8711d4ec100f62289d859d9af..e854ad2a9ce4541323d5948b72ae6775
    /**
     * Rewrite plaintext `@<name>` tokens in a `{ text }` / `{ markdown }` body
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 6cf990f0a7499178016e151e3545bc4626d6ab65..28d8adac257c17350818226c3417f823ed9ee0dd 100644
+index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025b05b6856 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
 @@ -3813,6 +3813,7 @@ function detectReceiveIdType(to) {
@@ -522,7 +545,30 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..28d8adac257c17350818226c3417f823
  			})).data?.message_id;
  			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
  			return id;
-@@ -4516,7 +4553,8 @@ var OutboundSender = class {
+@@ -4495,11 +4532,19 @@ var OutboundSender = class {
+ 	* native streaming APIs (cardElement.content for typewriter effect).
+ 	*/
+ 	async createCardInstance(spec) {
+-		const cardId = (await this.client.cardkit.v1.card.create({ data: {
++		const created = await this.client.cardkit.v1.card.create({ data: {
+ 			type: "card_json",
+ 			data: JSON.stringify(spec)
+-		} })).data?.card_id;
+-		if (!cardId) throw new LarkChannelError("unknown", "cardkit.card.create returned no card_id");
++		} });
++		const cardId = created?.data?.card_id;
++		if (!cardId) {
++			const data = {};
++			if (typeof created?.code === "number") data.code = created.code;
++			if (typeof created?.msg === "string") data.msg = created.msg;
++			throw new LarkChannelError("unknown", "cardkit.card.create returned no card_id", {
++				cause: { response: { data } }
++			});
++		}
+ 		return cardId;
+ 	}
+ 	/**
+@@ -4516,7 +4561,8 @@ var OutboundSender = class {
  				data: { card_id: cardId }
  			},
  			replyTo: opts.replyTo,

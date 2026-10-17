@@ -266,9 +266,9 @@ describe('FeishuLink recovery through the bridge', () => {
       history,
       withJournal: true,
     });
-    // waitFor is 10k setImmediate turns and cannot see Recovery's 1s
-    // retry after an incomplete startup scan. Join the in-flight pass
-    // (or retry immediately) before wrapping redeliver.
+    // Join the in-flight startup pass before wrapping redeliver. A pending
+    // Recovery retry still waits RECOVERY_RETRY_MIN_MS; waitFor observes
+    // journal.redeliver, not setImmediate turns.
     await h.bridge.recover();
 
     let releaseRedeliver!: () => void;
@@ -293,15 +293,18 @@ describe('FeishuLink recovery through the bridge', () => {
     // new lastLiveAt cannot still see this message.
     now += WATERMARK_MARGIN_MS + FEISHU_LINK_TICK_MS;
     await h.bridge.tickLink();
-    await waitFor(() => redeliverStarted);
-    expect(h.agent.runOptions).toHaveLength(0);
-    await h.ledger.flush();
+    try {
+      await waitFor(() => redeliverStarted);
+      expect(h.agent.runOptions).toHaveLength(0);
+      await h.ledger.flush();
+      const stopping = h.bridge.disconnect();
+      releaseRedeliver();
+      await stopping;
+    } finally {
+      releaseRedeliver();
+    }
 
     const ledgerFile = h.ledger.getFilePath();
-    const stopping = h.bridge.disconnect();
-    releaseRedeliver();
-    await stopping;
-
     const reloaded = new BackfillLedger(ledgerFile, { now: () => now });
     await reloaded.load();
     expect(reloaded.getLiveAt()!).toBeGreaterThan(postedAt + WATERMARK_MARGIN_MS);
@@ -320,6 +323,7 @@ describe('FeishuLink recovery through the bridge', () => {
       ledger: reloaded,
       now: () => now,
       probe: async () => true,
+      sleepProbe: notSleepingProbe(),
       controls: {
         profile: 'test',
         profileConfig: h.cfg,
@@ -444,6 +448,7 @@ async function startHarness(opts: {
     ...(journal ? { journal } : {}),
     now: opts.now,
     probe: opts.probe,
+    sleepProbe: notSleepingProbe(),
     ...(opts.onRecovered ? { onRecovered: opts.onRecovered } : {}),
     controls: {
       profile: 'test',
@@ -527,9 +532,23 @@ async function waitForDebounce() {
   await new Promise((resolve) => setTimeout(resolve, 700));
 }
 
-async function waitFor(predicate: () => boolean) {
-  for (let n = 0; n < 10_000; n++) {
-    if (predicate()) return;
+function notSleepingProbe(): {
+  note(): void;
+  detect(): Promise<{ suspended: false }>;
+} {
+  return {
+    note() {},
+    async detect() {
+      return { suspended: false };
+    },
+  };
+}
+
+async function waitFor(predicate: () => boolean | Promise<boolean>) {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
     await yieldIO();
   }
   throw new Error('expected FeishuLink recovery transition was not observed');

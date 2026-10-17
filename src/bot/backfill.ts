@@ -37,7 +37,11 @@ export interface RunBackfillDeps {
   channel: BackfillChannel;
   ledger: BackfillLedger;
   prefs: BackfillPreferences;
-  profile: { mode: ProfileMode; access: { allowedChats: string[] } };
+  profile: {
+    mode: ProfileMode;
+    access: { allowedChats: string[] };
+    automations?: { enabled?: boolean };
+  };
   now?: () => number;
   marks: Map<string, BackfillMark>;
   isClosing?: () => boolean;
@@ -417,7 +421,7 @@ async function filterHistoryItem(
     log.info('backfill', 'skip-processed', { msgId: msg.messageId, chatId });
     return { kind: 'processed' };
   }
-  if (isBackfillCommand(msg.content)) {
+  if (isBackfillCommand(msg.content, deps.profile.automations?.enabled === true)) {
     log.info('backfill', 'skip-command', { msgId: msg.messageId, chatId });
     return { kind: 'command' };
   }
@@ -557,6 +561,7 @@ function uniqueSessionChatIds(
   const listed: string[] = [];
   const seen = new Set<string>();
   for (const scope of sessionChatIds) {
+    if (scope.startsWith('auto:') || scope.startsWith('meeting:')) continue;
     const chatId = chatIdFromScope(scope);
     if (!chatId || seen.has(chatId)) continue;
     seen.add(chatId);
@@ -619,10 +624,11 @@ function chatIdFromScope(scope: string): string {
   return (cut === -1 ? scope : scope.slice(0, cut)).trim();
 }
 
-function isBackfillCommand(content: string): boolean {
-  if (isRegisteredSlashCommand(content)) return true;
+function isBackfillCommand(content: string, automationsEnabled: boolean): boolean {
+  const options = { automationsEnabled };
+  if (isRegisteredSlashCommand(content, options)) return true;
   const stripped = content.replace(/^@\S+\s+/, '').trim();
-  return stripped !== content && isRegisteredSlashCommand(stripped);
+  return stripped !== content && isRegisteredSlashCommand(stripped, options);
 }
 
 function mapMentions(raw: unknown): NonNullable<RawMessageEvent['message']['mentions']> | undefined {

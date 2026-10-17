@@ -74,7 +74,7 @@ export class GrokAdapter implements AgentAdapter {
       binaryPath: this.binary,
       argv: buildGrokArgs({
         prompt: opts.prompt,
-        rules: buildBridgeSystemPrompt(this.botIdentity),
+        rules: buildBridgeSystemPrompt(this.botIdentity, opts.promptVariant),
         ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
       }),

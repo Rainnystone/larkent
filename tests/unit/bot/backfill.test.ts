@@ -1281,6 +1281,38 @@ describe('runBackfill', () => {
     expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a', 'om_dm']);
   });
 
+  it('does not query chat mode for auto: or meeting: catalog scopes and completes the scan', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 10_000, { threadId: 'omt_a' })],
+      },
+    });
+    const modeLookups: string[] = [];
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: ['auto:3:oc_chat_a', 'meeting:70001'],
+      modeLookups,
+      chatModeErrors: {
+        auto: new Error('auto is not a chat'),
+        meeting: new Error('meeting is not a chat'),
+      },
+    }));
+    expect(modeLookups).toEqual([]);
+    expect(events(warn, 'backfill').filter((row) => row.event === 'mode-resolve-failed')).toEqual([]);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'done', enqueuedTotal: 1 }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'incomplete')).toEqual([]);
+    expect(h.ledger.getIncompleteFrom()).toBeUndefined();
+    expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a']);
+  });
+
   it('classifies unique session chats concurrently', async () => {
     const chats = ['oc_p2p_a', 'oc_p2p_b', 'oc_p2p_c', 'oc_p2p_d'];
     const h = await harness({ chats: [], messages: {} });

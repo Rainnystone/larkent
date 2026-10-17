@@ -5,6 +5,24 @@ import type { BackfillLedger } from '../bot/backfill-ledger';
 import type { ChatModeCache } from '../bot/chat-mode-cache';
 import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
+import {
+  isAutoCardAction,
+  isAutoEndAction,
+  type AutoActionAuth,
+  type AutoCardAction,
+} from '../automations/action-auth';
+import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth';
+import { abandonIfNotInChat } from '../automations/chat-lifecycle';
+import {
+  AUTO_END_BUSY,
+  AUTO_INVALID_END,
+  AUTO_INVALID_HINT,
+  completeDraftEnd,
+  confirmAutomationDraft,
+  resolveEndAt,
+} from '../automations/command';
+import type { AutomationScheduler } from '../automations/scheduler';
+import type { AutomationItem, AutomationsStore } from '../automations/store';
 import type { CallbackAuth } from './callback-auth';
 import type { Continuations } from '../bot/continuation';
 import {
@@ -53,6 +71,12 @@ export interface CardDispatchDeps {
   callbackPolicyFingerprintForScope?: (scope: string) => string | undefined;
   journal?: TurnJournal;
   noticeAuth?: NoticeActionAuth;
+  autoAuth?: AutoActionAuth;
+  boardAuth?: BoardActionAuth;
+  automations?: AutomationsStore;
+  automationsScheduler?: AutomationScheduler;
+  now?: () => number;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
   continuations?: Continuations;
   onNoticeAction?: (input: {
     action: NoticeAction;
@@ -112,6 +136,14 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
   const cmd = typeof payload.cmd === 'string' ? payload.cmd : '';
   if (cmd === 'notice.continue' || cmd === 'notice.dismiss') {
     await dispatchNoticeAction(deps, payload, cmd, scope, threadId, mode, accessDecision);
+    return;
+  }
+  if (isAutoCardAction(cmd)) {
+    await dispatchAutoAction(deps, payload, cmd, accessDecision, formValue);
+    return;
+  }
+  if (cmd === 'auto.pause' || cmd === 'auto.resume' || cmd === 'auto.delete') {
+    await dispatchBoardAction(deps, payload, cmd, accessDecision);
     return;
   }
   if (cmd) {
@@ -344,6 +376,208 @@ async function dispatchNoticeAction(
     mode,
     messageId: deps.evt.messageId,
   });
+}
+
+async function dispatchAutoAction(
+  deps: CardDispatchDeps,
+  payload: Record<string, unknown>,
+  cmd: AutoCardAction,
+  access: ReturnType<typeof evaluateAccess>,
+  formValue?: Record<string, unknown>,
+): Promise<void> {
+  if (!access.ok) return;
+  const botOpenId = deps.channel.botIdentity?.openId;
+  if (botOpenId && deps.evt.operator.openId === botOpenId) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
+  if (!deps.autoAuth || !deps.automations || !token) {
+    log.info('cardAction', 'skip-auto-auth-missing', { cmd });
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const registered = deps.automations.findDraftByCardMessageId(deps.evt.messageId);
+  if (!registered) {
+    log.info('cardAction', 'skip-auto-unregistered', { cmd, messageId: deps.evt.messageId });
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (!deps.controls.profileConfig.automations.enabled) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const verified = deps.autoAuth.verify(token, { consume: !isAutoEndAction(cmd) });
+  if (!verified.ok || verified.payload.action !== cmd) {
+    log.info('cardAction', 'skip-auto-auth-failed', {
+      cmd,
+      reason: verified.ok ? 'action-mismatch' : verified.reason,
+    });
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (
+    verified.payload.chatId !== deps.evt.chatId
+    || verified.payload.draftId !== registered.draftId
+  ) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (isAutoEndAction(cmd)) {
+    const nonce = verified.payload.nonce;
+    if (!deps.autoAuth.claimNonce(nonce)) {
+      await sendAutoHint(deps, AUTO_END_BUSY);
+      return;
+    }
+    let failure: string | undefined;
+    try {
+      const now = (deps.now ?? Date.now)();
+      const customText = readEndInput(payload, formValue);
+      const endAt = resolveEndAt(cmd, {
+        timezone: registered.timezone,
+        now,
+        startAt: registered.startAt,
+        ...(customText ? { customText } : {}),
+      });
+      if (endAt === undefined) {
+        failure = AUTO_INVALID_END;
+      } else {
+        const result = await completeDraftEnd({
+          automations: deps.automations,
+          autoAuth: deps.autoAuth,
+          automationsScheduler: deps.automationsScheduler,
+          channel: deps.channel,
+          now: deps.now,
+        }, registered, endAt, deps.evt.messageId);
+        if (!result.ok) failure = result.message;
+        else if (!deps.autoAuth.consume(nonce)) failure = AUTO_INVALID_HINT;
+      }
+    } finally {
+      deps.autoAuth.releaseNonce(nonce);
+    }
+    if (failure) await sendAutoHint(deps, failure);
+    return;
+  }
+
+  const taken = await deps.automations.takeDraft(registered.draftId);
+  if (!taken) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  switch (cmd) {
+    case 'auto.reject':
+      log.info('auto', 'rejected', { draftId: taken.draftId, chatId: taken.chatId });
+      await sendAutoHint(deps, '已取消该草稿。');
+      return;
+    case 'auto.confirm': {
+      const item = await confirmAutomationDraft(deps, taken);
+      if (!item) {
+        await sendAutoInvalid(deps);
+        return;
+      }
+      await sendAutoHint(deps, `已确认：#${item.id} ${item.name}`);
+      return;
+    }
+    default: {
+      const _exhaustive: never = cmd;
+      return _exhaustive;
+    }
+  }
+}
+
+async function dispatchBoardAction(
+  deps: CardDispatchDeps,
+  payload: Record<string, unknown>,
+  cmd: BoardCardAction,
+  access: ReturnType<typeof evaluateAccess>,
+): Promise<void> {
+  if (!access.ok) return;
+  const botOpenId = deps.channel.botIdentity?.openId;
+  if (botOpenId && deps.evt.operator.openId === botOpenId) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
+  if (!deps.boardAuth || !deps.automations || !deps.automationsScheduler || !token) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (!deps.controls.profileConfig.automations.enabled) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const registered = deps.automations.findBoardByMessageId(deps.evt.messageId);
+  if (!registered) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const verified = deps.boardAuth.verify(token);
+  if (!verified.ok || verified.payload.action !== cmd) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  if (
+    verified.payload.chatId !== deps.evt.chatId
+    || verified.payload.chatId !== registered.chatId
+  ) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  const item = deps.automations.get(verified.payload.itemId);
+  if (!item || item.chatId !== registered.chatId) {
+    await sendAutoInvalid(deps);
+    return;
+  }
+  switch (cmd) {
+    case 'auto.pause':
+      await deps.automationsScheduler.pause(item.id);
+      log.info('auto', 'paused', { id: item.id });
+      return;
+    case 'auto.resume':
+      await deps.automationsScheduler.resume(item.id);
+      log.info('auto', 'resumed', { id: item.id });
+      return;
+    case 'auto.delete':
+      await deps.automationsScheduler.delete(item.id);
+      log.info('auto', 'deleted', { id: item.id });
+      return;
+    default: {
+      const _exhaustive: never = cmd;
+      return _exhaustive;
+    }
+  }
+}
+
+function readEndInput(
+  payload: Record<string, unknown>,
+  formValue: Record<string, unknown> | undefined,
+): string | undefined {
+  const fromForm = formValue?.end_at;
+  if (typeof fromForm === 'string' && fromForm.trim()) return fromForm.trim();
+  const fromPayload = payload.end_at;
+  if (typeof fromPayload === 'string' && fromPayload.trim()) return fromPayload.trim();
+  return undefined;
+}
+
+async function sendAutoInvalid(deps: CardDispatchDeps): Promise<void> {
+  await sendAutoHint(deps, AUTO_INVALID_HINT);
+}
+
+async function sendAutoHint(deps: CardDispatchDeps, markdown: string): Promise<void> {
+  try {
+    await deps.channel.send(deps.evt.chatId, { markdown }, { replyTo: deps.evt.messageId });
+  } catch (error) {
+    if (await abandonIfNotInChat(
+      error,
+      deps.evt.chatId,
+      (chatId) => deps.automationsScheduler?.removeFromChat(chatId),
+    )) {
+      return;
+    }
+    log.warn('auto', 'hint-failed', {
+      err: error instanceof Error ? error.message : String(error),
+    });
+  }
 }
 
 async function sendNoticeInvalid(deps: CardDispatchDeps): Promise<void> {

@@ -36,7 +36,11 @@ export function planInterruptionNotice(outcome: RunOutcome): NoticePlan {
     case 'partial':
       return outcome.retriable ? { kind: 'continue' } : { kind: 'none' };
     case 'interrupted':
-      if (outcome.reason.type === 'user-stop' || outcome.reason.type === 'superseded') {
+      if (
+        outcome.reason.type === 'user-stop'
+        || outcome.reason.type === 'superseded'
+        || outcome.reason.type === 'policy-guard'
+      ) {
         return { kind: 'none' };
       }
       return { kind: 'continue' };

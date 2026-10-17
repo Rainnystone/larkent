@@ -19,7 +19,7 @@ import type { RunOutcome } from '../../../src/bot/run-outcome';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 function interrupted(
-  type: 'external-signal' | 'reconnect-command' | 'user-stop' | 'superseded' | 'bridge-idle-watchdog' | 'runner-timeout',
+  type: 'external-signal' | 'reconnect-command' | 'user-stop' | 'superseded' | 'bridge-idle-watchdog' | 'runner-timeout' | 'policy-guard',
   by: 'new' | 'cd' = 'new',
 ): RunOutcome {
   if (type === 'superseded') {
@@ -33,7 +33,7 @@ function interrupted(
   return {
     kind: 'interrupted',
     reason: { type },
-    retriable: type !== 'user-stop',
+    retriable: type !== 'user-stop' && type !== 'policy-guard',
     needsHuman: false,
   };
 }
@@ -43,6 +43,7 @@ describe('interruption notice decision', () => {
     expect(planInterruptionNotice(interrupted('external-signal'))).toEqual({ kind: 'continue' });
     expect(planInterruptionNotice(interrupted('reconnect-command'))).toEqual({ kind: 'continue' });
     expect(planInterruptionNotice(interrupted('user-stop'))).toEqual({ kind: 'none' });
+    expect(planInterruptionNotice(interrupted('policy-guard'))).toEqual({ kind: 'none' });
     expect(planInterruptionNotice(interrupted('superseded', 'new'))).toEqual({ kind: 'none' });
     expect(planInterruptionNotice(interrupted('superseded', 'cd'))).toEqual({ kind: 'none' });
   });

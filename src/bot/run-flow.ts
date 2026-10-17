@@ -1,7 +1,7 @@
 import { descriptorFor, type AgentKind } from '../agent/registry';
 import { resolveModelArg } from '../agent/models';
 import type { AgentCapability } from '../agent/capability';
-import type { AgentEvent } from '../agent/types';
+import type { AgentEvent, AgentPromptVariant } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
 import type { AccessDecision } from '../policy/access';
 import {
@@ -40,6 +40,12 @@ export interface StartRunFlowInput {
   forceResumeHandle?: string | null;
   /** When set, `forceResumeHandle` is ignored unless it matches the current policy. */
   forceResumeFingerprint?: string;
+  /** Agent-task fires use the cwd snapshot captured at creation, not the auto: scope workspace. */
+  cwdOverride?: string;
+  /** Automation fires skip the process pool and reconnect pause (ADR-011). */
+  bypassPool?: boolean;
+  /** Automation fires use the unattended bot-only system-prompt variant. */
+  promptVariant?: AgentPromptVariant;
   observability?: {
     profile: string;
     agent: string;
@@ -109,7 +115,10 @@ export function resolveRunResumeHandle(input: ResolveRunResumeHandleInput): stri
 
 export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFlowResult> {
   const requestedCwd =
-    input.workspaces.cwdFor(input.scopeId) ?? input.profileConfig.workspaces.default ?? '';
+    input.cwdOverride
+    ?? input.workspaces.cwdFor(input.scopeId)
+    ?? input.profileConfig.workspaces.default
+    ?? '';
   const workspace = await resolveWorkingDirectory(requestedCwd);
   if (!workspace.ok) {
     return {
@@ -193,6 +202,8 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
               .filter((path): path is string => Boolean(path))
           : undefined,
       stopGraceMs: input.stopGraceMs,
+      ...(input.bypassPool ? { bypassPool: true } : {}),
+      ...(input.promptVariant ? { promptVariant: input.promptVariant } : {}),
       observability: input.observability,
     });
   } catch (err) {

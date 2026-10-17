@@ -20,7 +20,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 
 ## Runs and sessions
 
-- **run**: one invocation of an agent for one Feishu message.
+- **run**: one Feishu message or one fire.
 - **idle bound** (`runIdleTimeoutMinutes`): default **15** minutes of stream silence ends the run as `idle_timeout` so the queue can drain. `0` or `/timeout 0` disables the watchdog. An open tool call pauses that bound for at most **60** minutes. Run handles expose `lastEventAt` (register time, then each stream event). After recovery, `runs.review(outage)` gives a silent run a **2-minute** stall deadline, then stops it with the idle-watchdog reason through the normal outcome + notice path. A silent run with an open tool call gets that deadline only when `outage.hostSuspended`; otherwise the 60-minute tool-call cap still bounds it.
 - **run options** (`AgentRunOptions`): run id, prompt, cwd, optional resume handle, model, images and adapter options. The executor maps the run's effective access into validated options; the profile adapter receives its bot identity through `setBotIdentity`.
 - **resume handle**: the opaque string that continues an **agent** conversation. Codex's thread id and everyone else's session id are both resume handles. Shared agent code has no other name for that handle.
@@ -43,6 +43,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - SessionStore uses v2 `{ schemaVersion, entries }`; entries use `resumeHandle`, preserve cwd/timestamps and allow idle-only preferences. The loader upgrades the legacy unversioned scope map and its `sessionId`.
 - WorkspaceStore uses v2 `{ schemaVersion, chats, named }`, preserving chat and named workspace mappings. Its loader upgrades legacy v1 documents.
 - Loaders validate supported formats, atomically persist required upgrades and expose the current shape. Unsupported future versions are rejected without replacing the original. Store flush and shutdown propagate persistence failures.
+- Automations (`automations.json`, schema v1) are supervisor-owned like the turn journal. Future versions are refused without replacing the original. The automations log is a separate append-only file. `automations-status.json` is the monitor-hook snapshot (no Feishu IDs, task text, or creator). `automations-wake/` holds local wake-request files for the monitor CLI.
 - New-profile bootstrap resolves binary env settings into `agent.binaryPath`; stored profile paths take precedence afterward. Bridge data roots do not replace `HOME` or CLI login state.
 - A code rollback does not downgrade data. Restore matching data backups before running an older version.
 
@@ -75,12 +76,37 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **kill switch**: `preferences.backfill.enabled: false`. No scan; the live watermark still advances.
 - **dry-run**: `preferences.backfill.dryRun: true`. The scan runs and logs `backfill.would-enqueue`; nothing is handed to intake.
 - **coalesce**: a second recovery signal while a scan is in-flight returns the same promise and logs `backfill.coalesced`.
-- **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`).
+- **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`). An agent-task fire's result post is the same kind of authoritative post for that fire.
+
+## Automations
+
+- **automation**: a persistent task bound to one group chat and one bot profile. `taskType` is `reminder` or `agent` (agent 任务). The field is not `kind`: **agent kind** already means the CLI adapter (`AgentKind`).
+- **agent task** (agent 任务): a fire that runs the profile's agent once on the captured cwd and task text. Distinct from agent kind.
+- **fire**: one absolute instant on an automation's schedule.
+- **fire key**: `id@fireAt` (short per-profile id plus the planned UTC millis), the idempotency key across restart, link recovery, and monitor wake.
+- **miss rule**: an item is missed iff `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`. Larkent and larkent-monitor use this same predicate. `now == nextFireAt` is not a miss.
+- **status block** / **monitor hook**: the visible notation markdown JSON on the board card (`v: 1`, bot display name, card-level `updatedAt`, per-item `id` / `paused` / `nextFireAt` / `lastFireAt` / `lastStatus` / `endAt` / `missed`). Times are UTC millis. No Feishu IDs, task text, or creator. Feishu's simplified render keeps this note text and drops button values.
+- **larkent-monitor**: a private Cloudflare Worker outside this repo. It scans pinned board status blocks, applies the miss rule, and wakes the always-on Grok Bot box at most once per fire key. No GitHub Action. Other PCs are out of scope.
+- **local wake**: CLI `wake <fireKey>` (`id@utcMillis`). Writes `automations-wake/*.json` in the profile data dir. If that profile's process or classic OS service is running, the command exits with no output and the scheduler consumes the file. If nothing is running, it starts the registered topology (`start --web-ui` when that service exists, else `start --profile`). Already-started keys stay silent (`auto.wake.already-started` in the local log only). A live supervisor with this profile offline cannot be driven through the random UI token; the wake file waits for the next profile start.
+- **catch-up**: run the latest missed fire at most once within 24 hours, marked 补跑. Every other missed instant is 已错过.
+- **已错过**: a planned instant that will not run (older than 24 hours, or displaced by a later catch-up). Traced on the board, in chat, and in the automations log.
+- **automations log**: an append-only file in the profile data dir. One entry per 已错过 instant, one per catch-up, and one per **policy-guard**. Permanent: not truncated, not removed when the item expires or is deleted. No task text, no Feishu ID.
+- **policy-guard**: a **stop reason** for an unattended **agent-task** fire that used a forbidden personnel/org lark-cli call (create chat, add/remove members, leave, chat settings, contacts, HR) or requested user identity (`--as user`). Outcome is `interrupted(policy-guard)`. The item is **paused**. The group gets a notice. Structured `auto.policy-guard` plus a redacted automations-log line. This is defence in depth, not a security boundary: the agent still has a full shell.
+- **automation prompt variant**: agent-task fires pass `promptVariant: 'automation'` so the system prompt is bot-only for that run. The profile's `larkCli.identityPreset` is not changed; human runs keep it.
+- **draft**: an automation waiting for confirm-card acceptance; TTL 24 hours. A recurring draft without `endAt` waits on the scripted end card first.
+- **scripted card**: a bridge-rendered fixed card (missing end, or a validation message). It does not go through the agent.
+- **confirm card**: the bridge-rendered 是/否 card for `/auto new` or a natural-language **automation proposal**. Signed like an interruption notice (`AutoActionAuth`): draft + chat + action + expiry + one-time nonce, no operator. Any allowed group member may tap. Stale, duplicate, or forged taps reply 此确认已失效. Registration is the draft's persisted `cardMessageId` (in-memory `isManaged` does not survive restart). The weekday line states 工作日不计调休 and lists the next 3 fires.
+- **automation proposal**: a structured `<automation_proposal>` JSON block in the agent reply (`taskType`, `schedule`, `taskText`, optional `name`). The bridge strips it from the visible **bridge-owned final reply**, ignores any `chatId` / `scope` / `createdBy` in it, converts relative schedule text to an absolute instant, and reuses the confirm card or the scripted end card. Proposals from bot messages or `auto:` / `meeting:` runs never create drafts.
+- **board**: per-bot per-group pinned card listing this bot's tasks with Pause/Resume and Delete. Anyone in the group may tap. Buttons use reusable signed actions (`BoardActionAuth`, no nonce). Status block v1 is rendered from `automations-status.json` (A0c snapshot). `/auto` list and `/auto pause|resume|delete <id>` are the fallback.
+- **scheduler**: the profile-owned timer that produces fires from `nextFireAt`. Startup, link recovery, and the local wake entry run the same catch-up rule. It is not a recovery poller and is not backfill.
+- **removed-from-chat**: this bot left the group or the group was disbanded (`im.chat.member.bot.deleted_v1` / `im.chat.disbanded_v1`, or a send/reply/patch rejected as not-in-chat). That chat's tasks and drafts are deleted, the board binding is dropped without a Feishu write, and one `auto.removed-from-chat` line is logged (no task text). Catch-up is not attempted for them.
+- **not-in-chat**: Feishu send/reply/patch codes `230002` (bot outside the group) and `232009` (chat dissolved). Distinct from a gone card (`isGoneMessage` / 404 / other gone-message codes).
+- **automation creator** (`createdBy`): the person whose message created the automation. **bot owner** is `isBotOwner()` (formerly `isCreator()`).
 
 ## Words we do not use
 
 - "default agent". There is none.
-- "poller" or "patrol" for recovery. Backfill runs on recovery signals, never on a schedule.
+- "poller" or "patrol" for recovery. Backfill runs on recovery signals, never on a schedule. The automations scheduler is a timer for fires, not a recovery poller.
 - Agent resume fields named `sessionId` or `threadId` outside an adapter or a migration. Shared agent code says `resumeHandle`.
 - "built-in" versus "added" agents. All registered kinds are equal.
 

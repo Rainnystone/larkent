@@ -44,6 +44,10 @@ describe('resolveAppPaths', () => {
     expect(paths.sessionsFile).toBe(join(profileDir, 'sessions.json'));
     expect(paths.backfillStateFile).toBe(join(profileDir, 'backfill-state.json'));
     expect(paths.turnJournalFile).toBe(join(profileDir, 'turn-journal.json'));
+    expect(paths.automationsFile).toBe(join(profileDir, 'automations.json'));
+    expect(paths.automationsLogFile).toBe(join(profileDir, 'automations.log'));
+    expect(paths.automationsStatusFile).toBe(join(profileDir, 'automations-status.json'));
+    expect(paths.automationsWakeDir).toBe(join(profileDir, 'automations-wake'));
     expect(paths.workspacesFile).toBe(join(profileDir, 'workspaces.json'));
     expect(paths.secretsFile).toBe(join(profileDir, 'secrets.enc'));
     expect(paths.keystoreSaltFile).toBe(join(profileDir, '.keystore.salt'));
