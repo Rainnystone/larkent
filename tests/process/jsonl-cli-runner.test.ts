@@ -1733,12 +1733,31 @@ describe('KimiAdapter process contract', () => {
   });
 
   it('surfaces spawn errors as stream error events', async () => {
-    const missing = join(tmpdir(), `missing-kimi-${Date.now()}`);
-    const run = new KimiAdapter({ binary: missing }).run({
-      runId: 'run-missing',
-      prompt: 'hi',
-      cwd: tmpdir(),
-    });
+    let run: ReturnType<KimiAdapter['run']>;
+    if (process.platform === 'win32') {
+      // Missing-path spawn on Windows can still get a pid (cmd.exe / PATHEXT)
+      // and exit 0 before "not recognized" stderr is classified. Kimi has no
+      // terminal JSONL line, so that clean empty exit is `done`. Use a real
+      // failing binary, same as Claude/Codex.
+      const fake = await createFakeKimi({
+        lines: [],
+        stderr: 'missing command\n',
+        exitCode: 1,
+      });
+      cleanup.push(fake.dir);
+      run = new KimiAdapter({ binary: fake.path }).run({
+        runId: 'run-missing',
+        prompt: 'hi',
+        cwd: fake.dir,
+      });
+    } else {
+      const missing = join(tmpdir(), `missing-kimi-${Date.now()}`);
+      run = new KimiAdapter({ binary: missing }).run({
+        runId: 'run-missing',
+        prompt: 'hi',
+        cwd: tmpdir(),
+      });
+    }
 
     const events = await collect(run.events);
 
@@ -2051,12 +2070,27 @@ describe('GrokAdapter process contract', () => {
   });
 
   it('surfaces spawn errors as stream error events', async () => {
-    const missing = join(tmpdir(), `missing-grok-${Date.now()}`);
-    const run = new GrokAdapter({ binary: missing }).run({
-      runId: 'run-missing',
-      prompt: 'hi',
-      cwd: tmpdir(),
-    });
+    let run: ReturnType<GrokAdapter['run']>;
+    if (process.platform === 'win32') {
+      const fake = await createFakeGrok({
+        lines: [],
+        stderr: 'missing command\n',
+        exitCode: 1,
+      });
+      cleanup.push(fake.dir);
+      run = new GrokAdapter({ binary: fake.path }).run({
+        runId: 'run-missing',
+        prompt: 'hi',
+        cwd: fake.dir,
+      });
+    } else {
+      const missing = join(tmpdir(), `missing-grok-${Date.now()}`);
+      run = new GrokAdapter({ binary: missing }).run({
+        runId: 'run-missing',
+        prompt: 'hi',
+        cwd: tmpdir(),
+      });
+    }
 
     const events = await collect(run.events);
 
@@ -2372,12 +2406,27 @@ describe('CursorAdapter process contract', () => {
   });
 
   it('surfaces spawn errors as stream error events', async () => {
-    const missing = join(tmpdir(), `missing-cursor-${Date.now()}`);
-    const run = new CursorAdapter({ binary: missing }).run({
-      runId: 'run-missing',
-      prompt: 'hi',
-      cwd: tmpdir(),
-    });
+    let run: ReturnType<CursorAdapter['run']>;
+    if (process.platform === 'win32') {
+      const fake = await createFakeCursor({
+        lines: [],
+        stderr: 'missing command\n',
+        exitCode: 1,
+      });
+      cleanup.push(fake.dir);
+      run = new CursorAdapter({ binary: fake.path }).run({
+        runId: 'run-missing',
+        prompt: 'hi',
+        cwd: fake.dir,
+      });
+    } else {
+      const missing = join(tmpdir(), `missing-cursor-${Date.now()}`);
+      run = new CursorAdapter({ binary: missing }).run({
+        runId: 'run-missing',
+        prompt: 'hi',
+        cwd: tmpdir(),
+      });
+    }
 
     const events = await collect(run.events);
 
