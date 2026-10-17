@@ -346,6 +346,16 @@ export class TurnJournal {
     });
   }
 
+  noticeRejected(turnId: string): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    if (!current?.notice) return;
+    const notice = { ...current.notice, state: 'rejected' as const };
+    this.patch(turnId, {
+      notice,
+      status: isStagedReply({ ...current, notice }) ? 'completed-undelivered' : 'notice-delivered',
+    });
+  }
+
   noticeDelivered(turnId: string): void {
     const current = this.entries.find((item) => item.turnId === turnId);
     const notice = current?.notice ? { ...current.notice, state: 'sent' as const } : current?.notice;
@@ -465,11 +475,32 @@ export class TurnJournal {
               resent += 1;
             }
           } catch (error) {
-            log.warn('journal', 'resend-failed', {
-              turnId: current.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-            if (classify(error) === 'link') throw error;
+            const kind = classify(error);
+            switch (kind) {
+              case 'rejected':
+                log.warn('journal', 'resend-rejected', {
+                  turnId: current.turnId,
+                  err: error instanceof Error ? error.message : String(error),
+                });
+                this.replyRejected(current.turnId);
+                break;
+              case 'link':
+                log.warn('journal', 'resend-failed', {
+                  turnId: current.turnId,
+                  err: error instanceof Error ? error.message : String(error),
+                });
+                throw error;
+              case 'local':
+                log.warn('journal', 'resend-failed', {
+                  turnId: current.turnId,
+                  err: error instanceof Error ? error.message : String(error),
+                });
+                break;
+              default: {
+                const _exhaustive: never = kind;
+                throw _exhaustive;
+              }
+            }
           }
         }
       }
@@ -493,11 +524,32 @@ export class TurnJournal {
           }
         }
       } catch (error) {
-        log.warn('journal', 'notice-resend-failed', {
-          turnId: latest.turnId,
-          err: error instanceof Error ? error.message : String(error),
-        });
-        if (classify(error) === 'link') throw error;
+        const kind = classify(error);
+        switch (kind) {
+          case 'rejected':
+            log.warn('journal', 'resend-rejected', {
+              turnId: latest.turnId,
+              err: error instanceof Error ? error.message : String(error),
+            });
+            this.noticeRejected(latest.turnId);
+            break;
+          case 'link':
+            log.warn('journal', 'notice-resend-failed', {
+              turnId: latest.turnId,
+              err: error instanceof Error ? error.message : String(error),
+            });
+            throw error;
+          case 'local':
+            log.warn('journal', 'notice-resend-failed', {
+              turnId: latest.turnId,
+              err: error instanceof Error ? error.message : String(error),
+            });
+            break;
+          default: {
+            const _exhaustive: never = kind;
+            throw _exhaustive;
+          }
+        }
       }
     }
 

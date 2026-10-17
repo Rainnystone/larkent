@@ -10,6 +10,7 @@ import {
   type TurnJournalEntry,
 } from '../../../src/bot/turn-journal';
 import { log } from '../../../src/core/logger';
+import { axiosHttpError } from '../../helpers/sdk-feishu-errors';
 
 vi.mock('../../../src/platform/atomic-write', async (original) => {
   const actual = await original<typeof import('../../../src/platform/atomic-write')>();
@@ -191,6 +192,41 @@ describe('TurnJournal', () => {
     expect(journal.get('turn-1')?.status).toBe('reply-delivered');
     const recovered = info.mock.calls.filter(([phase, event]) => phase === 'journal' && event === 'recovered');
     expect(recovered).toHaveLength(1);
+  });
+
+  it('drops a permanently rejected reply and notice after one attempt', async () => {
+    const { journal } = await fixture();
+    await journal.load();
+    journal.enqueue(queued({ turnId: 'reply-reject', messageIds: ['om_reply'] }));
+    journal.stageReply('reply-reject', {
+      markdown: 'GONE_PARENT',
+      replyTo: 'om_reply',
+      replyMode: 'text',
+    });
+    journal.enqueue(queued({ turnId: 'notice-reject', messageIds: ['om_notice'] }));
+    journal.stageNotice('notice-reject', {
+      kind: 'plain',
+      recipientChatId: 'oc_group',
+      markdown: 'GONE_CHAT',
+    });
+
+    const rejected = axiosHttpError(400);
+    const resend = vi.fn(async () => {
+      throw rejected;
+    });
+    const resendNotice = vi.fn(async () => {
+      throw rejected;
+    });
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+
+    await journal.redeliver({ resend, resendNotice });
+    await journal.redeliver({ resend, resendNotice });
+
+    expect(resend).toHaveBeenCalledTimes(1);
+    expect(resendNotice).toHaveBeenCalledTimes(1);
+    expect(journal.get('reply-reject')?.reply?.state).toBe('rejected');
+    expect(journal.get('notice-reject')?.notice?.state).toBe('rejected');
+    expect(warn.mock.calls.filter(([phase, event]) => phase === 'journal' && event === 'resend-rejected')).toHaveLength(2);
   });
 
   it('resends a settled turn that already has a stored reply', async () => {

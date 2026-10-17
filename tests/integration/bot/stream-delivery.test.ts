@@ -88,7 +88,7 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     expect(answerSends(h.channel)).toHaveLength(0);
   });
 
-  it('retries a one-time 400 patch while the link stays up and delivers the same card without a uuid-send', async () => {
+  it('drops a permanently rejected live-sweep patch after one attempt without a uuid-send', async () => {
     const h = await harness({ replyMode: 'card' });
     h.channel.streamErrors.finish = sdkShapedSendError('unknown', axiosHttpError(400));
     const origUpdate = h.channel.updateCard.bind(h.channel);
@@ -103,18 +103,16 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
 
     await h.channel.handlers.message?.(mention('om_400', 'please answer'));
     await waitFor(() => h.journal.list().some((entry) => (
-      entry.messageIds.includes('om_400') && entry.status === 'reply-delivered'
+      entry.messageIds.includes('om_400') && entry.reply?.state === 'rejected'
     )));
-    const streamId = h.channel.streams[0]?.messageId;
-    expect(streamId).toBeTruthy();
-    expect(patches).toBeGreaterThanOrEqual(2);
+    const patchesWhenDropped = patches;
+    expect(patchesWhenDropped).toBe(1);
     expect(answerSends(h.channel)).toHaveLength(0);
-    expect(h.channel.updatedCards.some((row) => (
-      row.messageId === streamId && JSON.stringify(row.card).includes(ANSWER)
-    ))).toBe(true);
     expect(h.channel.streams.length).toBe(1);
 
     await h.bridge.recoverMissed();
+    await h.bridge.recoverMissed();
+    expect(patches).toBe(patchesWhenDropped);
     expect(answerSends(h.channel)).toHaveLength(0);
     expect(h.channel.streams.length).toBe(1);
   });
