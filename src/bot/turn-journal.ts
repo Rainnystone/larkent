@@ -443,12 +443,22 @@ export class TurnJournal {
 
   async redeliver(opts: JournalRecoverOptions = {}): Promise<void> {
     if (this.redelivering) return this.redelivering;
-    this.redelivering = this.redeliverOwned(opts).then(async () => {
-      await this.flush();
-    }).finally(() => {
+    this.redelivering = this.finishRedeliver(opts).finally(() => {
       this.redelivering = undefined;
     });
     return this.redelivering;
+  }
+
+  private async finishRedeliver(opts: JournalRecoverOptions): Promise<void> {
+    try {
+      await this.redeliverOwned(opts);
+    } catch (error) {
+      // replyDelivered already scheduled a persist. Join that writer before
+      // rejecting so its atomic tmp file is not still in the journal directory.
+      await this.queue.flush().catch(() => {});
+      throw error;
+    }
+    await this.flush();
   }
 
   private async redeliverOwned(
