@@ -84,7 +84,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - **follow-up thread**：以 result post 为根的话题，续接该 fire 的 session。
 - **miss rule**（无固定宽限）：一项任务 missed 当且仅当 `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`。monitor 与 Larkent 使用同一条规则。
 - **catch-up**（补跑）：对 missed 的 fire，在计划时刻后 24 小时内执行恰好一次（按 fire key 幂等），消息注明“补跑，原定 HH:MM”；同一任务只补最近一个；本地 automations log 单独记一条 catch-up。标注例外：fire 时间晚于 `nextFireAt` 不超过 60 秒，且这次没有更早的漏跑，则执行但不标「补跑」（只影响标注，不改变 miss rule，也不改变 24 小时上限）。
-- **已跳过**（skipped fire）：同一 agent 任务上一次 run 尚未结算时，本次到点不执行。看板一行“已跳过 原定 …”，automations log 记原定时刻与原因；不发群消息。`lastStatus` 仍为进行中的那次。
+- **已跳过**（skipped fire）：同一 agent 任务上一次 run 尚未结算时，本次到点不执行，包括 link down 时到点（不排队到恢复后再跑）。看板一行“已跳过 原定 …”，保留 24 小时后从看板移除；automations log 永久记原定时刻与原因；不发群消息。`lastStatus` 仍为进行中的那次。
 - **已错过**（missed fire）：最终不执行的计划时刻（超 24 小时，或同任务被更近的一次补跑取代）。每个都留痕：看板一行“已错过 原定 …”、群内一条通知、本地 automations log 一条（ADR-016）。
 - **missed**（计数）：已错过的 fire 数；补跑成功的不计入。
 - **automations log**：profile 数据目录下的本地追加日志，记录每个已错过时刻与每次补跑；**永久保留**（不随任务删除或 fire 历史截断而清理）；不含任务正文与飞书 ID。
@@ -122,7 +122,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 ### 4. Scheduler, fire and catch-up（ADR-006/013/021）
 
 - scheduler 归 profile，跨 `/reconnect`、bridge swap、进程重启存活。
-- **短段重算**（ADR-021）：定时器每次最多睡 60 秒，醒来按墙钟重算到期的 fire 与到期删除。不使用单段长达数十天的 `setTimeout`。进程睡眠或墙钟前跳后，下一段醒来即按下面的补跑规则处理到期项，不必等 link 重连。
+- **短段重算**（ADR-021）：定时器每次最多睡 60 秒，醒来按墙钟重算到期的 fire 与到期删除。不使用单段长达数十天的 `setTimeout`。进程睡眠或墙钟前跳后，下一段醒来即按下面的补跑规则处理到期项。link 仍 down 时不开始发送（见下）；agent 任务的重叠跳过不依赖 link，到点即跳过，不把该次留到恢复后再跑。
 - 正常路径：到达 `nextFireAt` 时开始该 fire。
 - **准点标注**（ADR-021）：fire 时间晚于 `nextFireAt` 不超过 60 秒，且该次没有更早的漏跑，视为准点，不加「补跑」标注。晚于 60 秒且按 miss rule 确实错过，则按补跑处理。这只决定标注；miss rule 仍无固定宽限，24 小时补跑上限不变。
 - **幂等**：开始执行前先原子持久化 fire key 为 started（并写 `lastFireAt`），然后才发送或启动 agent；同一 fire key 不再执行。started 之后的投递失败只走 Outbox redeliver，不按补跑重来。已开始的 fire key 只保留计划时刻落在最近 48 小时内的条目，更早的在调度醒来时清除。
