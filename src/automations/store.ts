@@ -141,6 +141,7 @@ export class AutomationsStore {
   private logEntries: AutomationsLogEntry[] = [];
   private queue = new PersistenceQueue();
   private logQueue = new PersistenceQueue();
+  private statusQueue = new PersistenceQueue();
   private persistScheduled = false;
   private persistDirty = false;
   private loading: Promise<void> | undefined;
@@ -172,6 +173,7 @@ export class AutomationsStore {
     if (this.loadFailure) throw this.loadFailure.error;
     if (this.persistenceDisabled) return;
     await this.queue.flush();
+    await this.statusQueue.flush();
     await this.logQueue.flush();
   }
 
@@ -350,8 +352,14 @@ export class AutomationsStore {
 
   async writeStatus(botDisplayName: string): Promise<void> {
     this.assertMutable();
-    const snapshot = `${JSON.stringify(this.statusSnapshot(botDisplayName))}\n`;
-    await writeFileAtomic(this.statusPath, snapshot, { mode: 0o600 });
+    this.statusQueue.assertHealthy();
+    // Snapshot inside the queued job so a later settleFire cannot be
+    // overwritten by an in-flight stringify of lastStatus: running.
+    this.statusQueue.enqueue(async () => {
+      const snapshot = `${JSON.stringify(this.statusSnapshot(botDisplayName))}\n`;
+      await writeFileAtomic(this.statusPath, snapshot, { mode: 0o600 });
+    });
+    await this.statusQueue.flush();
   }
 
   async readStatus(): Promise<AutomationsStatusSnapshot | undefined> {
@@ -474,6 +482,7 @@ export class AutomationsStore {
 
   private async loadDocument(): Promise<void> {
     await this.queue.flush().catch(() => {});
+    await this.statusQueue.flush().catch(() => {});
     try {
       let text: string | undefined;
       try {
@@ -510,6 +519,7 @@ export class AutomationsStore {
     this.persistScheduled = false;
     this.persistDirty = false;
     this.queue = new PersistenceQueue();
+    this.statusQueue = new PersistenceQueue();
   }
 
   private pruneDrafts(): boolean {
@@ -536,7 +546,8 @@ export class AutomationsStore {
   private async persistNow(): Promise<void> {
     this.hasDocument = true;
     this.schedulePersist();
-    await this.flush();
+    await this.queue.flush();
+    await this.logQueue.flush();
   }
 
   private async persistLogNow(): Promise<void> {

@@ -111,6 +111,7 @@ import {
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { classify, rateLimitResetDelayMs } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
+import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
 import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
@@ -293,6 +294,8 @@ export interface StartChannelDeps {
     & Partial<Pick<AppPaths, 'logsDir' | 'automationsWakeDir'>>;
   now?: () => number;
   probe?: (signal?: AbortSignal) => Promise<boolean>;
+  /** Tests with a fake clock stub this so a watermark jump is not OS sleep. */
+  sleepProbe?: HostSleepProbe;
   onRecovered?: (outage: Outage) => void;
   /** Per-request REST/outbound deadline. Tests shorten it; production uses the default. */
   outboundTimeoutMs?: number;
@@ -827,6 +830,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     outbound: outboundIds,
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.outboundTimeoutMs !== undefined ? { outboundTimeoutMs: deps.outboundTimeoutMs } : {}),
+    ...(deps.sleepProbe ? { sleepProbe: deps.sleepProbe } : {}),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
   if (deps.automations && controls.profileConfig.automations.enabled) {
