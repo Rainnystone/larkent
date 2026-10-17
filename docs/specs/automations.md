@@ -3,7 +3,7 @@
 Status: ready-for-agent · Docs track: PR #44（本分支）· Code track: draft PR #49（`feat/automations-v2`，from `master@d056198`；取代已关闭的 #45），tickets claimed from #44, one ticket per session
 Tickets: [`automations/tickets/`](automations/tickets/README.md)
 Baseline: `master@d056198`（run-reliability 与 link-recovery PR #47 均已合入）。只依赖 link-recovery 的**契约**：fire 结果与通知的投递复用 **Outbox**（turn journal：stage → send → delivered → recovery 时 redeliver），link down / recovered 信号来自 **FeishuLink**；**永不**使用 **Continuations**（fire 被中断不提供“继续”，也不自动续跑）。
-Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-013..015（补跑规则、larkent-monitor 路线、status block v1），ADR-013 **取代** ADR-004；用户 2026-10-17 决定 ADR-016..020（见 Resolved decisions，取代原 Open questions）。见文末 Decision log。本文只写行为、决策、边界与验收；代码锚点（file:line，已对 `master@d056198` 核对）写在各 ticket。
+Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-013..015（补跑规则、larkent-monitor 路线、status block v1），ADR-013 **取代** ADR-004；用户 2026-10-17 决定 ADR-016..020（见 Resolved decisions，取代原 Open questions）；用户 2026-10-18 决定 ADR-021（短段墙钟重算、60 秒准点标注、agent 任务重叠跳过）。见文末 Decision log。本文只写行为、决策、边界与验收；代码锚点（file:line，已对 `master@d056198` 核对）写在各 ticket。
 
 ---
 
@@ -20,7 +20,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 
 - 群里 @bot，用自然语言或 `/auto new` 创建 **automation**：**一次性**或**周期**（iPhone 日历模型），任务类型为 **reminder**（纯文本，无成本）或 **agent 任务**（agent task，跑一次 agent prompt）。
 - bridge 校验时间表；缺结束时间时发**确定性脚本卡**索要；齐全后发**确认卡**（逐字列出类型、时间表、时区、接下来 3 次触发、结束时间、任务原文、执行身份），群里任何人点「是」即生效。
-- 到点：reminder 发一条文本；agent 任务在后台新开 session 跑一次，结果发为一条 **result post**，可在其话题里追问。每次 fire 互不阻塞，允许重叠。
+- 到点：reminder 发一条文本；agent 任务在后台新开 session 跑一次，结果发为一条 **result post**，可在其话题里追问。reminder 的 fire 互不阻塞。同一 agent 任务上一次未结束时，本次到点跳过：不并发、不排队、不发群消息。
 - 每个有自动化的 bot 在群里置顶一张自己的 **board**：每任务一行（内容、下次触发、结束），带【暂停】【删除】按钮，任何人可点；卡内含可见的机读 **monitor hook** 文本块。被取消置顶会在下次看板更新时重新置顶。
 - `/auto` 列表命令作为备用查看入口。
 - 周期任务到期即删除，无续期提醒、无保留。
@@ -41,7 +41,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 11. As a group member, I want too-frequent schedules rejected (reminder < 10 min, agent < 1 h) with a clear message, so that the group isn't spammed.
 12. As any group member, I want to confirm a draft with one tap, so that creation is quick.
 13. As a group member, I want each agent fire to start a fresh session, so that runs don't leak into each other.
-14. As a group member, I want a fire never to wait for or be skipped because of the previous fire, so that the schedule is honoured.
+14. As a group member, I want a reminder fire not to wait on another fire, and an agent task whose previous run is still going to skip this slot (board trace and local log, no group post) instead of stacking a second run, so that the schedule stays honest.
 15. As a group member, I want automation runs never to block or merge with human chat, so that conversation stays responsive.
 16. As a group member, I want exactly one result post per agent fire and to follow up in its thread, so that results are tidy.
 17. As a group member, I want a pinned board listing this bot's tasks with next fire and end, so that I can see what will happen.
@@ -83,7 +83,8 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - **result post**：一次 agent fire 的唯一权威消息；**bridge-owned final reply** 扩展到 fire；经 Outbox 投递。
 - **follow-up thread**：以 result post 为根的话题，续接该 fire 的 session。
 - **miss rule**（无固定宽限）：一项任务 missed 当且仅当 `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`。monitor 与 Larkent 使用同一条规则。
-- **catch-up**（补跑）：对 missed 的 fire，在计划时刻后 24 小时内执行恰好一次（按 fire key 幂等），消息注明“补跑，原定 HH:MM”；同一任务只补最近一个；本地 automations log 单独记一条 catch-up。
+- **catch-up**（补跑）：对 missed 的 fire，在计划时刻后 24 小时内执行恰好一次（按 fire key 幂等），消息注明“补跑，原定 HH:MM”；同一任务只补最近一个；本地 automations log 单独记一条 catch-up。标注例外：fire 时间晚于 `nextFireAt` 不超过 60 秒，且这次没有更早的漏跑，则执行但不标「补跑」（只影响标注，不改变 miss rule，也不改变 24 小时上限）。
+- **已跳过**（skipped fire）：同一 agent 任务上一次 run 尚未结算时，本次到点不执行。看板一行“已跳过 原定 …”，automations log 记原定时刻与原因；不发群消息。`lastStatus` 仍为进行中的那次。
 - **已错过**（missed fire）：最终不执行的计划时刻（超 24 小时，或同任务被更近的一次补跑取代）。每个都留痕：看板一行“已错过 原定 …”、群内一条通知、本地 automations log 一条（ADR-016）。
 - **missed**（计数）：已错过的 fire 数；补跑成功的不计入。
 - **automations log**：profile 数据目录下的本地追加日志，记录每个已错过时刻与每次补跑；**永久保留**（不随任务删除或 fire 历史截断而清理）；不含任务正文与飞书 ID。
@@ -93,7 +94,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - **board**：每 bot 每群一张置顶卡；行 + 暂停/删除按钮。
 - **monitor hook** / **status block**：board 内可见的机读文本块（“note”= 现有 markdown 元素 + `text_size: 'notation'`）；事实源为本地 status 文件。
 - **larkent-monitor**：私有的外部监视器，只服务常驻的 Grok Bot box；路线为 Cloudflare Worker 扫描看板 → wake webhook 唤醒 box；不涉及 GitHub Action。其实现不在本仓库。
-- **scheduler**：按 `nextFireAt` 产生 fire 的定时器，归 profile 所有；启动、link 恢复与本机唤醒入口触发时执行同一补跑规则；与 backfill 无关。
+- **scheduler**：按 `nextFireAt` 产生 fire 的定时器，归 profile 所有。每段最多睡 60 秒，醒来按墙钟重算到期项。启动、短段醒来、link 恢复与本机唤醒入口执行同一补跑规则；与 backfill 无关。
 - **automation creator**（`createdBy`）：促成创建那条消息的人；**bot owner** 即现 `isCreator()`，改名 `isBotOwner()`（避免与 creator 混淆）。
 
 ### 2. Time model（ADR-001/002/003）
@@ -118,15 +119,18 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - 确认卡按钮使用**新签名 action**：绑定 draft、群、动作、一次性 nonce、TTL；不绑 operator、不要求运行中 run；授权 = 回调点击者为人 + 通过该群 access；只接受 bridge 登记过的卡片。仿照 interruption notice 的签名 action（不绑 operator），**不**沿用绑定 operator + run 的 bridge callback 签名。
 - 编辑：v1 不提供原地编辑；删除后重建。
 
-### 4. Scheduler, fire and catch-up（ADR-006/013）
+### 4. Scheduler, fire and catch-up（ADR-006/013/021）
 
 - scheduler 归 profile，跨 `/reconnect`、bridge swap、进程重启存活。
+- **短段重算**（ADR-021）：定时器每次最多睡 60 秒，醒来按墙钟重算到期的 fire 与到期删除。不使用单段长达数十天的 `setTimeout`。进程睡眠或墙钟前跳后，下一段醒来即按下面的补跑规则处理到期项，不必等 link 重连。
 - 正常路径：到达 `nextFireAt` 时开始该 fire。
-- **幂等**：开始执行前先原子持久化 fire key 为 started（并写 `lastFireAt`），然后才发送或启动 agent；同一 fire key 不再执行。started 之后的投递失败只走 Outbox redeliver，不按补跑重来。
+- **准点标注**（ADR-021）：fire 时间晚于 `nextFireAt` 不超过 60 秒，且该次没有更早的漏跑，视为准点，不加「补跑」标注。晚于 60 秒且按 miss rule 确实错过，则按补跑处理。这只决定标注；miss rule 仍无固定宽限，24 小时补跑上限不变。
+- **幂等**：开始执行前先原子持久化 fire key 为 started（并写 `lastFireAt`），然后才发送或启动 agent；同一 fire key 不再执行。started 之后的投递失败只走 Outbox redeliver，不按补跑重来。已开始的 fire key 只保留计划时刻落在最近 48 小时内的条目，更早的在调度醒来时清除。
 - **补跑规则（Larkent 自身执行，不依赖 monitor，也不留给实现者自行决定）**，在以下时机运行，规则完全相同：
   1. 进程启动 / 重启；
   2. FeishuLink 由 down 恢复（`link.recovered`）；
-  3. 本机唤醒入口（见 §7，供 monitor 唤醒的 box 使用）。
+  3. 本机唤醒入口（见 §7，供 monitor 唤醒的 box 使用）；
+  4. 短段定时器醒来（墙钟重算）。
 
   对每个按 miss rule 判定 missed 的任务：
   - 若计划时刻距 `now` ≤ 24 小时：执行**恰好一次**补跑（fire key = `id` + 被错过的计划时刻），reminder 文本与 agent result post 都注明“补跑，原定 HH:MM”（按任务时区）；agent 的提示词附一行迟到说明；automations log 另记一条 catch-up（ADR-019）。
@@ -136,9 +140,9 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
   - 补跑后 `nextFireAt` 从 `now` 重算到下一个未来时刻；若已无后续（one-shot 或过 `endAt`），按 §2 到期删除。
   - paused 的任务不补跑；恢复后从 `now` 重算，不补暂停期间的 fire。删除的任务永不补跑。
 - **任一路径先到都安全**：Larkent 自己重启并补跑后，monitor 再唤醒 box，box 按 fire key 查到已 started → 静默，不对任何人报告；反之亦然。并发到达时以 fire key 的持久化为准，只有一个执行。
-- **link down 时到点**：不开始该 fire（不 stage、不计 started），该 fire 保持 missed 状态；link 恢复时按上述补跑规则处理（≤ 24 小时补跑一次并注明“补跑，原定 HH:MM”）。
-- 每次 fire 独立：新 session、scope `auto:<id>:<fireAt>`；不等待、不因同任务上一次未结束而跳过（允许重叠）；不进入群 pending queue，不与人工消息合并。
-- 并发：每次 fire 立即启动自己的 session，**不经过 profile 进程池、不设并发上限、永不因池满失败或排队**（以后可收紧）；人工 run 也不会排在自动化之后。现有 run 执行路径在 reconnect 暂停时拒绝、并经过进程池，所以 agent 任务需要一条独立的执行路径（A8）。
+- **link down 时到点**：不开始该 fire（不 stage、不计 started），该 fire 保持 missed 状态；link 恢复时按上述补跑规则处理（≤ 24 小时执行一次；超过 60 秒准点窗口时注明“补跑，原定 HH:MM”）。
+- 每次 fire 独立：新 session、scope `auto:<id>:<fireAt>`。reminder 不等待、不因其他 fire 未结束而跳过。同一 agent 任务上一次未结算则跳过本次（ADR-021）：不启动第二次 run、不排队、不发群消息；看板该条显示“已跳过 原定 YYYY-MM-DD HH:MM”；automations log 记原定时刻与原因。`lastStatus` 与 `lastFireAt` 保持为进行中的那次，以便结算。不进入群 pending queue，不与人工消息合并。
+- 并发：不同任务的 fire，以及 reminder，立即启动自己的 session，**不经过 profile 进程池、不设并发上限、永不因池满失败或排队**（以后可收紧）；人工 run 也不会排在自动化之后。同一 agent 任务不重叠（见上）。现有 run 执行路径在 reconnect 暂停时拒绝、并经过进程池，所以 agent 任务需要一条独立的执行路径（A8）。
 - `auto:` scope 的 run 不进入启动时孤儿回收的 Continuation / 继续通知流程。
 - 每次 fire 前校验：bot 仍在群内；否则见 §8。
 
@@ -162,6 +166,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - 每 bot 每群一张卡，只含本 bot 的任务；同数据根内锁 + 租约保证单写者；去抖更新。
 - 行：名称/内容摘要、任务类型、下次触发、结束时间、状态；按钮【暂停/恢复】【删除】，**群里任何人可点**（暂无权限校验；被滥用再议）。点击后卡片原地更新。
 - 已错过：每个已错过时刻单列一行“已错过 原定 YYYY-MM-DD HH:MM”，在看板上保留 24 小时（与 ADR-017 的 one-shot 保留期一致），之后从看板移除；automations log 永久保留。
+- 已跳过：agent 任务因上一次未结算而跳过的时刻单列一行“已跳过 原定 YYYY-MM-DD HH:MM”，同样在看板上保留 24 小时；automations log 永久保留原定时刻与原因。不发群消息。
 - 按钮签名：notice 式 token 是一次性 nonce + 24 小时 TTL，看板长期存在，所以按钮要么用可重复使用的签名 action（动作幂等），要么每次渲染重新签名并在 TTL 前刷新。
 - link 恢复后刷新看板（订阅 FeishuLink 的 recovered 信号）。
 - 置顶：无 unpin 事件，每次更新看板时查询本群 pins，若本卡不在则重新置顶；pin 失败提示一次。取消置顶不影响任务。本 bot 在群内无任务时卡片显示“暂无”并取消置顶。
@@ -193,7 +198,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 
 ### 10. Observability
 
-结构化事件：`auto.draft`、`auto.confirmed`、`auto.rejected`、`auto.fire`、`auto.missed`、`auto.catch-up`（含原定时刻与触发来源：startup / link-recovered / wake）、`auto.wake.already-started`（静默，仅本地日志）、`auto.result`（outcome）、`auto.paused`、`auto.deleted`、`auto.expired`、`auto.policy-guard`、`auto.board.repin`、`auto.removed-from-chat`。不含任务正文。`auto.missed` 与 `auto.catch-up` 同时写入永久的 automations log（ADR-016/017/019）。
+结构化事件：`auto.draft`、`auto.confirmed`、`auto.rejected`、`auto.fire`、`auto.missed`、`auto.catch-up`（含原定时刻与触发来源：startup / link-recovered / wake）、`auto.skipped`（agent 任务重叠跳过：原定时刻与原因；不发群消息）、`auto.wake.already-started`（静默，仅本地日志）、`auto.result`（outcome）、`auto.paused`、`auto.deleted`、`auto.expired`、`auto.policy-guard`、`auto.board.repin`、`auto.removed-from-chat`。不含任务正文。`auto.missed`、`auto.catch-up` 与 `auto.skipped` 同时写入永久的 automations log（ADR-016/017/019/021）。
 
 ### 11. Backfill fix (F20)
 
@@ -204,12 +209,12 @@ backfill 从 scope 推导 chat id 时，`auto:` 与 `meeting:` scope 永不进�
 - 只测外部行为：群里看到什么（消息、卡片状态、置顶）、落库与 hook 文本。用 recording channel、scripted CLI、fake executable、fake clock。
 - 最高测试缝：channel 级“推进时钟 → 群里可见输出 + 日志/状态文件”；与 run outcome / turn journal 集成测试同层。时间表解析与下次触发为纯函数，注入 `now()`，在 UTC 宿主时区跑表驱动用例（DST、跨午夜窗口、下限、1 年上限）。
 - 真飞书层：`e2e/test-bridge/`（默认 fake CLI，硬围栏）在 Bot Arena 跑；使用 fake clock 或**仅测试可用**的下限覆盖，不使用“1 分钟后”的生产输入。证据脱敏，不含任何 ID。
-- 补跑与幂等：fake clock 表驱动覆盖 miss rule 边界（`now == nextFireAt` 不算 miss、paused 不算、`lastFireAt == nextFireAt` 不算）、24 小时边界、多个错过时刻只补最近一个且其余每个都有看板行 / 群通知 / 日志、重启 / link 恢复 / 唤醒入口任意顺序与并发到达都只执行一次。
+- 补跑与幂等：fake clock 表驱动覆盖 miss rule 边界（`now == nextFireAt` 不算 miss、paused 不算、`lastFireAt == nextFireAt` 不算）、24 小时边界、多个错过时刻只补最近一个且其余每个都有看板行 / 群通知 / 日志、重启 / link 恢复 / 唤醒入口任意顺序与并发到达都只执行一次。短段重算：40 天后的一次性任务每段 ≤ 60 秒且不空转；墙钟前跳 2 小时后下一段醒来补发并按准点规则标注。准点标注：晚 50ms 与晚 59s 不标补跑，晚 61s 且确实错过则标补跑。agent 任务重叠：上一次未结算时跳过本次，看板与日志留痕，`lastStatus` 不被覆盖。started fire key 超出 48 小时后清除。
 - 不设延迟/耗时类验收。
 
 ## Out of Scope
 
-p2p 自动化；命令型自动化；超出 Outbox 1 小时 uuid 窗口的重复投递防护（ADR-018）；修复 larkent-monitor 本身让 miss 不发生（本仓库外的后续工作）；节假日调休日历；原地编辑；固定宽限窗口（grace）；超过 24 小时的补跑；续期提醒；硬并发与每群限额（可后续收紧）；跨群创建；fire 之间携带上次结果；跨 bot 共享看板 / 多维表格台账；附件/图片任务；larkent-monitor 本身的实现（私有，不在本仓库）；monitor 服务常驻 Grok Bot box 以外的电脑；monitor 预唤醒（monitor 只在 miss 之后唤醒，见 ADR-014）。
+p2p 自动化；命令型自动化；超出 Outbox 1 小时 uuid 窗口的重复投递防护（ADR-018）；修复 larkent-monitor 本身让 miss 不发生（本仓库外的后续工作）；节假日调休日历；原地编辑；miss rule 上的固定宽限（补跑**标注**的 60 秒准点窗口见 ADR-021，不改变“什么算错过”）；超过 24 小时的补跑；续期提醒；硬并发与每群限额（可后续收紧）；跨群创建；fire 之间携带上次结果；跨 bot 共享看板 / 多维表格台账；附件/图片任务；larkent-monitor 本身的实现（私有，不在本仓库）；monitor 服务常驻 Grok Bot box 以外的电脑；monitor 预唤醒（monitor 只在 miss 之后唤醒，见 ADR-014）。
 
 ## Further Notes
 
@@ -234,7 +239,7 @@ p2p 自动化；命令型自动化；超出 Outbox 1 小时 uuid 窗口的重复
 | 003 | recurring 必须有结束 ≤ 1 y；到期删除；缺结束发脚本卡 | 续期提醒、保留 |
 | 004 | ~~只在绝对时刻触发；无宽限/补跑~~ **已被 ADR-013 取代（2026-10-17）** | grace window 120 min |
 | 005 | reminder / agent 任务两类；reminder 先上线 | 只有 agent |
-| 006 | 每 fire 独立、允许重叠、暂无硬并发上限 | 运行中则跳过、子池上限 |
+| 006 | 每 fire 独立、暂无硬并发上限。~~允许重叠~~ 中「同一 agent 任务允许叠跑」**已被 ADR-021 取代（2026-10-18）**；reminder 与不同任务仍互不阻塞 | 运行中则跳过、子池上限 |
 | 007 | 置顶看板带暂停/删除，任何人可点；重新置顶；列表命令兜底 | D3 仅创建者、D6 只读看板 |
 | 008 | monitor hook = 看板内可见机读块（note 元素）；本地 status 文件为事实源；字段见 ADR-015 | — |
 | 009 | 暂无每群硬限额 | 10 / 5 |
@@ -249,3 +254,4 @@ p2p 自动化；命令型自动化；超出 Outbox 1 小时 uuid 窗口的重复
 | 018 | 超出 1 h uuid 窗口的重复投递为理论风险，不开 ticket、不处理（**用户确认 2026-10-17**） | Open question 3 |
 | 019 | agent 任务补跑上限保持 24 h；补跑 result post 注明“补跑，原定 HH:MM”，另写本地 catch-up 日志（**用户确认 2026-10-17**） | Open question 4 |
 | 020 | 任务类型改名 agent 任务（agent task），开关 `automations.agentTasks` 默认关（**用户确认 2026-10-17**） | “agent kind”、`automations.agentKind` |
+| 021 | 定时器每段 ≤ 60 秒，醒来按墙钟重算（取代单段约 24 天的 arm）。准点宽限 60 秒只决定是否标「补跑」：晚于 `nextFireAt` 不超过 60 秒且没有更早的漏跑则不标；miss rule 与 24 小时补跑上限不变。同一 agent 任务上一次未结束则跳过本次：看板“已跳过”+ 本地日志（原定时间与原因），不发群消息、不并发、不排队，`lastStatus` 不覆盖。started fire key 保留 48 小时（**用户确认 2026-10-18**） | ADR-006 的 agent 任务叠跑；长延迟单段 arm |
