@@ -12,6 +12,7 @@ import {
 import {
   noticeDeliveryKey,
   replyDeliveryKey,
+  streamDeliveryKey,
   TurnJournal,
   type TurnJournalEntry,
 } from '../../../src/bot/turn-journal';
@@ -26,6 +27,13 @@ afterEach(async () => {
 });
 
 describe('delivery keys', () => {
+  it('keeps the stream uuid distinct from the gone-card reply uuid', () => {
+    const turnId = '2e1b7c9a-1111-4111-8111-aaaaaaaaaaaa';
+    expect(streamDeliveryKey(turnId)).toBe(`stream:${turnId}`);
+    expect(streamDeliveryKey(turnId)).not.toBe(replyDeliveryKey(turnId));
+    expect(streamDeliveryKey(turnId).length).toBeLessThanOrEqual(50);
+  });
+
   it('is stable, persists across restart, and stays within 50 chars', async () => {
     const turnId = '2e1b7c9a-1111-4111-8111-aaaaaaaaaaaa';
     const key = replyDeliveryKey(turnId);
@@ -317,6 +325,86 @@ describe('redeliverStagedReply', () => {
 });
 
 describe('readBackBotReply', () => {
+  it('skips known non-answer ids and still finds the final answer', async () => {
+    const channel = createFakeChannel({ botAppId: APP, now: () => 1_760_000_001_000 });
+    const notice = await channel.send(CHAT, { markdown: 'COT 过程消息更新失败' }, { replyTo: 'om_src' });
+    const answer = await channel.send(CHAT, { markdown: 'ANSWER' }, { replyTo: 'om_src' });
+    const found = await readBackBotReply({
+      channel,
+      chatId: CHAT,
+      parentId: 'om_src',
+      botAppId: APP,
+      afterMs: 1_760_000_000_000,
+      excludeIds: new Set([notice.messageId]),
+    });
+    expect(found).toEqual({ kind: 'text', messageId: answer.messageId });
+  });
+
+  it('does not treat a newer distractor notice as the landed answer after the uuid window', async () => {
+    let now = 1_760_000_000_000;
+    const channel = createFakeChannel({ botAppId: APP, now: () => now });
+    const answer = await channel.send(CHAT, { markdown: 'ANSWER' }, {
+      uuid: 'reply:distract',
+      replyTo: 'om_src',
+    });
+    now += 1_000;
+    const notice = await channel.send(CHAT, { markdown: '上一轮未完成' }, { replyTo: 'om_src' });
+    const result = await redeliverStagedReply({
+      channel,
+      entry: {
+        ...staged({
+          turnId: 'distract',
+          deliveryId: 'reply:distract',
+          markdown: 'ANSWER',
+          createdAt: 1_760_000_000_000,
+        }),
+        nonAnswerIds: [notice.messageId],
+      },
+      botAppId: APP,
+      now: () => 1_760_000_000_000 + FEISHU_UUID_WINDOW_MS + 1,
+      sleep: async () => {},
+    });
+    expect(result.delivered).toBe(true);
+    expect(result.messageId).toBe(answer.messageId);
+    expect(channel.sent).toHaveLength(2);
+  });
+
+  it('reads a replyInThread answer from the thread container after the uuid window', async () => {
+    const createdAt = 1_760_000_000_000;
+    const channel = createFakeChannel({ botAppId: APP, now: () => createdAt + 1_000 });
+    channel.rawThreadIds.set('om_src', 'omt_topic');
+    const posted = await channel.send(CHAT, { markdown: 'THREAD_ANSWER' }, {
+      uuid: 'reply:thread',
+      replyTo: 'om_src',
+      replyInThread: true,
+    });
+    const result = await redeliverStagedReply({
+      channel,
+      entry: {
+        ...staged({
+          turnId: 'thread',
+          deliveryId: 'reply:thread',
+          markdown: 'THREAD_ANSWER',
+          createdAt,
+        }),
+        threadId: 'omt_topic',
+        reply: {
+          markdown: 'THREAD_ANSWER',
+          replyTo: 'om_src',
+          replyMode: 'text',
+          deliveryId: 'reply:thread',
+          replyInThread: true,
+        },
+      },
+      botAppId: APP,
+      now: () => createdAt + FEISHU_UUID_WINDOW_MS + 1,
+      sleep: async () => {},
+    });
+    expect(result.delivered).toBe(true);
+    expect(result.messageId).toBe(posted.messageId);
+    expect(channel.sent).toHaveLength(1);
+  });
+
   it('does not match another sender or a message before the turn start', async () => {
     const channel = createFakeChannel({ botAppId: APP });
     const listed = [

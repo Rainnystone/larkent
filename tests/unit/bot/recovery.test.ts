@@ -1,9 +1,19 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { WATERMARK_MARGIN_MS } from '../../../src/bot/backfill';
-import { createRecovery, reviewActiveRuns, type Outage, type ReviewableRun } from '../../../src/bot/recovery';
+import {
+  createRecovery,
+  reviewActiveRuns,
+  RECOVERY_RETRY_MIN_MS,
+  type Outage,
+  type ReviewableRun,
+} from '../../../src/bot/recovery';
 import { log } from '../../../src/core/logger';
 
 describe('Recovery', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('redelivers, then scans the outage window, then reviews runs', async () => {
     const steps: string[] = [];
     const scanned: number[] = [];
@@ -221,5 +231,124 @@ describe('Recovery', () => {
     reviewActiveRuns([openTool], { since: 1_000, until: 5_000, hostSuspended: true });
     expect(openTool.armStallDeadline).toHaveBeenCalledWith(2 * 60_000);
     expect(openTool.stallDeadlineMs).toBe(2 * 60_000);
+  });
+
+  it('reviews a tool-call run that started after last Feishu evidence when the host slept', () => {
+    const openTool: ReviewableRun = {
+      lastEventAt: 1_313_000,
+      interrupted: false,
+      hasOpenToolCall: true,
+      armStallDeadline: vi.fn(),
+    };
+    reviewActiveRuns([openTool], {
+      since: 1_316_000 - 3_000,
+      until: 1_524_000,
+      hostSuspended: true,
+      suspendStartedAt: 1_351_000,
+    });
+    expect(openTool.armStallDeadline).toHaveBeenCalledWith(2 * 60_000);
+  });
+
+  it('does not review a tool-call run that started after last Feishu evidence on a network-only outage', () => {
+    const openTool: ReviewableRun = {
+      lastEventAt: 1_331_000,
+      interrupted: false,
+      hasOpenToolCall: true,
+      armStallDeadline: vi.fn(),
+    };
+    reviewActiveRuns([openTool], {
+      since: 1_316_000,
+      until: 1_524_000,
+      hostSuspended: false,
+      suspendStartedAt: 1_351_000,
+    });
+    expect(openTool.armStallDeadline).not.toHaveBeenCalled();
+  });
+
+  it('retries a failed step on a timer without another recovery signal', async () => {
+    vi.useFakeTimers();
+    let scans = 0;
+    let second!: () => void;
+    const secondScan = new Promise<void>((resolve) => {
+      second = resolve;
+    });
+    const recovery = createRecovery({
+      journal: {
+        reapOrphans: async () => {},
+        redeliver: async () => {},
+      },
+      backfill: {
+        scan: async () => {
+          scans += 1;
+          if (scans === 1) throw new Error('backfill boom');
+          second();
+        },
+      },
+      runs: { review: () => {} },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+    await recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    expect(scans).toBe(1);
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS);
+    await secondScan;
+    expect(scans).toBe(2);
+    recovery.stop();
+  });
+
+  it('retries an incomplete backfill on a timer and does not retry a truncation-only scan', async () => {
+    vi.useFakeTimers();
+    const scans: boolean[] = [];
+    let done!: () => void;
+    const finished = new Promise<void>((resolve) => {
+      done = resolve;
+    });
+    const recovery = createRecovery({
+      journal: {
+        reapOrphans: async () => {},
+        redeliver: async () => {},
+      },
+      backfill: {
+        scan: async () => {
+          if (scans.length === 0) {
+            scans.push(false);
+            return false;
+          }
+          scans.push(true);
+          done();
+          return true;
+        },
+      },
+      runs: { review: () => {} },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+    await recovery.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    expect(scans).toEqual([false]);
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS);
+    await finished;
+    expect(scans).toEqual([false, true]);
+
+    const truncates: number[] = [];
+    const truncation = createRecovery({
+      journal: {
+        reapOrphans: async () => {},
+        redeliver: async () => {},
+      },
+      backfill: {
+        scan: async () => {
+          truncates.push(1);
+          return true;
+        },
+      },
+      runs: { review: () => {} },
+      lookbackMs: () => 6 * 60 * 60 * 1000,
+      now: () => 5_000,
+    });
+    await truncation.run({ since: 1_000, until: 5_000, hostSuspended: false });
+    await vi.advanceTimersByTimeAsync(RECOVERY_RETRY_MIN_MS * 2);
+    expect(truncates).toEqual([1]);
+    recovery.stop();
+    truncation.stop();
   });
 });

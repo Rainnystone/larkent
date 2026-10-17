@@ -124,26 +124,93 @@ describe('wrapChannelOutbound timeout', () => {
     expect(outbound.has('om_live_md')).toBe(true);
   });
 
-  it('does not time out a stream that lasts longer than the outbound request budget', async () => {
+  it('does not time out a producer that lasts longer than the outbound request budget', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const channel = {
-      stream: () => new Promise<{ messageId: string }>((resolve) => {
-        setTimeout(() => resolve({ messageId: 'om_s' }), 5 * 60_000);
-      }),
+      stream: async (
+        _chatId: string,
+        input: {
+          markdown?: (ctrl: { messageId: string; setContent: (text: string) => Promise<void> }) => Promise<void>;
+        },
+      ) => {
+        const ctrl = { messageId: 'om_long', setContent: async () => {} };
+        await input.markdown?.(ctrl);
+        return { messageId: 'om_long' };
+      },
     };
     wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 30_000 });
 
-    const pending = channel.stream();
+    const pending = channel.stream('oc', {
+      markdown: async (ctrl) => {
+        await ctrl.setContent('partial');
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 5 * 60_000);
+        });
+      },
+    });
     await vi.advanceTimersByTimeAsync(30_000);
     let settled = false;
     void pending.then(() => {
+      settled = true;
+    }, () => {
       settled = true;
     });
     await Promise.resolve();
     expect(settled).toBe(false);
 
     await vi.advanceTimersByTimeAsync(5 * 60_000 - 30_000);
-    await expect(pending).resolves.toEqual({ messageId: 'om_s' });
+    await expect(pending).resolves.toEqual({ messageId: 'om_long' });
+  });
+
+  it('rejects a stream whose open never calls the producer', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const channel = {
+      stream: () => new Promise<never>(() => {}),
+    };
+    wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 40 });
+    const pending = channel.stream();
+    await vi.advanceTimersByTimeAsync(39);
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(OutboundTimeoutError);
+      expect((err as OutboundTimeoutError).op).toBe('stream.open');
+      return true;
+    });
+  });
+
+  it('rejects a stream whose close never settles after the producer returns', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const channel = {
+      stream: async (
+        _chatId: string,
+        input: {
+          markdown?: (ctrl: { messageId: string; setContent: (text: string) => Promise<void> }) => Promise<void>;
+        },
+      ) => {
+        await input.markdown?.({ messageId: 'om_hang', setContent: async () => {} });
+        await new Promise<never>(() => {});
+        return { messageId: 'om_hang' };
+      },
+    };
+    wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 40 });
+    const pending = channel.stream('oc', {
+      markdown: async () => {},
+    });
+    await vi.advanceTimersByTimeAsync(39);
+    let settled = false;
+    void pending.then(() => { settled = true; }, () => { settled = true; });
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await expect(pending).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(OutboundTimeoutError);
+      expect((err as OutboundTimeoutError).op).toBe('stream.close');
+      return true;
+    });
   });
 
   it('rejects a hung getChatMode whose TCP connect never completes', async () => {

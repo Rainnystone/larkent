@@ -141,6 +141,46 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
     expect(JSON.stringify(answerSends(h.channel)[0]?.content)).toContain(ANSWER);
   });
 
+  it('stages a hung stream close and recovers exactly one complete markdown answer', async () => {
+    const h = await harness({ replyMode: 'markdown', outboundTimeoutMs: 40 });
+    h.channel.streamErrors.hangFinish = true;
+
+    await h.channel.handlers.message?.(mention('om_hang', 'please answer'));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_hang') && entry.status === 'completed-undelivered'
+    )));
+    expect(h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_hang') && entry.status === 'running'
+    ))).toBe(false);
+    expect(answerSends(h.channel)).toHaveLength(0);
+    const streamId = h.channel.streams[0]?.messageId;
+    expect(streamId).toBeTruthy();
+
+    h.channel.streamErrors.hangFinish = false;
+    await recoverLink(h);
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_hang') && entry.status === 'reply-delivered'
+    )));
+    expect(h.channel.updatedCards.some((row) => (
+      row.messageId === streamId && JSON.stringify(row.card).includes(ANSWER)
+    ))).toBe(true);
+    expect(answerSends(h.channel)).toHaveLength(0);
+    expect(h.channel.streams).toHaveLength(1);
+  });
+
+  it('uses a stream uuid that is not the gone-card reply uuid', async () => {
+    const h = await harness({ replyMode: 'markdown' });
+    await h.channel.handlers.message?.(mention('om_uuid', 'please answer'));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_uuid') && entry.status === 'reply-delivered'
+    )));
+    const entry = h.journal.list().find((item) => item.messageIds.includes('om_uuid'));
+    const streamUuid = (h.channel.streams[0]?.options as { uuid?: string } | undefined)?.uuid;
+    expect(streamUuid).toBe(`stream:${entry?.turnId}`);
+    expect(streamUuid).not.toBe(entry?.reply?.deliveryId);
+    expect(streamUuid?.length).toBeLessThanOrEqual(50);
+  });
+
   it('does not mark a card run longer than 30s delivered when the final patch fails', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const h = await harness({ replyMode: 'card', fakeTimers: true });
@@ -167,6 +207,7 @@ describe('stream result is the delivery signal', { timeout: 20_000 }, () => {
 async function harness(opts: {
   replyMode: 'card' | 'markdown';
   fakeTimers?: boolean;
+  outboundTimeoutMs?: number;
 }) {
   const tmp = await createTmpProfile('stream-delivery-');
   const file = join(tmp.profile, 'turn-journal.json');
@@ -200,6 +241,7 @@ async function harness(opts: {
     workspaces,
     journal,
     probe: async () => true,
+    ...(opts.outboundTimeoutMs !== undefined ? { outboundTimeoutMs: opts.outboundTimeoutMs } : {}),
     controls: {
       profile: 'test',
       profileConfig: cfg,

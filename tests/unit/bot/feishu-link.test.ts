@@ -109,6 +109,42 @@ describe('FeishuLink', () => {
     expect(recovered[0]!.hostSuspended).toBe(true);
   });
 
+  it('keeps suspendStartedAt on the last local tick when later ws-down pulls since back to Feishu evidence', async () => {
+    let now = 1_700_000_000_000;
+    const evidence = now;
+    let state: 'connected' | 'reconnecting' = 'connected';
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += FEISHU_LINK_TICK_MS;
+    await link.tick();
+    const lastTickBeforeSleep = now;
+
+    now += 90_000;
+    state = 'reconnecting';
+    await link.tick();
+    expect(link.isDown()).toBe(true);
+
+    state = 'connected';
+    now += FEISHU_LINK_TICK_MS;
+    await link.tick();
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.hostSuspended).toBe(true);
+    expect(recovered[0]!.since).toBe(evidence);
+    expect(recovered[0]!.suspendStartedAt).toBe(lastTickBeforeSleep);
+    expect(recovered[0]!.suspendStartedAt).toBeGreaterThan(recovered[0]!.since);
+  });
+
   it('stays down on a failed socket while the probe is healthy', async () => {
     let now = 1_700_000_000_000;
     let state: 'connected' | 'failed' = 'connected';
@@ -346,15 +382,24 @@ describe('FeishuLink', () => {
     expect(link.outageEpoch()).toBe(epoch + 1);
   });
 
-  it('does not treat a 5-minute stream as an outage', async () => {
+  it('does not treat a 5-minute stream producer as an outage', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     let now = 1_700_000_000_000;
     const recovered: Outage[] = [];
     const channel = {
       getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
-      stream: () => new Promise<{ messageId: string }>((resolve) => {
-        setTimeout(() => resolve({ messageId: 'om_s' }), 5 * 60_000);
-      }),
+      stream: async (
+        _chatId: string,
+        input: {
+          markdown?: (ctrl: { messageId: string; setContent: (text: string) => Promise<void> }) => Promise<void>;
+        },
+      ) => {
+        await input.markdown?.({
+          messageId: 'om_s',
+          setContent: async () => {},
+        });
+        return { messageId: 'om_s' };
+      },
     } as unknown as LarkChannel;
     const link = startFeishuLink({
       channel,
@@ -370,7 +415,14 @@ describe('FeishuLink', () => {
     expect(link.isDown()).toBe(false);
     const epoch = link.outageEpoch();
 
-    const pending = channel.stream('oc', { markdown: async () => {} });
+    const pending = channel.stream('oc', {
+      markdown: async (ctrl) => {
+        await ctrl.setContent('partial');
+        await new Promise<void>((resolve) => {
+          setTimeout(resolve, 5 * 60_000);
+        });
+      },
+    });
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     await expect(pending).resolves.toEqual({ messageId: 'om_s' });
     expect(link.isDown()).toBe(false);

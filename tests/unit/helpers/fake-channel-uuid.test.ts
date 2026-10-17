@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FEISHU_UUID_WINDOW_MS } from '../../../src/bot/feishu-delivery';
 import { createFakeChannel } from '../../helpers/fake-channel';
 
 const APP = 'cli_bot';
@@ -69,6 +70,80 @@ describe('SDK-faithful fake Feishu uuid and list', () => {
     expect(channel.updatedCards).toHaveLength(2);
     expect(JSON.stringify(channel.updatedCards.at(-1)?.card)).toContain('FULL');
   });
+
+  it('expires a uuid after the Feishu 1-hour window and creates a new message', async () => {
+    let now = 1_760_000_000_000;
+    const channel = createFakeChannel({ botAppId: APP, now: () => now });
+    const first = await channel.send(CHAT, { markdown: 'old' }, { uuid: 'reply:exp' });
+    now += FEISHU_UUID_WINDOW_MS + 1;
+    const second = await channel.send(CHAT, { markdown: 'new' }, { uuid: 'reply:exp' });
+
+    expect(second.messageId).not.toBe(first.messageId);
+    expect(channel.sent).toHaveLength(2);
+  });
+
+  it('lists newest first when sort_type is ByCreateTimeDesc and honours start_time', async () => {
+    let now = 1_760_000_000_000;
+    const channel = createFakeChannel({ botAppId: APP, now: () => now });
+    await channel.send(CHAT, { markdown: 'early' }, { replyTo: 'om_src' });
+    now += 2_000;
+    await channel.send(CHAT, { markdown: 'late' }, { replyTo: 'om_src' });
+
+    const listed = await channel.rawClient.im.v1.message.list({
+      params: {
+        container_id: CHAT,
+        container_id_type: 'chat',
+        sort_type: 'ByCreateTimeDesc',
+        start_time: String(Math.floor((1_760_000_000_000 + 1_000) / 1000)),
+      },
+    }) as { data?: { items?: Array<Record<string, unknown>> } };
+    expect(listed.data?.items?.map((item) => item.message_id)).toEqual(['om_fake_2']);
+  });
+
+  it('pages with page_size capped at 50 and page_token as an offset', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    for (let n = 0; n < 52; n += 1) {
+      await channel.send(CHAT, { markdown: `m${n}` });
+    }
+    const first = await channel.rawClient.im.v1.message.list({
+      params: { container_id: CHAT, container_id_type: 'chat', page_size: 80 },
+    }) as { data?: { items?: unknown[]; has_more?: boolean; page_token?: string } };
+    expect(first.data?.items).toHaveLength(50);
+    expect(first.data?.has_more).toBe(true);
+    expect(first.data?.page_token).toBe('50');
+
+    const second = await channel.rawClient.im.v1.message.list({
+      params: {
+        container_id: CHAT,
+        container_id_type: 'chat',
+        page_size: 50,
+        page_token: first.data?.page_token,
+      },
+    }) as { data?: { items?: unknown[]; has_more?: boolean } };
+    expect(second.data?.items).toHaveLength(2);
+    expect(second.data?.has_more).toBe(false);
+  });
+
+  it('lists thread replies only in the thread container, not the chat container', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    channel.rawThreadIds.set('om_src', 'omt_topic');
+    await channel.send(CHAT, { markdown: 'root-reply' }, { replyTo: 'om_src' });
+    await channel.send(CHAT, { markdown: 'in-thread' }, {
+      replyTo: 'om_src',
+      replyInThread: true,
+    });
+
+    const chatList = await channel.rawClient.im.v1.message.list({
+      params: { container_id: CHAT, container_id_type: 'chat' },
+    }) as { data?: { items?: Array<{ message_id?: string }> } };
+    expect(chatList.data?.items?.map((item) => item.message_id)).toEqual(['om_fake_1']);
+
+    const threadList = await channel.rawClient.im.v1.message.list({
+      params: { container_id: 'omt_topic', container_id_type: 'thread' },
+    }) as { data?: { items?: Array<{ message_id?: string }> } };
+    expect(threadList.data?.items?.map((item) => item.message_id)).toEqual(['om_fake_2']);
+  });
+
 });
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

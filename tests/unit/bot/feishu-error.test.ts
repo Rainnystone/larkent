@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LarkChannelError } from '@larksuite/channel';
-import { classify, isGoneMessage } from '../../../src/bot/feishu-error';
+import { classify, isGoneMessage, rateLimitResetDelayMs } from '../../../src/bot/feishu-error';
 import { OutboundTimeoutError } from '../../../src/bot/self-message';
 import {
   axiosErrno,
@@ -92,6 +92,32 @@ describe('classify Feishu errors from the real SDK', () => {
 
   it('does not classify by matching error message text', () => {
     expect(classify(new Error('getaddrinfo EAI_AGAIN open.feishu.cn'))).toBe('local');
+  });
+
+  it('maps 400+230020 and 400+99991400 as link before the 4xx rejected rule', async () => {
+    const frequency = await captureSdkSendError(axiosLike('Request failed with status code 400', {
+      response: { status: 400, data: { code: 230020 } },
+    }));
+    const permissionBudget = await captureSdkSendError(axiosLike('Request failed with status code 400', {
+      response: { status: 400, data: { code: 99991400 } },
+    }));
+    expect(classify(frequency)).toBe('link');
+    expect(classify(permissionBudget)).toBe('link');
+  });
+
+  it('maps LarkChannelError rate_limited to link without an HTTP status', () => {
+    expect(classify(new LarkChannelError('rate_limited', 'too many requests'))).toBe('link');
+  });
+
+  it('reads x-ogw-ratelimit-reset as remaining seconds', () => {
+    const err = axiosLike('Request failed with status code 400', {
+      response: {
+        status: 400,
+        data: { code: 230020 },
+        headers: { 'x-ogw-ratelimit-reset': '12' },
+      },
+    });
+    expect(rateLimitResetDelayMs(err)).toBe(12_000);
   });
 
   it('maps LarkChannelError send_timeout and ssrf_blocked from their codes', () => {

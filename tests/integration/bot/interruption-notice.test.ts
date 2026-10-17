@@ -209,7 +209,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
       return orig(...args);
     };
     await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => fails === 0 && h.journal.list().some((entry) => entry.status === 'notice-pending'));
+    await waitFor(() => fails === 0);
     await h.bridge.recoverMissed();
     await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-delivered'));
     const notices = h.channel.sent.filter((item) => isNoticeContent(item.content));
@@ -270,7 +270,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
         return orig(...args);
       };
       await h.channel.handlers.message?.(mention('om_run', SECRET));
-      await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending'));
+      await waitFor(() => noticeFails === 0 && noticePendingOrDelivered(h.journal));
       expect(streamedAnswers(h.channel, streamed)).toBeGreaterThanOrEqual(1);
       expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
 
@@ -290,7 +290,7 @@ describe('interruption notice in the live channel', { timeout: 20_000 }, () => {
     });
     failNoticeSends(h.channel, { remaining: 1 });
     await h.channel.handlers.message?.(mention('om_run', SECRET));
-    await waitFor(() => h.journal.list().some((entry) => entry.status === 'notice-pending'));
+    await waitFor(() => noticePendingOrDelivered(h.journal));
     expect(streamedAnswers(h.channel, streamed)).toBeGreaterThanOrEqual(1);
     expect(sentAnswers(h.channel, streamed)).toHaveLength(0);
     await h.journal.flush();
@@ -1176,6 +1176,12 @@ function patchedAnswers(
   sentinel: string,
 ) {
   return channel.updatedCards.filter((row) => JSON.stringify(row.card).includes(sentinel));
+}
+
+function noticePendingOrDelivered(journal: TurnJournal): boolean {
+  return journal.list().some((entry) => (
+    entry.status === 'notice-pending' || entry.status === 'notice-delivered'
+  ));
 }
 
 function noticeSends(channel: ReturnType<typeof createRecordingLarkChannel>) {

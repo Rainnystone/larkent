@@ -1,3 +1,5 @@
+import { FEISHU_UUID_WINDOW_MS } from '../../src/bot/feishu-delivery';
+
 export interface FakeChannelMessage {
   chatId: string;
   content: unknown;
@@ -64,9 +66,10 @@ export interface FakeChannel {
   /**
    * SDK-faithful stream faults: `update`/`setContent` always resolve.
    * `open` rejects before a message exists; `finish` rejects after create
-   * (the `stream()` result is the delivery signal).
+   * (the `stream()` result is the delivery signal). `hangFinish` never
+   * settles `stream()` after the producer returns (TCP accepted, no response).
    */
-  readonly streamErrors: { open?: unknown; finish?: unknown };
+  readonly streamErrors: { open?: unknown; finish?: unknown; hangFinish?: boolean };
   getConnectionStatus(): { state: 'connected' | 'reconnecting' | 'failed'; reconnectAttempts: number };
   getAppInfo(): Promise<{ ownerId: string }>;
 }
@@ -79,6 +82,8 @@ interface StoredChatMessage {
   uuid?: string;
   createTime: number;
   parentId?: string;
+  threadId?: string;
+  inThread?: boolean;
   msgType: string;
 }
 
@@ -97,7 +102,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
   let nextCard = 1;
   let nextMessage = 1;
 
-  const streamErrors: { open?: unknown; finish?: unknown } = {};
+  const streamErrors: { open?: unknown; finish?: unknown; hangFinish?: boolean } = {};
   const land = (input: {
     chatId: string;
     content: unknown;
@@ -110,10 +115,15 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
     const echo = stringifyContent(input.content);
     if (input.uuid) {
       const original = byUuid.get(input.uuid);
-      if (original) {
+      if (original && now() - original.createTime <= FEISHU_UUID_WINDOW_MS) {
         return { message_id: original.messageId, body: { content: echo } };
       }
+      if (original) byUuid.delete(input.uuid);
     }
+    const inThread = outboundReplyInThread(input.options);
+    const threadId = inThread
+      ? rawThreadIds.get(input.parentId ?? '') ?? input.parentId
+      : undefined;
     const messageId = `om_fake_${nextMessage++}`;
     const stored: StoredChatMessage = {
       messageId,
@@ -124,6 +134,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
       msgType: input.msgType,
       ...(input.uuid ? { uuid: input.uuid } : {}),
       ...(input.parentId ? { parentId: input.parentId } : {}),
+      ...(threadId ? { threadId, inThread: true } : {}),
     };
     chat.push(stored);
     byId.set(messageId, stored);
@@ -199,11 +210,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
             },
             async list(params: unknown): Promise<unknown> {
               requests.push({ method: 'im.v1.message.list', params });
-              const containerId = extractContainerId(params);
-              const items = chat
-                .filter((item) => !containerId || item.chatId === containerId)
-                .map((item) => listItem(item, botAppId));
-              return { data: { items, has_more: false } };
+              return listMessages(params);
             },
           },
         },
@@ -308,9 +315,46 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
         streamErrors.finish = undefined;
         throw finishErr;
       }
+      if (streamErrors.hangFinish) {
+        await new Promise(() => {});
+      }
       return { messageId: landed.message_id };
     },
   };
+
+  function listMessages(params: unknown): { data: { items: Record<string, unknown>[]; has_more: boolean; page_token?: string } } {
+    const nested = asRecord(asRecord(params)?.params) ?? asRecord(params) ?? {};
+    const containerType = nested.container_id_type === 'thread' ? 'thread' : 'chat';
+    const containerId = typeof nested.container_id === 'string' ? nested.container_id : undefined;
+    const sortDesc = nested.sort_type === 'ByCreateTimeDesc';
+    const startMs = boundTimeMs(nested.start_time);
+    const endMs = boundTimeMs(nested.end_time);
+    const pageSize = parsePageSize(nested.page_size);
+    const offset = parsePageOffset(nested.page_token);
+
+    let items = chat.filter((item) => {
+      if (containerType === 'thread') {
+        return item.inThread === true && Boolean(containerId) && item.threadId === containerId;
+      }
+      if (item.inThread) return false;
+      return !containerId || item.chatId === containerId;
+    });
+    if (startMs !== undefined) items = items.filter((item) => item.createTime >= startMs);
+    if (endMs !== undefined) items = items.filter((item) => item.createTime <= endMs);
+    items = [...items].sort((a, b) => (
+      sortDesc ? b.createTime - a.createTime : a.createTime - b.createTime
+    ));
+    const sliced = pageSize === undefined ? items.slice(offset) : items.slice(offset, offset + pageSize);
+    const nextOffset = offset + sliced.length;
+    const hasMore = nextOffset < items.length;
+    return {
+      data: {
+        items: sliced.map((item) => listItem(item, botAppId)),
+        has_more: hasMore,
+        ...(hasMore ? { page_token: String(nextOffset) } : {}),
+      },
+    };
+  }
 
   function resolveReferencedCard(params: unknown): unknown | undefined {
     const content = (params as { data?: { content?: unknown } } | undefined)?.data?.content;
@@ -363,6 +407,7 @@ function listItem(item: StoredChatMessage, botAppId: string): Record<string, unk
   return {
     message_id: item.messageId,
     ...(item.parentId ? { parent_id: item.parentId } : {}),
+    ...(item.threadId ? { thread_id: item.threadId } : {}),
     create_time: String(item.createTime),
     msg_type: item.msgType,
     sender: { id: botAppId, id_type: 'app_id', sender_type: 'app' },
@@ -376,6 +421,30 @@ function outboundUuid(options: unknown): string | undefined {
 
 function outboundReplyTo(options: unknown): string | undefined {
   return stringField(asRecord(options), 'replyTo');
+}
+
+function outboundReplyInThread(options: unknown): boolean {
+  return asRecord(options)?.replyInThread === true;
+}
+
+function boundTimeMs(raw: unknown): number | undefined {
+  if (typeof raw !== 'string' && typeof raw !== 'number') return undefined;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return undefined;
+  return n < 1e12 ? n * 1000 : n;
+}
+
+function parsePageSize(raw: unknown): number | undefined {
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  const n = typeof raw === 'number' ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return undefined;
+  return Math.min(50, Math.floor(n));
+}
+
+function parsePageOffset(raw: unknown): number {
+  if (typeof raw !== 'string' || !raw) return 0;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
 function inferMsgType(content: unknown): string {

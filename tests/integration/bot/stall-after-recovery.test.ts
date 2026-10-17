@@ -56,6 +56,33 @@ describe('stall check after recovery', () => {
     expect(rendered(h.channel)).toContain('notice.continue');
   });
 
+  it('reviews a tool-call run that started after last Feishu evidence when the host slept', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(message('first', 'please run the tool'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
+    await waitFor(() => rendered(h.channel).includes('long_tool'));
+
+    const toolAt = Date.now();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const suspendStartedAt = Date.now();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.bridge.recover({
+      since: toolAt - 15_000,
+      until: Date.now(),
+      hostSuspended: true,
+      suspendStartedAt,
+    });
+
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+  });
+
   it('after a host suspend, a silent open-tool run is stopped and posts one retriable notice within 2 min', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));

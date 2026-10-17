@@ -175,6 +175,39 @@ describe('per-item outbox gating', { timeout: 20_000 }, () => {
     expect(recovered).toHaveLength(0);
   });
 
+  it('delivers a rate-limited 400/230020 final exactly once after recovery', async () => {
+    const h = await harness({ replyMode: 'text' });
+    const orig = h.channel.send.bind(h.channel);
+    let failed = false;
+    h.channel.send = async (...args: Parameters<typeof orig>) => {
+      if (!failed) {
+        failed = true;
+        throw sdkShapedSendError('unknown', axiosLike('Request failed with status code 400', {
+          response: {
+            status: 400,
+            data: { code: 230020 },
+            headers: { 'x-ogw-ratelimit-reset': '1' },
+          },
+        }));
+      }
+      return orig(...args);
+    };
+
+    await h.channel.handlers.message?.(mention('om_freq', 'please answer'));
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_freq') && entry.reply?.state === 'staged'
+    )));
+    expect(answerSends(h.channel)).toHaveLength(0);
+
+    await h.bridge.recoverMissed();
+    await waitFor(() => h.journal.list().some((entry) => (
+      entry.messageIds.includes('om_freq') && entry.reply?.state === 'sent'
+    )));
+    expect(failed).toBe(true);
+    expect(answerSends(h.channel)).toHaveLength(1);
+    expect(JSON.stringify(answerSends(h.channel)[0]?.content)).toContain(ANSWER);
+  });
+
   it('does not retry an ENETUNREACH final send until recovery delivers it once', async () => {
     const h = await harness({ replyMode: 'text' });
     const orig = h.channel.send.bind(h.channel);
