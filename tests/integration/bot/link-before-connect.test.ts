@@ -68,15 +68,16 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
     expect(h.ledger.has('om_first')).toBe(false);
     expect(answerSends(h.channel)).toHaveLength(0);
 
+    const answered = waitUntilAnswered(h.channel);
     rest.up = true;
     await h.bridge.tickLink();
-    await waitForDebounce();
-    await waitFor(() => h.agent.runOptions.length === 1);
+    expect(recovered.length).toBeGreaterThanOrEqual(1);
+    await answered;
 
     expect(h.agent.runOptions).toHaveLength(1);
     expect(h.agent.runOptions[0]!.prompt).toContain('hello during rest outage');
     expect(answerSends(h.channel)).toHaveLength(1);
-    expect(recovered.length).toBeGreaterThanOrEqual(1);
+    expect(h.ledger.has('om_first')).toBe(true);
   });
 
   it('records a startup reply id so its echo is not a CLI self-send', async () => {
@@ -248,7 +249,7 @@ async function startHarness(opts: {
   const tmp = await createTmpProfile('link-before-connect-');
   const mediaDir = join(tmp.profile, 'media');
   await mkdir(mediaDir, { recursive: true });
-  const ledger = new BackfillLedger(`${tmp.profile}/backfill-state.json`);
+  const ledger = new BackfillLedger(`${tmp.profile}/backfill-state.json`, { now: () => NOW });
   await ledger.load();
   ledger.touchLive(opts.lastLiveAt);
   const journal = new TurnJournal(`${tmp.profile}/turn-journal.json`);
@@ -479,6 +480,25 @@ function manualRun(recorded: AgentRun) {
       run.stderrSnapshot = value;
     },
   };
+}
+
+function waitUntilAnswered(channel: ReturnType<typeof createRecordingLarkChannel>): Promise<void> {
+  if (answerSends(channel).length >= 1) return Promise.resolve();
+  const previousSend = channel.send.bind(channel);
+  const previousStream = channel.stream.bind(channel);
+  return new Promise((resolve) => {
+    const finish = (): void => resolve();
+    channel.send = ((...args: Parameters<typeof channel.send>) => {
+      const pending = previousSend(...args);
+      void pending.then(finish, finish);
+      return pending;
+    }) as typeof channel.send;
+    channel.stream = ((...args: Parameters<typeof channel.stream>) => {
+      const pending = previousStream(...args);
+      void pending.then(finish, finish);
+      return pending;
+    }) as typeof channel.stream;
+  });
 }
 
 async function waitForDebounce() {
