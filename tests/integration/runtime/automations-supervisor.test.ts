@@ -62,6 +62,7 @@ it('does not create automations files when the flag is off and reuses the superv
   expect(paths.automationsFile).toBe(join(paths.profileDir, 'automations.json'));
   expect(paths.automationsLogFile).toBe(join(paths.profileDir, 'automations.log'));
   expect(paths.automationsStatusFile).toBe(join(paths.profileDir, 'automations-status.json'));
+  expect(paths.automationsWakeDir).toBe(join(paths.profileDir, 'automations-wake'));
   expect(await missing(paths.automationsFile)).toBe(true);
   expect(await missing(paths.automationsLogFile)).toBe(true);
   expect(await missing(paths.automationsStatusFile)).toBe(true);

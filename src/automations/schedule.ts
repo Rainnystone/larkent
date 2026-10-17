@@ -396,8 +396,15 @@ export interface CatchUpItem {
   schedule: Schedule;
 }
 
-export function isMissed(item: CatchUpItem, now: number): boolean {
+export function fireIsMissed(
+  item: { paused: boolean; nextFireAt: number; lastFireAt: number },
+  now: number,
+): boolean {
   return !item.paused && item.nextFireAt > 0 && now > item.nextFireAt && item.lastFireAt < item.nextFireAt;
+}
+
+export function isMissed(item: CatchUpItem, now: number): boolean {
+  return fireIsMissed(item, now);
 }
 
 export function planCatchUp(

@@ -17,6 +17,7 @@ import {
   type AutomationTriggerSource,
   type AutomationsStore,
 } from './store';
+import { consumeWakeRequests, watchWakeDir, type WakeWatch } from './wake-file';
 
 export interface FireSend {
   id: number;
@@ -57,6 +58,8 @@ export interface AutomationSchedulerDeps {
   isLinkUp?: () => boolean;
   enabled?: () => boolean;
   onChanged?: () => void | Promise<void>;
+  /** Profile `automations-wake/` directory. A5 local wake transport. */
+  wakeDir?: string;
 }
 
 export interface AutomationScheduler {
@@ -89,10 +92,12 @@ class Scheduler implements AutomationScheduler {
   private readonly isLinkUp: () => boolean;
   private readonly enabled: () => boolean;
   private readonly onChanged?: () => void | Promise<void>;
+  private readonly wakeDir?: string;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   private fireTimer: unknown;
   private expireTimer: unknown;
+  private wakeWatch?: WakeWatch;
 
   constructor(deps: AutomationSchedulerDeps) {
     this.store = deps.store;
@@ -105,6 +110,7 @@ class Scheduler implements AutomationScheduler {
     this.isLinkUp = deps.isLinkUp ?? (() => true);
     this.enabled = deps.enabled ?? (() => true);
     this.onChanged = deps.onChanged;
+    this.wakeDir = deps.wakeDir;
   }
 
   start(): Promise<void> {
@@ -113,11 +119,15 @@ class Scheduler implements AutomationScheduler {
       await this.catchUp('startup');
       await this.handleDue();
       await this.writeStatus();
+      this.armWakeWatch();
+      await this.drainWake();
     });
   }
 
   stop(): void {
     this.closed = true;
+    this.wakeWatch?.close();
+    this.wakeWatch = undefined;
     this.clearTimers();
   }
 
@@ -481,6 +491,20 @@ class Scheduler implements AutomationScheduler {
     if (this.expireTimer !== undefined) this.clearTimeout(this.expireTimer);
     this.fireTimer = undefined;
     this.expireTimer = undefined;
+  }
+
+  private armWakeWatch(): void {
+    if (!this.wakeDir || this.wakeWatch || this.closed) return;
+    const dir = this.wakeDir;
+    this.wakeWatch = watchWakeDir(dir, (keys) => {
+      for (const fireKey of keys) void this.wake(fireKey);
+    });
+  }
+
+  private async drainWake(): Promise<void> {
+    if (!this.wakeDir || this.closed) return;
+    const keys = await consumeWakeRequests(this.wakeDir);
+    for (const fireKey of keys) void this.wake(fireKey);
   }
 
   private async writeStatus(): Promise<void> {

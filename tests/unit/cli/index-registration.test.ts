@@ -10,6 +10,13 @@ describe('CLI command registration', () => {
     expect(source).toContain('runMigrate');
   });
 
+  it('registers the automations wake command next to start/status', async () => {
+    const source = await readFile(join(process.cwd(), 'src', 'cli', 'index.ts'), 'utf8');
+
+    expect(source).toMatch(/\.command\(['"]wake <fireKey>['"]\)/);
+    expect(source).toContain('runWake');
+  });
+
   it('registers app-secret options for non-interactive app bootstrap commands', async () => {
     const source = await readFile(join(process.cwd(), 'src', 'cli', 'index.ts'), 'utf8');
 

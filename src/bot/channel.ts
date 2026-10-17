@@ -282,7 +282,8 @@ export interface StartChannelDeps {
   automations?: AutomationsStore;
   onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
   controls: Controls;
-  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
+  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>
+    & Partial<Pick<AppPaths, 'logsDir' | 'automationsWakeDir'>>;
   now?: () => number;
   probe?: (signal?: AbortSignal) => Promise<boolean>;
   onRecovered?: (outage: Outage) => void;
@@ -819,6 +820,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       isLinkUp: () => !closing && !started.isDown(),
       enabled: () => controls.profileConfig.automations.enabled,
       onChanged: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
+      wakeDir: deps.appPaths?.automationsWakeDir
+        ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
     });
     detachAutomationChatLifecycle = attachAutomationChatLifecycle(channel, (chatId) =>
       automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
