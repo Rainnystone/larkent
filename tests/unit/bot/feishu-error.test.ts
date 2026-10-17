@@ -137,7 +137,16 @@ describe('classify Feishu errors from the real SDK', () => {
 });
 
 describe('isGoneMessage', () => {
-  it.each([230002, 230025, 230026])('treats Feishu %s as a gone card, still classified rejected', (code) => {
+  it('does not treat Feishu 230002 as a gone card', () => {
+    const err = sdkShapedSendError('format_error', axiosLike('The bot can not be outside the group', {
+      response: { status: 400, data: { code: 230002 } },
+    }));
+    expect(classify(err)).toBe('rejected');
+    expect(isNotInChat(err)).toBe(true);
+    expect(isGoneMessage(err)).toBe(false);
+  });
+
+  it.each([230025, 230026])('treats Feishu %s as a gone card, still classified rejected', (code) => {
     const err = sdkShapedSendError('unknown', axiosLike('message not found', {
       response: { status: 400, data: { code } },
     }));

@@ -5,8 +5,7 @@ export type FeishuErrorClass = 'link' | 'rejected' | 'local';
 
 /** Feishu IM codes that mean the target message is gone and cannot be patched. */
 export const FEISHU_GONE_MESSAGE_CODES = new Set([
-  230002, // invalid message id
-  230025, // message not found
+  230025, // The length of the message content reaches its limit
   230026, // message recalled
 ]);
 
@@ -149,8 +148,7 @@ export function isGoneMessage(err: unknown): boolean {
 
 /**
  * A rejected 4xx that means the bot is outside the group or the chat was
- * dissolved. Distinct from {@link isGoneMessage}: 230002 is also listed as a
- * gone-card code for stream recovery, but automations must treat it as leave.
+ * dissolved. Distinct from {@link isGoneMessage}: 230002 is not a gone card.
  */
 export function isNotInChat(err: unknown): boolean {
   for (const node of causeChain(err)) {

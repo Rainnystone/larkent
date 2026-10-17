@@ -194,6 +194,33 @@ describe('redeliverStagedReply', () => {
     expect(channel.sent).toHaveLength(before);
   });
 
+  it('does not uuid-send when a rejected patch is 230002 not-in-chat', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    const card = await channel.send(CHAT, { card: recoveryAnswerCard('partial') }, { uuid: 'reply:left' });
+    channel.updateCard = async () => {
+      throw Object.assign(new Error('The bot can not be outside the group'), {
+        cause: { response: { status: 400, data: { code: 230002 } } },
+      });
+    };
+    const before = channel.sent.length;
+    await expect(redeliverStagedReply({
+      channel,
+      entry: staged({
+        turnId: 'left',
+        deliveryId: 'reply:left',
+        markdown: 'FULL ANSWER',
+        replyMode: 'card',
+        messageId: card.messageId,
+        interactive: true,
+      }),
+      botAppId: APP,
+      now: () => 1_760_000_000_000,
+    })).rejects.toMatchObject({
+      cause: { response: { data: { code: 230002 } } },
+    });
+    expect(channel.sent).toHaveLength(before);
+  });
+
   it('uuid-sends with reply:<turnId> when a gone card has no stored deliveryId', async () => {
     const channel = createFakeChannel({ botAppId: APP });
     channel.updateCard = async () => {

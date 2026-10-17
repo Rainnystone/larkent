@@ -70,7 +70,10 @@ describe('automation lifecycle and observability', () => {
     expect(h.store.list().map((item) => item.chatId).sort()).toEqual([CHAT, OTHER]);
 
     h.channel.emitRaw('im.chat.member.bot.deleted_v1', { chat_id: CHAT });
-    await waitFor(() => h.store.list().every((item) => item.chatId !== CHAT));
+    const status = await waitForStatus(h, (snapshot) =>
+      h.store.list().every((item) => item.chatId !== CHAT)
+      && snapshot.items.map((item) => item.id).join() === '2',
+    );
 
     expect(h.store.list().map((item) => item.chatId)).toEqual([OTHER]);
     expect(h.store.getBoard(CHAT)).toBeUndefined();
@@ -79,10 +82,6 @@ describe('automation lifecycle and observability', () => {
     expect(chatBoardSends()).toBe(sendsBefore);
     expect(chatBoardUpdates()).toBe(updatesBefore);
 
-    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
-      v: number;
-      items: Array<{ id: number }>;
-    };
     expect(status.v).toBe(1);
     expect(status.items.map((item) => item.id)).toEqual([2]);
     expect(JSON.stringify(status)).not.toContain(TASK_BODY);
@@ -120,11 +119,12 @@ describe('automation lifecycle and observability', () => {
     const updatesBefore = h.channel.updatedCards.filter((item) => item.messageId === leftBoard.messageId).length;
 
     h.channel.emitRaw('im.chat.disbanded_v1', { event: { chat_id: CHAT } });
-    await waitFor(() => h.store.list().length === 0);
+    const status = await waitForStatus(h, (snapshot) =>
+      h.store.list().length === 0 && snapshot.items.length === 0,
+    );
 
     expect(h.store.getBoard(CHAT)).toBeUndefined();
     expect(h.channel.updatedCards.filter((item) => item.messageId === leftBoard.messageId)).toHaveLength(updatesBefore);
-    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as { items: unknown[] };
     expect(status.items).toEqual([]);
     expect(autoEvents().filter((entry) => entry.event === 'removed-from-chat')).toHaveLength(1);
     expect(JSON.stringify(autoEvents())).not.toContain(TASK_BODY);
@@ -156,20 +156,13 @@ describe('automation lifecycle and observability', () => {
       await h.channel.handlers.cardAction?.(
         boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
       );
-      await waitFor(async () => {
-        if (h.store.list().length !== 0) return false;
-        try {
-          const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as { items: unknown[] };
-          return status.items.length === 0;
-        } catch {
-          return false;
-        }
-      });
+      const status = await waitForStatus(h, (snapshot) =>
+        h.store.list().length === 0 && snapshot.items.length === 0,
+      );
       expect(h.store.getBoard(CHAT)).toBeUndefined();
       expect(h.channel.sent.filter((item) =>
         item.chatId === CHAT && isBoardContent(item.content),
       )).toHaveLength(sendsBefore);
-      const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as { items: unknown[] };
       expect(status.items).toEqual([]);
       expect(autoEvents().filter((entry) =>
         entry.event === 'removed-from-chat' && entry.fields.chatId === CHAT,
@@ -183,15 +176,9 @@ describe('automation lifecycle and observability', () => {
     await confirmOne(h, CHAT, 'om_new');
     h.channel.sendErrors.send = notInChatError(230002);
     await h.channel.handlers.message?.(mention('om_list', '/auto'));
-    await waitFor(async () => {
-      if (h.store.list().length !== 0) return false;
-      try {
-        const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as { items: unknown[] };
-        return status.items.length === 0;
-      } catch {
-        return false;
-      }
-    });
+    await waitForStatus(h, (snapshot) =>
+      h.store.list().length === 0 && snapshot.items.length === 0,
+    );
     expect(h.store.getBoard(CHAT)).toBeUndefined();
     expect(autoEvents().some((entry) => entry.event === 'removed-from-chat')).toBe(true);
     expect(JSON.stringify(autoEvents())).not.toContain(TASK_BODY);
@@ -501,4 +488,24 @@ async function waitFor(cond: () => boolean | Promise<boolean>, timeoutMs = 2000)
     if (Date.now() - start > timeoutMs) throw new Error('timed out waiting');
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
+}
+
+async function waitForStatus(
+  h: { statusPath: string },
+  pred: (status: { v: number; items: Array<{ id: number }> }) => boolean | Promise<boolean>,
+): Promise<{ v: number; items: Array<{ id: number }> }> {
+  let snapshot: { v: number; items: Array<{ id: number }> } | undefined;
+  await waitFor(async () => {
+    try {
+      snapshot = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
+        v: number;
+        items: Array<{ id: number }>;
+      };
+      return pred(snapshot);
+    } catch {
+      return false;
+    }
+  });
+  expect(snapshot, 'expected automations-status.json after leave').toBeDefined();
+  return snapshot!;
 }
