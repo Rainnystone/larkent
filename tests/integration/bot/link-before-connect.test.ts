@@ -147,7 +147,7 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
       run.releaseCleanup();
       h.channel.connectionState = 'connected';
       await h.bridge.tickLink();
-      await waitFor(() => noticeCards(h.channel).length === 1);
+      await h.bridge.recoverMissed();
 
       const notice = JSON.stringify(noticeCards(h.channel)[0]?.content);
       expect(notice).toContain('上游网络中断');

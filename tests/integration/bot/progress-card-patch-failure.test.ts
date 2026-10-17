@@ -39,6 +39,11 @@ const USER = 'ou_user';
 const ANSWER = 'STREAM_FINAL';
 const STREAM_ID = 'om_prog1234';
 
+interface PatchCalls {
+  n: number;
+  notify?: () => void;
+}
+
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -55,15 +60,17 @@ describe('larkent card path with failing progress patches', { timeout: 20_000 },
     };
     process.on('unhandledRejection', onUnhandled);
     const fail = vi.spyOn(log, 'fail').mockImplementation(() => {});
-    const patchCalls = { n: 0 };
+    const patchCalls: PatchCalls = { n: 0 };
 
     try {
       const h = await harness(patchCalls);
+      const runStarted = waitUntilRun(h.agent);
+      const patched = waitUntilPatched(patchCalls);
+      const finalPatch = waitUntilLogged(fail, 'stream', 'final-patch');
       await h.channel.handlers.message?.(mention('om_t17', 'please answer'));
-      await waitFor(() => h.agent.manual.length === 1);
-      const run = h.agent.manual[0]!;
+      const run = await runStarted;
       run.push({ type: 'text', delta: ANSWER });
-      await waitFor(() => patchCalls.n >= 1);
+      await patched;
       expect(rejections, String(rejections[0])).toEqual([]);
 
       run.push({ type: 'final_text', content: ANSWER });
@@ -71,24 +78,17 @@ describe('larkent card path with failing progress patches', { timeout: 20_000 },
       run.close();
       run.releaseCleanup();
 
-      await waitFor(() => h.journal.list().some((entry) => (
-        entry.messageIds.includes('om_t17')
-        && (entry.status === 'completed-undelivered' || entry.status === 'reply-delivered')
-      )));
+      await finalPatch;
       expect(rejections, String(rejections[0])).toEqual([]);
-      expect(fail.mock.calls.some((call) => (
-        call[0] === 'stream'
-        && (call[2] as { step?: string } | undefined)?.step === 'final-patch'
+      expect(h.journal.list().some((entry) => (
+        entry.messageIds.includes('om_t17') && entry.status === 'completed-undelivered'
       ))).toBe(true);
 
-      if (h.journal.list().some((entry) => (
-        entry.messageIds.includes('om_t17') && entry.status === 'completed-undelivered'
-      ))) {
-        await recoverLink(h);
-      }
-      await waitFor(() => h.journal.list().some((entry) => (
-        entry.messageIds.includes('om_t17') && entry.status === 'reply-delivered'
-      )));
+      const delivered = waitUntilReplyDelivered(h.journal, 'om_t17');
+      const cardPatched = waitUntilCardAnswer(h.channel);
+      await recoverLink(h);
+      await delivered;
+      await cardPatched;
       expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes(ANSWER))).toHaveLength(0);
       expect(
         h.channel.updatedCards.some((row) => (
@@ -103,7 +103,7 @@ describe('larkent card path with failing progress patches', { timeout: 20_000 },
   });
 });
 
-async function harness(patchCalls: { n: number }) {
+async function harness(patchCalls: PatchCalls) {
   const tmp = await createTmpProfile('progress-card-patch-');
   const file = join(tmp.profile, 'turn-journal.json');
   const journal = new TurnJournal(file);
@@ -146,7 +146,7 @@ async function harness(patchCalls: { n: number }) {
 
 function attachFailingCardStream(
   recording: ReturnType<typeof createRecordingLarkChannel>,
-  patchCalls: { n: number },
+  patchCalls: PatchCalls,
 ): void {
   if (!sdk.createReal) throw new Error('real createLarkChannel is not available');
   const real = sdk.createReal({
@@ -176,6 +176,7 @@ function attachFailingCardStream(
           reply: async () => ({ data: { message_id: STREAM_ID } }),
           patch: async () => {
             patchCalls.n += 1;
+            patchCalls.notify?.();
             throw PATCH_ERR;
           },
         },
@@ -204,6 +205,7 @@ function profile(workspace: string) {
 
 class StreamingFakeAgent extends FakeAgentAdapter {
   readonly manual: ReturnType<typeof manualRun>[] = [];
+  notifyRun?: () => void;
   constructor() {
     super({ id: 'claude' });
   }
@@ -211,6 +213,7 @@ class StreamingFakeAgent extends FakeAgentAdapter {
     const recorded = super.run(opts);
     const manual = manualRun(recorded);
     this.manual.push(manual);
+    this.notifyRun?.();
     return manual.run;
   }
 }
@@ -282,11 +285,78 @@ async function recoverLink(h: {
   await h.bridge.recoverMissed();
 }
 
-async function waitFor(predicate: () => boolean) {
-  const deadline = Date.now() + 8_000;
-  while (Date.now() < deadline) {
-    if (predicate()) return;
-    await new Promise((resolve) => setTimeout(resolve, 25));
+function waitUntilRun(agent: StreamingFakeAgent): Promise<ReturnType<typeof manualRun>> {
+  if (agent.manual[0]) return Promise.resolve(agent.manual[0]);
+  return new Promise((resolve) => {
+    agent.notifyRun = () => {
+      const run = agent.manual[0];
+      if (run) resolve(run);
+    };
+  });
+}
+
+function waitUntilPatched(patchCalls: PatchCalls): Promise<void> {
+  if (patchCalls.n >= 1) return Promise.resolve();
+  return new Promise((resolve) => {
+    patchCalls.notify = resolve;
+  });
+}
+
+function waitUntilLogged(
+  fail: {
+    mock: { calls: ReadonlyArray<readonly [string, unknown, { step?: unknown }?]> };
+    mockImplementation(impl: typeof log.fail): unknown;
+  },
+  phase: string,
+  step: string,
+): Promise<void> {
+  const matches = (loggedPhase: string, fields?: { step?: unknown }): boolean => (
+    loggedPhase === phase && fields?.step === step
+  );
+  if (fail.mock.calls.some(([loggedPhase, , fields]) => matches(loggedPhase, fields))) {
+    return Promise.resolve();
   }
-  throw new Error('expected progress-card patch-failure transition was not observed');
+  return new Promise((resolve) => {
+    fail.mockImplementation((loggedPhase, _err, fields) => {
+      if (matches(loggedPhase, fields)) resolve();
+    });
+  });
+}
+
+function waitUntilReplyDelivered(journal: TurnJournal, messageId: string): Promise<void> {
+  const delivered = (): boolean => journal.list().some((entry) => (
+    entry.messageIds.includes(messageId) && entry.status === 'reply-delivered'
+  ));
+  if (delivered()) return Promise.resolve();
+  const previous = journal.replyDelivered.bind(journal);
+  return new Promise((resolve) => {
+    journal.replyDelivered = ((turnId: string, id?: string) => {
+      previous(turnId, id);
+      if (delivered()) resolve();
+    }) as TurnJournal['replyDelivered'];
+  });
+}
+
+function waitUntilCardAnswer(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+): Promise<void> {
+  const has = (): boolean => channel.updatedCards.some((row) => (
+    row.messageId === STREAM_ID && JSON.stringify(row.card).includes(ANSWER)
+  ));
+  if (has()) return Promise.resolve();
+  const previous = channel.updateCard.bind(channel);
+  return new Promise((resolve, reject) => {
+    channel.updateCard = (async (
+      ...args: Parameters<typeof channel.updateCard>
+    ) => {
+      try {
+        const result = await previous(...args);
+        if (has()) resolve();
+        return result;
+      } catch (err) {
+        reject(err);
+        throw err;
+      }
+    }) as typeof channel.updateCard;
+  });
 }
