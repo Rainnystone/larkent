@@ -109,10 +109,9 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     expect(outboxSends(h.channel)).toHaveLength(1);
     expect(replyToOf(outboxSends(h.channel)[0])).toBeUndefined();
     expect(continuationBodies(h.channel)).toEqual([]);
-    expect(await readStatus(h.statusPath)).toEqual({
+    expect(await readStatus(h.statusPath)).toMatchObject({
       v: 1,
       bot: 'Pin Bot',
-      updatedAt: t0,
       items: [{
         id: 1,
         paused: false,
@@ -123,6 +122,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
         missed: 0,
       }],
     });
+    expect((await readStatus(h.statusPath)).updatedAt).toBeGreaterThanOrEqual(t0);
     await expect(h.store.readLog()).resolves.toEqual([]);
   });
 

@@ -123,8 +123,6 @@ describe('automation draft card delivery', () => {
       store: h.store,
       channel: h.channel as never,
       auth: new BoardActionAuth({ secret: 'board-secret', now: () => NOW }),
-      botDisplayName: () => 'Pin Bot',
-      now: () => NOW,
       lockPath: join(h.dir, 'board.lock'),
     });
     let refreshed = 0;

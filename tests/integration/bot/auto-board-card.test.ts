@@ -40,7 +40,7 @@ afterEach(async () => {
 });
 
 describe('automation board card', () => {
-  it('posts a pinned board whose status block matches the A0c snapshot after confirm, and pause updates it in place', async () => {
+  it('posts a pinned human-only board after confirm, and pause updates it in place', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const confirm = confirmCard(h);
@@ -55,12 +55,25 @@ describe('automation board card', () => {
     expect(board.text).toContain('暂停');
     expect(board.text).toContain('删除');
     expect(board.text).not.toContain('提醒交周报');
+    expectNoStatusBlock(board.text);
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([board.messageId]);
 
-    const block = statusBlock(board.text);
-    expect(block.v).toBe(1);
-    expect(block.bot).toBe('Pin Bot');
-    expect(block.items).toEqual([
+    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
+      v: number;
+      bot: string;
+      updatedAt: number;
+      items: Array<{
+        id: number;
+        paused: boolean;
+        nextFireAt: number;
+        lastFireAt: number;
+        lastStatus: string;
+        missed: number;
+      }>;
+    };
+    expect(status.v).toBe(1);
+    expect(status.bot).toBe('Pin Bot');
+    expect(status.items).toEqual([
       expect.objectContaining({
         id: 1,
         paused: false,
@@ -70,14 +83,9 @@ describe('automation board card', () => {
         missed: 0,
       }),
     ]);
-    expect(JSON.stringify(block)).not.toMatch(/\b(oc|om|ou|on)_[A-Za-z0-9]+/);
-    expect(JSON.stringify(block)).not.toContain('提醒交周报');
-    expect(JSON.stringify(block)).not.toContain(USER);
-
-    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as typeof block;
-    expect(status.v).toBe(1);
-    expect(status.items[0]).toMatchObject({ id: 1, paused: false, nextFireAt: FIRE_AT });
-    expect(status.updatedAt).toBe(block.updatedAt);
+    expect(JSON.stringify(status)).not.toMatch(/\b(oc|om|ou|on)_[A-Za-z0-9]+/);
+    expect(JSON.stringify(status)).not.toContain('提醒交周报');
+    expect(JSON.stringify(status)).not.toContain(USER);
     await expect(readFile(h.logPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
 
     const sendsBeforePause = h.channel.sent.filter((item) => isBoardContent(item.content)).length;
@@ -90,10 +98,14 @@ describe('automation board card', () => {
     const paused = latestBoard(h);
     expect(paused.messageId).toBe(board.messageId);
     expect(h.channel.sent.filter((item) => isBoardContent(item.content))).toHaveLength(sendsBeforePause);
-    expect(statusBlock(paused.text).items[0]?.paused).toBe(true);
-    expect(statusBlock(paused.text).updatedAt).toBeGreaterThan(block.updatedAt);
+    expectNoStatusBlock(paused.text);
     expect(h.store.get(1)?.paused).toBe(true);
-    expect(JSON.parse(await readFile(h.statusPath, 'utf8')).items[0].paused).toBe(true);
+    const pausedStatus = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
+      updatedAt: number;
+      items: Array<{ paused: boolean }>;
+    };
+    expect(pausedStatus.items[0]?.paused).toBe(true);
+    expect(pausedStatus.updatedAt).toBeGreaterThan(status.updatedAt);
 
     await h.channel.handlers.cardAction?.(
       boardClick(MATE, originalPause, paused.messageId, 'auto.pause'),
@@ -133,13 +145,14 @@ describe('automation board card', () => {
     expect(board.text).toContain('已错过 原定 2026-01-02 12:00');
     expect(board.text).toContain('已错过 原定 2026-01-02 13:00');
     expect(board.text).not.toContain('secret ping body');
-    const block = statusBlock(board.text);
-    expect(block.v).toBe(1);
-    expect(block.items[0]).toMatchObject({ id: 1, missed: 2 });
-    expect(JSON.stringify(block)).not.toContain('secret ping body');
-    expect(JSON.stringify(block)).not.toContain(USER);
+    expectNoStatusBlock(board.text);
 
-    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as typeof block;
+    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
+      items: Array<{ id: number; missed: number }>;
+    };
+    expect(status.items[0]).toMatchObject({ id: 1, missed: 2 });
+    expect(JSON.stringify(status)).not.toContain('secret ping body');
+    expect(JSON.stringify(status)).not.toContain(USER);
     expect(status.items[0]?.missed).toBe(2);
     const logEntries = (await readFile(h.logPath, 'utf8'))
       .trim()
@@ -200,7 +213,7 @@ describe('automation board card', () => {
     await waitFor(() => h.channel.updatedCards.length > updatesBefore);
     expect(latestBoard(h).messageId).toBe(first.messageId);
     expect(boardSends()).toBe(1);
-    expect(statusBlock(latestBoard(h).text).v).toBe(1);
+    expectNoStatusBlock(latestBoard(h).text);
   });
 
   it('lists and mutates tasks through /auto fallback commands', async () => {
@@ -212,7 +225,7 @@ describe('automation board card', () => {
 
     await h.channel.handlers.message?.(mention('om_pause', '/auto pause 1'));
     expect(h.store.get(1)?.paused).toBe(true);
-    expect(statusBlock(latestBoard(h).text).items[0]?.paused).toBe(true);
+    expectNoStatusBlock(latestBoard(h).text);
 
     await h.channel.handlers.message?.(mention('om_resume', '/auto resume 1'));
     expect(h.store.get(1)?.paused).toBe(false);
@@ -233,7 +246,8 @@ describe('automation board card', () => {
     );
     const next = latestBoard(h);
     expect(next.messageId).not.toBe(first.messageId);
-    expect(statusBlock(next.text).items[0]?.paused).toBe(true);
+    expectNoStatusBlock(next.text);
+    expect(h.store.get(1)?.paused).toBe(true);
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next.messageId]);
   });
 
@@ -311,6 +325,51 @@ describe('automation board card', () => {
     expect(order.at(-1)).toBe('update');
   });
 
+  it('does not POST status when endpoint or secret is missing', async () => {
+    const fetchImpl = vi.fn(async () => new Response(null, { status: 204 }));
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      const h = await harness();
+      await confirmOne(h);
+      expectNoStatusBlock(latestBoard(h).text);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('POSTs a signed v2 payload after confirm when status push is configured', async () => {
+    const posts: Array<{ url: string; body: string }> = [];
+    const fetchImpl = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      posts.push({ url: String(input), body: String(init?.body ?? '') });
+      return new Response(null, { status: 204 });
+    });
+    vi.stubGlobal('fetch', fetchImpl);
+    try {
+      const h = await harness({
+        statusEndpoint: 'https://status.test',
+        statusSecret: 'unit-status-secret',
+      });
+      await confirmOne(h);
+      await waitFor(() => posts.length > 0, 5_000);
+      expect(posts[0]?.url).toBe('https://status.test/v1/status');
+      const body = JSON.parse(posts[0]!.body) as {
+        v: number;
+        botKey: string;
+        items: Array<{ id: string; lastFireAt: number; paused: boolean }>;
+      };
+      expect(body.v).toBe(2);
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0]?.paused).toBe(false);
+      expect(JSON.stringify(body)).not.toMatch(/\b(oc|om|ou|on|cli)_/);
+      expect(JSON.stringify(body)).not.toContain('交周报');
+      expect(JSON.stringify(body)).not.toContain('unit-status-secret');
+      expectNoStatusBlock(latestBoard(h).text);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('rejects p2p /auto and does not create a board when automations are off', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_dm', '/auto', { chatType: 'p2p' }));
@@ -323,7 +382,13 @@ describe('automation board card', () => {
   });
 });
 
-async function harness(opts: { enabled?: boolean; nowMs?: number; rawCardFallback?: boolean } = {}) {
+async function harness(opts: {
+  enabled?: boolean;
+  nowMs?: number;
+  rawCardFallback?: boolean;
+  statusEndpoint?: string;
+  statusSecret?: string;
+} = {}) {
   const tmp = await createTmpProfile('auto-board-');
   const mediaDir = join(tmp.profile, 'media');
   await mkdir(mediaDir, { recursive: true });
@@ -353,6 +418,8 @@ async function harness(opts: { enabled?: boolean; nowMs?: number; rawCardFallbac
     enabled: opts.enabled ?? true,
     agentTasks: false,
     timezone: 'Asia/Shanghai',
+    ...(opts.statusEndpoint ? { statusEndpoint: opts.statusEndpoint } : {}),
+    ...(opts.statusSecret ? { statusSecret: opts.statusSecret } : {}),
   };
   cfg.workspaces.default = tmp.workspace;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
@@ -542,25 +609,10 @@ function messageIdFromSend(
   return `om_fake_${index + 1}`;
 }
 
-function statusBlock(cardJson: string): {
-  v: number;
-  bot: string;
-  updatedAt: number;
-  items: Array<{
-    id: number;
-    paused: boolean;
-    nextFireAt: number;
-    lastFireAt: number;
-    lastStatus: string;
-    endAt: number;
-    missed: number;
-  }>;
-} {
-  const escaped = cardJson.indexOf('{\\"v\\":1');
-  const source = escaped >= 0 ? cardJson.slice(escaped).replace(/\\"/g, '"') : cardJson;
-  const match = source.match(/\{"v":1,[\s\S]*?"items":\[[^\]]*\]\}/);
-  expect(match?.[0], 'expected a status block v1 JSON note').toBeDefined();
-  return JSON.parse(match![0]!) as ReturnType<typeof statusBlock>;
+function expectNoStatusBlock(cardJson: string): void {
+  expect(cardJson).not.toContain('notation');
+  expect(cardJson).not.toContain('"v":1');
+  expect(cardJson).not.toContain('"v":2');
 }
 
 async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {

@@ -56,14 +56,12 @@ describe('automation cards are CardKit schema 2.0', () => {
     const auth = new BoardActionAuth({ secret: 'board-secret', now: () => NOW });
     const board = automationBoardCard({
       items: [],
-      status: { v: 1, bot: 'Pin Bot', updatedAt: NOW, items: [] },
       auth,
     });
     assertCardSchema2(board);
     expect((board as { config?: { update_multi?: boolean } }).config?.update_multi).toBe(true);
     assertCardSchema2(automationBoardCard({
       items: [item({ paused: true, lastStatus: 'ok' })],
-      status: { v: 1, bot: 'Pin Bot', updatedAt: NOW, items: [] },
       auth,
     }));
     assertCardSchema2(automationBoardCard({
@@ -71,7 +69,6 @@ describe('automation cards are CardKit schema 2.0', () => {
         missedInstants: [{ fireAt: NOW, recordedAt: NOW }],
         skippedInstants: [{ fireAt: NOW + 60_000, recordedAt: NOW, reason: 'previous-run-unsettled' }],
       })],
-      status: { v: 1, bot: 'Pin Bot', updatedAt: NOW, items: [] },
       auth,
     }));
   });

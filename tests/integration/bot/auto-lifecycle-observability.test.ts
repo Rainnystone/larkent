@@ -66,7 +66,8 @@ describe('automation lifecycle and observability', () => {
     const sendsBefore = chatBoardSends();
     const updatesBefore = chatBoardUpdates();
     expect(leftBoard.text).toContain('#1');
-    expect(statusBlock(leftBoard.text).items.map((item) => item.id)).toEqual([1]);
+    expectNoStatusBlock(leftBoard.text);
+    expect(h.store.list().filter((item) => item.chatId === CHAT).map((item) => item.id)).toEqual([1]);
     expect(h.store.list().map((item) => item.chatId).sort()).toEqual([CHAT, OTHER]);
 
     h.channel.emitRaw('im.chat.member.bot.deleted_v1', { chat_id: CHAT });
@@ -88,7 +89,8 @@ describe('automation lifecycle and observability', () => {
     expect(JSON.stringify(status)).not.toContain('secret other body');
 
     const otherBoard = boardForChat(h, OTHER);
-    expect(statusBlock(otherBoard.text).items.map((item) => item.id)).toEqual([2]);
+    expectNoStatusBlock(otherBoard.text);
+    expect(h.store.list().filter((item) => item.chatId === OTHER).map((item) => item.id)).toEqual([2]);
     expect(JSON.stringify(otherBoard.text)).not.toContain(TASK_BODY);
 
     const removed = autoEvents().filter((entry) => entry.event === 'removed-from-chat');
@@ -143,7 +145,8 @@ describe('automation lifecycle and observability', () => {
     expect(gone.store.list()).toHaveLength(1);
     const replaced = boardForChat(gone, CHAT);
     expect(replaced.messageId).not.toBe(first.messageId);
-    expect(statusBlock(replaced.text).items[0]?.paused).toBe(true);
+    expectNoStatusBlock(replaced.text);
+    expect(gone.store.get(1)?.paused).toBe(true);
 
     for (const code of [230002, 232009] as const) {
       const h = await harness();
@@ -462,15 +465,10 @@ function boardForChat(
   };
 }
 
-function statusBlock(cardJson: string): {
-  v: number;
-  items: Array<{ id: number; paused: boolean }>;
-} {
-  const escaped = cardJson.indexOf('{\\"v\\":1');
-  const source = escaped >= 0 ? cardJson.slice(escaped).replace(/\\"/g, '"') : cardJson;
-  const match = source.match(/\{"v":1,[\s\S]*?"items":\[[^\]]*\]\}/);
-  expect(match?.[0], 'expected a status block v1 JSON note').toBeDefined();
-  return JSON.parse(match![0]!) as ReturnType<typeof statusBlock>;
+function expectNoStatusBlock(cardJson: string): void {
+  expect(cardJson).not.toContain('notation');
+  expect(cardJson).not.toContain('"v":1');
+  expect(cardJson).not.toContain('"v":2');
 }
 
 function autoEvents(): Array<{ event: string; fields: Record<string, unknown> }> {

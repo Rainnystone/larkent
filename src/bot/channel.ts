@@ -849,10 +849,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       store: deps.automations,
       channel,
       auth: automationsCtl.boardAuth,
-      botDisplayName: () => channel.botIdentity?.name ?? 'bot',
       lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
       onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
-      ...(deps.now ? { now: deps.now } : {}),
     });
     const automationOutbox: AutomationDeliveryDeps = {
       journal,
@@ -902,6 +900,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       onChanged: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
       wakeDir: deps.appPaths?.automationsWakeDir
         ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
+      statusPush: {
+        profile: controls.profile,
+        ...(controls.profileConfig.automations.statusEndpoint
+          ? { endpoint: controls.profileConfig.automations.statusEndpoint }
+          : {}),
+        ...(controls.profileConfig.automations.statusSecret
+          ? { secret: controls.profileConfig.automations.statusSecret }
+          : {}),
+      },
     });
     detachAutomationChatLifecycle = attachAutomationChatLifecycle(channel, (chatId) =>
       automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),

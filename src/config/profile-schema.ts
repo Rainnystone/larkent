@@ -143,6 +143,10 @@ export interface AutomationsConfig {
   enabled: boolean;
   agentTasks: boolean;
   timezone: string;
+  /** Optional larkent-monitor origin. Missing or blank disables status push. */
+  statusEndpoint?: string;
+  /** Shared HMAC secret for status push. Never logged. Missing disables push. */
+  statusSecret?: string;
 }
 
 export const DEFAULT_AUTOMATION_TIMEZONE = 'Asia/Shanghai';
@@ -592,17 +596,29 @@ function normalizeAutomations(input: unknown): AutomationsConfig {
     enabled?: unknown;
     agentTasks?: unknown;
     timezone?: unknown;
+    statusEndpoint?: unknown;
+    statusSecret?: unknown;
   };
   const timezone = typeof raw.timezone === 'string'
     && raw.timezone.trim() === raw.timezone
     && isValidTimeZone(raw.timezone)
     ? raw.timezone
     : AUTOMATIONS_DEFAULTS.timezone;
+  const statusEndpoint = optionalTrimmed(raw.statusEndpoint);
+  const statusSecret = optionalTrimmed(raw.statusSecret);
   return {
     enabled: raw.enabled === true,
     agentTasks: raw.agentTasks === true,
     timezone,
+    ...(statusEndpoint ? { statusEndpoint } : {}),
+    ...(statusSecret ? { statusSecret } : {}),
   };
+}
+
+function optionalTrimmed(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const next = value.trim();
+  return next ? next : undefined;
 }
 
 function normalizeLarkCli(input: unknown): LarkCliConfig {

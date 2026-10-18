@@ -97,36 +97,38 @@ Staged rollout is an operations choice, not product behavior: enable on one prof
 
 ## Automations monitor hook
 
-This section is the contract larkent-monitor follows. The monitor is a private Cloudflare Worker (scan pinned board → wake webhook → this always-on box). It is not in this repo. No GitHub Action. Other PCs are out of scope. At most one wake per fire key, and only after a miss (no pre-wake).
+This section is the contract larkent-monitor follows. The monitor is a private Cloudflare Worker (`POST /v1/status` → scan → wake webhook → this always-on box). It is not in this repo. No GitHub Action. Other PCs are out of scope. At most one wake per fire key, and only after a miss (no pre-wake). The pinned board card is human-only.
 
-### Status block v1
+### Status push v2
 
-The pinned per-bot board card includes a visible notation markdown note. Feishu's simplified render keeps that note text and drops HTML comments and button values. Parse the first JSON object whose `"v"` is `1`:
+Set optional profile keys `automations.statusEndpoint` (origin, no path) and `automations.statusSecret`. Either missing disables push; automations still run locally. The secret is never written to logs.
+
+`POST <statusEndpoint>/v1/status` with JSON body and headers `x-timestamp` (UTC millis) and `x-signature` = hex `HMAC-SHA256(secret, timestamp + "." + body)`. Monitor accepts when the timestamp is within ±5 minutes **and** `updatedAt` is strictly greater than the last value for that `botKey`.
 
 ```json
-{"v":1,"bot":"<display name>","updatedAt":0,"items":[{"id":3,"paused":false,"nextFireAt":0,"lastFireAt":0,"lastStatus":"ok","endAt":0,"missed":0}]}
+{"v":2,"botKey":"<opaque>","updatedAt":0,"items":[{"id":"<opaque>","nextFires":[0],"lastFireAt":0,"paused":false,"endAt":0}]}
 ```
 
 | Field | Meaning |
 | --- | --- |
-| `v` | Always `1` |
-| `bot` | Bot display name, not a Feishu id |
-| `updatedAt` | Card-level UTC millis of this render |
-| `items[].id` | Per-profile short automation id (same as `/auto`, never reused, never a Feishu id) |
+| `v` | Always `2` |
+| `botKey` | HMAC of the profile name under the shared secret, truncated. Not a Feishu id. Rotating the secret changes every key. |
+| `updatedAt` | Monotonic UTC millis from the bridge. Used only for upsert; not for miss detection. |
+| `items[].id` | HMAC of `profile:number` under the shared secret, truncated. Not the `/auto` number. |
+| `items[].nextFires` | Future planned instants, UTC millis: those in the next 24 hours up to 24 entries, or the single next fire if it is later. Empty when paused or there is no further fire. |
+| `items[].lastFireAt` | Last started planned instant UTC millis; `0` if none |
 | `items[].paused` | Pause state |
-| `items[].nextFireAt` | Planned fire UTC millis; `0` means no further fire |
-| `items[].lastFireAt` | Last started planned instant UTC millis |
-| `items[].lastStatus` | `ok` \| `missed` \| `failed` \| `running` |
 | `items[].endAt` | End UTC millis; `0` if none |
-| `items[].missed` | Count of 已错过 instants (not catch-ups) |
 
-Times are UTC milliseconds. The block contains no Feishu IDs, task text, or creator. The on-disk source of truth is `<data-root>/profiles/<profile>/automations-status.json`.
+The body is a full replace for that `botKey`. Times are UTC milliseconds. No Feishu IDs, chat names, bot names, task text, schedule rules, or creator. The on-disk source of truth is `<data-root>/profiles/<profile>/automations-status.json`.
 
 ### Miss rule and fire key
 
-An item is missed iff `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`. `now == nextFireAt` is not a miss. Paused items are not missed.
+For each unpaused item, `t` is the earliest `nextFires` value with `t > lastFireAt`. Miss when `now > t + scanSlack` (`scanSlack` covers push delay, about 2 minutes). `updatedAt` is not part of this predicate. If every listed `nextFires` is `≤ lastFireAt` or is already past and uncovered, miss on the earliest uncovered instant (the window ran out without another push).
 
-Fire key: `<id>@<nextFireAt>`, for example `3@1792218600000`. Wake at most once per key. After a miss, Larkent catch-up (restart, link recovery, or this wake) runs the latest eligible instant at most once within 24 hours; older instants are 已错过 and are not sent.
+Larkent's own catch-up still uses `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`. `now == nextFireAt` is not a miss. Paused items are not missed.
+
+Fire key: `<id>@<nextFireAt>`, for example `3@1792218600000` (local `/auto` id, not the opaque push id). Wake at most once per key. After a miss, Larkent catch-up (restart, link recovery, or this wake) runs the latest eligible instant at most once within 24 hours; older instants are 已错过 and are not sent.
 
 ### Local wake CLI
 

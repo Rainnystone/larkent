@@ -100,8 +100,6 @@ async function harness() {
     store,
     channel: channel as never,
     auth: new BoardActionAuth({ secret: 'board-secret', now: () => NOW }),
-    botDisplayName: () => 'Pin Bot',
-    now: () => NOW,
     lockPath: join(dir, 'board.lock'),
   });
   return { logsDir, store, channel, board, itemId: item.id };

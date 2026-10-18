@@ -7,6 +7,10 @@ import {
   formatFireKey,
   type Schedule,
 } from '../../../src/automations/schedule';
+import {
+  STATUS_PUSH_DEBOUNCE_MS,
+  STATUS_PUSH_MAX_NEXT_FIRES,
+} from '../../../src/automations/status-push';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { automationBoardCard } from '../../../src/automations/board-card';
 import { simplifiedBoardRender } from '../../../src/automations/status-block';
@@ -19,7 +23,6 @@ import {
   AUTOMATIONS_MISSED_TTL_MS,
   AUTOMATIONS_STARTED_KEY_WINDOW_MS,
   AutomationsStore,
-  type AutomationsStatusSnapshot,
   type CreateAutomationInput,
 } from '../../../src/automations/store';
 import { log } from '../../../src/core/logger';
@@ -102,6 +105,12 @@ async function harness(nowMs: number, opts?: {
   agentTasks?: () => boolean;
   setTimeout?: (fn: () => void, delayMs: number) => unknown;
   onChanged?: () => void | Promise<void>;
+  statusPush?: {
+    endpoint?: string;
+    secret?: string;
+    profile: string;
+    fetch?: typeof fetch;
+  };
 }) {
   const dir = await mkdtemp(join(tmpdir(), 'automations-scheduler-'));
   dirs.push(dir);
@@ -131,6 +140,7 @@ async function harness(nowMs: number, opts?: {
     ...(opts?.isLinkUp ? { isLinkUp: opts.isLinkUp } : {}),
     ...(opts?.agentTasks ? { agentTasks: opts.agentTasks } : {}),
     ...(opts?.onChanged ? { onChanged: opts.onChanged } : {}),
+    ...(opts?.statusPush ? { statusPush: opts.statusPush } : {}),
   });
   schedulers.push(scheduler);
   return {
@@ -211,12 +221,15 @@ async function readStatus(path: string) {
   };
 }
 
-function statusFromStore(store: AutomationsStore, bot: string, updatedAt: number) {
-  return {
+async function expectStatusMatchesStore(h: {
+  store: AutomationsStore;
+  statusPath: string;
+}): Promise<void> {
+  const status = await readStatus(h.statusPath);
+  expect(status).toMatchObject({
     v: 1,
-    bot,
-    updatedAt,
-    items: store.list().map((item) => ({
+    bot: 'Grok Bot',
+    items: h.store.list().map((item) => ({
       id: item.id,
       paused: item.paused,
       nextFireAt: item.nextFireAt,
@@ -225,7 +238,7 @@ function statusFromStore(store: AutomationsStore, bot: string, updatedAt: number
       endAt: item.endAt,
       missed: item.missed,
     })),
-  };
+  });
 }
 
 describe('automation scheduler', () => {
@@ -756,15 +769,13 @@ describe('automation scheduler', () => {
     const item = await h.store.create(reminderInput({ nextFireAt: t0, name: 'status' }));
     await h.scheduler.start();
     await h.clock.advanceTo(t0, () => h.scheduler.idle());
-    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+    await expectStatusMatchesStore(h);
 
     const catchUp = await harness(t0 + 2 * HOUR + 1);
     await catchUp.store.create(reminderInput({ nextFireAt: t0, name: 'catch' }));
     await catchUp.scheduler.start();
     await catchUp.scheduler.idle();
-    expect(await readStatus(catchUp.statusPath)).toEqual(
-      statusFromStore(catchUp.store, 'Grok Bot', catchUp.clock.now()),
-    );
+    await expectStatusMatchesStore(catchUp);
 
     const abandon = await harness(t0 + CATCH_UP_WINDOW_MS + HOUR);
     await abandon.store.create(reminderInput({
@@ -780,17 +791,15 @@ describe('automation scheduler', () => {
     }));
     await abandon.scheduler.start();
     await abandon.scheduler.idle();
-    expect(await readStatus(abandon.statusPath)).toEqual(
-      statusFromStore(abandon.store, 'Grok Bot', abandon.clock.now()),
-    );
+    await expectStatusMatchesStore(abandon);
 
     await h.scheduler.pause(item.id);
     await h.scheduler.idle();
-    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+    await expectStatusMatchesStore(h);
 
     await h.scheduler.delete(item.id);
     await h.scheduler.idle();
-    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+    await expectStatusMatchesStore(h);
   });
 
   it('after catch-up keeps a fire due exactly now for the on-time path', async () => {
@@ -823,7 +832,7 @@ describe('automation scheduler', () => {
     expect(h.notices).toEqual([
       expect.objectContaining({ missedFires: [t0, t0 + HOUR] }),
     ]);
-    expect(await readStatus(h.statusPath)).toEqual(statusFromStore(h.store, 'Grok Bot', h.clock.now()));
+    await expectStatusMatchesStore(h);
   });
 
   it('skips the next agent fire while the previous run is unsettled and leaves a board and log trace', async () => {
@@ -872,11 +881,11 @@ describe('automation scheduler', () => {
     const item = h.store.get(1);
     const rendered = simplifiedBoardRender(automationBoardCard({
       items: item ? [item] : [],
-      status: status as AutomationsStatusSnapshot,
       auth: new BoardActionAuth({ secret: 'board-secret', now: () => h.clock.now() }),
     }));
     expect(rendered).toContain('已跳过 原定 2026-01-02 13:00');
-    expect(rendered).toContain('"lastStatus":"running"');
+    expect(rendered).not.toMatch(/\{/);
+    expect(status.items[0]).toMatchObject({ lastStatus: 'running' });
     release();
   });
 
@@ -1113,11 +1122,11 @@ describe('automation scheduler', () => {
     const item = h.store.get(1);
     const rendered = simplifiedBoardRender(automationBoardCard({
       items: item ? [item] : [],
-      status: status as AutomationsStatusSnapshot,
       auth: new BoardActionAuth({ secret: 'board-secret', now: () => h.clock.now() }),
     }));
     expect(rendered).toContain('已跳过 原定 2026-01-02 13:00');
-    expect(rendered).toContain('"lastStatus":"running"');
+    expect(rendered).not.toMatch(/\{/);
+    expect(status.items[0]).toMatchObject({ lastStatus: 'running' });
     expect(h.clock.pendingCount()).toBe(1);
     expect(delays.at(-1)).toBe(60_000);
   });
@@ -1439,5 +1448,146 @@ describe('automation scheduler', () => {
         triggerSource: 'wake',
       }),
     ]);
+  });
+
+  it('pushes lastFireAt equal to the planned instant when a fire starts, and does not push mid-window', async () => {
+    const posts: string[] = [];
+    const h = await harness(t0 - 1, {
+      statusPush: {
+        endpoint: 'https://status.test',
+        secret: 'unit-status-secret',
+        profile: 'test-profile',
+        fetch: (async (_url: string | URL, init?: RequestInit) => {
+          posts.push(String(init?.body ?? ''));
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      },
+    });
+    await h.store.create(reminderInput({
+      schedule: {
+        kind: 'interval',
+        timezone: 'UTC',
+        everyMs: 10 * HOUR,
+        startAt: t0,
+        endAt: t0 + 365 * 24 * HOUR,
+      },
+      nextFireAt: t0,
+    }));
+    await h.scheduler.start();
+    await h.clock.advanceTo(t0, () => h.scheduler.idle());
+    await h.clock.advanceTo(t0 + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    expect(h.fires.map((fire) => fire.fireAt)).toEqual([t0]);
+    const fired = JSON.parse(posts.at(-1)!) as {
+      items: Array<{ lastFireAt: number; nextFires: number[] }>;
+    };
+    expect(fired.items[0]?.lastFireAt).toBe(t0);
+    expect(fired.items[0]?.nextFires[0]).toBe(t0 + 10 * HOUR);
+    const afterFire = posts.length;
+
+    await h.clock.advanceTo(t0 + 5 * HOUR, () => h.scheduler.idle());
+    expect(posts).toHaveLength(afterFire);
+    expect(STATUS_PUSH_MAX_NEXT_FIRES).toBe(24);
+  });
+
+  it('pushes after a skipped slot advances state', async () => {
+    const posts: string[] = [];
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const h = await harness(t0, {
+      send: () => hold,
+      statusPush: {
+        endpoint: 'https://status.test',
+        secret: 'unit-status-secret',
+        profile: 'test-profile',
+        fetch: (async (_url: string | URL, init?: RequestInit) => {
+          posts.push(String(init?.body ?? ''));
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      },
+    });
+    await h.store.create(reminderInput({
+      taskType: 'agent',
+      cwd: h.dir,
+      nextFireAt: t0,
+      name: '汇总',
+      taskText: '每天总结本群',
+    }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    await h.clock.advanceTo(t0 + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    posts.length = 0;
+    await h.clock.advanceTo(t0 + HOUR, () => h.scheduler.idle());
+    await h.clock.advanceTo(t0 + HOUR + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    expect(h.store.get(1)?.skippedInstants.map((entry) => entry.fireAt)).toEqual([t0 + HOUR]);
+    const body = JSON.parse(posts.at(-1)!) as { items: Array<{ lastFireAt: number }> };
+    expect(body.items[0]?.lastFireAt).toBe(t0);
+    release();
+  });
+
+  it('pushes on startup and again on link recovery', async () => {
+    const posts: string[] = [];
+    const h = await harness(t0, {
+      statusPush: {
+        endpoint: 'https://status.test',
+        secret: 'unit-status-secret',
+        profile: 'test-profile',
+        fetch: (async (_url: string | URL, init?: RequestInit) => {
+          posts.push(String(init?.body ?? ''));
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      },
+    });
+    await h.store.create(reminderInput({ nextFireAt: t0 + HOUR }));
+    await h.scheduler.start();
+    await h.clock.advanceTo(t0 + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    expect(posts).toHaveLength(1);
+    const started = JSON.parse(posts[0]!) as { items: Array<{ lastFireAt: number; nextFires: number[] }> };
+    expect(started.items[0]?.lastFireAt).toBe(0);
+    expect(started.items[0]?.nextFires[0]).toBe(t0 + HOUR);
+
+    posts.length = 0;
+    await h.scheduler.onLinkRecovered();
+    await h.clock.advanceTo(h.clock.now() + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    expect(posts).toHaveLength(1);
+    const recovered = JSON.parse(posts[0]!) as { items: Array<{ nextFires: number[] }> };
+    expect(recovered.items[0]?.nextFires[0]).toBe(t0 + HOUR);
+  });
+
+  it('pushes after a missed instant advances nextFireAt', async () => {
+    const posts: string[] = [];
+    const fireAt = t0;
+    const now = fireAt + CATCH_UP_WINDOW_MS + HOUR;
+    const h = await harness(now, {
+      statusPush: {
+        endpoint: 'https://status.test',
+        secret: 'unit-status-secret',
+        profile: 'test-profile',
+        fetch: (async (_url: string | URL, init?: RequestInit) => {
+          posts.push(String(init?.body ?? ''));
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      },
+    });
+    await h.store.create(reminderInput({
+      schedule: {
+        kind: 'interval',
+        timezone: 'UTC',
+        everyMs: 48 * HOUR,
+        startAt: fireAt,
+        endAt: fireAt + 365 * 24 * HOUR,
+      },
+      nextFireAt: fireAt,
+    }));
+    await h.scheduler.start();
+    await h.clock.advanceTo(now + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    expect(h.fires).toEqual([]);
+    expect(h.store.get(1)?.missed).toBe(1);
+    expect(h.store.get(1)?.nextFireAt).toBe(fireAt + 48 * HOUR);
+    expect(posts).toHaveLength(1);
+    const body = JSON.parse(posts[0]!) as { items: Array<{ lastFireAt: number; nextFires: number[] }> };
+    expect(body.items[0]?.lastFireAt).toBe(0);
+    expect(body.items[0]?.nextFires).toEqual([fireAt + 48 * HOUR]);
   });
 });

@@ -7,11 +7,10 @@ import {
   type Schedule,
 } from '../../../src/automations/schedule';
 import {
-  parseStatusBlock,
   simplifiedBoardRender,
   statusBlockIsMissed,
 } from '../../../src/automations/status-block';
-import type { AutomationItem, AutomationsStatusSnapshot } from '../../../src/automations/store';
+import type { AutomationItem } from '../../../src/automations/store';
 
 const FIRE = Date.UTC(2026, 0, 2, 12, 0, 0);
 const SCHEDULE: Schedule = { kind: 'one-shot', fireAt: FIRE };
@@ -40,56 +39,29 @@ function item(overrides: Partial<AutomationItem> = {}): AutomationItem {
   };
 }
 
-function snapshotFor(live: AutomationItem, now: number): AutomationsStatusSnapshot {
-  return {
-    v: 1,
-    bot: 'Grok Bot',
-    updatedAt: now,
-    items: [{
-      id: live.id,
-      paused: live.paused,
-      nextFireAt: live.nextFireAt,
-      lastFireAt: live.lastFireAt,
-      lastStatus: live.lastStatus,
-      endAt: live.endAt,
-      missed: live.missed,
-    }],
-  };
-}
-
 describe('monitor status-block contract', () => {
-  it('parses v1 from the simplified board render and matches Larkent isMissed for the same now', () => {
+  it('keeps the board human-only and matches Larkent isMissed for the same now', () => {
     const live = item();
     const now = FIRE + 1;
     const card = automationBoardCard({
       items: [live],
-      status: snapshotFor(live, now),
       auth: new BoardActionAuth({ secret: 'board-secret', now: () => now }),
     });
     const simplified = simplifiedBoardRender(card);
-    expect(simplified).toContain('"v":1');
-    expect(simplified).toContain('"id":3');
+    expect(simplified).not.toContain('"v":1');
+    expect(simplified).not.toMatch(/\{/);
     expect(simplified).not.toContain('auto_token');
     expect(simplified).not.toContain('secret ping body');
     expect(simplified).not.toContain('ou_alice');
     expect(simplified).not.toContain('oc_group');
+    expect(JSON.stringify(card)).not.toContain('notation');
 
-    const parsed = parseStatusBlock(simplified);
-    expect(parsed?.v).toBe(1);
-    expect(parsed?.bot).toBe('Grok Bot');
-    expect(parsed?.items).toEqual([
-      {
-        id: 3,
-        paused: false,
-        nextFireAt: FIRE,
-        lastFireAt: 0,
-        lastStatus: 'ok',
-        endAt: FIRE,
-        missed: 0,
-      },
-    ]);
-
-    const hookItem = parsed!.items[0]!;
+    const hookItem = {
+      id: live.id,
+      paused: live.paused,
+      nextFireAt: live.nextFireAt,
+      lastFireAt: live.lastFireAt,
+    };
     const cases = [
       { name: 'now == nextFireAt', at: FIRE },
       { name: 'just after nextFireAt', at: FIRE + 1 },
@@ -114,42 +86,5 @@ describe('monitor status-block contract', () => {
     expect(statusBlockIsMissed({ ...hookItem, paused: true }, FIRE + 1)).toBe(false);
     expect(statusBlockIsMissed({ ...hookItem, lastFireAt: FIRE }, FIRE + 1)).toBe(false);
     expect(statusBlockIsMissed({ ...hookItem, nextFireAt: 0 }, FIRE + 1)).toBe(false);
-  });
-
-  it('reads v1 from a schema 2.0 board object and from the message readback shape', () => {
-    const live = item({ id: 7, paused: true });
-    const updatedAt = FIRE + 50;
-    const card = automationBoardCard({
-      items: [live],
-      status: snapshotFor(live, updatedAt),
-      auth: new BoardActionAuth({ secret: 'board-secret', now: () => updatedAt }),
-    });
-    const fromObject = parseStatusBlock(simplifiedBoardRender(card));
-    expect(fromObject).toMatchObject({ v: 1, updatedAt, items: [{ id: 7, paused: true }] });
-
-    const status = JSON.stringify(snapshotFor(live, updatedAt));
-    const readback = JSON.stringify({
-      body: {
-        elements: [
-          {
-            tag: 'form',
-            name: 'ignored',
-            elements: [
-              {
-                tag: 'column_set',
-                columns: [
-                  {
-                    tag: 'column',
-                    elements: [{ tag: 'markdown', content: status, text_size: 'notation' }],
-                  },
-                ],
-              },
-            ],
-          },
-        ],
-      },
-    });
-    const fromReadback = parseStatusBlock(simplifiedBoardRender(readback));
-    expect(fromReadback).toMatchObject({ v: 1, updatedAt, items: [{ id: 7, paused: true }] });
   });
 });

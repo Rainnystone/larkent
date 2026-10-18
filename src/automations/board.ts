@@ -6,7 +6,7 @@ import { readCardApiError } from '../card/card-api-error';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { classify, isGoneMessage, isNotInChat } from '../bot/feishu-error';
-import { automationBoardCard, chatStatusSnapshot } from './board-card';
+import { automationBoardCard } from './board-card';
 import { listPinnedMessageIds, pinMessage, unpinMessage } from './board-pins';
 import type { BoardActionAuth } from './board-auth';
 import type { AutomationBoardBinding, AutomationsStore } from './store';
@@ -22,8 +22,6 @@ export interface AutomationBoardDeps {
   store: AutomationsStore;
   channel: LarkChannel;
   auth: BoardActionAuth;
-  botDisplayName: () => string;
-  now?: () => number;
   lockPath: string;
   onNotInChat?: (chatId: string) => void | Promise<unknown>;
 }
@@ -36,8 +34,6 @@ class Board implements AutomationBoard {
   private readonly store: AutomationsStore;
   private readonly channel: LarkChannel;
   private readonly auth: BoardActionAuth;
-  private readonly botDisplayName: () => string;
-  private readonly now: () => number;
   private readonly lockPath: string;
   private readonly onNotInChat?: (chatId: string) => void | Promise<unknown>;
   private tail: Promise<void> = Promise.resolve();
@@ -50,8 +46,6 @@ class Board implements AutomationBoard {
     this.store = deps.store;
     this.channel = deps.channel;
     this.auth = deps.auth;
-    this.botDisplayName = deps.botDisplayName;
-    this.now = deps.now ?? Date.now;
     this.lockPath = deps.lockPath;
     this.onNotInChat = deps.onNotInChat;
   }
@@ -108,12 +102,7 @@ class Board implements AutomationBoard {
         const items = this.store.list().filter((item) => item.chatId === chatId);
         const binding = this.store.getBoard(chatId);
         if (items.length === 0 && !binding) return;
-        const snapshot = await this.store.readStatus();
-        const status = chatStatusSnapshot(snapshot, items, {
-          bot: this.botDisplayName(),
-          updatedAt: this.now(),
-        });
-        const card = automationBoardCard({ items, status, auth: this.auth });
+        const card = automationBoardCard({ items, auth: this.auth });
         attemptKey = boardAttemptKey(card);
         if (this.failedAttempt.get(chatId) === attemptKey) return;
         const next = await this.patchOrResend(chatId, binding, card);

@@ -17,6 +17,7 @@ import {
   type AutomationTriggerSource,
   type AutomationsStore,
 } from './store';
+import { createStatusPusher, type StatusPusher } from './status-pusher';
 import { consumeWakeRequests, watchWakeDir, type WakeWatch } from './wake-file';
 
 /**
@@ -71,6 +72,12 @@ export interface AutomationSchedulerDeps {
   /** Profile `automations-wake/` directory. A5 local wake transport. */
   wakeDir?: string;
   agentTasks?: () => boolean;
+  statusPush?: {
+    endpoint?: string;
+    secret?: string;
+    profile: string;
+    fetch?: typeof fetch;
+  };
 }
 
 export interface AutomationScheduler {
@@ -105,6 +112,7 @@ class Scheduler implements AutomationScheduler {
   private readonly onChanged?: () => void | Promise<void>;
   private readonly wakeDir?: string;
   private readonly agentTasks: () => boolean;
+  private readonly statusPusher?: StatusPusher;
   private chain: Promise<void> = Promise.resolve();
   private closed = false;
   /** Crash leftovers are settled once, before the first fire in this process. */
@@ -129,6 +137,15 @@ class Scheduler implements AutomationScheduler {
     this.onChanged = deps.onChanged;
     this.wakeDir = deps.wakeDir;
     this.agentTasks = deps.agentTasks ?? (() => true);
+    if (deps.statusPush) {
+      this.statusPusher = createStatusPusher({
+        ...deps.statusPush,
+        store: this.store,
+        now: this.now,
+        setTimeout: this.setTimeout,
+        clearTimeout: this.clearTimeout,
+      });
+    }
   }
 
   start(): Promise<void> {
@@ -146,13 +163,14 @@ class Scheduler implements AutomationScheduler {
 
   stop(): void {
     this.closed = true;
+    this.statusPusher?.stop();
     this.wakeWatch?.close();
     this.wakeWatch = undefined;
     this.clearTimers();
   }
 
   idle(): Promise<void> {
-    return this.chain;
+    return this.chain.then(() => this.statusPusher?.idle() ?? Promise.resolve());
   }
 
   onLinkRecovered(): Promise<void> {
@@ -163,6 +181,7 @@ class Scheduler implements AutomationScheduler {
       await this.abandonOrphansOnce();
       await this.catchUp(source);
       await this.handleDue(source);
+      await this.writeStatus();
     });
   }
 
@@ -680,6 +699,7 @@ class Scheduler implements AutomationScheduler {
 
   private async writeStatus(): Promise<void> {
     await this.store.writeStatus(this.botDisplayName());
+    this.statusPusher?.notify();
     try {
       await this.onChanged?.();
     } catch (error) {

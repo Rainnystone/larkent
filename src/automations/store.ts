@@ -159,6 +159,7 @@ export class AutomationsStore {
   private persistenceDisabled = false;
   private loadFailure: { error: unknown } | undefined;
   private hasDocument = false;
+  private lastStatusUpdatedAt = 0;
 
   constructor(opts: AutomationsStoreOptions) {
     this.path = opts.path;
@@ -592,12 +593,14 @@ export class AutomationsStore {
       if (text === undefined) {
         this.publish(emptyDocument(), false, false);
         this.logEntries = await this.loadLogEntries();
+        await this.loadStatusUpdatedAt();
         this.loadFailure = undefined;
         return;
       }
       const document = parseAutomationsDocument(text);
       this.publish(document, false, true);
       this.logEntries = await this.loadLogEntries();
+      await this.loadStatusUpdatedAt();
       if (this.pruneDrafts()) this.schedulePersist();
       this.loadFailure = undefined;
     } catch (error) {
@@ -700,11 +703,18 @@ export class AutomationsStore {
     });
   }
 
+  private async loadStatusUpdatedAt(): Promise<void> {
+    const snapshot = await this.readStatus();
+    this.lastStatusUpdatedAt = snapshot?.updatedAt ?? 0;
+  }
+
   private statusSnapshot(botDisplayName: string): AutomationsStatusSnapshot {
+    const updatedAt = Math.max(this.now(), this.lastStatusUpdatedAt + 1);
+    this.lastStatusUpdatedAt = updatedAt;
     return {
       v: 1,
       bot: botDisplayName,
-      updatedAt: this.now(),
+      updatedAt,
       items: this.items.map((item) => ({
         id: item.id,
         paused: item.paused,

@@ -7,7 +7,6 @@ import {
   isMissed,
 } from '../../../src/automations/schedule';
 import {
-  parseStatusBlock,
   simplifiedBoardRender,
   statusBlockIsMissed,
 } from '../../../src/automations/status-block';
@@ -50,10 +49,23 @@ describe('automation monitor wake hook', () => {
     await h.restart();
 
     const board = latestBoard(h);
-    const parsed = parseStatusBlock(simplifiedBoardRender(JSON.parse(board.text) as object));
-    expect(parsed?.v).toBe(1);
-    expect(parsed?.bot).toBe('Grok Bot');
-    const hookItem = parsed?.items[0];
+    const visible = simplifiedBoardRender(JSON.parse(board.text) as object);
+    expect(visible).not.toContain('"v":1');
+    expect(visible).not.toMatch(/\{/);
+    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
+      v: number;
+      bot: string;
+      items: Array<{
+        id: number;
+        paused: boolean;
+        nextFireAt: number;
+        lastFireAt: number;
+        lastStatus: string;
+      }>;
+    };
+    expect(status.v).toBe(1);
+    expect(status.bot).toBe('Grok Bot');
+    const hookItem = status.items[0];
     expect(hookItem).toMatchObject({
       id: 1,
       paused: false,
@@ -62,8 +74,8 @@ describe('automation monitor wake hook', () => {
       lastStatus: 'ok',
     });
     const live = h.store.get(1)!;
-    expect(JSON.stringify(parsed)).not.toContain('secret ping body');
-    expect(JSON.stringify(parsed)).not.toContain(USER);
+    expect(JSON.stringify(status)).not.toContain('secret ping body');
+    expect(JSON.stringify(status)).not.toContain(USER);
     for (const at of [T0, fireAt, fireAt + 1, fireAt + CATCH_UP_WINDOW_MS + 1]) {
       const specMiss = !hookItem!.paused
         && hookItem!.nextFireAt > 0
@@ -250,16 +262,18 @@ describe('automation monitor wake hook', () => {
     ]);
     const board = latestBoard(h);
     expect(board.text).toContain('已错过 原定 2026-01-02 12:00');
-    const parsed = parseStatusBlock(simplifiedBoardRender(JSON.parse(board.text) as object));
-    expect(parsed?.v).toBe(1);
-    expect(parsed?.items[0]).toMatchObject({
+    expect(simplifiedBoardRender(JSON.parse(board.text) as object)).not.toContain('"v":1');
+    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
+      v: number;
+      items: Array<{ id: number; lastStatus: string; nextFireAt: number; missed: number }>;
+    };
+    expect(status.v).toBe(1);
+    expect(status.items[0]).toMatchObject({
       id: 1,
       lastStatus: 'missed',
       nextFireAt: 0,
       missed: 1,
     });
-    const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as typeof parsed;
-    expect(status?.items[0]).toMatchObject({ lastStatus: 'missed', missed: 1, nextFireAt: 0 });
   });
 });
 

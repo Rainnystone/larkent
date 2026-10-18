@@ -1,26 +1,12 @@
-import { buttonRow, callbackButton, card2, hr, md, note } from '../card/v2';
+import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
 import { describeEnd, formatZonedDateTime } from './confirm-card';
 import { readSchedule } from './schedule';
-import type { AutomationItem, AutomationsStatusSnapshot } from './store';
+import type { AutomationItem } from './store';
 import type { BoardActionAuth } from './board-auth';
 import { BOARD_CARD_TTL_MS } from './board-auth';
 
 function escapeMd(s: string): string {
   return s.replace(/([*_`\\])/g, '\\$1');
-}
-
-export function chatStatusSnapshot(
-  snapshot: AutomationsStatusSnapshot | undefined,
-  items: AutomationItem[],
-  fallback: { bot: string; updatedAt: number },
-): AutomationsStatusSnapshot {
-  const ids = new Set(items.map((item) => item.id));
-  return {
-    v: 1,
-    bot: snapshot?.bot ?? fallback.bot,
-    updatedAt: snapshot?.updatedAt ?? fallback.updatedAt,
-    items: (snapshot?.items ?? []).filter((item) => ids.has(item.id)),
-  };
 }
 
 export function formatAutomationListLine(item: AutomationItem): string {
@@ -35,7 +21,6 @@ export function formatAutomationListLine(item: AutomationItem): string {
 
 export function automationBoardCard(input: {
   items: AutomationItem[];
-  status: AutomationsStatusSnapshot;
   auth: BoardActionAuth;
 }): object {
   const elements: object[] = [];
@@ -58,8 +43,6 @@ export function automationBoardCard(input: {
       if (index < input.items.length - 1) elements.push(hr);
     });
   }
-  elements.push(hr);
-  elements.push(note(JSON.stringify(input.status)));
   return card2({ title: '本群自动化', summary: '本群自动化', elements });
 }
 

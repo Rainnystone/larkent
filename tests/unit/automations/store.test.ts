@@ -305,6 +305,24 @@ describe('AutomationsStore', () => {
     }
   });
 
+  it('keeps status updatedAt strictly increasing across same-ms writes and reload', async () => {
+    const now = { t: 1_760_000_000_000 };
+    const { path, logPath, statusPath, store } = await fixture(() => now.t);
+    await store.load();
+    await store.create(reminderInput());
+    await store.writeStatus('Grok Bot');
+    const first = JSON.parse(await readFile(statusPath, 'utf8')) as { updatedAt: number };
+    await store.writeStatus('Grok Bot');
+    const second = JSON.parse(await readFile(statusPath, 'utf8')) as { updatedAt: number };
+    expect(second.updatedAt).toBe(first.updatedAt + 1);
+
+    const restarted = new AutomationsStore({ path, logPath, statusPath, now: () => first.updatedAt });
+    await restarted.load();
+    await restarted.writeStatus('Grok Bot');
+    const third = JSON.parse(await readFile(statusPath, 'utf8')) as { updatedAt: number };
+    expect(third.updatedAt).toBeGreaterThan(first.updatedAt);
+  });
+
   it('drops drafts older than 24 hours and persists remaining drafts', async () => {
     const now = { t: 1_760_000_000_000 };
     const { path, logPath, statusPath, store } = await fixture(() => now.t);

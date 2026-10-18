@@ -34,6 +34,49 @@ describe('automations profile settings', () => {
     });
   });
 
+  it('keeps optional status endpoint and secret and treats blanks as unset', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'automations-status-push-'));
+    roots.push(root);
+    const configPath = join(root, 'config.json');
+    const profile = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      automations: {
+        enabled: true,
+        statusEndpoint: 'https://status.test',
+        statusSecret: 'unit-status-secret',
+      },
+    });
+    expect(profile.automations).toEqual({
+      enabled: true,
+      agentTasks: false,
+      timezone: 'Asia/Shanghai',
+      statusEndpoint: 'https://status.test',
+      statusSecret: 'unit-status-secret',
+    });
+
+    await saveRootConfig(createRootConfig('claude', profile), configPath);
+    const loaded = await loadRootConfig(configPath);
+    expect(loaded?.profiles.claude?.automations).toEqual(profile.automations);
+
+    const blank = normalizeProfileConfig({
+      schemaVersion: 3,
+      agentKind: 'claude',
+      accounts: { app },
+      automations: {
+        enabled: true,
+        statusEndpoint: '  ',
+        statusSecret: '',
+      },
+    });
+    expect(blank.automations).toEqual({
+      enabled: true,
+      agentTasks: false,
+      timezone: 'Asia/Shanghai',
+    });
+  });
+
   it('survives a profile load/save round-trip and keeps explicit values', async () => {
     const root = await mkdtemp(join(tmpdir(), 'automations-settings-'));
     roots.push(root);
