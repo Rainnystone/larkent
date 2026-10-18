@@ -79,6 +79,11 @@ function serviceFileExists(serviceId: string): boolean {
   return getServiceAdapter(serviceId)?.fileExists() ?? false;
 }
 
+/** launchd retains failed jobs, so lifecycle work must not depend on a live worker. */
+function serviceIsLoaded(adapter: ServiceAdapter): boolean {
+  return adapter.isLoaded?.() ?? adapter.isRunning();
+}
+
 /** Find the live registry entry (with botName) for a classic profile, if any. */
 async function lookupProfileEntry(profile: string): Promise<ProcessEntry | undefined> {
   const runtime = await maybeResolveProfileRuntime(profile);
@@ -353,8 +358,8 @@ export async function runServiceStart(opts: ServiceStartOptions = {}): Promise<v
 
   await adapter.install();
 
-  // If already running, stop first so start operations don't race.
-  if (adapter.isRunning()) {
+  // Unload even a failed job before bootstrap, which requires a fresh registration.
+  if (serviceIsLoaded(adapter)) {
     console.log('检测到旧 bot 实例,先停掉再重启...');
     const r = await adapter.stop();
     if (!r.ok) {
@@ -410,7 +415,7 @@ async function runServiceStartWebUi(opts: ServiceStartOptions): Promise<void> {
 
   await adapter.install();
 
-  if (adapter.isRunning()) {
+  if (serviceIsLoaded(adapter)) {
     console.log('检测到 supervisor 服务已在运行,先停掉再重启...');
     const r = await adapter.stop();
     if (!r.ok) {
@@ -447,7 +452,7 @@ export async function runServiceStop(opts: ServiceProfileOptions = {}): Promise<
     console.log(webUi ? 'supervisor 还没在后台运行过,无需停止。' : 'bot 还没在后台运行过,无需停止。');
     return;
   }
-  if (!adapter.isRunning()) {
+  if (!serviceIsLoaded(adapter)) {
     // Not running now, but the registration may still carry login-time
     // autostart (launchd RunAtLoad / systemd WantedBy) — which is exactly how
     // a "stopped" daemon comes back on its own. Make `stop` mean stopped.
@@ -505,7 +510,7 @@ export async function runServiceRestart(opts: ServiceProfileOptions = {}): Promi
   // Health-check waits on a profile connecting: classic → the service's own
   // profile; web-ui → whatever the supervisor auto-starts (the active profile).
   const waitProfile = webUi ? await resolveServiceProfile(undefined) : serviceId;
-  if (adapter.isRunning()) {
+  if (serviceIsLoaded(adapter)) {
     await reportConnectAfter('restarted', waitProfile, adapter.restart);
     return;
   }
@@ -567,7 +572,7 @@ export async function runServiceUnregister(opts: ServiceProfileOptions = {}): Pr
     console.log(`${label} 还没在后台运行过,无需清理。`);
     return;
   }
-  if (adapter.isRunning()) {
+  if (serviceIsLoaded(adapter)) {
     const r = await adapter.stopAndDisableAutostart();
     if (!r.ok) {
       console.warn(`⚠ 停止 ${label} 时有警告(继续清理):\n${formatServiceStderr(r.stderr)}`);

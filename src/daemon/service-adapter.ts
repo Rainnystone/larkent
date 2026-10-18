@@ -27,6 +27,10 @@ export interface ServiceAdapter {
   /** Whether the service is currently running (process alive). */
   isRunning(): boolean;
 
+  /** Some managers retain a loaded job without a running process. Lifecycle
+   * commands must still unload/restart that job. Others use isRunning(). */
+  isLoaded?(): boolean;
+
   /** Path/name to the service definition (for status output). */
   servicePath(): string;
 
@@ -72,7 +76,8 @@ function makeLaunchdAdapter(profile: string, runArgs: string[]): ServiceAdapter 
   return {
     platformName: 'launchd (macOS)',
     fileExists: () => launchd.plistExists(profile),
-    isRunning: () => launchd.isLoaded(profile),
+    isRunning: () => launchd.isRunning(profile),
+    isLoaded: () => launchd.isLoaded(profile),
     servicePath: () => launchAgentPlistPath(profile),
     install: () => launchd.writePlist(profile, runArgs),
     // A previous `stop` may have left the job disabled in launchd's override

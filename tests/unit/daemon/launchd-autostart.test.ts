@@ -94,4 +94,32 @@ describe('launchd autostart lifecycle', () => {
 
     expect(launchctlCalls()).toEqual([expect.stringMatching(/^bootout /)]);
   });
+
+  it('distinguishes a loaded failed job from a running process', () => {
+    mocks.spawnSync.mockReturnValue({
+      status: 0,
+      stdout: 'gui/501/ai.test = {\n\tstate = spawn scheduled\n\tlast exit code = 42\n}\n',
+      stderr: '',
+    });
+    const adapter = getServiceAdapter('codex-dev')!;
+
+    expect(adapter.isRunning()).toBe(false);
+    expect(adapter.isLoaded?.()).toBe(true);
+  });
+
+  it('reports a process running when launchctl exposes its live pid', () => {
+    mocks.spawnSync.mockReturnValue({
+      status: 0,
+      stdout: 'gui/501/ai.test = {\n\tstate = running\n\tpid = 12345\n}\n',
+      stderr: '',
+    });
+
+    expect(getServiceAdapter('codex-dev')!.isRunning()).toBe(true);
+  });
+
+  it('does not report an unloaded job as running', () => {
+    mocks.spawnSync.mockReturnValue({ status: 113, stdout: '', stderr: 'Could not find service' });
+
+    expect(getServiceAdapter('codex-dev')!.isRunning()).toBe(false);
+  });
 });
