@@ -5,6 +5,7 @@ import { readCardApiError } from '../card/card-api-error';
 import { card2, md } from '../card/v2';
 import { log } from '../core/logger';
 import { renderSettledCard } from './card-body';
+import { monotonicCardSequence } from './card-sequence';
 import type { AutomationDraft, AutomationsStore } from './store';
 
 export const DRAFT_SETTLED_CANCELLED = '已取消';
@@ -32,11 +33,12 @@ export async function settleDraftCard(
   draft: DraftCardRef,
   status: string,
   store?: AutomationsStore,
+  now: () => number = Date.now,
 ): Promise<void> {
   if (!draft.cardMessageId) return;
   const card = draft.cardBody ? renderSettledCard(draft.cardBody, status) : automationSettledCard(status);
   if (draft.cardId) {
-    const sequence = (draft.sequence ?? 0) + 1;
+    const sequence = monotonicCardSequence(draft.sequence, now());
     await updateCardByCardId(channel, draft.cardId, card, sequence);
     const live = store?.getDraft(draft.draftId);
     if (store && live?.cardId === draft.cardId) {

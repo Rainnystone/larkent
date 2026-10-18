@@ -10,6 +10,7 @@ import { classify, isNotInChat } from '../bot/feishu-error';
 import { automationBoardCard } from './board-card';
 import { listPinnedMessageIds, pinMessage, unpinMessage } from './board-pins';
 import type { BoardActionAuth } from './board-auth';
+import { monotonicCardSequence } from './card-sequence';
 import type { AutomationBoardBinding, AutomationsStore } from './store';
 
 export const AUTO_PIN_FAILED_HINT = '看板置顶失败，任务不受影响。';
@@ -25,6 +26,7 @@ export interface AutomationBoardDeps {
   auth: BoardActionAuth;
   lockPath: string;
   onNotInChat?: (chatId: string) => void | Promise<unknown>;
+  now?: () => number;
 }
 
 export function createAutomationBoard(deps: AutomationBoardDeps): AutomationBoard {
@@ -37,6 +39,9 @@ class Board implements AutomationBoard {
   private readonly auth: BoardActionAuth;
   private readonly lockPath: string;
   private readonly onNotInChat?: (chatId: string) => void | Promise<unknown>;
+  private readonly now: () => number;
+  /** Highest CardKit sequence already sent for a card in this process. Not persisted. */
+  private readonly attemptedSequence = new Map<string, number>();
   private tail: Promise<void> = Promise.resolve();
   private queued = false;
   private running = false;
@@ -49,6 +54,7 @@ class Board implements AutomationBoard {
     this.auth = deps.auth;
     this.lockPath = deps.lockPath;
     this.onNotInChat = deps.onNotInChat;
+    this.now = deps.now ?? Date.now;
   }
 
   refresh(): Promise<void> {
@@ -106,17 +112,20 @@ class Board implements AutomationBoard {
         const card = automationBoardCard({ items, auth: this.auth });
         attemptKey = boardAttemptKey(card);
         if (this.failedAttempt.get(chatId) === attemptKey) return;
-        const next = await this.patchOrResend(chatId, binding, card);
+        const outcome = await this.patchOrResend(chatId, binding, card);
         this.failedAttempt.delete(chatId);
+        const next = outcome.binding;
         if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
           return;
         }
-        if (items.length === 0) await this.ensureUnpinned(next);
-        else {
-          const pinned = await this.ensurePinned(chatId, next, {
-            repin: binding?.messageId === next.messageId,
-          });
-          if (!pinned) return;
+        if (outcome.applied) {
+          if (items.length === 0) await this.ensureUnpinned(next);
+          else {
+            const pinned = await this.ensurePinned(chatId, next, {
+              repin: binding?.messageId === next.messageId,
+            });
+            if (!pinned) return;
+          }
         }
         await this.releasePendingUnpin(next);
       } catch (error) {
@@ -146,24 +155,76 @@ class Board implements AutomationBoard {
     chatId: string,
     binding: AutomationBoardBinding | undefined,
     card: object,
-  ): Promise<AutomationBoardBinding> {
-    if (binding) {
-      try {
-        await this.patch(binding, card);
-        return binding;
-      } catch (error) {
-        if (isNotInChat(error)) throw error;
-        if (classify(error) === 'link') throw error;
-        const api = readCardApiError(error);
-        log.fail('auto', error, {
-          event: 'board',
-          chatId,
-          ...(api.code !== undefined ? { code: api.code } : {}),
-          ...(api.msg !== undefined ? { msg: api.msg } : {}),
-        });
-        log.warn('auto', 'board.resend', { chatId });
-      }
+  ): Promise<BoardPatchOutcome> {
+    if (!binding) return this.sendReplacement(chatId, undefined, card);
+    try {
+      return await this.patch(binding, card);
+    } catch (error) {
+      if (isNotInChat(error)) throw error;
+      if (classify(error) === 'link') throw error;
+      if (!binding.cardId) logPatchFailed(error, undefined);
+      const reason = boardResendReason(error);
+      if (!reason) return { binding, applied: false };
+      log.warn('auto', 'board.resend', { chatId, reason });
+      return this.sendReplacement(chatId, binding, card);
     }
+  }
+
+  private async patch(binding: AutomationBoardBinding, card: object): Promise<BoardPatchOutcome> {
+    if (!binding.cardId) {
+      await this.channel.updateCard(binding.messageId, card);
+      return { binding, applied: true };
+    }
+    const sequence = this.nextSequence(binding);
+    try {
+      await updateCardByCardId(this.channel, binding.cardId, card, sequence);
+    } catch (error) {
+      if (isNotInChat(error) || classify(error) === 'link') throw error;
+      logPatchFailed(error, sequence);
+      if (readCardApiError(error).code !== 300317) throw error;
+      return this.retrySequence(binding, card);
+    }
+    await this.persistSequence(binding, sequence);
+    logPatch(binding.cardId, sequence, false);
+    return { binding: { ...binding, sequence }, applied: true };
+  }
+
+  private async retrySequence(binding: AutomationBoardBinding, card: object): Promise<BoardPatchOutcome> {
+    const cardId = binding.cardId;
+    if (!cardId) return { binding, applied: false };
+    const sequence = this.nextSequence(binding);
+    try {
+      await updateCardByCardId(this.channel, cardId, card, sequence);
+    } catch (error) {
+      if (isNotInChat(error) || classify(error) === 'link') throw error;
+      logPatchFailed(error, sequence);
+      // The one retry already failed. Keep the binding; the next refresh uses a higher sequence.
+      return { binding, applied: false };
+    }
+    await this.persistSequence(binding, sequence);
+    logPatch(cardId, sequence, true);
+    return { binding: { ...binding, sequence }, applied: true };
+  }
+
+  private nextSequence(binding: AutomationBoardBinding): number {
+    const key = binding.cardId ?? binding.messageId;
+    const attempted = this.attemptedSequence.get(key) ?? 0;
+    const sequence = monotonicCardSequence(binding.sequence, this.now(), attempted);
+    this.attemptedSequence.set(key, sequence);
+    return sequence;
+  }
+
+  private async persistSequence(binding: AutomationBoardBinding, sequence: number): Promise<void> {
+    const live = this.store.getBoard(binding.chatId) ?? binding;
+    if (live.cardId !== binding.cardId || live.messageId !== binding.messageId) return;
+    await this.store.setBoard({ ...live, sequence });
+  }
+
+  private async sendReplacement(
+    chatId: string,
+    binding: AutomationBoardBinding | undefined,
+    card: object,
+  ): Promise<BoardPatchOutcome> {
     const sent = await sendManagedCard(this.channel, chatId, card);
     const pendingUnpinMessageId = retainedUnpinMessageId(binding, sent.messageId);
     const next: AutomationBoardBinding = {
@@ -173,17 +234,7 @@ class Board implements AutomationBoard {
       ...(pendingUnpinMessageId ? { pendingUnpinMessageId } : {}),
     };
     await this.store.setBoard(next);
-    return next;
-  }
-
-  private async patch(binding: AutomationBoardBinding, card: object): Promise<void> {
-    if (binding.cardId) {
-      const sequence = (binding.sequence ?? 0) + 1;
-      await updateCardByCardId(this.channel, binding.cardId, card, sequence);
-      await this.store.setBoard({ ...binding, sequence });
-      return;
-    }
-    await this.channel.updateCard(binding.messageId, card);
+    return { binding: next, applied: true };
   }
 
   private async ensurePinned(
@@ -253,6 +304,61 @@ class Board implements AutomationBoard {
     }
     await this.store.setBoard({ ...binding, pinFailedHinted: true });
   }
+}
+
+interface BoardPatchOutcome {
+  binding: AutomationBoardBinding;
+  /** False when the card body was not accepted and the same binding is kept. */
+  applied: boolean;
+}
+
+type BoardResendReason = '200740' | '200750' | 'message-deleted';
+
+/**
+ * Resend only when the card entity or the message cannot be updated.
+ * 200740 / 200750: CardKit entity missing or expired.
+ * 230110 / 230011 / 10020 / 10037: message deleted, recalled, or id not found.
+ * HTTP 404 with no Feishu code: message not found.
+ * 300311 is an app-permission error on an entity that still exists, so it is not a reason.
+ * 300317 is a stale sequence; the caller retries in place.
+ */
+function boardResendReason(error: unknown): BoardResendReason | undefined {
+  const code = readCardApiError(error).code;
+  if (code === 200740) return '200740';
+  if (code === 200750) return '200750';
+  if (code === 230110 || code === 230011 || code === 10020 || code === 10037) return 'message-deleted';
+  if (code === undefined && responseStatus(error) === 404) return 'message-deleted';
+  return undefined;
+}
+
+function responseStatus(error: unknown): number | undefined {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (current !== undefined && current !== null && typeof current === 'object' && !seen.has(current)) {
+    seen.add(current);
+    const rec = current as { response?: { status?: unknown }; status?: unknown; cause?: unknown };
+    if (typeof rec.response?.status === 'number') return rec.response.status;
+    current = rec.cause;
+  }
+  return undefined;
+}
+
+function logPatch(cardId: string, sequence: number, retry: boolean): void {
+  log.info('auto', 'board.patch', {
+    cardId: cardId.slice(-4),
+    sequence,
+    retry,
+  });
+}
+
+function logPatchFailed(error: unknown, sequence: number | undefined): void {
+  const api = readCardApiError(error);
+  const msg = api.msg ?? (error instanceof Error ? error.message : undefined);
+  log.warn('auto', 'board.patch-failed', {
+    ...(api.code !== undefined ? { code: api.code } : {}),
+    ...(msg !== undefined ? { msg } : {}),
+    ...(sequence !== undefined ? { sequence } : {}),
+  });
 }
 
 function retainedUnpinMessageId(

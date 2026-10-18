@@ -152,8 +152,16 @@ describe('draft card settle', () => {
     expect(h.store.getDraft(draft.draftId)?.sequence).toBeUndefined();
     expect(JSON.stringify(h.channel.updatedCards.at(-1)?.card)).toContain('已指定结束时间');
 
-    await settleDraftCard(h.channel as never, h.store.getDraft(draft.draftId)!, '已确认 #1', h.store);
-    expect(h.store.getDraft(draft.draftId)?.sequence).toBe(1);
+    await settleDraftCard(
+      h.channel as never,
+      h.store.getDraft(draft.draftId)!,
+      '已确认 #1',
+      h.store,
+      () => NOW,
+    );
+    expect(h.store.getDraft(draft.draftId)?.sequence).toBe(
+      Math.floor((NOW - Date.UTC(2026, 0, 1)) / 1000),
+    );
   });
 
   it('keeps the registered card body after the draft is consumed and the task is deleted', async () => {

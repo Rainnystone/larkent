@@ -870,6 +870,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         auth: automationsCtl.boardAuth,
         lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
         onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+        ...(deps.now ? { now: deps.now } : {}),
       });
     }
     const automationOutbox: AutomationDeliveryDeps = {
