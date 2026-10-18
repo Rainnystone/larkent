@@ -247,6 +247,9 @@ async function harness(opts: {
     await bridge.disconnect().catch(() => {});
     await store.flush().catch(() => {});
     await journal.flush().catch(() => {});
+    // Windows fs.rm does not settle while this process still holds the log
+    // stream. Close it before the profile directory is removed.
+    await closeLogger();
     await tmp.cleanup();
   });
   return { channel, store, logsDir, bridge };
