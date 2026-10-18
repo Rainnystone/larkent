@@ -28,6 +28,7 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A19](A19-status-push-bridge.md) | Board card drops the status block; bridge pushes a signed status digest to larkent-monitor (lands on #49, before merge) | — (endpoint contract in spec §7) | ready-for-agent |
 | [A20](A20-board-tap-refresh.md) | Board tap: check card.update response code, toast immediately, refresh after the callback returns; one-shot cards (confirm, 一个月 / 结束) disable their buttons after the first tap or on expiry | A19 | ready-for-agent |
 | [A21](A21-board-rebind-after-pin.md) | Board resend: keep the old binding until the replacement is pinned; on pin failure keep old binding and retry next refresh (Codex r7 P2, lands on #49) | A20 | ready-for-agent |
+| [A22](A22-oneshot-card-keep-body.md) | One-shot cards keep their original body after settle (tap 是/否, expiry, startup catch-up, losing concurrent tap); only the button row becomes a result line (已确认 #N / 已取消 / 已过期 / 已指定结束时间); amends A20 (d), lands on #49 | A21 | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -76,4 +77,5 @@ graph LR
   A19 --> A20
   A11 -.finds.-> A20
   A20 --> A21
+  A21 --> A22
 ```
