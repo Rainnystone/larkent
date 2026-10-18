@@ -35,6 +35,7 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A26](A26-board-settle-old-and-pending-list.md) | After a resend, settle the old board to a button-less note; taps on a non-current board get a board-specific toast; A21 pending unpin ids become a list (no permanent double pin); amends A21 (A11 r5, medium) | A25 | ready-for-agent |
 | [A27](A27-confirm-card-fire-count.md) | Confirm card: 「接下来 N 次」 uses the actual count; one-shot shows its single time / 共 1 次; windows ending within 30 days show 共 N 次 (A11 r5, low) | A22 | ready-for-agent |
 | [A28](A28-nl-delete-replace.md) | Natural-language delete / replace: per-turn group task snapshot (that group's session only, no open_ids, data-not-instructions tag); proposal `op` = create/delete/replace; bridge validates (unified 「本群没有 #N」); one confirm card for delete, one for replace (create new, then delete old); anyone can confirm; edit requests get 替换 / 另建 options, never 已修改 (user decision 2026-10-18, high) | A22, A27 | ready-for-agent |
+| [A29](A29-status-push-updatedat-monotonic.md) | Status push `updatedAt` strictly increasing: the pusher holds a persisted monotonic value; every push whose body differs (incl. retry and startup) carries a strictly greater one; an identical retry may reuse it (lands on #49, before merge; closes an A19 acceptance gap) | A19 | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -51,6 +52,7 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 - **Natural-language delete / replace (user decision 2026-10-18):** [A28](A28-nl-delete-replace.md) after A27 (serial; both touch `confirm-card.ts`; settles like A22). Then run the A28 live E2E steps 1–6.
 
 - **Status push (user decision 2026-10-18):** [A19](A19-status-push-bridge.md) on #49 before merge; the receiver is a separate track in the larkent-monitor repo; then rerun the A11 monitor scenarios.
+- **Status push `updatedAt` (2026-10-18):** [A29](A29-status-push-updatedat-monotonic.md) after A19, on #49 before merge. The monitor receiver answers 409 to a changed body with a non-increasing `updatedAt` (spec §7 response codes), so without A29 a retry or startup push can be dropped. Monitor wake is keyless (spec §7), so no wake-CLI change is needed.
 
 Reminders ship after A0a–A1', A2, A4, A5, A7. Agent tasks (`automations.agentTasks`, default off) ship after A8–A9.
 
@@ -99,4 +101,6 @@ graph LR
   A22 --> A27
   A22 --> A28
   A27 --> A28
+  A19 --> A29
+  A29 --> A11
 ```

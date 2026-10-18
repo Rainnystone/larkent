@@ -194,8 +194,23 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - 看板卡**只给人看**，不含任何机读块（ADR-008，2026-10-18）。
 - **status push**（ADR-008、ADR-015）：事实源仍是 profile 数据目录下的本地 status 文件（随 scheduler 原子写）；看板与推送都由它派生。
   - 端点：`POST /v1/status`，位于私有 larkent-monitor Worker。只接受 POST，响应体为空。
-  - 鉴权：`HMAC-SHA256(secret, timestamp + "." + body)`，放在请求头。
+  - 鉴权：`HMAC-SHA256(secret, timestamp + "." + body)`，放在请求头。请求头名固定（2026-10-18）：`x-timestamp` = bridge 发送时刻的 **UTC 毫秒**十进制字符串（签名用的就是这个原样字符串）；`x-signature` = 签名的小写 hex；另带 `content-type: application/json`。常量见 `src/automations/status-push.ts`（`STATUS_PUSH_TIMESTAMP_HEADER` / `STATUS_PUSH_SIGNATURE_HEADER`）。
   - 防回放：timestamp 与 monitor 时钟相差 ±5 分钟以内，**且**同一 `botKey` 的 `updatedAt` 严格大于已存值；两条都满足才接受。`updatedAt` 只用于这条单调 upsert，**不参与 miss 判定**（它来自 bridge 时钟，与 monitor 时钟比较会受偏差影响）。
+  - `updatedAt` 由 pusher 持有并持久化（A29）：body 与上一次已发送的不同时（含重试、启动推送），`updatedAt` 必须严格大于此前任何一次已发送值，跨重启也不回退；**完全相同**的 body 重发可以沿用原值（monitor 视为重复，返回 204）。
+  - 响应码（2026-10-18；响应体一律为空）：
+
+    | 码 | 含义 | bridge 行为 |
+    |---|---|---|
+    | 204 | 已接受；或与已存的同一 `botKey`、同一 `updatedAt`、同一 body 完全相同（重复） | 成功 |
+    | 400 | body 不是合法 v2 payload（字段缺失、类型错、多余字段、超出上限） | 记日志，不重试 |
+    | 401 | 签名不对，或 `x-timestamp` 与 monitor 时钟相差超过 ±5 分钟 | 记日志，不重试 |
+    | 409 | `updatedAt` 不大于已存值且 body 不同（过期 / 回放） | 记日志，不重试；下一次触发全量推送 |
+    | 413 | body 超过 64 KiB | 记日志，不重试 |
+    | 429 | 同一 `botKey` 推送过快；带 `Retry-After`（秒） | 按 `Retry-After` 与退避重试 |
+    | 5xx / 网络错误 / 超时 | monitor 故障 | 按退避重试 |
+
+    另：非 POST → 405；monitor 未配置 secret 或存储 → 503（运维问题，bridge 按 5xx 重试）。
+  - 存储：monitor 收到后写入它自己的 Cloudflare D1（binding `MONITOR_DB`，**monitor Worker 是唯一写入方**）。表结构、保留期与扫描实现都是 larkent-monitor 的内部细节，不属于本契约；bridge 不持有任何 Cloudflare 凭据，也没有任何读取接口。
   - payload（时间均为 UTC 毫秒）：
 
 ```json
@@ -211,6 +226,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
   - 对每个未暂停的 item，`t` = `nextFires` 中最早的、`t > lastFireAt` 的时刻；`now > t + scanSlack` 即判 miss。`scanSlack` 是覆盖推送延迟的小常量（如 2 分钟）。
   - 列出的 `nextFires` 全部 ≤ `lastFireAt` 或已过且未被覆盖时，按最早未覆盖的那个判 miss（即窗口耗尽而 bridge 没再推送）。
   - fire key 仍按 §1（`id` + 计划时刻）；monitor 在 miss 之后唤醒、每个 fire key 至多一次（ADR-014）。
+  - **唤醒不带 key（2026-10-18）**：monitor 的 wake webhook body 只有 `{"source":"larkent-monitor","kind":"missed","ts":<ms>,"misses":<n>}`，不含 fire key、`botKey` 或 item `id`。被唤醒的 box 上该跑什么，完全由 Larkent 自己的启动补跑 / 墙钟重算（§4、ADR-021）决定；monitor 侧在 D1 里按 fire key 记录已唤醒（至多一次）并对每个 bot 做冷却，每轮扫描最多合并发一次唤醒。下面的本机唤醒入口仍可由运维手动按 fire key 调用，但 monitor 路线不依赖它。
 - **本机唤醒入口**（Larkent 暴露，被唤醒的 box 调用）：一个新的 CLI 子命令，给定 fire key：Larkent 未运行则启动它（启动补跑生效）；在运行则通知运行中的进程（目前没有稳定的进程间通道，UI server 的 token 每进程随机，不能复用；传输方式在 A5 定义）。若该 fire 已 started → 无输出、不发任何消息、不向任何人报告；否则按 §4 补跑规则处理，补跑恰好一次，> 24 小时按“已错过”留痕。该入口幂等，可重复调用。
 - `/auto`：列出本群本 bot 的任务（任何人）；`/auto pause|resume|delete <编号>` 与按钮等价。
 
