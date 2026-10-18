@@ -104,6 +104,82 @@ describe('board card.update', () => {
     expect(h.channel.pins.map((pin) => pin.messageId)).not.toContain(firstMessageId);
   });
 
+  it('keeps the old pin after a transient pin failure and unpins it after a restart', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT);
+    expect(first?.messageId).toBeTruthy();
+    const firstMessageId = first!.messageId;
+    const firstCardId = first!.cardId;
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+
+    rejectCardUpdateFor(h, firstCardId);
+    failPinCreates(h, 1);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    const held = h.store.getBoard(CHAT);
+    expect(held?.messageId).not.toBe(firstMessageId);
+    expect(held?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+    expect(h.store.findBoardByMessageId(firstMessageId)?.chatId).toBe(CHAT);
+
+    const restarted = await reloadBoard(h);
+    expect(restarted.store.getBoard(CHAT)?.pendingUnpinMessageId).toBe(firstMessageId);
+    await restarted.board.refresh();
+    const recovered = restarted.store.getBoard(CHAT);
+    expect(recovered?.messageId).toBe(held?.messageId);
+    expect(recovered?.pendingUnpinMessageId).toBeUndefined();
+    expect(restarted.channel.pins.map((pin) => pin.messageId)).toEqual([recovered?.messageId]);
+  });
+
+  it('keeps the old pin and pending unpin id across persistent pin failures without resending', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT);
+    const firstMessageId = first!.messageId;
+    rejectCardUpdateFor(h, first?.cardId);
+    failPinCreates(h, 'always');
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    const replacement = h.store.getBoard(CHAT);
+    expect(replacement?.messageId).not.toBe(firstMessageId);
+    expect(replacement?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+
+    await h.store.resume(h.itemId, NOW + 2 * 60 * 60_000);
+    await h.board.refresh();
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(replacement?.messageId);
+    expect(h.store.getBoard(CHAT)?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+  });
+
+  it('keeps the pending unpin id when unpin fails after the replacement is pinned', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const firstMessageId = h.store.getBoard(CHAT)!.messageId;
+    rejectCardUpdateFor(h, h.store.getBoard(CHAT)?.cardId);
+    failPinCreates(h, 1);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.pendingUnpinMessageId).toBe(firstMessageId);
+
+    failPinDeletes(h, 1);
+    await h.board.refresh();
+    const replacement = h.store.getBoard(CHAT);
+    expect(replacement?.messageId).not.toBe(firstMessageId);
+    expect(replacement?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(h.channel.pins.map((pin) => pin.messageId).sort()).toEqual(
+      [firstMessageId, replacement!.messageId].sort(),
+    );
+
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.pendingUnpinMessageId).toBeUndefined();
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([replacement?.messageId]);
+  });
+
   it('bumps sequence after cardkit update returns code 0', async () => {
     const h = await harness();
     await h.board.refresh();
@@ -147,7 +223,68 @@ async function harness() {
     auth: new BoardActionAuth({ secret: 'board-secret', now: () => NOW }),
     lockPath: join(dir, 'board.lock'),
   });
-  return { logsDir, store, channel, board, itemId: item.id };
+  return { logsDir, store, channel, board, itemId: item.id, dir };
+}
+
+async function reloadBoard(h: Awaited<ReturnType<typeof harness>>) {
+  const store = new AutomationsStore({
+    path: join(h.dir, 'automations.json'),
+    logPath: join(h.dir, 'automations.log'),
+    statusPath: join(h.dir, 'automations-status.json'),
+    now: () => NOW,
+  });
+  await store.load();
+  const board = createAutomationBoard({
+    store,
+    channel: h.channel as never,
+    auth: new BoardActionAuth({ secret: 'board-secret', now: () => NOW }),
+    lockPath: join(h.dir, 'board.lock'),
+  });
+  return { store, board, channel: h.channel };
+}
+
+function rejectCardUpdateFor(
+  h: Awaited<ReturnType<typeof harness>>,
+  cardId: string | undefined,
+): void {
+  h.channel.rawClient.cardkit.v1.card.update = async (params) => {
+    const path = (params as { path?: { card_id?: string } } | undefined)?.path;
+    if (cardId && path?.card_id === cardId) {
+      return { code: 300317, msg: 'card update failed' };
+    }
+    return { code: 0, msg: 'ok' };
+  };
+}
+
+function failPinCreates(
+  h: Awaited<ReturnType<typeof harness>>,
+  times: number | 'always',
+): void {
+  failPinOp(h.channel.rawClient.im.v1.pin, 'create', times, 'pin rate limited');
+}
+
+function failPinDeletes(
+  h: Awaited<ReturnType<typeof harness>>,
+  times: number | 'always',
+): void {
+  failPinOp(h.channel.rawClient.im.v1.pin, 'delete', times, 'unpin rate limited');
+}
+
+function failPinOp(
+  pin: Awaited<ReturnType<typeof harness>>['channel']['rawClient']['im']['v1']['pin'],
+  op: 'create' | 'delete',
+  times: number | 'always',
+  message: string,
+): void {
+  const orig = pin[op].bind(pin);
+  let remaining = times;
+  pin[op] = async (params) => {
+    if (remaining === 'always' || remaining > 0) {
+      if (remaining !== 'always') remaining -= 1;
+      throw new Error(message);
+    }
+    return orig(params);
+  };
 }
 
 async function boardFailEntries(logsDir: string): Promise<Array<{ code?: unknown; msg?: unknown }>> {

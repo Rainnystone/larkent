@@ -106,7 +106,6 @@ class Board implements AutomationBoard {
         const card = automationBoardCard({ items, auth: this.auth });
         attemptKey = boardAttemptKey(card);
         if (this.failedAttempt.get(chatId) === attemptKey) return;
-        const previousMessageId = binding?.messageId;
         const next = await this.patchOrResend(chatId, binding, card);
         this.failedAttempt.delete(chatId);
         if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
@@ -119,9 +118,7 @@ class Board implements AutomationBoard {
           });
           if (!pinned) return;
         }
-        if (previousMessageId && previousMessageId !== next.messageId) {
-          await this.unpinQuietly(previousMessageId);
-        }
+        await this.releasePendingUnpin(next);
       } catch (error) {
         if (isNotInChat(error)) {
           void Promise.resolve(this.onNotInChat?.(chatId)).catch((next) => {
@@ -168,10 +165,12 @@ class Board implements AutomationBoard {
       }
     }
     const sent = await sendManagedCard(this.channel, chatId, card);
+    const pendingUnpinMessageId = retainedUnpinMessageId(binding, sent.messageId);
     const next: AutomationBoardBinding = {
       chatId,
       messageId: sent.messageId,
       ...(sent.kind === 'card-id' && sent.cardId ? { cardId: sent.cardId } : {}),
+      ...(pendingUnpinMessageId ? { pendingUnpinMessageId } : {}),
     };
     await this.store.setBoard(next);
     return next;
@@ -221,6 +220,26 @@ class Board implements AutomationBoard {
     }
   }
 
+  private async releasePendingUnpin(binding: AutomationBoardBinding): Promise<void> {
+    const live = this.store.getBoard(binding.chatId) ?? binding;
+    const stale = live.pendingUnpinMessageId;
+    if (!stale) return;
+    if (stale !== live.messageId) {
+      try {
+        await unpinMessage(this.channel, stale);
+      } catch (error) {
+        if (isNotInChat(error)) throw error;
+        log.warn('auto', 'board.unpin-failed', {
+          err: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+    }
+    const latest = this.store.getBoard(binding.chatId);
+    if (!latest || latest.messageId !== live.messageId) return;
+    await this.store.setBoard({ ...latest, pendingUnpinMessageId: undefined });
+  }
+
   private async hintPinFailed(chatId: string, binding: AutomationBoardBinding): Promise<void> {
     if (binding.pinFailedHinted) return;
     try {
@@ -234,6 +253,18 @@ class Board implements AutomationBoard {
     }
     await this.store.setBoard({ ...binding, pinFailedHinted: true });
   }
+}
+
+function retainedUnpinMessageId(
+  binding: AutomationBoardBinding | undefined,
+  nextMessageId: string,
+): string | undefined {
+  if (!binding) return undefined;
+  if (binding.pendingUnpinMessageId && binding.pendingUnpinMessageId !== nextMessageId) {
+    return binding.pendingUnpinMessageId;
+  }
+  if (binding.messageId && binding.messageId !== nextMessageId) return binding.messageId;
+  return undefined;
 }
 
 function boardAttemptKey(card: object): string {

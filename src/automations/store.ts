@@ -109,6 +109,8 @@ export interface AutomationBoardBinding {
   cardId?: string;
   sequence?: number;
   pinFailedHinted?: boolean;
+  /** Previous pinned board, kept until the current message is pinned. */
+  pendingUnpinMessageId?: string;
 }
 
 export interface AutomationsStatusItem {
@@ -481,7 +483,9 @@ export class AutomationsStore {
   }
 
   findBoardByMessageId(messageId: string): AutomationBoardBinding | undefined {
-    const board = this.boards.find((entry) => entry.messageId === messageId);
+    const board = this.boards.find((entry) =>
+      entry.messageId === messageId || entry.pendingUnpinMessageId === messageId,
+    );
     return board ? { ...board } : undefined;
   }
 
@@ -492,12 +496,14 @@ export class AutomationsStore {
   async setBoard(binding: AutomationBoardBinding): Promise<void> {
     this.assertMutable();
     const index = this.boards.findIndex((entry) => entry.chatId === binding.chatId);
+    const pendingUnpin = pendingUnpinMessageId(binding);
     const next: AutomationBoardBinding = {
       chatId: binding.chatId,
       messageId: binding.messageId,
       ...(binding.cardId ? { cardId: binding.cardId } : {}),
       ...(typeof binding.sequence === 'number' ? { sequence: binding.sequence } : {}),
       ...(binding.pinFailedHinted ? { pinFailedHinted: true } : {}),
+      ...(pendingUnpin ? { pendingUnpinMessageId: pendingUnpin } : {}),
     };
     if (index >= 0) this.boards[index] = next;
     else this.boards.push(next);
@@ -833,7 +839,21 @@ function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
     ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
     ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
     ...(raw.pinFailedHinted === true ? { pinFailedHinted: true } : {}),
+    ...(typeof raw.pendingUnpinMessageId === 'string'
+      && raw.pendingUnpinMessageId
+      && raw.pendingUnpinMessageId !== raw.messageId
+      ? { pendingUnpinMessageId: raw.pendingUnpinMessageId }
+      : {}),
   };
+}
+
+function pendingUnpinMessageId(binding: AutomationBoardBinding): string | undefined {
+  if (
+    typeof binding.pendingUnpinMessageId !== 'string'
+    || !binding.pendingUnpinMessageId
+    || binding.pendingUnpinMessageId === binding.messageId
+  ) return undefined;
+  return binding.pendingUnpinMessageId;
 }
 
 function parseStatusDocument(text: string): AutomationsStatusSnapshot {

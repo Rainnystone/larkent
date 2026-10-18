@@ -364,18 +364,22 @@ describe('AutomationsStore', () => {
       messageId: 'om_board',
       cardId: 'card_1',
       sequence: 2,
+      pendingUnpinMessageId: 'om_old',
     });
     expect(store.getBoard('oc_group')).toEqual({
       chatId: 'oc_group',
       messageId: 'om_board',
       cardId: 'card_1',
       sequence: 2,
+      pendingUnpinMessageId: 'om_old',
     });
     expect(store.findBoardByMessageId('om_board')?.chatId).toBe('oc_group');
+    expect(store.findBoardByMessageId('om_old')?.messageId).toBe('om_board');
 
     const restarted = new AutomationsStore({ path, logPath, statusPath, now: () => 1_760_000_000_000 });
     await restarted.load();
-    expect(restarted.getBoard('oc_group')?.messageId).toBe('om_board');
+    expect(restarted.getBoard('oc_group')?.pendingUnpinMessageId).toBe('om_old');
+    expect(restarted.findBoardByMessageId('om_old')?.chatId).toBe('oc_group');
     expect(restarted.findBoardByMessageId('om_other')).toBeUndefined();
   });
 
