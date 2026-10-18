@@ -39,6 +39,11 @@ export interface TurnReply {
   messageId?: string;
   /** True when the receipt is an interactive card (stream create or card send). */
   interactive?: boolean;
+  /**
+   * Message this reply replaces. Recovery recalls it after the replacement
+   * send lands, and never treats that id as the correction itself.
+   */
+  supersedes?: string;
   state?: OutboxItemState;
 }
 
@@ -242,6 +247,7 @@ export class TurnJournal {
     deliveryId?: string;
     messageId?: string;
     interactive?: boolean;
+    supersedes?: string;
   }): void {
     const current = this.entries.find((item) => item.turnId === turnId);
     const threadId = reply.threadId?.trim() || current?.threadId;
@@ -254,6 +260,7 @@ export class TurnJournal {
       deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
       ...(reply.messageId ? { messageId: reply.messageId } : {}),
       ...(reply.interactive === true ? { interactive: true } : {}),
+      ...(reply.supersedes?.trim() ? { supersedes: reply.supersedes.trim() } : {}),
       state: 'staged',
     };
     this.patch(turnId, {
@@ -320,6 +327,13 @@ export class TurnJournal {
 
   noteCliAlreadySent(turnId: string): void {
     this.patch(turnId, { cliAlreadySent: true });
+  }
+
+  /** The CLI posted the previous text. A replacement still has to be sent. */
+  clearCliAlreadySent(turnId: string): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    if (!current?.cliAlreadySent) return;
+    this.patch(turnId, { cliAlreadySent: false });
   }
 
   noteNonAnswerId(turnId: string, messageId: string): void {
@@ -905,6 +919,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
     ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
     ...(raw.interactive === true ? { interactive: true } : {}),
+    ...(typeof raw.supersedes === 'string' && raw.supersedes ? { supersedes: raw.supersedes } : {}),
     ...(isOutboxItemState(raw.state) ? { state: raw.state } : {}),
   };
 }
@@ -1085,6 +1100,10 @@ export const FEISHU_DELIVERY_ID_MAX_CHARS = 50;
 
 export function replyDeliveryKey(turnId: string): string {
   return clipDeliveryId(`reply:${turnId}`);
+}
+
+export function promiseCorrectionDeliveryKey(turnId: string): string {
+  return clipDeliveryId(`correct:${turnId}`);
 }
 
 export function noticeDeliveryKey(turnId: string): string {

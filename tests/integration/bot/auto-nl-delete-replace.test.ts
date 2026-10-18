@@ -13,6 +13,7 @@ import { WorkspaceStore } from '../../../src/workspace/store';
 import type { AgentEvent } from '../../../src/agent/types';
 import { FakeAgentAdapter, type FakeAgentEvents } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { axiosErrno } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -283,6 +284,62 @@ describe('A28 natural-language delete and replace', () => {
     ]);
     expect(JSON.stringify(rejected)).not.toContain('Sam Altman');
     expect(h.store.get(1)).toBeUndefined();
+  }, 15_000);
+
+  it('delivers one promise correction after recovery when the target is gone and the correction send fails once', async () => {
+    const h = await harness({
+      events: done(proposal({
+        op: 'replace',
+        id: 1,
+        taskType: 'reminder',
+        schedule: '2026-10-19 09:00',
+        name: '马斯克和 Sam Altman',
+        taskText: '总结马斯克和 Sam Altman 的推特',
+      })),
+      items: [item()],
+    });
+    await h.bridge.tickLink();
+    await h.bridge.recover();
+
+    const originalSend = h.channel.send.bind(h.channel);
+    let correctionAttempts = 0;
+    h.channel.send = async (chatId, content, options) => {
+      const text = JSON.stringify(content);
+      if (text.includes('已生成确认卡，点「是」后用新任务替换 #1')) {
+        await h.store.delete(1);
+      }
+      if (text.includes('没有删除任务：本群没有 #1')) {
+        correctionAttempts += 1;
+        if (correctionAttempts === 1) throw axiosErrno('ECONNRESET', 'connect ECONNRESET');
+      }
+      return originalSend(chatId, content, options);
+    };
+
+    await h.channel.handlers.message?.(mention('om_correct', '删了重建，加上 Sam Altman'));
+    await waitFor(() => correctionAttempts === 1);
+    expect(correctionAttempts).toBe(1);
+    expect(correctionSends(h)).toHaveLength(0);
+    expect(h.store.listDrafts()).toEqual([]);
+
+    await h.bridge.recover();
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(correctionAttempts).toBe(2);
+    expect(h.store.listDrafts()).toEqual([]);
+    expect(sentText(h)).not.toContain('确认替换');
+    const calls = h.channel.snapshotCalls();
+    const promiseSendIndex = calls.findIndex((call) => (
+      call.op === 'send' && JSON.stringify(call.content).includes('已生成确认卡，点「是」后用新任务替换 #1')
+    ));
+    expect(promiseSendIndex).toBeGreaterThanOrEqual(0);
+    const promiseSendNumber = calls.slice(0, promiseSendIndex + 1).filter((call) => call.op === 'send').length;
+    expect(calls.filter((call) => call.op === 'recall')).toEqual([
+      { op: 'recall', messageId: `om_fake_${promiseSendNumber}` },
+    ]);
+
+    await h.bridge.recover();
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(correctionAttempts).toBe(2);
+    expect(h.channel.snapshotCalls().filter((call) => call.op === 'recall')).toHaveLength(1);
   }, 15_000);
 
   it('replaces by creating the new task before deleting the old one', async () => {
@@ -562,6 +619,7 @@ async function harness(opts: {
     await tmp.cleanup();
   });
   return {
+    bridge,
     channel,
     store,
     agent,
@@ -625,6 +683,12 @@ function markdowns(h: { channel: ReturnType<typeof createRecordingLarkChannel> }
 
 function lastMarkdown(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string {
   return markdowns(h).at(-1) ?? '';
+}
+
+function correctionSends(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): unknown[] {
+  return h.channel.snapshotCalls().filter((call) => (
+    call.op === 'send' && JSON.stringify(call.content).includes('没有删除任务：本群没有 #1')
+  ));
 }
 
 function cardText(

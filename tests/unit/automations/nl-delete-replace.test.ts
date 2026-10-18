@@ -489,6 +489,68 @@ describe('delete and replace drafts', () => {
     expect(h.store.listDrafts()).toEqual([]);
     expect(h.store.get(item.id)?.name).toBe('总结马斯克推特');
   });
+
+  it('anchors 一个月 on a start next month', async () => {
+    const h = await harness();
+    const item = await h.store.create(reminderInput());
+    await submitAutomationReplaceProposal(h.proposalCtx(), {
+      op: 'replace',
+      id: item.id,
+      taskType: 'reminder',
+      scheduleText: '从 2026-11-18 起 每个工作日 09:00',
+      name: '下月工作日',
+      taskText: '总结马斯克推特',
+    });
+    const waiting = scheduleDraft(h.store.listDrafts()[0]);
+    const startAt = Date.UTC(2026, 10, 17, 16, 0, 0);
+    expect(waiting.startAt).toBe(startAt);
+    const endAt = presetEndAt('auto.end.1m', TZ, h.now(), waiting.startAt);
+    expect(endAt).toBe(Date.UTC(2026, 11, 17, 16, 0, 0));
+    const chosen = await completeDraftEnd({
+      automations: h.store,
+      autoAuth: h.autoAuth,
+      automationsScheduler: h.scheduler,
+      channel: h.channel as never,
+      now: () => h.now(),
+    }, waiting, endAt, waiting.cardMessageId!);
+    expect(chosen).toEqual({ ok: true });
+    expect(scheduleDraft(h.store.listDrafts()[0]).endAt).toBe(Date.UTC(2026, 11, 17, 16, 0, 0));
+  });
+
+  it('anchors 今年年底 on the year of a start next year', async () => {
+    const h = await harness();
+    const item = await h.store.create(reminderInput());
+    await submitAutomationReplaceProposal(h.proposalCtx(), {
+      op: 'replace',
+      id: item.id,
+      taskType: 'reminder',
+      scheduleText: '从 2027-06-01 起 每天 09:00',
+      name: '明年每天',
+      taskText: '总结马斯克推特',
+    });
+    const waiting = scheduleDraft(h.store.listDrafts()[0]);
+    const startAt = Date.UTC(2027, 4, 31, 16, 0, 0);
+    expect(waiting.startAt).toBe(startAt);
+    const endAt = presetEndAt('auto.end.eoy', TZ, h.now(), waiting.startAt);
+    expect(endAt).toBe(Date.UTC(2027, 11, 31, 16, 0, 0));
+    const chosen = await completeDraftEnd({
+      automations: h.store,
+      autoAuth: h.autoAuth,
+      automationsScheduler: h.scheduler,
+      channel: h.channel as never,
+      now: () => h.now(),
+    }, waiting, endAt, waiting.cardMessageId!);
+    expect(chosen).toEqual({ ok: true });
+    expect(scheduleDraft(h.store.listDrafts()[0]).endAt).toBe(Date.UTC(2027, 11, 31, 16, 0, 0));
+  });
+
+  it('keeps duration presets on now when the task starts immediately', () => {
+    expect(presetEndAt('auto.end.1m', TZ, NOW)).toBe(Date.UTC(2026, 10, 17, 3, 0, 0));
+    expect(presetEndAt('auto.end.3m', TZ, NOW)).toBe(Date.UTC(2027, 0, 17, 3, 0, 0));
+    expect(presetEndAt('auto.end.eoy', TZ, NOW)).toBe(Date.UTC(2026, 11, 31, 16, 0, 0));
+    expect(presetEndAt('auto.end.1y', TZ, NOW)).toBe(NOW + 365 * 24 * 60 * 60 * 1000);
+    expect(presetEndAt('auto.end.1m', TZ, NOW, NOW)).toBe(Date.UTC(2026, 10, 17, 3, 0, 0));
+  });
 });
 
 describe('confirming a delete or replace', () => {

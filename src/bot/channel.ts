@@ -117,6 +117,7 @@ import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
   noticeState,
+  promiseCorrectionDeliveryKey,
   replyDeliveryKey,
   replyState,
   streamDeliveryKey,
@@ -2871,42 +2872,132 @@ async function reconcileReplacePromise(input: {
   }
   const interactive = reply.interactive === true || input.replyMode === 'card';
   const previousMessageId = reply.messageId;
-  try {
-    if (interactive && previousMessageId) {
+  const canStage = Boolean(input.journal && input.turnId);
+  if (interactive && previousMessageId) {
+    if (canStage && input.journal && input.turnId) {
+      await stageFailedPromiseCorrection({
+        journal: input.journal,
+        turnId: input.turnId,
+        reply,
+        correctedBody,
+        interactive,
+        previousMessageId,
+      });
+    }
+    try {
       await input.channel.updateCard(
         previousMessageId,
         settledReplyCard(input.replyMode, corrected, correctedBody, input.cardRenderOptions),
       );
-      if (input.turnId) input.journal?.reviseDeliveredReply(input.turnId, correctedBody);
-      await input.journal?.flush();
+    } catch (error) {
+      await keepOrRestorePromise(error, input, reply);
       return;
     }
-    if (previousMessageId) {
-      const sent = await input.channel.send(
+    if (input.turnId) {
+      input.journal?.reviseDeliveredReply(input.turnId, correctedBody);
+      input.journal?.replyDelivered(input.turnId);
+    }
+    await input.journal?.flush();
+    return;
+  }
+  if (previousMessageId) {
+    if (canStage && input.journal && input.turnId) {
+      await stageFailedPromiseCorrection({
+        journal: input.journal,
+        turnId: input.turnId,
+        reply,
+        correctedBody,
+        interactive,
+        previousMessageId,
+      });
+    }
+    let sent: { messageId?: string };
+    try {
+      sent = await input.channel.send(
         input.chatId,
         { markdown: correctedBody },
-        {
+        withDeliveryUuid({
           ...(input.sendOpts.replyTo ? { replyTo: input.sendOpts.replyTo } : {}),
           ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
-        },
+        }, input.turnId ? promiseCorrectionDeliveryKey(input.turnId) : undefined),
       );
-      const messageId = sent.messageId?.trim();
-      if (input.turnId) {
-        input.journal?.reviseDeliveredReply(input.turnId, correctedBody, messageId || undefined);
-      }
-      try {
-        await input.channel.recallMessage(previousMessageId);
-      } catch (error) {
-        log.warn('auto', 'promise-recall-failed', {
-          err: error instanceof Error ? error.message : String(error),
-        });
-      }
-      await input.journal?.flush();
+    } catch (error) {
+      await keepOrRestorePromise(error, input, reply);
       return;
     }
-    log.warn('auto', 'promise-uncorrected', {});
+    const messageId = sent.messageId?.trim();
+    if (input.turnId) {
+      input.journal?.reviseDeliveredReply(input.turnId, correctedBody, messageId || undefined);
+      input.journal?.replyDelivered(input.turnId);
+    }
+    await recallReplacedMessage(input.channel, previousMessageId);
+    await input.journal?.flush();
+    return;
+  }
+  log.warn('auto', 'promise-uncorrected', {});
+}
+
+async function keepOrRestorePromise(
+  error: unknown,
+  input: {
+    journal?: TurnJournal;
+    turnId?: string;
+  },
+  reply: NonNullable<TurnJournalEntry['reply']>,
+): Promise<void> {
+  if (classify(error) === 'link' && input.journal && input.turnId) return;
+  if (input.journal && input.turnId && reply.messageId) {
+    input.journal.stageReply(input.turnId, {
+      markdown: reply.markdown,
+      replyTo: reply.replyTo,
+      ...(reply.replyInThread ? { replyInThread: true } : {}),
+      ...(reply.threadId ? { threadId: reply.threadId } : {}),
+      replyMode: reply.replyMode,
+      ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
+      messageId: reply.messageId,
+      ...(reply.interactive ? { interactive: true } : {}),
+    });
+    input.journal.replyDelivered(input.turnId);
+    await input.journal.flush();
+  }
+  log.warn('auto', 'promise-correct-failed', {
+    err: error instanceof Error ? error.message : String(error),
+  });
+}
+
+async function stageFailedPromiseCorrection(input: {
+  journal: TurnJournal;
+  turnId: string;
+  reply: NonNullable<TurnJournalEntry['reply']>;
+  correctedBody: string;
+  interactive: boolean;
+  previousMessageId?: string;
+}): Promise<void> {
+  const supersedes = !input.interactive && input.previousMessageId
+    ? input.previousMessageId
+    : undefined;
+  input.journal.stageReply(input.turnId, {
+    markdown: input.correctedBody,
+    replyTo: input.reply.replyTo,
+    ...(input.reply.replyInThread ? { replyInThread: true } : {}),
+    ...(input.reply.threadId ? { threadId: input.reply.threadId } : {}),
+    replyMode: input.reply.replyMode,
+    deliveryId: promiseCorrectionDeliveryKey(input.turnId),
+    ...(input.interactive && input.previousMessageId
+      ? { messageId: input.previousMessageId, interactive: true }
+      : {}),
+    ...(supersedes ? { supersedes } : {}),
+  });
+  if (supersedes) input.journal.noteNonAnswerId(input.turnId, supersedes);
+  input.journal.clearCliAlreadySent(input.turnId);
+  await input.journal.flush();
+}
+
+async function recallReplacedMessage(channel: LarkChannel, messageId: string): Promise<void> {
+  try {
+    await channel.recallMessage(messageId);
   } catch (error) {
-    log.warn('auto', 'promise-correct-failed', {
+    log.warn('auto', 'promise-recall-failed', {
       err: error instanceof Error ? error.message : String(error),
     });
   }
@@ -3088,6 +3179,10 @@ async function resendJournalReply(input: {
     return false;
   }
   if (delivered) {
+    const superseded = reply.supersedes?.trim();
+    if (superseded && messageId !== superseded) {
+      await recallReplacedMessage(input.channel, superseded);
+    }
     log.info('outbound', 'journal-resend', {
       scope: entry.scope,
       turnId: entry.turnId,

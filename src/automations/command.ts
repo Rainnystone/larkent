@@ -453,7 +453,7 @@ export function presetEndAt(
   now: number,
   startAt = now,
 ): number {
-  const parts = zonedParts(timezone, now);
+  const parts = zonedParts(timezone, startAt);
   switch (action) {
     case 'auto.end.1m':
       return addLocalMonths(timezone, parts, 1);
