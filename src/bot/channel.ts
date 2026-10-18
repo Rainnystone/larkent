@@ -1020,6 +1020,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       })(), 'auto');
     }
   });
+  started.onSuspendAmended((outage) => {
+    reviewActiveRuns(activeRuns.snapshot(), outage);
+  });
   feishuLink = started;
   const link = started;
 

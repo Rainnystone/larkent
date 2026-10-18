@@ -33,6 +33,8 @@ export interface FeishuLink {
   isDown(): boolean;
   outageEpoch(): number;
   onRecovered(fn: (o: Outage) => void): () => void;
+  /** Late OS-sleep evidence for an outage that already recovered. Not a second recovery. */
+  onSuspendAmended(fn: (o: Outage) => void): () => void;
   noteInbound(at?: number): void;
   /** Pong or any other frame on the current socket. Ignored unless a wake reconnect is open. */
   noteSocketFrame(at?: number): void;
@@ -164,6 +166,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   const nowFn = deps.now ?? Date.now;
   const sleepProbe = deps.sleepProbe ?? createHostSleepProbe();
   const listeners = new Set<(o: Outage) => void>();
+  const suspendListeners = new Set<(o: Outage) => void>();
   let stopped = false;
   let down = true;
   let epoch = 0;
@@ -189,6 +192,8 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let sawSocketDown = false;
   /** Last outage handed to recovery. A late sleep result merges into this window. */
   let lastRecovered: Outage | undefined;
+  /** `epoch` of `lastRecovered`. A sleep probe may apply only to that generation. */
+  let lastRecoveredEpoch = -1;
 
   const touchHeartbeat = (): void => {
     if (!deps.heartbeatPath) return;
@@ -202,6 +207,10 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
   const emitRecovered = (outage: Outage): void => {
     for (const listener of listeners) listener(outage);
+  };
+
+  const emitSuspendAmended = (outage: Outage): void => {
+    for (const listener of suspendListeners) listener(outage);
   };
 
   const goDown = (since: number, opts?: { hostSuspended?: boolean; suspendStartedAt?: number }): void => {
@@ -243,10 +252,12 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       ...(outage.suspendStartedAt !== undefined ? { suspendStartedAt: outage.suspendStartedAt } : {}),
     });
     lastRecovered = outage;
+    lastRecoveredEpoch = epoch;
     emitRecovered(outage);
   };
 
   const publishSuspend = (
+    originEpoch: number,
     gapFrom: number,
     gapTo: number,
     evidence: HostSleepEvidence,
@@ -258,27 +269,24 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       sleptMs,
       ...(evidence.suspendStartedAt !== undefined ? { suspendStartedAt: evidence.suspendStartedAt } : {}),
     });
-    if (down) {
+    if (down && epoch === originEpoch) {
       goDown(gapFrom, { hostSuspended: true, suspendStartedAt: startedAt });
       return;
     }
-    if (lastRecovered?.hostSuspended) return;
-    const since = lastRecovered ? Math.min(lastRecovered.since, gapFrom) : gapFrom;
-    const until = lastRecovered ? Math.max(lastRecovered.until, gapTo) : gapTo;
+    if (!lastRecovered || lastRecoveredEpoch !== originEpoch || lastRecovered.hostSuspended) return;
     const amended: Outage = {
-      since,
-      until,
+      since: Math.min(lastRecovered.since, gapFrom),
+      until: Math.max(lastRecovered.until, gapTo),
       hostSuspended: true,
       suspendStartedAt: startedAt,
     };
     lastRecovered = amended;
-    log.info('link', 'recovered', {
+    log.info('link', 'suspend-amended', {
       since: amended.since,
       until: amended.until,
-      hostSuspended: true,
       suspendStartedAt: startedAt,
     });
-    emitRecovered(amended);
+    emitSuspendAmended(amended);
   };
 
   const noteEvidence = (at: number, wsConnected: boolean): void => {
@@ -369,8 +377,11 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       }
       const gapFrom = lastTickAt;
       const gapTo = at;
+      // A frame can recover this wake before the tick. A later drop must not
+      // inherit the probe; the gap still belongs to the recovered wake.
+      const originEpoch = wakeAlreadyRecovered ? lastRecoveredEpoch : epoch;
       sleepDetect = detectSleep(sleepProbe, { fromMs: gapFrom, toMs: gapTo }).then((evidence) => {
-        publishSuspend(gapFrom, gapTo, evidence, sinceLast);
+        publishSuspend(originEpoch, gapFrom, gapTo, evidence, sinceLast);
       });
       if (!sameWake) armWakeReconnect(at, sinceLast);
     }
@@ -511,6 +522,12 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       listeners.add(fn);
       return () => {
         listeners.delete(fn);
+      };
+    },
+    onSuspendAmended(fn) {
+      suspendListeners.add(fn);
+      return () => {
+        suspendListeners.delete(fn);
       };
     },
     noteInbound(at) {

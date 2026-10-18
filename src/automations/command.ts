@@ -1207,50 +1207,90 @@ function canPostMutationProposal(ctx: AutomationProposalContext): boolean {
   return Boolean(ctx.automations && ctx.autoAuth && ctx.automationsScheduler);
 }
 
-export async function flushPendingDraftCards(ctx: {
+type DraftFlushContext = {
   channel: CommandContext['channel'];
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
   automationsScheduler?: CommandContext['automationsScheduler'];
   now?: () => number;
   isLinkDown?: () => boolean;
-}): Promise<void> {
+};
+
+/** In-flight card claim per draft. Bind happens after send, so a second flush must wait. */
+const draftCardClaims = new Map<string, Promise<void>>();
+
+export async function flushPendingDraftCards(ctx: DraftFlushContext): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth || ctx.isLinkDown?.()) return;
   const now = (ctx.now ?? Date.now)();
   for (const draft of ctx.automations.listDrafts()) {
     if (draft.cardMessageId) continue;
-    const cardCtx = {
-      channel: ctx.channel,
-      automations: ctx.automations,
-      autoAuth: ctx.autoAuth,
-      automationsScheduler: ctx.automationsScheduler,
-      chatMode: 'group' as const,
-      msg: { chatId: draft.chatId, messageId: '', threadId: undefined },
-    };
     try {
-      switch (draft.op) {
-        case 'delete':
-          await postDeleteCard(cardCtx, draft);
-          break;
-        case 'create':
-        case 'replace':
-          if (draft.pendingRecurring) {
-            await postEndCard(cardCtx, draft);
-            break;
-          }
-          {
-            const schedule = readSchedule(draft.schedule);
-            if (!schedule) break;
-            await postConfirmCard(cardCtx, draft, schedule, now, '');
-          }
-          break;
-        default: {
-          const _exhaustive: never = draft;
-          return _exhaustive;
-        }
-      }
+      await flushDraftCardOnce(ctx, draft.draftId, now);
     } catch (error) {
       log.fail('auto', error, { event: 'draft.flush', draftId: draft.draftId });
+    }
+  }
+}
+
+async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: number): Promise<void> {
+  const automations = ctx.automations;
+  if (!automations || !ctx.autoAuth) return;
+  for (;;) {
+    const inflight = draftCardClaims.get(draftId);
+    if (inflight) {
+      await inflight;
+      continue;
+    }
+    const draft = automations.getDraft(draftId);
+    if (!draft || draft.cardMessageId) return;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    draftCardClaims.set(draftId, gate);
+    try {
+      await deliverUnboundDraftCard(ctx, draft, now);
+    } finally {
+      if (draftCardClaims.get(draftId) === gate) draftCardClaims.delete(draftId);
+      release();
+    }
+    return;
+  }
+}
+
+async function deliverUnboundDraftCard(
+  ctx: DraftFlushContext,
+  draft: AutomationDraft,
+  now: number,
+): Promise<void> {
+  if (!ctx.automations || !ctx.autoAuth) return;
+  const cardCtx = {
+    channel: ctx.channel,
+    automations: ctx.automations,
+    autoAuth: ctx.autoAuth,
+    automationsScheduler: ctx.automationsScheduler,
+    chatMode: 'group' as const,
+    msg: { chatId: draft.chatId, messageId: '', threadId: undefined },
+  };
+  switch (draft.op) {
+    case 'delete':
+      await postDeleteCard(cardCtx, draft);
+      return;
+    case 'create':
+    case 'replace':
+      if (draft.pendingRecurring) {
+        await postEndCard(cardCtx, draft);
+        return;
+      }
+      {
+        const schedule = readSchedule(draft.schedule);
+        if (!schedule) return;
+        await postConfirmCard(cardCtx, draft, schedule, now, '');
+      }
+      return;
+    default: {
+      const _exhaustive: never = draft;
+      return _exhaustive;
     }
   }
 }

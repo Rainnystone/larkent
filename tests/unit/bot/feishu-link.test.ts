@@ -391,9 +391,13 @@ describe('FeishuLink', () => {
         reconnects.push(now);
       },
     });
+    const amended: Outage[] = [];
     await link.tick();
     link.onRecovered((outage) => {
       recovered.push(outage);
+    });
+    link.onSuspendAmended((outage) => {
+      amended.push(outage);
       reviewActiveRuns([openTool], outage);
     });
 
@@ -401,12 +405,145 @@ describe('FeishuLink', () => {
     link.noteKeepaliveWake(now);
     link.noteSocketFrame(now);
     expect(link.isDown()).toBe(false);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.hostSuspended).toBe(false);
+    expect(openTool.stallDeadlineMs).toBeUndefined();
 
     await link.tick();
     expect(reconnects).toEqual([now]);
     expect(link.isDown()).toBe(false);
-    expect(recovered.some((outage) => outage.hostSuspended)).toBe(true);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.hostSuspended).toBe(false);
+    expect(amended).toHaveLength(1);
+    expect(amended[0]!.hostSuspended).toBe(true);
+    expect(amended[0]!.suspendStartedAt).toBe(now - 5 * 60_000);
     expect(openTool.stallDeadlineMs).toBe(2 * 60_000);
+  });
+
+  it('applies a late sleep probe to the outage that started it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    let state: 'connected' | 'reconnecting' = 'connected';
+    let resolveDetect: ((value: { suspended: true; suspendStartedAt: number }) => void) | undefined;
+    const recovered: Outage[] = [];
+    const amended: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      reconnect: () => {},
+      sleepProbe: {
+        note() {},
+        detect() {
+          return new Promise((resolve) => {
+            resolveDetect = resolve;
+          });
+        },
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    link.onSuspendAmended((outage) => {
+      amended.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    const gapFrom = now;
+    now += 5 * 60_000;
+    const gapTick = link.tick();
+    for (let n = 0; n < 8; n++) await Promise.resolve();
+    expect(resolveDetect).toBeTypeOf('function');
+    expect(link.isDown()).toBe(true);
+
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ hostSuspended: false, since: gapFrom, until: now });
+    const wokeAt = now;
+
+    state = 'reconnecting';
+    now += 1_000;
+    const downTick = link.tick();
+    expect(link.isDown()).toBe(true);
+    expect(link.outageEpoch()).toBe(2);
+
+    resolveDetect?.({ suspended: true, suspendStartedAt: gapFrom });
+    await Promise.all([gapTick, downTick]);
+
+    expect(recovered).toHaveLength(1);
+    expect(amended).toEqual([
+      expect.objectContaining({
+        hostSuspended: true,
+        suspendStartedAt: gapFrom,
+        since: gapFrom,
+      }),
+    ]);
+
+    state = 'connected';
+    await link.tick();
+    expect(recovered).toHaveLength(2);
+    expect(recovered[1]).toMatchObject({ hostSuspended: false, until: now });
+    expect(recovered[1]!.suspendStartedAt).toBeUndefined();
+    expect(recovered[1]!.since).toBeGreaterThan(gapFrom);
+
+    const startedAfterWake: ReviewableRun = {
+      lastEventAt: wokeAt,
+      interrupted: false,
+      hasOpenToolCall: true,
+    };
+    reviewActiveRuns([startedAfterWake], recovered[1]!);
+    expect(startedAfterWake.stallDeadlineMs).toBeUndefined();
+  });
+
+  it('does not attach the wake sleep probe to an outage that replaced it', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    const recovered: Outage[] = [];
+    const amended: Outage[] = [];
+    const channel = {
+      getConnectionStatus: () => ({ state: 'connected' as const, reconnectAttempts: 0 }),
+      send: () => Promise.reject(sdkShapedSendError('unknown', axiosHttpError(502))),
+    } as unknown as LarkChannel;
+    const link = startFeishuLink({
+      channel,
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      reconnect: () => {},
+      sleepProbe: sleepingProbe(),
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    link.onSuspendAmended((outage) => {
+      amended.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    const gapFrom = now;
+    now += 5 * 60_000;
+    link.noteKeepaliveWake(now);
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]).toMatchObject({ hostSuspended: false, since: gapFrom });
+
+    await expect(channel.send('oc', { markdown: 'flap' })).rejects.toMatchObject({ code: 'unknown' });
+    expect(link.isDown()).toBe(true);
+    const flapEpoch = link.outageEpoch();
+    expect(flapEpoch).toBe(2);
+
+    await link.tick();
+    expect(amended).toEqual([
+      expect.objectContaining({ hostSuspended: true, suspendStartedAt: gapFrom }),
+    ]);
+    expect(recovered).toHaveLength(2);
+    expect(recovered[1]).toMatchObject({ hostSuspended: false });
+    expect(recovered[1]!.suspendStartedAt).toBeUndefined();
+    expect(recovered[1]!.since).toBeGreaterThan(gapFrom);
+    expect(link.outageEpoch()).toBe(flapEpoch);
   });
 
   it('emits one recovered outage after a 2 min probe failure while WS stays connected', async () => {

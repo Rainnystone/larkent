@@ -173,6 +173,52 @@ describe('automation draft card delivery', () => {
     expect(JSON.stringify(h.channel.sent)).toContain('本群自动化');
     expect(refreshed).toBe(1);
   });
+
+  it('posts one confirm card when two flushes overlap on the same draft', async () => {
+    const h = await harness();
+    await h.store.saveDraft({
+      taskType: 'reminder',
+      schedule: { kind: 'one-shot', fireAt: NOW + 60 * 60_000 },
+      timezone: 'Asia/Shanghai',
+      startAt: NOW,
+      endAt: NOW + 60 * 60_000,
+      nextFireAt: NOW + 60 * 60_000,
+      chatId: CHAT,
+      createdBy: USER,
+      name: '交周报',
+      taskText: '提醒交周报',
+    });
+    const orig = h.channel.createCard.bind(h.channel);
+    let creates = 0;
+    let releaseFirst!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    h.channel.createCard = async (card) => {
+      creates += 1;
+      if (creates === 1) await held;
+      return orig(card);
+    };
+    const flush = () => flushPendingDraftCards({
+      channel: h.channel as never,
+      automations: h.store,
+      autoAuth: h.autoAuth,
+      now: () => NOW,
+    });
+
+    const first = flush();
+    for (let n = 0; creates < 1 && n < 20; n++) await Promise.resolve();
+    expect(creates).toBe(1);
+    const second = flush();
+    await Promise.resolve();
+    expect(creates).toBe(1);
+
+    releaseFirst();
+    await Promise.all([first, second]);
+    expect(creates).toBe(1);
+    expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+    expect(h.store.listDrafts()[0]?.cardMessageId).toEqual(expect.any(String));
+  });
 });
 
 async function harness() {
