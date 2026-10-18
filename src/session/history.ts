@@ -1,5 +1,5 @@
 import { createReadStream } from 'node:fs';
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, realpath, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -17,12 +17,18 @@ function encodeCwd(cwd: string): string {
 }
 
 function claudeProjectDir(cwd: string): string {
-  return join(homedir(), '.claude', 'projects', encodeCwd(cwd));
+  const configDir = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
+  return join(configDir, 'projects', encodeCwd(cwd));
 }
 
 /** Return the most recent `limit` jsonl sessions for the given cwd, newest first. */
 export async function listRecentSessions(cwd: string, limit = 5): Promise<SessionSummary[]> {
-  const dir = claudeProjectDir(cwd);
+  const canonicalCwd = await realpath(cwd).catch((error: NodeJS.ErrnoException) => {
+    // History can outlive a deleted workspace; preserve its original key.
+    if (error.code === 'ENOENT') return cwd;
+    throw error;
+  });
+  const dir = claudeProjectDir(canonicalCwd);
   let files: string[];
   try {
     files = await readdir(dir);
