@@ -6,6 +6,8 @@ Blocked by: A20（同样改 `src/automations/board.ts`）
 Track: 推到现有 code 分支 `feat/automations-v2`（PR #49），**#49 合入前完成**，不开新 PR
 Spec: [../../automations.md](../../automations.md) §7（卡片无法更新时重发并置顶、取消旧卡置顶）
 
+> **缺陷由 [A26](A26-board-settle-old-and-pending-list.md) 修订（A11 r5，2026-10-18）**：单个 `pendingUnpinMessageId` 在「取消置顶失败 + 连续两次重发」时会遗忘仍置顶的卡，改为 pending 列表；pending 窗口内的旧卡不再执行动作。另：下文「13:05 置顶失败 300317」按 r5 日志实为 card.update 失败，见 [A25](A25-board-sequence-retry-in-place.md)。
+
 ## 场景
 
 看板无法原地更新（A20 (a)：card.update 返回 `code != 0`）时，`patchOrResend` 会发一张新卡并置顶。按现在的代码（`7c29b6a`，`src/automations/board.ts` 约 120 行），新卡的绑定（message id / card id / sequence）在 `ensurePinned` 成功**之前**就写进了 store。

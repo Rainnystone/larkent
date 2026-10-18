@@ -29,6 +29,11 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A20](A20-board-tap-refresh.md) | Board tap: check card.update response code, toast immediately, refresh after the callback returns; one-shot cards (confirm, 一个月 / 结束) disable their buttons after the first tap or on expiry | A19 | ready-for-agent |
 | [A21](A21-board-rebind-after-pin.md) | Board resend: keep the old binding until the replacement is pinned; on pin failure keep old binding and retry next refresh (Codex r7 P2, lands on #49) | A20 | ready-for-agent |
 | [A22](A22-oneshot-card-keep-body.md) | One-shot cards keep their original body after settle (tap 是/否, expiry, startup catch-up, losing concurrent tap); only the button row becomes a result line (已确认 #N / 已取消 / 已过期 / 已指定结束时间); amends A20 (d), lands on #49 | A21 | ready-for-agent |
+| [A23](A23-oneshot-day-time-grammar.md) | Schedule grammar: 今天/明天/后天 HH:MM, bare HH:MM = next occurrence, recurring `从 <日期> [HH:MM] 起` start date; proposal prompt gets absolute-time examples; rejected proposals log `auto.rejected` (A11 r5, high) | — | ready-for-agent |
+| [A24](A24-no-claim-before-confirm.md) | Never claim 已提交/已创建 before the confirm tap: validate the proposal before the reply body is delivered; failure reason in the same reply; bridge appends 「已生成确认卡，点「是」后生效。」 (A11 r5, medium) | A23 | ready-for-agent |
+| [A25](A25-board-sequence-retry-in-place.md) | Board 300317: retry in place with a monotonic higher sequence; resend only on 200740/200750/300311/message deleted; `auto.board.patch` success log with sequence (A11 r5, high) | A22 | ready-for-agent |
+| [A26](A26-board-settle-old-and-pending-list.md) | After a resend, settle the old board to a button-less note; taps on a non-current board get a board-specific toast; A21 pending unpin ids become a list (no permanent double pin); amends A21 (A11 r5, medium) | A25 | ready-for-agent |
+| [A27](A27-confirm-card-fire-count.md) | Confirm card: 「接下来 N 次」 uses the actual count; one-shot shows its single time / 共 1 次; windows ending within 30 days show 共 N 次 (A11 r5, low) | A22 | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -39,6 +44,8 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 - **Last:** A11.
 - **From the first A11 run (2026-10-18):** A13 and A14 now (in parallel), A15 after A14; then rerun the A11 scenarios each ticket lists.
 - **From the A11 run on `91b9dec`:** [A17](A17-oneshot-confirm-and-grok-eos.md) (one-shot confirm frequency, Grok `<|eos|>` empty result); then rerun the scenarios that ticket lists.
+
+- **From the A11 r5 run (2026-10-18, code `5552726` + A22):** A23 → A24 (both touch the proposal prompt); A25 → A26 (board resend path); A27 after A22. Rerun the scenarios each ticket lists.
 
 - **Status push (user decision 2026-10-18):** [A19](A19-status-push-bridge.md) on #49 before merge; the receiver is a separate track in the larkent-monitor repo; then rerun the A11 monitor scenarios.
 
@@ -78,4 +85,13 @@ graph LR
   A11 -.finds.-> A20
   A20 --> A21
   A21 --> A22
+  A11 -.finds.-> A23
+  A11 -.finds.-> A24
+  A11 -.finds.-> A25
+  A11 -.finds.-> A26
+  A11 -.finds.-> A27
+  A23 --> A24
+  A22 --> A25
+  A25 --> A26
+  A22 --> A27
 ```
