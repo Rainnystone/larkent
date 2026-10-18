@@ -54,8 +54,26 @@ describe('agent model catalog', () => {
     expect(resolveModelArg('codex', 'claude-opus-4-8')).toBeUndefined();
   });
 
+  it.each(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])(
+    'preserves an explicit current Codex model %s instead of reverting to the CLI default',
+    (model) => {
+      expect(normalizeModelSelection('codex', model)).toBe(model);
+      expect(resolveModelArg('codex', model)).toBe(model);
+      expect(resolveModelArg('claude', model)).toBeUndefined();
+    },
+  );
+
+  it.each(['opus', 'sonnet', 'haiku', 'fable'])(
+    'preserves the selected Claude CLI alias %s through normalization and argv resolution',
+    (model) => {
+      expect(normalizeModelSelection('claude', model)).toBe(model);
+      expect(resolveModelArg('claude', model)).toBe(model);
+      expect(resolveModelArg('codex', model)).toBeUndefined();
+    },
+  );
+
   it('labels a stored value using the picker option text', () => {
-    expect(modelLabel('claude', 'claude-opus-4-8')).toBe('Opus 4.8（最新）');
+    expect(modelLabel('claude', 'claude-opus-4-8')).toBe('Opus 4.8');
     expect(modelLabel('claude', DEFAULT_MODEL)).toContain('跟随默认');
   });
 });

@@ -7,7 +7,7 @@ import { buildBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
 import { runJsonlCli, wrapParsedTranslator } from '../runner/jsonl-cli-runner';
-import { translateEvent } from './stream-json';
+import { ClaudeStreamTranslator } from './stream-json';
 import {
   mergeAgentOptions,
   runAgentOptions,
@@ -94,7 +94,7 @@ export class ClaudeAdapter implements AgentAdapter {
       env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
       stdin: opts.prompt,
       translator: wrapParsedTranslator(
-        { translate: (parsed) => translateEvent(parsed) },
+        new ClaudeStreamTranslator(),
         'claude',
       ),
       cleanup: () => systemPromptFile.cleanup(),

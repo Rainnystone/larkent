@@ -161,6 +161,12 @@ export function isLoaded(profile: string): boolean {
   return r.status === 0;
 }
 
+/** A loaded job can be waiting to respawn after its process has exited. */
+export function isRunning(profile: string): boolean {
+  const r = runLaunchctl(['print', serviceTarget(profile)]);
+  return r.ok && /^\s*pid\s*=\s*[1-9]\d*\s*$/m.test(r.stdout);
+}
+
 /**
  * launchctl bootout returns synchronously, but the actual unload is async
  * at the OS level — `isLoaded()` may still be true for a brief window
