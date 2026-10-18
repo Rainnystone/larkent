@@ -63,8 +63,17 @@ describe('agent model catalog', () => {
     },
   );
 
+  it.each(['opus', 'sonnet', 'haiku', 'fable'])(
+    'preserves the selected Claude CLI alias %s through normalization and argv resolution',
+    (model) => {
+      expect(normalizeModelSelection('claude', model)).toBe(model);
+      expect(resolveModelArg('claude', model)).toBe(model);
+      expect(resolveModelArg('codex', model)).toBeUndefined();
+    },
+  );
+
   it('labels a stored value using the picker option text', () => {
-    expect(modelLabel('claude', 'claude-opus-4-8')).toBe('Opus 4.8（最新）');
+    expect(modelLabel('claude', 'claude-opus-4-8')).toBe('Opus 4.8');
     expect(modelLabel('claude', DEFAULT_MODEL)).toContain('跟随默认');
   });
 });
