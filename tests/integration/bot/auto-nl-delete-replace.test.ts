@@ -271,14 +271,11 @@ describe('A28 natural-language delete and replace', () => {
     expect(lastMarkdown(h)).not.toContain('已生成确认卡');
     expect(lastMarkdown(h)).toContain('没有删除任务：本群没有 #1');
     expect(lastMarkdown(h)).toContain(VISIBLE);
-    const calls = h.channel.snapshotCalls();
-    const promiseSendIndex = calls.findIndex((call) => (
-      call.op === 'send' && JSON.stringify(call.content).includes('已生成确认卡，点「是」后用新任务替换 #1')
-    ));
-    expect(promiseSendIndex).toBeGreaterThanOrEqual(0);
-    const promiseSendNumber = calls.slice(0, promiseSendIndex + 1).filter((call) => call.op === 'send').length;
-    expect(calls.filter((call) => call.op === 'recall')).toEqual([
-      { op: 'recall', messageId: `om_fake_${promiseSendNumber}` },
+    // The correction is sent, then the journal flushes, then the promise is
+    // recalled. The correction text is visible before that recall is recorded.
+    await waitForPromiseRecall(h);
+    expect(recallCalls(h)).toEqual([
+      { op: 'recall', messageId: promiseMessageId(h.channel.snapshotCalls()) },
     ]);
     const rejected = await logEvents(h.logsDir, 'rejected');
     expect(rejected).toEqual([
@@ -328,14 +325,9 @@ describe('A28 natural-language delete and replace', () => {
     expect(correctionAttempts).toBe(2);
     expect(h.store.listDrafts()).toEqual([]);
     expect(sentText(h)).not.toContain('确认替换');
-    const calls = h.channel.snapshotCalls();
-    const promiseSendIndex = calls.findIndex((call) => (
-      call.op === 'send' && JSON.stringify(call.content).includes('已生成确认卡，点「是」后用新任务替换 #1')
-    ));
-    expect(promiseSendIndex).toBeGreaterThanOrEqual(0);
-    const promiseSendNumber = calls.slice(0, promiseSendIndex + 1).filter((call) => call.op === 'send').length;
-    expect(calls.filter((call) => call.op === 'recall')).toEqual([
-      { op: 'recall', messageId: `om_fake_${promiseSendNumber}` },
+    await waitForPromiseRecall(h);
+    expect(recallCalls(h)).toEqual([
+      { op: 'recall', messageId: promiseMessageId(h.channel.snapshotCalls()) },
     ]);
 
     await h.bridge.recover();
@@ -384,14 +376,9 @@ describe('A28 natural-language delete and replace', () => {
     await h.bridge.recover();
     expect(correctionSends(h)).toHaveLength(1);
     expect(recallAttempts).toBe(2);
-    const calls = h.channel.snapshotCalls();
-    const promiseSendIndex = calls.findIndex((call) => (
-      call.op === 'send' && JSON.stringify(call.content).includes('已生成确认卡，点「是」后用新任务替换 #1')
-    ));
-    expect(promiseSendIndex).toBeGreaterThanOrEqual(0);
-    const promiseSendNumber = calls.slice(0, promiseSendIndex + 1).filter((call) => call.op === 'send').length;
-    expect(calls.filter((call) => call.op === 'recall')).toEqual([
-      { op: 'recall', messageId: `om_fake_${promiseSendNumber}` },
+    await waitForPromiseRecall(h);
+    expect(recallCalls(h)).toEqual([
+      { op: 'recall', messageId: promiseMessageId(h.channel.snapshotCalls()) },
     ]);
 
     await h.bridge.recover();
@@ -978,6 +965,35 @@ function correctionSends(h: { channel: ReturnType<typeof createRecordingLarkChan
   return h.channel.snapshotCalls().filter((call) => (
     call.op === 'send' && JSON.stringify(call.content).includes('没有删除任务：本群没有 #1')
   ));
+}
+
+function recallCalls(
+  h: { channel: ReturnType<typeof createRecordingLarkChannel> },
+): Array<{ op: 'recall'; messageId: string }> {
+  return h.channel.snapshotCalls().flatMap((call) => (
+    call.op === 'recall' ? [{ op: 'recall' as const, messageId: call.messageId }] : []
+  ));
+}
+
+function promiseMessageId(
+  calls: ReturnType<ReturnType<typeof createRecordingLarkChannel>['snapshotCalls']>,
+): string | undefined {
+  const promiseSendIndex = calls.findIndex((call) => (
+    call.op === 'send' && JSON.stringify(call.content).includes('已生成确认卡，点「是」后用新任务替换 #1')
+  ));
+  if (promiseSendIndex < 0) return undefined;
+  const promiseSendNumber = calls.slice(0, promiseSendIndex + 1).filter((call) => call.op === 'send').length;
+  return `om_fake_${promiseSendNumber}`;
+}
+
+async function waitForPromiseRecall(
+  h: { channel: ReturnType<typeof createRecordingLarkChannel> },
+): Promise<void> {
+  await waitFor(() => {
+    const calls = h.channel.snapshotCalls();
+    const messageId = promiseMessageId(calls);
+    return messageId !== undefined && calls.some((call) => call.op === 'recall' && call.messageId === messageId);
+  });
 }
 
 function cardText(
