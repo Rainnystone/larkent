@@ -136,14 +136,15 @@ describe('automation lifecycle and observability', () => {
   it('a 230002 or 232009 send deletes that group; a gone-card 404 does not', async () => {
     const gone = await harness();
     await confirmOne(gone, CHAT, 'om_new');
+    const firstId = gone.store.getBoard(CHAT)!.messageId;
     const first = boardForChat(gone, CHAT);
     gone.channel.cardErrors.update = axiosHttpError(404, 'card gone');
     await gone.channel.handlers.cardAction?.(
-      boardClick(USER, pauseToken(first.text), first.messageId, 'auto.pause'),
+      boardClick(USER, pauseToken(first.text), firstId, 'auto.pause'),
     );
     expect(gone.store.get(1)?.paused).toBe(true);
     expect(gone.store.list()).toHaveLength(1);
-    await waitFor(() => boardForChat(gone, CHAT).messageId !== first.messageId);
+    await waitFor(() => gone.store.getBoard(CHAT)?.messageId !== firstId);
     const replaced = boardForChat(gone, CHAT);
     expect(replaced.messageId).not.toBe(first.messageId);
     expectNoStatusBlock(replaced.text);
@@ -153,12 +154,13 @@ describe('automation lifecycle and observability', () => {
       const h = await harness();
       await confirmOne(h, CHAT, 'om_new');
       const board = boardForChat(h, CHAT);
+      const boardId = h.store.getBoard(CHAT)!.messageId;
       const sendsBefore = h.channel.sent.filter((item) =>
         item.chatId === CHAT && isBoardContent(item.content),
       ).length;
       h.channel.cardErrors.update = notInChatError(code);
       await h.channel.handlers.cardAction?.(
-        boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
+        boardClick(USER, pauseToken(board.text), boardId, 'auto.pause'),
       );
       const status = await waitForStatus(h, (snapshot) =>
         h.store.list().length === 0 && snapshot.items.length === 0,
@@ -335,9 +337,12 @@ async function confirmOne(
   await h.channel.handlers.cardAction?.(
     cardClick(USER, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!, chatId),
   );
-  await waitFor(() => Boolean(h.store.getBoard(chatId)) && h.channel.sent.some((item) =>
-    item.chatId === chatId && isBoardContent(item.content),
-  ));
+  await waitFor(() => {
+    const board = h.store.getBoard(chatId);
+    if (!board) return false;
+    return h.channel.sent.some((item) => item.chatId === chatId && isBoardContent(item.content))
+      && h.channel.pins.some((pin) => pin.chatId === chatId && pin.messageId === board.messageId);
+  });
 }
 
 function mention(
@@ -445,11 +450,16 @@ function isBoardContent(content: unknown): boolean {
 }
 
 function boardForChat(
-  h: { channel: ReturnType<typeof createRecordingLarkChannel> },
+  h: {
+    channel: ReturnType<typeof createRecordingLarkChannel>;
+    store?: { getBoard(chatId: string): { messageId: string } | undefined };
+  },
   chatId: string,
 ): { messageId: string; text: string } {
+  const boundId = h.store?.getBoard(chatId)?.messageId;
   const updated = [...h.channel.updatedCards].reverse().find((item) => {
     if (!isBoardContent(item.card)) return false;
+    if (boundId && item.messageId === boundId) return true;
     const send = [...h.channel.sent].reverse().find((entry) =>
       entry.chatId === chatId && isBoardContent(entry.content),
     );
@@ -464,7 +474,8 @@ function boardForChat(
   expect(send, `expected a board card in ${chatId}`).toBeDefined();
   const content = send!.content as { card?: unknown };
   return {
-    messageId: h.channel.pins.find((pin) => pin.chatId === chatId)?.messageId
+    messageId: boundId
+      ?? h.channel.pins.find((pin) => pin.chatId === chatId)?.messageId
       ?? updated?.messageId
       ?? `om_unknown_${chatId}`,
     text: JSON.stringify(updated?.card ?? content.card ?? send!.content),
