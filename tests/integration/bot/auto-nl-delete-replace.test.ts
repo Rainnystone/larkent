@@ -13,7 +13,7 @@ import { WorkspaceStore } from '../../../src/workspace/store';
 import type { AgentEvent } from '../../../src/agent/types';
 import { FakeAgentAdapter, type FakeAgentEvents } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
-import { axiosErrno } from '../../helpers/sdk-feishu-errors';
+import { axiosErrno, axiosHttpError, axiosLike, sdkShapedSendError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -400,6 +400,192 @@ describe('A28 natural-language delete and replace', () => {
     expect(h.channel.snapshotCalls().filter((call) => call.op === 'recall')).toHaveLength(1);
   }, 15_000);
 
+  it('settles the correction when recall is permanently denied and does not retry or resend it', async () => {
+    const h = await harness({
+      events: done(proposal({
+        op: 'replace',
+        id: 1,
+        taskType: 'reminder',
+        schedule: '2026-10-19 09:00',
+        name: '马斯克和 Sam Altman',
+        taskText: '总结马斯克和 Sam Altman 的推特',
+      })),
+      items: [item()],
+    });
+    await h.bridge.tickLink();
+    await h.bridge.recover();
+
+    const originalSend = h.channel.send.bind(h.channel);
+    h.channel.send = async (chatId, content, options) => {
+      const text = JSON.stringify(content);
+      if (text.includes('已生成确认卡，点「是」后用新任务替换 #1')) {
+        await h.store.delete(1);
+      }
+      return originalSend(chatId, content, options);
+    };
+    let recallAttempts = 0;
+    h.channel.recallMessage = async () => {
+      recallAttempts += 1;
+      throw sdkShapedSendError('permission_denied', axiosHttpError(403, 'permission_denied'));
+    };
+
+    await h.channel.handlers.message?.(mention('om_recall_denied', '删了重建，加上 Sam Altman'));
+    await waitFor(() => correctionSends(h).length === 1 && recallAttempts === 1);
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(recallAttempts).toBe(1);
+
+    await h.bridge.recover();
+    await h.bridge.recover();
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(recallAttempts).toBe(1);
+    const correction = h.journal.list().find((entry) => (
+      entry.reply?.markdown.includes('没有删除任务：本群没有 #1')
+    ));
+    expect(correction?.reply?.state).toBe('sent');
+    expect(h.journal.list().some((entry) => entry.reply?.state === 'staged' && entry.reply.supersedes)).toBe(false);
+    expect(await logEvents(h.logsDir, 'promise-recall-failed')).toHaveLength(1);
+  }, 15_000);
+
+  it('drops the chat when recall says the bot is not in it and does not retry the correction', async () => {
+    const h = await harness({
+      events: done(proposal({
+        op: 'replace',
+        id: 1,
+        taskType: 'reminder',
+        schedule: '2026-10-19 09:00',
+        name: '马斯克和 Sam Altman',
+        taskText: '总结马斯克和 Sam Altman 的推特',
+      })),
+      items: [
+        item(),
+        item({ name: '留在本群', taskText: '留在本群' }),
+        item({ chatId: OTHER, name: '别的群', taskText: '别的群' }),
+      ],
+    });
+    await h.bridge.tickLink();
+    await h.bridge.recover();
+
+    const originalSend = h.channel.send.bind(h.channel);
+    h.channel.send = async (chatId, content, options) => {
+      const text = JSON.stringify(content);
+      if (text.includes('已生成确认卡，点「是」后用新任务替换 #1')) {
+        await h.store.delete(1);
+      }
+      return originalSend(chatId, content, options);
+    };
+    let recallAttempts = 0;
+    h.channel.recallMessage = async () => {
+      recallAttempts += 1;
+      throw sdkShapedSendError('format_error', axiosLike('The bot can not be outside the group', {
+        response: { status: 400, data: { code: 230002 } },
+      }));
+    };
+
+    await h.channel.handlers.message?.(mention('om_recall_left', '删了重建，加上 Sam Altman'));
+    await waitFor(() => correctionSends(h).length === 1 && recallAttempts === 1);
+    await waitFor(() => h.store.list().every((entry) => entry.chatId !== CHAT));
+
+    await h.bridge.recover();
+    await h.bridge.recover();
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(recallAttempts).toBe(1);
+    expect(h.store.list().map((entry) => entry.chatId)).toEqual([OTHER]);
+    expect(h.journal.list().some((entry) => entry.reply?.state === 'staged' && entry.reply.supersedes)).toBe(false);
+    const removed = await logEvents(h.logsDir, 'removed-from-chat');
+    expect(removed).toEqual([expect.objectContaining({ _chatId: CHAT })]);
+    expect(await logEvents(h.logsDir, 'promise-recall-failed')).toHaveLength(1);
+  }, 15_000);
+
+  it.each([
+    {
+      name: 'HTTP 403',
+      error: () => axiosHttpError(403, 'Request failed with status code 403'),
+    },
+    {
+      name: 'recall window 230009',
+      error: () => sdkShapedSendError('unknown', axiosLike('Message has expired when recall message.', {
+        response: { status: 400, data: { code: 230009 } },
+      })),
+    },
+  ])('settles the correction once when recall fails with $name', async ({ error }) => {
+    const driven = await driveReplaceRecall({ recall: () => { throw error(); } });
+    await driven.h.bridge.recover();
+    await driven.h.bridge.recover();
+    expect(correctionSends(driven.h)).toHaveLength(1);
+    expect(driven.recallAttempts()).toBe(1);
+    expect(correctionReply(driven.h)?.state).toBe('sent');
+    expect(await logEvents(driven.h.logsDir, 'promise-recall-failed')).toHaveLength(1);
+  }, 15_000);
+
+  it('keeps a local recall failure staged and retries it without resending the correction', async () => {
+    const driven = await driveReplaceRecall({
+      recall: (attempt) => {
+        if (attempt === 1) throw new TypeError('recall blew up');
+      },
+    });
+    expect(driven.recallAttempts()).toBe(1);
+    expect(correctionSends(driven.h)).toHaveLength(1);
+    expect(correctionReply(driven.h)?.state).toBe('staged');
+
+    await driven.h.bridge.recover();
+    expect(correctionSends(driven.h)).toHaveLength(1);
+    expect(driven.recallAttempts()).toBe(2);
+    expect(correctionReply(driven.h)?.state).toBe('sent');
+  }, 15_000);
+
+  it('settles a staged recall on the next recovery when the retry is outside the recall window', async () => {
+    const driven = await driveReplaceRecall({
+      recall: (attempt) => {
+        if (attempt === 1) throw axiosErrno('ECONNRESET', 'connect ECONNRESET');
+        throw sdkShapedSendError('unknown', axiosLike('Message has expired when recall message.', {
+          response: { status: 400, data: { code: 230009 } },
+        }));
+      },
+    });
+    expect(driven.recallAttempts()).toBe(1);
+    expect(correctionReply(driven.h)?.state).toBe('staged');
+
+    await driven.h.bridge.recover();
+    expect(correctionSends(driven.h)).toHaveLength(1);
+    expect(driven.recallAttempts()).toBe(2);
+    expect(correctionReply(driven.h)?.state).toBe('sent');
+
+    await driven.h.bridge.recover();
+    expect(correctionSends(driven.h)).toHaveLength(1);
+    expect(driven.recallAttempts()).toBe(2);
+    expect(await logEvents(driven.h.logsDir, 'promise-recall-failed')).toHaveLength(2);
+  }, 15_000);
+
+  it('drops the chat on recovery when a staged recall then says the bot is outside the group', async () => {
+    const driven = await driveReplaceRecall({
+      items: [
+        item(),
+        item({ name: '留在本群', taskText: '留在本群' }),
+        item({ chatId: OTHER, name: '别的群', taskText: '别的群' }),
+      ],
+      recall: (attempt) => {
+        if (attempt === 1) throw axiosErrno('ECONNRESET', 'connect ECONNRESET');
+        throw sdkShapedSendError('format_error', axiosLike('Your request specifies a chat which has already been dissolved.', {
+          response: { status: 400, data: { code: 232009 } },
+        }));
+      },
+    });
+    expect(driven.h.store.list().some((entry) => entry.chatId === CHAT)).toBe(true);
+
+    await driven.h.bridge.recover();
+    await waitFor(() => driven.h.store.list().every((entry) => entry.chatId !== CHAT));
+    expect(correctionSends(driven.h)).toHaveLength(1);
+    expect(driven.recallAttempts()).toBe(2);
+    expect(driven.h.store.list().map((entry) => entry.chatId)).toEqual([OTHER]);
+    expect(correctionReply(driven.h)?.state).not.toBe('staged');
+
+    await driven.h.bridge.recover();
+    expect(driven.recallAttempts()).toBe(2);
+    expect(await logEvents(driven.h.logsDir, 'removed-from-chat')).toEqual([
+      expect.objectContaining({ _chatId: CHAT }),
+    ]);
+  }, 15_000);
+
   it('replaces by creating the new task before deleting the old one', async () => {
     const h = await harness({
       events: done(proposal({
@@ -680,6 +866,7 @@ async function harness(opts: {
     bridge,
     channel,
     store,
+    journal,
     agent,
     logsDir,
     setNow(next: number) {
@@ -741,6 +928,50 @@ function markdowns(h: { channel: ReturnType<typeof createRecordingLarkChannel> }
 
 function lastMarkdown(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string {
   return markdowns(h).at(-1) ?? '';
+}
+
+function correctionReply(h: { journal: TurnJournal }): { state?: string } | undefined {
+  return h.journal.list().find((entry) => (
+    entry.reply?.markdown.includes('没有删除任务：本群没有 #1')
+  ))?.reply;
+}
+
+async function driveReplaceRecall(opts: {
+  recall: (attempt: number) => void;
+  items?: CreateAutomationInput[];
+}): Promise<{
+  h: Awaited<ReturnType<typeof harness>>;
+  recallAttempts: () => number;
+}> {
+  const h = await harness({
+    events: done(proposal({
+      op: 'replace',
+      id: 1,
+      taskType: 'reminder',
+      schedule: '2026-10-19 09:00',
+      name: '马斯克和 Sam Altman',
+      taskText: '总结马斯克和 Sam Altman 的推特',
+    })),
+    items: opts.items ?? [item()],
+  });
+  await h.bridge.tickLink();
+  await h.bridge.recover();
+  const originalSend = h.channel.send.bind(h.channel);
+  let recallAttempts = 0;
+  h.channel.send = async (chatId, content, options) => {
+    const text = JSON.stringify(content);
+    if (text.includes('已生成确认卡，点「是」后用新任务替换 #1')) {
+      await h.store.delete(1);
+    }
+    return originalSend(chatId, content, options);
+  };
+  h.channel.recallMessage = async () => {
+    recallAttempts += 1;
+    opts.recall(recallAttempts);
+  };
+  await h.channel.handlers.message?.(mention('om_recall_case', '删了重建，加上 Sam Altman'));
+  await waitFor(() => correctionSends(h).length === 1 && recallAttempts >= 1);
+  return { h, recallAttempts: () => recallAttempts };
 }
 
 function correctionSends(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): unknown[] {

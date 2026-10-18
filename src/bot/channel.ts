@@ -433,6 +433,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     board?: AutomationBoard;
     boardAuth?: BoardActionAuth;
   } = {};
+  const removeFromChat = (chatId: string): Promise<unknown> => (
+    automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve()
+  );
   let detachAutomationChatLifecycle = (): void => {};
   const onAutomationConfirmed = async (item: AutomationItem): Promise<void> => {
     await deps.onAutomationConfirmed?.(item);
@@ -680,6 +683,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       entry,
       botAppId: cfg.accounts.app.id,
       now: deps.now,
+      onNotInChat: removeFromChat,
     }),
     resendNotice: (entry: TurnJournalEntry) => resendPendingNotice({
       send: (chatId: string, content: { markdown: string } | { card: object }, options?: {
@@ -733,6 +737,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           entry: latest,
           botAppId: cfg.accounts.app.id,
           now: deps.now,
+          onNotInChat: removeFromChat,
         });
         if (delivered) {
           owned.replyDelivered(entry.turnId);
@@ -906,7 +911,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         channel,
         auth: automationsCtl.boardAuth,
         lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
-        onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+        onNotInChat: removeFromChat,
         ...(deps.now ? { now: deps.now } : {}),
       });
     }
@@ -924,10 +929,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           entry,
           botAppId: cfg.accounts.app.id,
           now: deps.now,
+          onNotInChat: removeFromChat,
         }),
       } : {}),
       onUndelivered: () => outboxSweep.schedule(),
-      onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+      onNotInChat: removeFromChat,
     };
     automationsCtl.scheduler = createAutomationScheduler({
       store: deps.automations,
@@ -976,9 +982,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           : {}),
       },
     });
-    detachAutomationChatLifecycle = attachAutomationChatLifecycle(channel, (chatId) =>
-      automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
-    );
+    detachAutomationChatLifecycle = attachAutomationChatLifecycle(channel, removeFromChat);
   }
   const automationsScheduler = automationsCtl.scheduler;
   started.onRecovered((outage) => {
@@ -2131,6 +2135,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const reactionPromise =
     cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
 
+  const onNotInChat = (chatId: string): Promise<unknown> => (
+    automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve()
+  );
   cliSelfSent?.begin(scope, turnId);
   try {
     if (cotEnabled) {
@@ -2189,6 +2196,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           cliSelfSent,
           link,
           onWait: onDeliveryWait,
+          onNotInChat,
           ...(automationReply ? { automation: automationReply } : {}),
         });
         return;
@@ -2276,6 +2284,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        onNotInChat,
         ...(automationReply ? { automation: automationReply } : {}),
       });
     } else if (replyMode === 'markdown') {
@@ -2353,6 +2362,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        onNotInChat,
         ...(automationReply ? { automation: automationReply } : {}),
       });
     } else {
@@ -2388,6 +2398,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        onNotInChat,
         ...(automationReply ? { automation: automationReply } : {}),
       });
     }
@@ -2590,6 +2601,7 @@ async function deliverFinalReply(input: {
   cliSelfSent?: CliSelfSendTracker;
   link?: { isDown(): boolean };
   onWait?: (delayMs?: number) => void;
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
   automation?: {
     honor: boolean;
     plan: (parsed: AutomationProposalFields) => AutomationProposalVerdict;
@@ -2662,6 +2674,7 @@ async function deliverFinalReply(input: {
       plannedSuffix: proposalSuffix,
       replacement: nextLine,
       sendOpts: input.sendOpts,
+      onNotInChat: input.onNotInChat,
     });
   };
   const visibleBody = renderText(replyState);
@@ -2848,6 +2861,7 @@ async function reconcileReplacePromise(input: {
   plannedSuffix: string;
   replacement: string | undefined;
   sendOpts: { replyTo: string; replyInThread?: boolean };
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
 }): Promise<void> {
   const corrected = stateWithoutProposalLine(input.state, input.plannedSuffix, input.replacement);
   if (corrected === input.state) return;
@@ -2930,7 +2944,16 @@ async function reconcileReplacePromise(input: {
       input.journal.noteReplyReceipt(input.turnId, messageId);
       await input.journal.flush();
     }
-    const recall = await recallReplacedMessage(input.channel, previousMessageId);
+    let recall: SupersedeRecall;
+    try {
+      recall = await recallReplacedMessage(input.channel, previousMessageId);
+    } catch (error) {
+      if (!isNotInChat(error)) throw error;
+      if (input.turnId) input.journal?.replyRejected(input.turnId);
+      await input.journal?.flush();
+      await input.onNotInChat?.(input.chatId);
+      return;
+    }
     switch (recall) {
       case 'done':
         if (input.turnId) input.journal?.replyDelivered(input.turnId);
@@ -3009,9 +3032,11 @@ type SupersedeRecall = 'done' | 'retry';
 /**
  * Recall a promise the correction replaced.
  * Success, or an already recalled / deleted / not-found message, is done.
- * Every other failure stays retryable and does not fail the turn or recovery:
+ * A link or local failure stays retryable and does not fail the turn or recovery:
  * the staged correction already holds the new receipt, so a later pass recalls
  * this id and does not send the correction again.
+ * A permanent rejection settles that correction after one log.
+ * Not-in-chat is rethrown so the caller can run the existing chat cleanup.
  */
 async function recallReplacedMessage(channel: LarkChannel, messageId: string): Promise<SupersedeRecall> {
   try {
@@ -3022,7 +3047,19 @@ async function recallReplacedMessage(channel: LarkChannel, messageId: string): P
     log.warn('auto', 'promise-recall-failed', {
       err: error instanceof Error ? error.message : String(error),
     });
-    return 'retry';
+    if (isNotInChat(error)) throw error;
+    const kind = classify(error);
+    switch (kind) {
+      case 'link':
+      case 'local':
+        return 'retry';
+      case 'rejected':
+        return 'done';
+      default: {
+        const _exhaustive: never = kind;
+        throw _exhaustive;
+      }
+    }
   }
 }
 
@@ -3151,6 +3188,7 @@ async function resendJournalReply(input: {
   entry: TurnJournalEntry;
   botAppId: string;
   now?: () => number;
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
 }): Promise<boolean> {
   const { entry } = input;
   if (entry.cliAlreadySent) {
@@ -3205,7 +3243,16 @@ async function resendJournalReply(input: {
   const superseded = reply.supersedes?.trim();
   if (superseded && messageId !== superseded) {
     if (input.journal) await input.journal.flush();
-    const recall = await recallReplacedMessage(input.channel, superseded);
+    let recall: SupersedeRecall;
+    try {
+      recall = await recallReplacedMessage(input.channel, superseded);
+    } catch (error) {
+      if (!isNotInChat(error)) throw error;
+      input.journal.replyRejected(entry.turnId);
+      await input.journal.flush();
+      await input.onNotInChat?.(entry.chatId);
+      throw error;
+    }
     switch (recall) {
       case 'done':
         break;
