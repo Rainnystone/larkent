@@ -7,11 +7,16 @@ import { updateCardByCardId } from '../card/cardkit-update';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { classify, isNotInChat } from '../bot/feishu-error';
-import { automationBoardCard } from './board-card';
+import { automationBoardCard, automationBoardSettledCard } from './board-card';
 import { listPinnedMessageIds, pinMessage, unpinMessage } from './board-pins';
 import type { BoardActionAuth } from './board-auth';
 import { monotonicCardSequence } from './card-sequence';
-import type { AutomationBoardBinding, AutomationsStore } from './store';
+import type {
+  AutomationBoardBinding,
+  AutomationsStore,
+  PendingUnpinBoard,
+  PendingUnpinMessageRef,
+} from './store';
 
 export const AUTO_PIN_FAILED_HINT = '看板置顶失败，任务不受影响。';
 
@@ -47,6 +52,8 @@ class Board implements AutomationBoard {
   private running = false;
   /** Non-link create/update failures, keyed by chat and card content. */
   private readonly failedAttempt = new Map<string, string>();
+  /** Last pending-list length already warned for a chat. Not persisted. */
+  private readonly pendingOverflowLogged = new Map<string, number>();
 
   constructor(deps: AutomationBoardDeps) {
     this.store = deps.store;
@@ -118,16 +125,23 @@ class Board implements AutomationBoard {
         if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
           return;
         }
-        if (outcome.applied) {
-          if (items.length === 0) await this.ensureUnpinned(next);
-          else {
-            const pinned = await this.ensurePinned(chatId, next, {
-              repin: binding?.messageId === next.messageId,
-            });
-            if (!pinned) return;
-          }
+        if (items.length === 0) {
+          if (outcome.applied) await this.ensureUnpinned(next);
+          await this.releasePendingUnpin(next, { settle: false });
+          return;
         }
-        await this.releasePendingUnpin(next);
+        if (outcome.applied) {
+          const pinned = await this.ensurePinned(chatId, next, {
+            repin: binding?.messageId === next.messageId,
+          });
+          if (!pinned) return;
+        } else if (
+          !next.pendingUnpinMessageIds?.length
+          || !(await this.currentMessagePinned(chatId, next.messageId))
+        ) {
+          return;
+        }
+        await this.releasePendingUnpin(next, { settle: true });
       } catch (error) {
         if (isNotInChat(error)) {
           void Promise.resolve(this.onNotInChat?.(chatId)).catch((next) => {
@@ -206,7 +220,11 @@ class Board implements AutomationBoard {
     return { binding: { ...binding, sequence }, applied: true };
   }
 
-  private nextSequence(binding: AutomationBoardBinding): number {
+  private nextSequence(binding: {
+    cardId?: string;
+    messageId: string;
+    sequence?: number;
+  }): number {
     const key = binding.cardId ?? binding.messageId;
     const attempted = this.attemptedSequence.get(key) ?? 0;
     const sequence = monotonicCardSequence(binding.sequence, this.now(), attempted);
@@ -226,14 +244,15 @@ class Board implements AutomationBoard {
     card: object,
   ): Promise<BoardPatchOutcome> {
     const sent = await sendManagedCard(this.channel, chatId, card);
-    const pendingUnpinMessageId = retainedUnpinMessageId(binding, sent.messageId);
+    const pendingUnpinMessageIds = appendPendingUnpin(binding, sent.messageId);
     const next: AutomationBoardBinding = {
       chatId,
       messageId: sent.messageId,
       ...(sent.kind === 'card-id' && sent.cardId ? { cardId: sent.cardId } : {}),
-      ...(pendingUnpinMessageId ? { pendingUnpinMessageId } : {}),
+      ...(pendingUnpinMessageIds ? { pendingUnpinMessageIds } : {}),
     };
     await this.store.setBoard(next);
+    if (pendingUnpinMessageIds) this.notePendingOverflow(chatId, pendingUnpinMessageIds.length);
     return { binding: next, applied: true };
   }
 
@@ -256,6 +275,17 @@ class Board implements AutomationBoard {
     }
   }
 
+  private async currentMessagePinned(chatId: string, messageId: string): Promise<boolean> {
+    try {
+      const pinned = await listPinnedMessageIds(this.channel, chatId);
+      return pinned.includes(messageId);
+    } catch (error) {
+      if (isNotInChat(error)) throw error;
+      log.fail('auto', error, { event: 'board.pin', chatId });
+      return false;
+    }
+  }
+
   private async ensureUnpinned(binding: AutomationBoardBinding): Promise<void> {
     await this.unpinQuietly(binding.messageId);
   }
@@ -271,24 +301,101 @@ class Board implements AutomationBoard {
     }
   }
 
-  private async releasePendingUnpin(binding: AutomationBoardBinding): Promise<void> {
+  private async releasePendingUnpin(
+    binding: AutomationBoardBinding,
+    opts: { settle: boolean },
+  ): Promise<void> {
     const live = this.store.getBoard(binding.chatId) ?? binding;
-    const stale = live.pendingUnpinMessageId;
-    if (!stale) return;
-    if (stale !== live.messageId) {
+    const pending = live.pendingUnpinMessageIds ?? [];
+    if (pending.length === 0) return;
+    const remaining: PendingUnpinMessageRef[] = [];
+    let changed = false;
+    for (const ref of pending) {
+      const messageId = pendingUnpinRefMessageId(ref);
+      if (messageId === live.messageId) {
+        changed = true;
+        continue;
+      }
+      let nextRef = ref;
+      if (opts.settle) {
+        const settled = await this.settlePending(nextRef);
+        if (settled.changed) {
+          nextRef = settled.ref;
+          changed = true;
+        }
+      }
+      let unpinned = false;
       try {
-        await unpinMessage(this.channel, stale);
+        await unpinMessage(this.channel, messageId);
+        unpinned = true;
       } catch (error) {
         if (isNotInChat(error)) throw error;
         log.warn('auto', 'board.unpin-failed', {
           err: error instanceof Error ? error.message : String(error),
         });
-        return;
       }
+      if (unpinned) {
+        changed = true;
+        continue;
+      }
+      remaining.push(nextRef);
     }
+    if (!changed) return;
     const latest = this.store.getBoard(binding.chatId);
     if (!latest || latest.messageId !== live.messageId) return;
-    await this.store.setBoard({ ...latest, pendingUnpinMessageId: undefined });
+    await this.store.setBoard({
+      ...latest,
+      pendingUnpinMessageIds: remaining,
+    });
+    this.notePendingOverflow(binding.chatId, remaining.length);
+  }
+
+  /**
+   * One settle attempt. A stale sequence is not retried here; the next refresh
+   * uses a higher sequence. Expired entities are logged and left pending.
+   */
+  private async settlePending(
+    ref: PendingUnpinMessageRef,
+  ): Promise<{ ref: PendingUnpinMessageRef; changed: boolean }> {
+    const entry = asPendingUnpinBoard(ref);
+    if (entry.settled || !entry.cardId) return { ref, changed: false };
+    const sequence = this.nextSequence({
+      messageId: entry.messageId,
+      cardId: entry.cardId,
+      sequence: entry.sequence,
+    });
+    try {
+      await updateCardByCardId(
+        this.channel,
+        entry.cardId,
+        automationBoardSettledCard(),
+        sequence,
+      );
+    } catch (error) {
+      if (isNotInChat(error) || classify(error) === 'link') throw error;
+      logPatchFailed(error, sequence);
+      return { ref, changed: false };
+    }
+    logPatch(entry.cardId, sequence, false);
+    return {
+      ref: {
+        messageId: entry.messageId,
+        cardId: entry.cardId,
+        sequence,
+        settled: true,
+      },
+      changed: true,
+    };
+  }
+
+  private notePendingOverflow(chatId: string, count: number): void {
+    if (count <= 5) {
+      this.pendingOverflowLogged.delete(chatId);
+      return;
+    }
+    if (this.pendingOverflowLogged.get(chatId) === count) return;
+    this.pendingOverflowLogged.set(chatId, count);
+    log.warn('auto', 'board.pending-overflow', { count });
   }
 
   private async hintPinFailed(chatId: string, binding: AutomationBoardBinding): Promise<void> {
@@ -361,16 +468,43 @@ function logPatchFailed(error: unknown, sequence: number | undefined): void {
   });
 }
 
-function retainedUnpinMessageId(
+function appendPendingUnpin(
   binding: AutomationBoardBinding | undefined,
   nextMessageId: string,
-): string | undefined {
+): PendingUnpinMessageRef[] | undefined {
   if (!binding) return undefined;
-  if (binding.pendingUnpinMessageId && binding.pendingUnpinMessageId !== nextMessageId) {
-    return binding.pendingUnpinMessageId;
+  const pending = (binding.pendingUnpinMessageIds ?? []).filter(
+    (ref) => pendingUnpinRefMessageId(ref) !== nextMessageId,
+  );
+  if (
+    binding.messageId
+    && binding.messageId !== nextMessageId
+    && !pending.some((ref) => pendingUnpinRefMessageId(ref) === binding.messageId)
+  ) {
+    pending.push(pendingEntryFromBinding(binding));
   }
-  if (binding.messageId && binding.messageId !== nextMessageId) return binding.messageId;
-  return undefined;
+  return pending.length > 0 ? pending : undefined;
+}
+
+function pendingEntryFromBinding(binding: AutomationBoardBinding): PendingUnpinMessageRef {
+  if (!binding.cardId && typeof binding.sequence !== 'number') return binding.messageId;
+  return {
+    messageId: binding.messageId,
+    ...(binding.cardId ? { cardId: binding.cardId } : {}),
+    ...(typeof binding.sequence === 'number' && binding.sequence > 0
+      ? { sequence: binding.sequence }
+      : {}),
+  };
+}
+
+function pendingUnpinRefMessageId(ref: PendingUnpinMessageRef): string {
+  if (typeof ref === 'string') return ref;
+  return ref.messageId;
+}
+
+function asPendingUnpinBoard(ref: PendingUnpinMessageRef): PendingUnpinBoard {
+  if (typeof ref === 'string') return { messageId: ref };
+  return ref;
 }
 
 function boardAttemptKey(card: object): string {

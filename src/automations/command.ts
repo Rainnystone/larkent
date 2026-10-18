@@ -29,6 +29,7 @@ import type { AutomationDraft, AutomationItem, AutomationTaskType, AutomationsSt
 export const AUTO_NEW_USAGE = '用法：`/auto new <时间表> | <名称> | <任务>`';
 export const AUTO_P2P_HINT = '仅支持群';
 export const AUTO_INVALID_HINT = '此确认已失效。';
+export const AUTO_BOARD_UPDATED_HINT = '此看板已更新，请使用置顶的新看板。';
 export const AUTO_LEAD_TOO_SOON = '最早 10 分钟后。';
 export const AUTO_ONE_SHOT_TOO_FAR = '一次性任务不能超过 1 年。';
 export const AUTO_AGENT_DISABLED = 'agent 任务未开启。';

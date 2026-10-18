@@ -427,6 +427,42 @@ describe('automation board card', () => {
     expect(off.channel.sent.some((item) => isBoardContent(item.content))).toBe(false);
     expect(off.store.list()).toEqual([]);
   });
+
+  it('toasts the new board hint for a pending old pause and does not change the task', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    const board = latestBoard(h);
+    const live = h.store.getBoard(CHAT)!;
+    await h.store.setBoard({ ...live, pendingUnpinMessageIds: ['om_pending_old'] });
+    const writes = h.channel.updatedCards.length;
+    const sent = h.channel.sent.length;
+    const stale = await h.channel.handlers.cardAction?.(
+      boardClick(USER, pauseToken(board.text), 'om_pending_old', 'auto.pause'),
+    );
+    expect(stale).toEqual({
+      toast: { type: 'error', content: '此看板已更新，请使用置顶的新看板。' },
+    });
+    expect(h.store.get(1)?.paused).toBe(false);
+    expect(h.channel.updatedCards).toHaveLength(writes);
+    expect(h.channel.sent).toHaveLength(sent);
+  });
+
+  it('toasts the new board hint for a delete on a released old board', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    const board = latestBoard(h);
+    const writes = h.channel.updatedCards.length;
+    const sent = h.channel.sent.length;
+    const stale = await h.channel.handlers.cardAction?.(
+      boardClick(USER, boardToken(board.text, 'auto.delete'), 'om_released_old', 'auto.delete'),
+    );
+    expect(stale).toEqual({
+      toast: { type: 'error', content: '此看板已更新，请使用置顶的新看板。' },
+    });
+    expect(h.store.get(1)?.id).toBe(1);
+    expect(h.channel.updatedCards).toHaveLength(writes);
+    expect(h.channel.sent).toHaveLength(sent);
+  });
 });
 
 async function harness(opts: {
@@ -645,7 +681,10 @@ function latestBoard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
   messageId: string;
   text: string;
 } {
-  const updated = [...h.channel.updatedCards].reverse().find((item) => isBoardContent(item.card));
+  const pinned = new Set(h.channel.pins.map((pin) => pin.messageId));
+  const updated = [...h.channel.updatedCards].reverse().find((item) => (
+    isBoardContent(item.card) && (pinned.size === 0 || pinned.has(item.messageId))
+  ));
   if (updated) {
     return { messageId: updated.messageId, text: JSON.stringify(updated.card) };
   }

@@ -19,6 +19,18 @@ export function formatAutomationListLine(item: AutomationItem): string {
   ].join(' · ');
 }
 
+export const BOARD_UPDATED_TEXT = '此看板已更新，请查看置顶的新看板。';
+
+const BOARD_TITLE = '本群自动化';
+
+export function automationBoardSettledCard(): object {
+  return card2({
+    title: BOARD_TITLE,
+    summary: BOARD_TITLE,
+    elements: [md(BOARD_UPDATED_TEXT)],
+  });
+}
+
 export function automationBoardCard(input: {
   items: AutomationItem[];
   auth: BoardActionAuth;
@@ -43,7 +55,7 @@ export function automationBoardCard(input: {
       if (index < input.items.length - 1) elements.push(hr);
     });
   }
-  return card2({ title: '本群自动化', summary: '本群自动化', elements });
+  return card2({ title: BOARD_TITLE, summary: BOARD_TITLE, elements });
 }
 
 function formatTaskRow(item: AutomationItem): string {

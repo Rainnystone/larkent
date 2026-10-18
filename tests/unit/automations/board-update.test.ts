@@ -124,16 +124,16 @@ describe('board card.update', () => {
 
     const held = h.store.getBoard(CHAT);
     expect(held?.messageId).not.toBe(firstMessageId);
-    expect(held?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(pendingMessageIds(held)).toEqual([firstMessageId]);
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
-    expect(h.store.findBoardByMessageId(firstMessageId)?.chatId).toBe(CHAT);
+    expect(h.store.findBoardByMessageId(firstMessageId)).toBeUndefined();
 
     const restarted = await reloadBoard(h);
-    expect(restarted.store.getBoard(CHAT)?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(pendingMessageIds(restarted.store.getBoard(CHAT))).toEqual([firstMessageId]);
     await restarted.board.refresh();
     const recovered = restarted.store.getBoard(CHAT);
     expect(recovered?.messageId).toBe(held?.messageId);
-    expect(recovered?.pendingUnpinMessageId).toBeUndefined();
+    expect(pendingMessageIds(recovered)).toEqual([]);
     expect(restarted.channel.pins.map((pin) => pin.messageId)).toEqual([recovered?.messageId]);
   });
 
@@ -149,14 +149,14 @@ describe('board card.update', () => {
 
     const replacement = h.store.getBoard(CHAT);
     expect(replacement?.messageId).not.toBe(firstMessageId);
-    expect(replacement?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(pendingMessageIds(replacement)).toEqual([firstMessageId]);
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
 
     await h.store.resume(h.itemId, NOW + 2 * 60 * 60_000);
     await h.board.refresh();
     await h.board.refresh();
     expect(h.store.getBoard(CHAT)?.messageId).toBe(replacement?.messageId);
-    expect(h.store.getBoard(CHAT)?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([firstMessageId]);
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
   });
 
@@ -168,19 +168,19 @@ describe('board card.update', () => {
     failPinCreates(h, 1);
     await h.store.pause(h.itemId);
     await h.board.refresh();
-    expect(h.store.getBoard(CHAT)?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([firstMessageId]);
 
     failPinDeletes(h, 1);
     await h.board.refresh();
     const replacement = h.store.getBoard(CHAT);
     expect(replacement?.messageId).not.toBe(firstMessageId);
-    expect(replacement?.pendingUnpinMessageId).toBe(firstMessageId);
+    expect(pendingMessageIds(replacement)).toEqual([firstMessageId]);
     expect(h.channel.pins.map((pin) => pin.messageId).sort()).toEqual(
       [firstMessageId, replacement!.messageId].sort(),
     );
 
     await h.board.refresh();
-    expect(h.store.getBoard(CHAT)?.pendingUnpinMessageId).toBeUndefined();
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([]);
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([replacement?.messageId]);
   });
 
@@ -312,7 +312,9 @@ describe('board card.update', () => {
     await h.store.pause(h.itemId);
     await h.board.refresh();
 
-    expect(sequences).toEqual([timeSequence(NOW)]);
+    expect(sequences[0]).toBe(timeSequence(NOW));
+    expect(sequences).toHaveLength(2);
+    expect(sequences[1]).toBeGreaterThan(sequences[0]!);
     const next = h.store.getBoard(CHAT);
     expect(next?.messageId).not.toBe(first.messageId);
     expect(next?.sequence).toBeUndefined();
@@ -321,7 +323,8 @@ describe('board card.update', () => {
       expect.objectContaining({ reason }),
     ]);
     expect(await boardEvents(h.logsDir, 'board.patch-failed')).toEqual([
-      expect.objectContaining({ code, msg, sequence: timeSequence(NOW) }),
+      expect.objectContaining({ code, msg, sequence: sequences[0] }),
+      expect.objectContaining({ code, msg, sequence: sequences[1] }),
     ]);
   });
 
@@ -370,10 +373,241 @@ describe('board card.update', () => {
     expect(h.store.getBoard(CHAT)?.sequence).toBe(3_000_001);
     expect(h.store.getBoard(CHAT)?.messageId).toBe(binding.messageId);
   });
+
+  it('keeps every still-pinned board across two 200750 resends when unpin keeps failing', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const cardA = h.store.getBoard(CHAT)!;
+    const expired = new Set<string>([cardA.cardId!]);
+    scriptExpiredCards(h, expired);
+    const unpin = failUnpinUntilReleased(h);
+
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+    const cardB = h.store.getBoard(CHAT)!;
+    expect(cardB.messageId).not.toBe(cardA.messageId);
+    expectPinnedBoardsTracked(h);
+    expired.add(cardB.cardId!);
+
+    await h.board.refresh();
+    const cardC = h.store.getBoard(CHAT)!;
+    expect(cardC.messageId).not.toBe(cardB.messageId);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([
+      cardA.messageId,
+      cardB.messageId,
+    ]);
+    expect(h.channel.pins.map((pin) => pin.messageId).sort()).toEqual(
+      [cardA.messageId, cardB.messageId, cardC.messageId].sort(),
+    );
+    expectPinnedBoardsTracked(h);
+
+    unpin.release();
+    await h.board.refresh();
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([cardC.messageId]);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([]);
+    expectPinnedBoardsTracked(h);
+  });
+
+  it('settles the replaced board once, with no buttons and a higher sequence', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const updates = scriptSettleUpdates(h, first.cardId!);
+    const unpin = failUnpinUntilReleased(h);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    const settle = updates.filter((update) => (
+      update.cardId === first.cardId && update.cardText.includes('此看板已更新')
+    ));
+    expect(settle).toHaveLength(1);
+    expect(settle[0]!.sequence).toBeGreaterThan(updates[0]!.sequence);
+    expect(settle[0]!.cardText).toContain('此看板已更新，请查看置顶的新看板。');
+    expect(settle[0]!.cardText).toContain('本群自动化');
+    expect(settle[0]!.cardText).not.toContain('"tag":"button"');
+    expect(settle[0]!.cardText).not.toContain('disabled');
+    expect(settle[0]!.cardText).not.toContain('交周报');
+    expect(settle[0]!.cardText).not.toContain('提醒交周报');
+    expect(h.store.getBoard(CHAT)?.messageId).not.toBe(first.messageId);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([first.messageId]);
+
+    await h.board.refresh();
+    expect(updates.filter((update) => (
+      update.cardId === first.cardId && update.cardText.includes('此看板已更新')
+    ))).toHaveLength(1);
+
+    unpin.release();
+    await h.board.refresh();
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([]);
+    expect(updates.filter((update) => update.cardId === first.cardId)).toHaveLength(2);
+  });
+
+  it('retries a 200750 settle on the next refresh and stops after unpin succeeds', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const updates = scriptExpiredCards(h, new Set([first.cardId!]));
+    const unpin = failUnpinUntilReleased(h);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    const next = h.store.getBoard(CHAT)!;
+    expect(next.messageId).not.toBe(first.messageId);
+    expect(next.cardId).not.toBe(first.cardId);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([first.messageId]);
+    const settleAttempts = () => updates.filter((update) => update.cardId === first.cardId);
+    expect(settleAttempts()).toHaveLength(2);
+    expect(settleAttempts()[1]!.sequence).toBeGreaterThan(settleAttempts()[0]!.sequence);
+    expect(await boardEvents(h.logsDir, 'board.patch-failed')).toEqual([
+      expect.objectContaining({
+        code: 200750,
+        msg: 'card entity has expired',
+        sequence: settleAttempts()[0]!.sequence,
+      }),
+      expect.objectContaining({
+        code: 200750,
+        msg: 'card entity has expired',
+        sequence: settleAttempts()[1]!.sequence,
+      }),
+    ]);
+    expect(JSON.stringify(await boardEvents(h.logsDir, 'board.patch-failed'))).not.toContain('提醒交周报');
+    expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([
+      expect.objectContaining({ reason: '200750' }),
+    ]);
+
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(next.messageId);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([first.messageId]);
+    expect(settleAttempts()).toHaveLength(3);
+    expect(settleAttempts()[2]!.sequence).toBeGreaterThan(settleAttempts()[1]!.sequence);
+
+    unpin.release();
+    await h.board.refresh();
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next.messageId]);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([]);
+    const afterUnpin = settleAttempts().length;
+    await h.board.refresh();
+    expect(settleAttempts()).toHaveLength(afterUnpin);
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(next.messageId);
+  });
+
+  it('warns when more than five boards are still waiting to be unpinned and does not drop any', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const seeded = ['om_pending_1', 'om_pending_2', 'om_pending_3', 'om_pending_4', 'om_pending_5'];
+    await h.store.setBoard({
+      ...first,
+      pendingUnpinMessageIds: seeded,
+    });
+    scriptExpiredCards(h, new Set([first.cardId!]));
+    failUnpinUntilReleased(h);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual([...seeded, first.messageId]);
+    expect(await boardEvents(h.logsDir, 'board.pending-overflow')).toEqual([
+      expect.objectContaining({ count: 6 }),
+    ]);
+    const overflow = JSON.stringify(await boardEvents(h.logsDir, 'board.pending-overflow'));
+    expect(overflow).not.toContain(first.messageId);
+    expect(overflow).not.toContain('om_pending_1');
+  });
 });
 
 function timeSequence(nowMs: number): number {
   return Math.floor((nowMs - Date.UTC(2026, 0, 1)) / 1000);
+}
+
+interface CardUpdateRecord {
+  cardId: string;
+  sequence: number;
+  cardText: string;
+}
+
+function installCardUpdateScript(
+  h: Awaited<ReturnType<typeof harness>>,
+  decide: (update: CardUpdateRecord, seenForCard: number) => { code: number; msg: string } | 'ok',
+): CardUpdateRecord[] {
+  const updates: CardUpdateRecord[] = [];
+  const orig = h.channel.rawClient.cardkit.v1.card.update.bind(h.channel.rawClient.cardkit.v1.card);
+  const perCard = new Map<string, number>();
+  h.channel.rawClient.cardkit.v1.card.update = async (params) => {
+    const path = (params as { path?: { card_id?: string } } | undefined)?.path;
+    const data = (params as { data?: { sequence?: number; card?: { data?: string } } } | undefined)?.data;
+    const cardId = typeof path?.card_id === 'string' ? path.card_id : '';
+    const sequence = typeof data?.sequence === 'number' ? data.sequence : -1;
+    const cardText = typeof data?.card?.data === 'string' ? data.card.data : '';
+    const record = { cardId, sequence, cardText };
+    updates.push(record);
+    const seen = (perCard.get(cardId) ?? 0) + 1;
+    perCard.set(cardId, seen);
+    const decision = decide(record, seen);
+    if (decision !== 'ok') return decision;
+    return orig(params);
+  };
+  return updates;
+}
+
+function scriptExpiredCards(
+  h: Awaited<ReturnType<typeof harness>>,
+  expired: Set<string>,
+): CardUpdateRecord[] {
+  return installCardUpdateScript(h, (update) => (
+    expired.has(update.cardId)
+      ? { code: 200750, msg: 'card entity has expired' }
+      : 'ok'
+  ));
+}
+
+function scriptSettleUpdates(
+  h: Awaited<ReturnType<typeof harness>>,
+  cardId: string,
+): CardUpdateRecord[] {
+  return installCardUpdateScript(h, (update, seen) => (
+    update.cardId === cardId && seen === 1
+      ? { code: 200750, msg: 'card entity has expired' }
+      : 'ok'
+  ));
+}
+
+function failUnpinUntilReleased(
+  h: Awaited<ReturnType<typeof harness>>,
+): { release(): void } {
+  const pin = h.channel.rawClient.im.v1.pin;
+  const orig = pin.delete.bind(pin);
+  let fail = true;
+  pin.delete = async (params) => {
+    if (fail) throw new Error('unpin rate limited');
+    return orig(params);
+  };
+  return {
+    release() {
+      fail = false;
+    },
+  };
+}
+
+function pendingMessageIds(board: object | undefined): string[] {
+  const raw = (board as { pendingUnpinMessageIds?: unknown } | undefined)?.pendingUnpinMessageIds;
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((entry) => {
+    if (typeof entry === 'string') return entry ? [entry] : [];
+    if (!entry || typeof entry !== 'object' || !('messageId' in entry)) return [];
+    const messageId = (entry as { messageId?: unknown }).messageId;
+    return typeof messageId === 'string' && messageId ? [messageId] : [];
+  });
+}
+
+function expectPinnedBoardsTracked(h: Awaited<ReturnType<typeof harness>>): void {
+  const board = h.store.getBoard(CHAT);
+  const known = new Set<string>([
+    ...(board?.messageId ? [board.messageId] : []),
+    ...pendingMessageIds(board),
+  ]);
+  for (const pin of h.channel.pins) {
+    expect(known.has(pin.messageId)).toBe(true);
+  }
 }
 
 function scriptCardUpdates(

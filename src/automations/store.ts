@@ -111,14 +111,29 @@ export interface AutomationsLogEntry {
   skipReason?: AutomationSkipReason;
 }
 
+/** One still-pinned board waiting to be unpinned. A legacy id is only the message id. */
+export interface PendingUnpinBoard {
+  messageId: string;
+  cardId?: string;
+  sequence?: number;
+  /** True after the buttonless settle update was accepted. */
+  settled?: boolean;
+}
+
+export type PendingUnpinMessageRef = string | PendingUnpinBoard;
+
 export interface AutomationBoardBinding {
   chatId: string;
   messageId: string;
   cardId?: string;
   sequence?: number;
   pinFailedHinted?: boolean;
-  /** Previous pinned board, kept until the current message is pinned. */
-  pendingUnpinMessageId?: string;
+  /**
+   * Still-pinned previous boards. Message ids are unique.
+   * Entries recorded on resend keep cardId and sequence so a later refresh can settle them.
+   * A legacy `pendingUnpinMessageId` string loads as a one-element list.
+   */
+  pendingUnpinMessageIds?: PendingUnpinMessageRef[];
 }
 
 export interface AutomationsStatusItem {
@@ -494,31 +509,32 @@ export class AutomationsStore {
 
   getBoard(chatId: string): AutomationBoardBinding | undefined {
     const board = this.boards.find((entry) => entry.chatId === chatId);
-    return board ? { ...board } : undefined;
+    return board ? cloneBoard(board) : undefined;
   }
 
   findBoardByMessageId(messageId: string): AutomationBoardBinding | undefined {
-    const board = this.boards.find((entry) =>
-      entry.messageId === messageId || entry.pendingUnpinMessageId === messageId,
-    );
-    return board ? { ...board } : undefined;
+    const board = this.boards.find((entry) => entry.messageId === messageId);
+    return board ? cloneBoard(board) : undefined;
   }
 
   listBoards(): AutomationBoardBinding[] {
-    return this.boards.map((board) => ({ ...board }));
+    return this.boards.map((board) => cloneBoard(board));
   }
 
   async setBoard(binding: AutomationBoardBinding): Promise<void> {
     this.assertMutable();
     const index = this.boards.findIndex((entry) => entry.chatId === binding.chatId);
-    const pendingUnpin = pendingUnpinMessageId(binding);
+    const pendingUnpinMessageIds = normalizePendingUnpinMessageIds(
+      binding.pendingUnpinMessageIds,
+      binding.messageId,
+    );
     const next: AutomationBoardBinding = {
       chatId: binding.chatId,
       messageId: binding.messageId,
       ...(binding.cardId ? { cardId: binding.cardId } : {}),
       ...(typeof binding.sequence === 'number' ? { sequence: binding.sequence } : {}),
       ...(binding.pinFailedHinted ? { pinFailedHinted: true } : {}),
-      ...(pendingUnpin ? { pendingUnpinMessageId: pendingUnpin } : {}),
+      ...(pendingUnpinMessageIds.length > 0 ? { pendingUnpinMessageIds } : {}),
     };
     if (index >= 0) this.boards[index] = next;
     else this.boards.push(next);
@@ -658,7 +674,7 @@ export class AutomationsStore {
     this.items = document.items.map(cloneItem);
     this.drafts = document.drafts.map((draft) => ({ ...draft }));
     this.started = new Set(document.started);
-    this.boards = document.boards.map((board) => ({ ...board }));
+    this.boards = document.boards.map((board) => cloneBoard(board));
     this.persistenceDisabled = persistenceDisabled;
     this.hasDocument = hasDocument;
     this.persistScheduled = false;
@@ -786,7 +802,7 @@ export class AutomationsStore {
       items: this.items.map(cloneItem),
       drafts: this.drafts.map((draft) => cloneDraft(draft)),
       started: [...this.started],
-      boards: this.boards.map((board) => ({ ...board })),
+      boards: this.boards.map((board) => cloneBoard(board)),
     };
   }
 }
@@ -854,21 +870,117 @@ function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
     ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
     ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
     ...(raw.pinFailedHinted === true ? { pinFailedHinted: true } : {}),
-    ...(typeof raw.pendingUnpinMessageId === 'string'
-      && raw.pendingUnpinMessageId
-      && raw.pendingUnpinMessageId !== raw.messageId
-      ? { pendingUnpinMessageId: raw.pendingUnpinMessageId }
+    ...pendingUnpinField(readPendingUnpinMessageIds(raw)),
+  };
+}
+
+function readPendingUnpinMessageIds(raw: Record<string, unknown>): PendingUnpinMessageRef[] {
+  const currentMessageId = typeof raw.messageId === 'string' ? raw.messageId : '';
+  if (Array.isArray(raw.pendingUnpinMessageIds)) {
+    return normalizePendingUnpinMessageIds(raw.pendingUnpinMessageIds, currentMessageId);
+  }
+  if (typeof raw.pendingUnpinMessageId === 'string') {
+    return normalizePendingUnpinMessageIds([raw.pendingUnpinMessageId], currentMessageId);
+  }
+  return [];
+}
+
+function normalizePendingUnpinMessageIds(
+  raw: readonly unknown[] | undefined,
+  currentMessageId: string,
+): PendingUnpinMessageRef[] {
+  const refs = (raw ?? []).flatMap((entry) => {
+    const parsed = parsePendingUnpinRef(entry, currentMessageId);
+    return parsed ? [parsed] : [];
+  });
+  return dedupePendingUnpin(refs);
+}
+
+function parsePendingUnpinRef(raw: unknown, currentMessageId: string): PendingUnpinMessageRef | undefined {
+  if (typeof raw === 'string') {
+    if (!raw || raw === currentMessageId) return undefined;
+    return raw;
+  }
+  if (!isObject(raw) || typeof raw.messageId !== 'string' || !raw.messageId) return undefined;
+  if (raw.messageId === currentMessageId) return undefined;
+  const cardId = typeof raw.cardId === 'string' && raw.cardId ? raw.cardId : undefined;
+  const sequence = isPositiveInt(raw.sequence) ? raw.sequence : undefined;
+  const settled = raw.settled === true;
+  if (!cardId && sequence === undefined && !settled) return raw.messageId;
+  return {
+    messageId: raw.messageId,
+    ...(cardId ? { cardId } : {}),
+    ...(sequence !== undefined ? { sequence } : {}),
+    ...(settled ? { settled: true } : {}),
+  };
+}
+
+function dedupePendingUnpin(refs: PendingUnpinMessageRef[]): PendingUnpinMessageRef[] {
+  const order: string[] = [];
+  const byId = new Map<string, PendingUnpinMessageRef>();
+  for (const ref of refs) {
+    const id = pendingUnpinRefMessageId(ref);
+    const current = byId.get(id);
+    if (!current) {
+      order.push(id);
+      byId.set(id, ref);
+      continue;
+    }
+    byId.set(id, mergePendingUnpin(current, ref));
+  }
+  return order.flatMap((id) => {
+    const ref = byId.get(id);
+    return ref ? [ref] : [];
+  });
+}
+
+function mergePendingUnpin(
+  current: PendingUnpinMessageRef,
+  incoming: PendingUnpinMessageRef,
+): PendingUnpinMessageRef {
+  const kept = asPendingUnpinBoard(current);
+  const extra = asPendingUnpinBoard(incoming);
+  const cardId = kept.cardId ?? extra.cardId;
+  const sequence = kept.sequence ?? extra.sequence;
+  const settled = kept.settled === true || extra.settled === true;
+  if (!cardId && sequence === undefined && !settled) return kept.messageId;
+  return {
+    messageId: kept.messageId,
+    ...(cardId ? { cardId } : {}),
+    ...(sequence !== undefined ? { sequence } : {}),
+    ...(settled ? { settled: true } : {}),
+  };
+}
+
+function asPendingUnpinBoard(ref: PendingUnpinMessageRef): PendingUnpinBoard {
+  if (typeof ref === 'string') return { messageId: ref };
+  return ref;
+}
+
+function pendingUnpinRefMessageId(ref: PendingUnpinMessageRef): string {
+  if (typeof ref === 'string') return ref;
+  return ref.messageId;
+}
+
+function pendingUnpinField(
+  refs: PendingUnpinMessageRef[],
+): { pendingUnpinMessageIds: PendingUnpinMessageRef[] } | Record<string, never> {
+  if (refs.length === 0) return {};
+  return { pendingUnpinMessageIds: refs };
+}
+
+function cloneBoard(board: AutomationBoardBinding): AutomationBoardBinding {
+  return {
+    ...board,
+    ...(board.pendingUnpinMessageIds
+      ? { pendingUnpinMessageIds: board.pendingUnpinMessageIds.map(clonePendingUnpin) }
       : {}),
   };
 }
 
-function pendingUnpinMessageId(binding: AutomationBoardBinding): string | undefined {
-  if (
-    typeof binding.pendingUnpinMessageId !== 'string'
-    || !binding.pendingUnpinMessageId
-    || binding.pendingUnpinMessageId === binding.messageId
-  ) return undefined;
-  return binding.pendingUnpinMessageId;
+function clonePendingUnpin(ref: PendingUnpinMessageRef): PendingUnpinMessageRef {
+  if (typeof ref === 'string') return ref;
+  return { ...ref };
 }
 
 function parseStatusDocument(text: string): AutomationsStatusSnapshot {

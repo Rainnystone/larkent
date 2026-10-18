@@ -20,6 +20,7 @@ import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth
 import {
   AUTO_END_BUSY,
   AUTO_INVALID_END,
+  AUTO_BOARD_UPDATED_HINT,
   AUTO_INVALID_HINT,
   AUTO_UNKNOWN_ID,
   completeDraftEnd,
@@ -519,13 +520,13 @@ async function dispatchBoardAction(
   if (!deps.controls.profileConfig.automations.enabled) {
     return actionToast('error', AUTO_INVALID_HINT);
   }
-  const registered = deps.automations.findBoardByMessageId(deps.evt.messageId);
-  if (!registered) {
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
   const verified = deps.boardAuth.verify(token);
   if (!verified.ok || verified.payload.action !== cmd) {
     return actionToast('error', AUTO_INVALID_HINT);
+  }
+  const registered = deps.automations.findBoardByMessageId(deps.evt.messageId);
+  if (!registered || registered.messageId !== deps.evt.messageId) {
+    return actionToast('error', AUTO_BOARD_UPDATED_HINT);
   }
   if (
     verified.payload.chatId !== deps.evt.chatId
