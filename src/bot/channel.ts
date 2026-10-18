@@ -199,6 +199,38 @@ export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
 /** `connect()` / force-reconnect wait. Channel 0.6.1+ no longer reads handshakeTimeoutMs for this. */
 export const CHANNEL_CONNECT_TIMEOUT_MS = CHANNEL_HANDSHAKE_TIMEOUT_MS;
 
+/**
+ * Seconds to wait for any inbound frame after a client ping before the SDK
+ * terminates the socket.
+ *
+ * Armed when the client sends a ping, cleared on any inbound frame, and
+ * reset by the next ping. The wait must stay strictly under the server
+ * PingInterval or a silent socket is never torn down. The documented default
+ * is {@link WS_SERVER_PING_INTERVAL_SEC}; field reports also describe 30s.
+ * 15s is under both.
+ *
+ * 3s sat inside routine jitter and tore a healthy link down. 15s still covers
+ * a lost ping through TCP retransmission (about 1s, then 3s, then 7s) and a
+ * short stall. Node runs an expired timer before I/O, so a stall longer than
+ * this wait drops a pong that already arrived.
+ *
+ * At the documented 120s cadence a silent link is torn down within
+ * {@link WS_DEFAULT_DEAD_LINK_DETECT_BOUND_SEC}. A longer server interval
+ * detects later. An interval of 15s or less never trips this watchdog.
+ */
+export const WS_PING_TIMEOUT_SEC = 15;
+/**
+ * Documented Feishu ClientConfig PingInterval and the SDK pre-handshake
+ * default, in seconds. The server may push another value. This client does
+ * not set it.
+ */
+export const WS_SERVER_PING_INTERVAL_SEC = 120;
+/**
+ * Worst case, at {@link WS_SERVER_PING_INTERVAL_SEC}, from the last inbound
+ * frame until the socket is torn down. A different server cadence changes it.
+ */
+export const WS_DEFAULT_DEAD_LINK_DETECT_BOUND_SEC = WS_SERVER_PING_INTERVAL_SEC + WS_PING_TIMEOUT_SEC;
+
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
   '不要 unset LARK_CHANNEL / LARK_CHANNEL_HOME / LARK_CHANNEL_PROFILE / LARKSUITE_CLI_CONFIG_DIR，也不要用 env -u LARK_CHANNEL 绕回本机普通配置。',
@@ -453,11 +485,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     outbound: {
       streamThrottleMs: 400,
     },
-    // SDK 1.65.0-alpha.3+ knobs.
+    // SDK 1.65.0-alpha.3+ knobs. See WS_PING_TIMEOUT_SEC.
     wsConfig: {
-      // 3s liveness watchdog: if no inbound message arrives within 3s after
-      // the last ping, SDK presumes connection dead and forces a reconnect.
-      pingTimeout: 3,
+      pingTimeout: WS_PING_TIMEOUT_SEC,
     },
     // Transport-only reconnect: the SDK watchdog force-reconnects a stuck
     // WebSocket. The bridge never calls controls.restart for link problems.
