@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { CodexAdapter } from '../../src/agent/codex/adapter.js';
 import type { AgentEvent, AgentRun } from '../../src/agent/types.js';
 import { listCodexThreadHistory } from '../../src/session/codex-history.js';
@@ -15,13 +15,29 @@ const RUN = process.env.CODEX_REAL_SMOKE === '1';
 const binary = process.env.LARK_CHANNEL_CODEX_BIN ?? 'codex';
 const model = process.env.CODEX_REAL_SMOKE_MODEL;
 const dirs: string[] = [];
+const activeRuns = new Set<AgentRun>();
 
 // Synthetic 64x64 solid RGB PNGs; the resumed turn changes color so a model
 // cannot pass the image assertion by remembering the first picture.
 const RED_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdLep8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3IPanc8OLDQitxAAAAAElFTkSuQmCC';
 const BLUE_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAb0lEQVR4nO3PAQkAAAyEwO9feoshgnABdNvJ8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ3I8QUNyPEFDcjxBQ2oPcf88OIhvJ6vAAAAAElFTkSuQmCC';
 
+// Vitest's outer timeout does not cancel an executing test promise. The
+// hook owns any run whose collect() has not reached its finally block yet.
+afterEach(async () => {
+  const results = await Promise.allSettled([...activeRuns].map(async run => {
+    await run.stop();
+    if (!await run.waitForExit(1000)) throw new Error('Codex smoke child did not exit during cleanup');
+    activeRuns.delete(run);
+  }));
+  const failures = results.filter(result => result.status === 'rejected');
+  if (failures.length > 0) {
+    throw new AggregateError(failures.map(result => result.reason), 'Codex smoke cleanup failed');
+  }
+}, 30_000);
+
 afterAll(async () => {
+  if (activeRuns.size > 0) throw new Error('Keeping smoke workspaces because Codex cleanup failed');
   await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
 });
 
@@ -65,7 +81,7 @@ describe.skipIf(!RUN)('CodexAdapter real binary smoke', () => {
 
     const history = await listCodexThreadHistory({ binary, cwd: dir, limit: 10, profileStateDir });
     expect(history.some(entry => entry.threadId === handle)).toBe(true);
-  }, 240_000);
+  }, 420_000); // Three 90s turns plus process cleanup and history query.
 
   it('stops an active tool, confirms exit, and can resume the interrupted thread', async () => {
     const { dir, adapter } = await createSmoke();
@@ -96,7 +112,7 @@ describe.skipIf(!RUN)('CodexAdapter real binary smoke', () => {
     expectNormal(resumed);
     expect(finalText(resumed)).toContain('CODEX-RESUMED-AFTER-STOP');
     expect(resumed.find(event => event.type === 'system')?.resumeHandle).toBe(handle);
-  }, 180_000);
+  }, 300_000); // Two 90s turns plus process cleanup.
 });
 
 async function createSmoke() {
@@ -111,6 +127,7 @@ async function createSmoke() {
 }
 
 async function collect(run: AgentRun, onEvent?: (event: AgentEvent) => Promise<void>): Promise<AgentEvent[]> {
+  activeRuns.add(run);
   const events: AgentEvent[] = [];
   let timedOut = false;
   const deadline = setTimeout(() => { timedOut = true; void run.stop().catch(() => {}); }, 90_000);
@@ -124,6 +141,7 @@ async function collect(run: AgentRun, onEvent?: (event: AgentEvent) => Promise<v
   } finally {
     clearTimeout(deadline);
     if (!await run.waitForExit(10_000)) await run.stop();
+    activeRuns.delete(run);
   }
 }
 
