@@ -22,7 +22,7 @@ box 睡眠后唤醒，`link.recovered` 触发 `board.refresh()`（`channel.ts:94
 
 ## 300317 的含义
 
-飞书 CardKit 错误码表：`300317` = 对同一卡片实体的操作 sequence 没有严格递增。它**不表示**卡片丢失或过期（那是 200740 / 200750）；卡片实体仍然可以更新，只是本地 sequence 落后于服务端。注：[A21](A21-board-rebind-after-pin.md) 写的「13:05 置顶失败 300317」按 r5 日志实为 card.update（patch）失败，不是 pin。
+飞书 CardKit 错误码表：`300317` = 对同一卡片实体的操作 sequence 没有严格递增。它**不表示**卡片丢失或过期（那是 200740 / 200750）；卡片实体仍然可以更新，只是本地 sequence 落后于服务端。注：[A21](A21-board-rebind-after-pin.md) 写的「13:05 置顶失败 300317」按 r5 日志实为 card.update（patch）失败，不是 pin。`300311` = 卡片属于其它应用（非本应用卡片），同样不是丢失/过期，不重发。2026-10-18 核实：300311=非本应用卡片（A25 实现侧 + 官方文档）。
 
 ## 触发
 
@@ -38,11 +38,11 @@ box 睡眠后唤醒，`link.recovered` 触发 `board.refresh()`（`channel.ts:94
 
 - **单调 sequence**：每次 card.update 用 `seq = max(stored + 1, floor((now − 2026-01-01T00:00:00Z) / 1000))`（秒级，int32 内）。只有 `code == 0` 才持久化（保留 A20 的语义）；即使漏记过一次成功响应，下一次也会超过服务端值。
 - **300317 原地重试**：patch 返回 300317 时，用 `seq' = max(seq + 1, 时间派生值)` 立即重试**一次**；成功则持久化 `seq'`，不发新卡，pins 不变。重试仍失败：记 `code` / `msg`，**不重发**，保留绑定，下一次 refresh 再用更大的 sequence 尝试。
-- **只在丢失/过期时重发**：200740、200750、300311 以及「消息已删除 / 不存在」才走重发路径（A21 的先置顶后换绑定流程不变）。其它 `code != 0`：记日志，不重发，保留绑定。not-in-chat、link 类保持现状。
+- **只在丢失/过期时重发**：200740、200750 以及「消息已删除 / 不存在」才走重发路径（A21 的先置顶后换绑定流程不变）。`300311`（非本应用卡片）记日志、不重发，保留绑定。其它 `code != 0`：记日志，不重发，保留绑定。not-in-chat、link 类保持现状。
 - **日志**（Spec §10）：
   - `auto.board.patch`（info）：每次 patch 成功写一条，含 cardId 后 4 位、`sequence`、是否重试。
   - `auto.board.patch-failed`：含 `code` / `msg` / 用过的 `sequence`（已有的失败日志补上 sequence）。
-  - `auto.board.resend`：含触发重发的原因码（`200740` / `200750` / `300311` / `message-deleted`）。
+  - `auto.board.resend`：含触发重发的原因码（`200740` / `200750` / `message-deleted`）。
   - 不记飞书完整 ID，不记任务内容。
 - 同样的单调 sequence 规则用于 bridge 写的其它 CardKit 卡（确认卡、结束提示卡的结算更新），避免同类漂移；不改它们的结算内容（A22）。
 
@@ -51,7 +51,8 @@ box 睡眠后唤醒，`link.recovered` 触发 `board.refresh()`（`channel.ts:94
 - [ ] 先写失败测试，再实现（fake CardKit client 按调用顺序返回码）：
   - card.update 先返回 300317，第二次（sequence 更大）返回 0 → 不发新卡；store 的 sequence 等于重试用的值；pins 不变；日志一条 `patch-failed code=300317` 和一条 `auto.board.patch retry=true sequence=<值>`。
   - 300317 两次 → 不发新卡，绑定不变，sequence 不持久化；下一次 refresh 用的 sequence 大于上次重试值。
-  - 200740、200750、300311、消息已删除各一例 → 走重发（A21 流程），`auto.board.resend` 带原因码。
+  - 200740、200750、消息已删除各一例 → 走重发（A21 流程），`auto.board.resend` 带原因码。
+  - 300311 → 不重发，绑定不变，有失败日志（非本应用卡片）。
   - 其它未列出的 `code != 0`（测试用任意码）→ 不重发，绑定不变，有失败日志。
   - 单调性：stored = 5、时间派生值 = 2,500,000 → 用 2,500,000；stored = 3,000,000 → 用 3,000,001。
   - 改写 `board-update.test.ts:23`：仍然只在 `code == 0` 时持久化，但 sequence 取单调值。
