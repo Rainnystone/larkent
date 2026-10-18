@@ -24,6 +24,7 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A14](A14-agent-result-body.md) | Agent result post uses the shared final-reply extraction (`finalText`) | — | ready-for-agent |
 | [A15](A15-notice-wording-and-trigger-source.md) | Cross-day 原定 labels, accurate `triggerSource`, no 追问 footer on interrupted/policy-guard notices | A14 | ready-for-agent |
 | [A17](A17-oneshot-confirm-and-grok-eos.md) | One-shot confirm card omits monthly frequency; Grok control-token-only text counts as empty | — | ready-for-agent |
+| [A18](A18-card-button-access.md) | Automation card buttons are not gated by allowedUsers; denied card actions return a toast | — (after #49 merges) | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -65,4 +66,5 @@ graph LR
   A11 -.finds.-> A14
   A14 --> A15
   A11 -.finds.-> A17
+  A18
 ```
