@@ -1,4 +1,5 @@
 import type { LarkChannel } from '@larksuite/channel';
+import { classify, isGoneMessage } from '../bot/feishu-error';
 import { updateCardByCardId } from '../card/cardkit-update';
 import { readCardApiError } from '../card/card-api-error';
 import { card2, md } from '../card/v2';
@@ -8,6 +9,8 @@ import type { AutomationDraft, AutomationsStore } from './store';
 export const DRAFT_SETTLED_CANCELLED = '已取消';
 export const DRAFT_SETTLED_EXPIRED = '已过期';
 export const DRAFT_SETTLED_END_CHOSEN = '已指定结束时间';
+export const DRAFT_SETTLE_RETRY_ATTEMPTS = 3;
+export const DRAFT_SETTLE_RETRY_MIN_MS = 1_000;
 
 export function draftConfirmedStatus(id: number): string {
   return `已确认 #${id}`;
@@ -50,6 +53,9 @@ export async function expireDueDraftCards(input: {
       await settleDraftCard(input.channel, draft, DRAFT_SETTLED_EXPIRED, input.store);
     } catch (error) {
       logDraftCardFail(draft.draftId, error);
+      if (isPermanentDraftCardError(error)) {
+        await input.store.takeDraft(draft.draftId);
+      }
       continue;
     }
     await input.store.takeDraft(draft.draftId);
@@ -63,9 +69,37 @@ export function scheduleDraftCardSettle(
   store?: AutomationsStore,
 ): void {
   setImmediate(() => {
-    void settleDraftCard(channel, draft, status, store).catch((error: unknown) => {
-      logDraftCardFail(draft.draftId, error);
-    });
+    void settleDraftCardWithRetry(channel, draft, status, store);
+  });
+}
+
+async function settleDraftCardWithRetry(
+  channel: LarkChannel,
+  draft: Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'>,
+  status: string,
+  store: AutomationsStore | undefined,
+): Promise<void> {
+  for (let attempt = 0; attempt < DRAFT_SETTLE_RETRY_ATTEMPTS; attempt += 1) {
+    try {
+      await settleDraftCard(channel, draft, status, store);
+      return;
+    } catch (error) {
+      if (isPermanentDraftCardError(error) || attempt === DRAFT_SETTLE_RETRY_ATTEMPTS - 1) {
+        logDraftCardFail(draft.draftId, error);
+        return;
+      }
+      await wait(DRAFT_SETTLE_RETRY_MIN_MS * (2 ** attempt));
+    }
+  }
+}
+
+function isPermanentDraftCardError(error: unknown): boolean {
+  return isGoneMessage(error) || classify(error) === 'rejected';
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
   });
 }
 

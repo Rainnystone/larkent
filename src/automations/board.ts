@@ -106,6 +106,7 @@ class Board implements AutomationBoard {
         const card = automationBoardCard({ items, auth: this.auth });
         attemptKey = boardAttemptKey(card);
         if (this.failedAttempt.get(chatId) === attemptKey) return;
+        const previousMessageId = binding?.messageId;
         const next = await this.patchOrResend(chatId, binding, card);
         this.failedAttempt.delete(chatId);
         if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
@@ -113,9 +114,13 @@ class Board implements AutomationBoard {
         }
         if (items.length === 0) await this.ensureUnpinned(next);
         else {
-          await this.ensurePinned(chatId, next, {
+          const pinned = await this.ensurePinned(chatId, next, {
             repin: binding?.messageId === next.messageId,
           });
+          if (!pinned) return;
+        }
+        if (previousMessageId && previousMessageId !== next.messageId) {
+          await this.unpinQuietly(previousMessageId);
         }
       } catch (error) {
         if (isNotInChat(error)) {
@@ -160,7 +165,6 @@ class Board implements AutomationBoard {
           ...(api.msg !== undefined ? { msg: api.msg } : {}),
         });
         log.warn('auto', 'board.resend', { chatId });
-        await this.unpinQuietly(binding.messageId);
       }
     }
     const sent = await sendManagedCard(this.channel, chatId, card);
@@ -187,16 +191,18 @@ class Board implements AutomationBoard {
     chatId: string,
     binding: AutomationBoardBinding,
     opts: { repin: boolean },
-  ): Promise<void> {
+  ): Promise<boolean> {
     try {
       const pinned = await listPinnedMessageIds(this.channel, chatId);
-      if (pinned.includes(binding.messageId)) return;
+      if (pinned.includes(binding.messageId)) return true;
       await pinMessage(this.channel, binding.messageId);
       if (opts.repin) log.info('auto', 'board.repin', { chatId });
+      return true;
     } catch (error) {
       if (isNotInChat(error)) throw error;
       log.fail('auto', error, { event: 'board.pin', chatId });
       await this.hintPinFailed(chatId, binding);
+      return false;
     }
   }
 

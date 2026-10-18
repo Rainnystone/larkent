@@ -120,9 +120,8 @@ describe('status push payload', () => {
   it('keeps nextFires after now, caps the 24h window at N, and still lists a weekly fire beyond 24h', () => {
     const hourlyFires = statusPushNextFires(item({ nextFireAt: NOW + 10 * 60_000 }), NOW);
     expect(hourlyFires).toHaveLength(STATUS_PUSH_MAX_NEXT_FIRES);
-    expect(hourlyFires[0]).toBe(NOW + HOUR);
-    expect(hourlyFires.at(-1)).toBe(NOW + STATUS_PUSH_MAX_NEXT_FIRES * HOUR);
-    expect(hourlyFires.every((time) => time > NOW)).toBe(true);
+    expect(hourlyFires[0]).toBe(NOW + 10 * 60_000);
+    expect(hourlyFires[1]).toBe(NOW + HOUR);
     expect(hourlyFires.at(-1)!).toBeLessThanOrEqual(NOW + STATUS_PUSH_WINDOW_MS);
 
     const weeklyNext = NOW + 7 * DAY;
@@ -142,6 +141,38 @@ describe('status push payload', () => {
 
     expect(statusPushNextFires(item({ paused: true, nextFireAt: NOW + HOUR }), NOW)).toEqual([]);
     expect(statusPushNextFires(item({ nextFireAt: 0 }), NOW)).toEqual([]);
+  });
+
+  it('includes an overdue pending nextFireAt so the monitor still sees t after startup', () => {
+    const overdue = NOW - 5 * 60_000;
+    const oneShot = statusPushNextFires(item({
+      schedule: { kind: 'one-shot', fireAt: overdue },
+      startAt: overdue,
+      endAt: overdue,
+      nextFireAt: overdue,
+      lastFireAt: 0,
+    }), NOW);
+    expect(oneShot).toEqual([overdue]);
+    expect(monitorMisses({
+      nextFires: oneShot,
+      lastFireAt: 0,
+      paused: false,
+    }, NOW + 2 * 60_000)).toBe(true);
+
+    const hourlyOverdue = statusPushNextFires(item({
+      nextFireAt: overdue,
+      lastFireAt: 0,
+    }), NOW);
+    expect(hourlyOverdue[0]).toBe(overdue);
+    expect(hourlyOverdue).toHaveLength(STATUS_PUSH_MAX_NEXT_FIRES);
+    expect(hourlyOverdue.at(-1)!).toBeLessThanOrEqual(NOW + STATUS_PUSH_WINDOW_MS);
+
+    const afterFire = statusPushNextFires(item({
+      nextFireAt: overdue,
+      lastFireAt: overdue,
+    }), NOW);
+    expect(afterFire[0]).toBeGreaterThan(NOW);
+    expect(afterFire).not.toContain(overdue);
   });
 
   it('does not evaluate as a monitor miss after a normal fire start', () => {

@@ -7,6 +7,7 @@ import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { AutomationsStore } from '../../../src/automations/store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
 import { createFakeChannel } from '../../helpers/fake-channel';
+import { axiosErrno } from '../../helpers/sdk-feishu-errors';
 
 const CHAT = 'oc_group';
 const NOW = Date.UTC(2026, 9, 18, 3, 0, 0);
@@ -59,6 +60,48 @@ describe('board card.update', () => {
     await h.board.refresh();
     expect(h.store.getBoard(CHAT)?.sequence).toBeUndefined();
     expect(h.store.getBoard(CHAT)?.messageId).not.toBe(firstMessageId);
+  });
+
+  it('keeps the old pin and store when replacement send fails after a patch error', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT);
+    expect(first?.messageId).toBeTruthy();
+    const firstMessageId = first!.messageId;
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+
+    h.channel.rawClient.cardkit.v1.card.update = async () => ({
+      code: 300317,
+      msg: 'card update failed',
+    });
+    h.channel.cardErrors.create = axiosErrno('ECONNRESET', 'connect ECONNRESET');
+    await h.store.pause(h.itemId);
+    await expect(h.board.refresh()).rejects.toThrow(/ECONNRESET/);
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(firstMessageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+
+    await h.board.refresh();
+    const next = h.store.getBoard(CHAT);
+    expect(next?.messageId).toBeTruthy();
+    expect(next?.messageId).not.toBe(firstMessageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next?.messageId]);
+  });
+
+  it('unpins the old board after a last-item resend, not only the replacement', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const firstMessageId = h.store.getBoard(CHAT)!.messageId;
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+
+    await h.store.delete(h.itemId);
+    h.channel.rawClient.cardkit.v1.card.update = async () => ({
+      code: 300317,
+      msg: 'card update failed',
+    });
+    await h.board.refresh();
+
+    expect(h.store.getBoard(CHAT)?.messageId).not.toBe(firstMessageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).not.toContain(firstMessageId);
   });
 
   it('bumps sequence after cardkit update returns code 0', async () => {

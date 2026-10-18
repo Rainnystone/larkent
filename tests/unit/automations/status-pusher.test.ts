@@ -8,6 +8,7 @@ import {
   STATUS_PUSH_RETRY_MAX_MS,
   STATUS_PUSH_RETRY_MIN_MS,
   STATUS_PUSH_SIGNATURE_HEADER,
+  STATUS_PUSH_TIMEOUT_MS,
   STATUS_PUSH_TIMESTAMP_HEADER,
   signStatusPush,
 } from '../../../src/automations/status-push';
@@ -114,6 +115,14 @@ function headersOf(headers: RequestInit['headers']): Record<string, string> {
     out[key.toLowerCase()] = value;
   });
   return out;
+}
+
+async function waitFor(cond: () => boolean, timeoutMs = 1000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
 }
 
 function reminderInput(): CreateAutomationInput {
@@ -257,6 +266,138 @@ describe('status pusher', () => {
     await h.clock.advanceTo(h.clock.now() + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
     expect(h.posts).toHaveLength(1);
     expect(JSON.parse(h.posts[0]!.body)).toMatchObject({ v: 2 });
+  });
+
+  it('retries 408 and 429, honours Retry-After under the cap, and leaves other 4xx terminal', async () => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(reminderInput());
+    await h.store.writeStatus('Grok Bot');
+    let calls = 0;
+    h.fetchImpl.mockImplementation(async (input, init) => {
+      calls += 1;
+      h.posts.push({
+        url: String(input),
+        headers: headersOf(init?.headers),
+        body: String(init?.body ?? ''),
+      });
+      if (calls === 1) return new Response(null, { status: 408 });
+      if (calls === 2) {
+        return new Response(null, { status: 429, headers: { 'Retry-After': '12' } });
+      }
+      return new Response(null, { status: 204 });
+    });
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    expect(h.posts).toHaveLength(1);
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_RETRY_MIN_MS, () => h.pusher.idle());
+    expect(h.posts).toHaveLength(2);
+    await h.clock.advanceTo(
+      NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_RETRY_MIN_MS + STATUS_PUSH_RETRY_MIN_MS,
+      () => h.pusher.idle(),
+    );
+    expect(h.posts).toHaveLength(2);
+    await h.clock.advanceTo(
+      NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_RETRY_MIN_MS + 12_000,
+      () => h.pusher.idle(),
+    );
+    expect(h.posts).toHaveLength(3);
+
+    const terminal = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await terminal.store.create(reminderInput());
+    await terminal.store.writeStatus('Grok Bot');
+    terminal.fetchImpl.mockImplementation(async (input, init) => {
+      terminal.posts.push({
+        url: String(input),
+        headers: headersOf(init?.headers),
+        body: String(init?.body ?? ''),
+      });
+      return new Response(null, { status: 404 });
+    });
+    terminal.pusher.notify();
+    await terminal.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => terminal.pusher.idle());
+    expect(terminal.posts).toHaveLength(1);
+    await terminal.clock.advanceTo(
+      NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_RETRY_MAX_MS + 1,
+      () => terminal.pusher.idle(),
+    );
+    expect(terminal.posts).toHaveLength(1);
+
+    const capped = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await capped.store.create(reminderInput());
+    await capped.store.writeStatus('Grok Bot');
+    let cappedCalls = 0;
+    capped.fetchImpl.mockImplementation(async (input, init) => {
+      cappedCalls += 1;
+      capped.posts.push({
+        url: String(input),
+        headers: headersOf(init?.headers),
+        body: String(init?.body ?? ''),
+      });
+      if (cappedCalls === 1) {
+        return new Response(null, { status: 429, headers: { 'Retry-After': '120' } });
+      }
+      return new Response(null, { status: 204 });
+    });
+    capped.pusher.notify();
+    await capped.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => capped.pusher.idle());
+    expect(capped.posts).toHaveLength(1);
+    await capped.clock.advanceTo(
+      NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_RETRY_MAX_MS,
+      () => capped.pusher.idle(),
+    );
+    expect(capped.posts).toHaveLength(2);
+  });
+
+  it('aborts a hung status POST after a few seconds and retries, and stop does not wait on it', async () => {
+    expect(STATUS_PUSH_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(STATUS_PUSH_TIMEOUT_MS).toBeLessThanOrEqual(10_000);
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(reminderInput());
+    await h.store.writeStatus('Grok Bot');
+    let calls = 0;
+    const signals: AbortSignal[] = [];
+    h.fetchImpl.mockImplementation((_input, init) => {
+      calls += 1;
+      const signal = init?.signal;
+      if (signal) signals.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        if (!signal) return;
+        const onAbort = () => {
+          const err = new Error('The operation was aborted');
+          err.name = 'AbortError';
+          reject(err);
+        };
+        if (signal.aborted) onAbort();
+        else signal.addEventListener('abort', onAbort, { once: true });
+      });
+    });
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => Promise.resolve());
+    await waitFor(() => calls === 1);
+    expect(signals[0]).toBeInstanceOf(AbortSignal);
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_TIMEOUT_MS, () => h.pusher.idle());
+    expect(signals[0]?.aborted).toBe(true);
+    await h.clock.advanceTo(
+      NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_TIMEOUT_MS + STATUS_PUSH_RETRY_MIN_MS,
+      () => Promise.resolve(),
+    );
+    await waitFor(() => calls === 2);
+    h.pusher.stop();
+
+    const hung = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await hung.store.create(reminderInput());
+    await hung.store.writeStatus('Grok Bot');
+    hung.fetchImpl.mockImplementation(() => new Promise<Response>(() => {}));
+    hung.pusher.notify();
+    await hung.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => Promise.resolve());
+    await waitFor(() => hung.fetchImpl.mock.calls.length === 1);
+    hung.pusher.stop();
+    await Promise.race([
+      hung.pusher.idle(),
+      new Promise((_resolve, reject) => {
+        setTimeout(() => reject(new Error('idle hung after stop')), 200);
+      }),
+    ]);
   });
 
   it('logs a push failure without the secret', async () => {

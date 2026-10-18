@@ -849,19 +849,21 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     ...(deps.sleepProbe ? { sleepProbe: deps.sleepProbe } : {}),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
-  if (deps.automations && controls.profileConfig.automations.enabled) {
+  if (deps.automations) {
     const automations = deps.automations;
-    automationsCtl.boardAuth = new BoardActionAuth({
-      secret: appSecret,
-      ...(deps.now ? { now: deps.now } : {}),
-    });
-    automationsCtl.board = createAutomationBoard({
-      store: deps.automations,
-      channel,
-      auth: automationsCtl.boardAuth,
-      lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
-      onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
-    });
+    if (controls.profileConfig.automations.enabled) {
+      automationsCtl.boardAuth = new BoardActionAuth({
+        secret: appSecret,
+        ...(deps.now ? { now: deps.now } : {}),
+      });
+      automationsCtl.board = createAutomationBoard({
+        store: deps.automations,
+        channel,
+        auth: automationsCtl.boardAuth,
+        lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
+        onNotInChat: (chatId) => automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+      });
+    }
     const automationOutbox: AutomationDeliveryDeps = {
       journal,
       channel,

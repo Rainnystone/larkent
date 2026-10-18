@@ -104,6 +104,7 @@ async function harness(nowMs: number, opts?: {
   isLinkUp?: () => boolean;
   send?: (fire: FireSend) => void | Promise<void>;
   agentTasks?: () => boolean;
+  enabled?: () => boolean;
   setTimeout?: (fn: () => void, delayMs: number) => unknown;
   onChanged?: () => void | Promise<void>;
   onExpireDrafts?: () => void | Promise<void>;
@@ -141,6 +142,7 @@ async function harness(nowMs: number, opts?: {
     botDisplayName: () => 'Grok Bot',
     ...(opts?.isLinkUp ? { isLinkUp: opts.isLinkUp } : {}),
     ...(opts?.agentTasks ? { agentTasks: opts.agentTasks } : {}),
+    ...(opts?.enabled ? { enabled: opts.enabled } : {}),
     ...(opts?.onChanged ? { onChanged: opts.onChanged } : {}),
     ...(opts?.onExpireDrafts ? { onExpireDrafts: opts.onExpireDrafts } : {}),
     ...(opts?.statusPush ? { statusPush: opts.statusPush } : {}),
@@ -266,6 +268,34 @@ describe('automation scheduler', () => {
     await h.clock.advanceTo(h.clock.now(), () => h.scheduler.idle());
     expect(expired).toEqual([draft.draftId]);
     expect(h.store.listDrafts()).toEqual([]);
+  });
+
+  it('expires posted drafts even when automations are disabled', async () => {
+    const expired: string[] = [];
+    const h = await harness(t0, {
+      enabled: () => false,
+      onExpireDrafts: async () => {
+        for (const draft of h.store.listExpiredDrafts()) {
+          expired.push(draft.draftId);
+          await h.store.takeDraft(draft.draftId);
+        }
+      },
+    });
+    const draft = await h.store.saveDraft(reminderInput({
+      nextFireAt: t0 + 10 * HOUR,
+      name: 'draft',
+    }));
+    await h.store.bindDraftCard(draft.draftId, 'om_card', 'card_1');
+    await h.store.create(reminderInput({ nextFireAt: t0 }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([]);
+    expect(expired).toEqual([]);
+    h.clock.jump(AUTOMATIONS_DRAFT_TTL_MS + 1);
+    await h.clock.advanceTo(h.clock.now(), () => h.scheduler.idle());
+    expect(expired).toEqual([draft.draftId]);
+    expect(h.store.listDrafts()).toEqual([]);
+    expect(h.fires).toEqual([]);
   });
 
   it('expires posted drafts that aged out while the process was down', async () => {

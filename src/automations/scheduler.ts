@@ -282,7 +282,10 @@ class Scheduler implements AutomationScheduler {
   }
 
   private async catchUp(source: AutomationTriggerSource): Promise<void> {
-    if (!this.enabled()) return;
+    if (!this.enabled()) {
+      await this.expireDraftCards();
+      return;
+    }
     if (this.isLinkUp()) this.linkSeenUp = true;
     for (const item of this.store.list()) {
       await this.reconcileStarted(item);
@@ -566,7 +569,12 @@ class Scheduler implements AutomationScheduler {
   }
 
   private async handleDue(source: AutomationTriggerSource): Promise<void> {
-    if (this.closed || !this.enabled()) return;
+    if (this.closed) return;
+    if (!this.enabled()) {
+      await this.expireDraftCards();
+      this.armTimer();
+      return;
+    }
     if (this.isLinkUp()) this.linkSeenUp = true;
     await this.store.pruneStartedFireKeys(this.now());
     const now = this.now();
@@ -597,14 +605,17 @@ class Scheduler implements AutomationScheduler {
     this.armTimer();
   }
 
-  private async expireDue(): Promise<void> {
-    if (this.isLinkUp()) {
-      try {
-        await this.onExpireDrafts?.();
-      } catch (error) {
-        log.fail('auto', error, { event: 'draft-card' });
-      }
+  private async expireDraftCards(): Promise<void> {
+    if (!this.isLinkUp()) return;
+    try {
+      await this.onExpireDrafts?.();
+    } catch (error) {
+      log.fail('auto', error, { event: 'draft-card' });
     }
+  }
+
+  private async expireDue(): Promise<void> {
+    await this.expireDraftCards();
     const dropped = await this.store.dropAgedInstants();
     const now = this.now();
     let changed = false;
@@ -648,9 +659,9 @@ class Scheduler implements AutomationScheduler {
 
   private armTimer(): void {
     this.clearTimers();
-    if (this.closed || !this.enabled()) return;
+    if (this.closed) return;
     const now = this.now();
-    const deadline = this.nextDeadline(now);
+    const deadline = this.enabled() ? this.nextDeadline(now) : this.nextDraftDeadline(now);
     if (deadline === undefined) return;
     const delay = Math.min(SCHEDULER_SEGMENT_MS, Math.max(0, deadline - now));
     this.fireTimer = this.setTimeout(() => {
@@ -686,6 +697,13 @@ class Scheduler implements AutomationScheduler {
     }
     const startedExpiry = this.store.earliestStartedKeyExpiry();
     if (startedExpiry !== undefined) next = Math.min(next, startedExpiry);
+    const draftDeadline = this.nextDraftDeadline(now);
+    if (draftDeadline !== undefined) next = Math.min(next, draftDeadline);
+    return Number.isFinite(next) ? next : undefined;
+  }
+
+  private nextDraftDeadline(now: number): number | undefined {
+    let next = Number.POSITIVE_INFINITY;
     for (const draft of this.store.listDrafts()) {
       if (!draft.cardMessageId) continue;
       const expiry = draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS;

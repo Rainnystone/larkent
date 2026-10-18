@@ -8,6 +8,8 @@ export const STATUS_PUSH_DEBOUNCE_MS = 2_000;
 export const STATUS_PUSH_ID_HEX_LEN = 32;
 export const STATUS_PUSH_RETRY_MIN_MS = 1_000;
 export const STATUS_PUSH_RETRY_MAX_MS = 60_000;
+/** Bound each status POST so shutdown never waits on a hung endpoint. */
+export const STATUS_PUSH_TIMEOUT_MS = 5_000;
 export const STATUS_PUSH_TIMESTAMP_HEADER = 'x-timestamp';
 export const STATUS_PUSH_SIGNATURE_HEADER = 'x-signature';
 
@@ -39,7 +41,7 @@ export function opaqueItemId(secret: string, profile: string, id: number): strin
 }
 
 export function statusPushNextFires(
-  item: Pick<AutomationItem, 'paused' | 'schedule' | 'nextFireAt'>,
+  item: Pick<AutomationItem, 'paused' | 'schedule' | 'nextFireAt' | 'lastFireAt'>,
   now: number,
 ): number[] {
   if (item.paused || item.nextFireAt <= 0) return [];
@@ -48,6 +50,11 @@ export function statusPushNextFires(
   const windowEnd = now + STATUS_PUSH_WINDOW_MS;
   const fires: number[] = [];
   let cursor = now;
+  if (item.nextFireAt > item.lastFireAt) {
+    if (item.nextFireAt > windowEnd) return [item.nextFireAt];
+    fires.push(item.nextFireAt);
+    cursor = item.nextFireAt;
+  }
   for (;;) {
     const next = nextFireAfter(schedule, cursor);
     if (next === 0) break;
@@ -55,7 +62,7 @@ export function statusPushNextFires(
       if (fires.length === 0) fires.push(next);
       break;
     }
-    if (next > now) fires.push(next);
+    fires.push(next);
     if (fires.length >= STATUS_PUSH_MAX_NEXT_FIRES) break;
     cursor = next;
   }

@@ -168,6 +168,19 @@ describe('/auto new confirm card', () => {
     expect(settled).not.toContain(MATE);
   });
 
+  it('still settles expired confirm cards to 已过期 after restart with automations disabled', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    expect(confirmCard(h)).toContain('auto.confirm');
+    h.setNow(NOW + AUTOMATIONS_DRAFT_TTL_MS + 1);
+    h.cfg.automations.enabled = false;
+    await h.restart();
+    await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已过期')));
+    expect(settledCardUpdates(h).filter((text) => text.includes('已过期'))).toHaveLength(1);
+    expect(h.store.list()).toEqual([]);
+    expect(h.store.listDrafts()).toEqual([]);
+  });
+
   it('updates the original confirm card to 已过期 after TTL and still toasts 此确认已失效', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
@@ -357,6 +370,7 @@ async function harness(opts: {
     store,
     agent,
     tmp,
+    cfg,
     chatType: opts.chatType ?? 'group',
     setNow(next: number) {
       nowMs = next;

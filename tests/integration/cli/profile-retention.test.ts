@@ -180,6 +180,33 @@ describe('profile retention and export', () => {
     ).rejects.toThrow(/--yes/);
   });
 
+  it('redacts automations.statusSecret unless --include-secrets --yes is given', async () => {
+    const root = await makeRoot();
+    await writeProfiles(root, 'claude', ['claude']);
+    const statusSecret = 'hmac-status-secret-for-export';
+    const rootConfig = await readRoot(root);
+    rootConfig.profiles.claude!.automations = {
+      ...rootConfig.profiles.claude!.automations,
+      enabled: true,
+      statusEndpoint: 'https://status.test',
+      statusSecret,
+    };
+    await writeJson(join(root, 'config.json'), rootConfig);
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: string) => lines.push(line));
+
+    await runProfileExport('claude', { rootDir: root });
+    const safeExport = JSON.parse(lines.pop() ?? '') as RootConfig;
+    await runProfileExport('claude', { rootDir: root, includeSecrets: true, yes: true });
+    const secretExport = JSON.parse(lines.pop() ?? '') as RootConfig;
+
+    expect(JSON.stringify(safeExport)).not.toContain(statusSecret);
+    expect(safeExport.profiles.claude?.automations.statusSecret).toBe('[REDACTED]');
+    expect(safeExport.profiles.claude?.accounts.app.secret).toBe('[REDACTED]');
+    expect(secretExport.profiles.claude?.automations.statusSecret).toBe(statusSecret);
+    expect(secretExport.profiles.claude?.accounts.app.secret).toBe('plain-secret');
+  });
+
   it('materializes keystore app secret only when exporting with secrets', async () => {
     const root = await makeRoot();
     await writeProfiles(root, 'claude', ['claude']);

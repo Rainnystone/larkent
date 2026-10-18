@@ -257,6 +257,9 @@ export async function runProfileExport(
   if (!opts.includeSecrets) {
     delete profile.secrets;
     profile.accounts.app.secret = '[REDACTED]';
+    if (profile.automations.statusSecret) {
+      profile.automations.statusSecret = '[REDACTED]';
+    }
   }
   const body = formatRootConfig(exported);
 

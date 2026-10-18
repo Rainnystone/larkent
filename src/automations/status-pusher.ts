@@ -4,6 +4,7 @@ import {
   STATUS_PUSH_RETRY_MAX_MS,
   STATUS_PUSH_RETRY_MIN_MS,
   STATUS_PUSH_SIGNATURE_HEADER,
+  STATUS_PUSH_TIMEOUT_MS,
   STATUS_PUSH_TIMESTAMP_HEADER,
   buildStatusPushPayload,
   signStatusPush,
@@ -45,6 +46,7 @@ class Pusher implements StatusPusher {
   private failCount = 0;
   private closed = false;
   private chain: Promise<void> = Promise.resolve();
+  private inflightAbort: AbortController | undefined;
 
   constructor(deps: StatusPusherDeps) {
     this.endpoint = trimmed(deps.endpoint);
@@ -68,9 +70,11 @@ class Pusher implements StatusPusher {
     this.closed = true;
     this.clearDebounce();
     this.clearRetry();
+    this.inflightAbort?.abort();
   }
 
   idle(): Promise<void> {
+    if (this.closed) return Promise.resolve();
     return this.chain;
   }
 
@@ -82,12 +86,16 @@ class Pusher implements StatusPusher {
     }, STATUS_PUSH_DEBOUNCE_MS);
   }
 
-  private scheduleRetry(): void {
+  private scheduleRetry(retryAfterMs?: number): void {
     if (this.closed || !this.endpoint || !this.secret) return;
     this.clearRetry();
-    const delay = Math.min(
+    const backoff = Math.min(
       STATUS_PUSH_RETRY_MAX_MS,
       STATUS_PUSH_RETRY_MIN_MS * (2 ** this.failCount),
+    );
+    const delay = Math.min(
+      STATUS_PUSH_RETRY_MAX_MS,
+      Math.max(backoff, retryAfterMs ?? 0),
     );
     this.failCount += 1;
     this.retryTimer = this.setTimeout(() => {
@@ -109,18 +117,23 @@ class Pusher implements StatusPusher {
     const endpoint = this.endpoint;
     const secret = this.secret;
     if (this.closed || !endpoint || !secret) return;
-    const snapshot = await this.store.readStatus();
-    const payload = buildStatusPushPayload({
-      secret,
-      profile: this.profile,
-      updatedAt: snapshot?.updatedAt ?? this.now(),
-      now: this.now(),
-      items: this.store.list(),
-    });
-    const body = JSON.stringify(payload);
-    const timestamp = String(this.now());
-    const url = `${endpoint.replace(/\/+$/, '')}/v1/status`;
+    const abort = new AbortController();
+    this.inflightAbort = abort;
+    let timeout: unknown;
     try {
+      const snapshot = await this.store.readStatus();
+      if (this.closed) return;
+      const payload = buildStatusPushPayload({
+        secret,
+        profile: this.profile,
+        updatedAt: snapshot?.updatedAt ?? this.now(),
+        now: this.now(),
+        items: this.store.list(),
+      });
+      const body = JSON.stringify(payload);
+      const timestamp = String(this.now());
+      const url = `${endpoint.replace(/\/+$/, '')}/v1/status`;
+      timeout = this.setTimeout(() => abort.abort(), STATUS_PUSH_TIMEOUT_MS);
       const response = await this.fetch(url, {
         method: 'POST',
         headers: {
@@ -129,7 +142,9 @@ class Pusher implements StatusPusher {
           [STATUS_PUSH_SIGNATURE_HEADER]: signStatusPush(secret, timestamp, body),
         },
         body,
+        signal: abort.signal,
       });
+      if (this.closed) return;
       if (response.ok) {
         this.failCount = 0;
         return;
@@ -138,10 +153,16 @@ class Pusher implements StatusPusher {
         event: 'status-push',
         status: response.status,
       });
-      if (response.status >= 500) this.scheduleRetry();
+      if (isRetryableStatus(response.status)) {
+        this.scheduleRetry(retryAfterMs(response));
+      }
     } catch (error) {
+      if (this.closed) return;
       log.fail('auto', error, { event: 'status-push' });
       this.scheduleRetry();
+    } finally {
+      if (timeout !== undefined) this.clearTimeout(timeout);
+      if (this.inflightAbort === abort) this.inflightAbort = undefined;
     }
   }
 
@@ -156,6 +177,20 @@ class Pusher implements StatusPusher {
     this.clearTimeout(this.retryTimer);
     this.retryTimer = undefined;
   }
+}
+
+function isRetryableStatus(status: number): boolean {
+  return status === 408 || status === 429 || status >= 500;
+}
+
+function retryAfterMs(response: Response): number | undefined {
+  const raw = response.headers.get('retry-after');
+  if (!raw) return undefined;
+  const seconds = Number(raw);
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+  const at = Date.parse(raw);
+  if (Number.isFinite(at)) return Math.max(0, at - Date.now());
+  return undefined;
 }
 
 function trimmed(value: string | undefined): string | undefined {
