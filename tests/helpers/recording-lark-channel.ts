@@ -20,6 +20,8 @@ export interface RecordingLarkChannel extends FakeChannel {
   disconnect(): Promise<void>;
   getChatMode(chatId: string): Promise<'group' | 'topic'>;
   connectionState: 'connected' | 'reconnecting' | 'failed';
+  forceReconnectCount: number;
+  forceReconnect(): Promise<void>;
   getConnectionStatus(): { state: 'connected' | 'reconnecting' | 'failed'; reconnectAttempts: number };
   listChats(): Promise<Array<{ id: string; name: string }>>;
   getAppInfo(): Promise<{ ownerId: string }>;
@@ -58,6 +60,7 @@ export function createRecordingLarkChannel(options: {
   const rawHandlers = new Map<string, Set<(data: unknown) => void>>();
   let reactionSeq = 1;
   let listChatsCalls = 0;
+  let forceReconnectCount = 0;
 
   const origSend = inner.send.bind(inner);
   const origStream = inner.stream.bind(inner);
@@ -153,6 +156,12 @@ export function createRecordingLarkChannel(options: {
       return options.chatMode ?? 'group';
     },
     connectionState: 'connected',
+    get forceReconnectCount() {
+      return forceReconnectCount;
+    },
+    async forceReconnect() {
+      forceReconnectCount += 1;
+    },
     getConnectionStatus() {
       return { state: channel.connectionState, reconnectAttempts: 0 };
     },

@@ -24,6 +24,352 @@ describe('FeishuLink', () => {
     vi.restoreAllMocks();
   });
 
+  it('reconnects on the wake tick after a multi-minute suspend and recovers only after a new-socket frame', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    const reconnects: number[] = [];
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+
+    await link.tick();
+    expect(recovered).toHaveLength(1);
+    recovered.length = 0;
+    expect(reconnects).toEqual([]);
+    const info = vi.spyOn(log, 'info');
+
+    now += 5 * 60_000;
+    await link.tick();
+    expect(reconnects).toEqual([now]);
+    expect(info.mock.calls.some((call) => call[0] === 'link' && call[1] === 'tick-gap')).toBe(true);
+    expect(info.mock.calls.some((call) => (
+      call[0] === 'link'
+      && call[1] === 'wake-reconnect'
+      && (call[2] as { gapMs?: number }).gapMs === 5 * 60_000
+    ))).toBe(true);
+    expect(info.mock.calls.some((call) => call[0] === 'link' && call[1] === 'recovered')).toBe(false);
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+
+    now += FEISHU_LINK_TICK_MS;
+    await link.tick();
+    expect(reconnects).toEqual([now - FEISHU_LINK_TICK_MS]);
+    expect(recovered).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(recovered).toHaveLength(0);
+
+    link.noteInbound(now);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.hostSuspended).toBe(false);
+    expect(recovered[0]!.since).toBe(now - 5 * 60_000 - FEISHU_LINK_TICK_MS);
+    expect(recovered[0]!.until).toBe(now);
+    expect(link.isDown()).toBe(false);
+  });
+
+  it('does not recover from a frame during reconnect or a probe once the socket looks connected', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    let state: 'connected' | 'reconnecting' = 'connected';
+    const reconnects: number[] = [];
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+        state = 'reconnecting';
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += 5 * 60_000;
+    await link.tick();
+    expect(reconnects).toEqual([now]);
+    expect(state).toBe('reconnecting');
+    link.noteInbound(now);
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+
+    state = 'connected';
+    now += FEISHU_LINK_TICK_MS;
+    await link.tick();
+    expect(recovered).toHaveLength(0);
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+    expect(link.isDown()).toBe(false);
+  });
+
+  it('does not recover from a stale connected socket until the wake reconnect settles and a new frame arrives', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    let release: (() => void) | undefined;
+    const reconnects: number[] = [];
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+        return new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += 5 * 60_000;
+    await link.tick();
+    expect(reconnects).toEqual([now]);
+    expect(release).toBeTypeOf('function');
+
+    link.noteInbound(now);
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(0);
+
+    release!();
+    await Promise.resolve();
+    expect(recovered).toHaveLength(1);
+    expect(link.isDown()).toBe(false);
+  });
+
+  it('recovers on the next connected tick when the new-socket frame arrived before reconnect settled', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    let state: 'connected' | 'reconnecting' = 'connected';
+    let release: (() => void) | undefined;
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        state = 'reconnecting';
+        return new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += 5 * 60_000;
+    await link.tick();
+    link.noteSocketFrame(now);
+    release!();
+    await Promise.resolve();
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+
+    state = 'connected';
+    now += FEISHU_LINK_TICK_MS;
+    await link.tick();
+    expect(recovered).toHaveLength(1);
+    expect(link.isDown()).toBe(false);
+  });
+
+  it('recovers from a frame only after the socket returns when the wake reconnect fails', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    let state: 'connected' | 'reconnecting' = 'connected';
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => state),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        state = 'reconnecting';
+        return Promise.reject(new Error('handshake failed'));
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += 5 * 60_000;
+    await link.tick();
+    await Promise.resolve();
+    expect(link.isDown()).toBe(true);
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(0);
+
+    state = 'connected';
+    now += FEISHU_LINK_TICK_MS;
+    await link.tick();
+    expect(recovered).toHaveLength(0);
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+    expect(link.isDown()).toBe(false);
+  });
+
+  it('reconnects on a keepalive wake even when the link tick gap is still under the sleep threshold', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    const reconnects: number[] = [];
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += FEISHU_LINK_SLEEP_MS - 1_000;
+    await link.tick();
+    expect(reconnects).toEqual([]);
+    expect(link.isDown()).toBe(false);
+
+    link.noteKeepaliveWake(now);
+    expect(reconnects).toEqual([now]);
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+    expect(link.isDown()).toBe(false);
+  });
+
+  it('does not reconnect on a normal tick with no gap', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    const reconnects: number[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+      },
+    });
+    await link.tick();
+    for (let n = 0; n < 4; n++) {
+      now += FEISHU_LINK_TICK_MS;
+      await link.tick();
+    }
+    expect(reconnects).toEqual([]);
+    expect(link.isDown()).toBe(false);
+  });
+
+  it('reconnects once when keepalive wake-up and the tick gap are the same suspend, and a pong recovers', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    const reconnects: number[] = [];
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: sleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += 5 * 60_000;
+    link.noteKeepaliveWake(now);
+    expect(reconnects).toEqual([now]);
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+
+    await link.tick();
+    expect(reconnects).toEqual([now]);
+    expect(recovered).toHaveLength(0);
+
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]!.hostSuspended).toBe(true);
+    expect(link.isDown()).toBe(false);
+
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+  });
+
+  it('stays up when the tick gap follows a pong on the keepalive wake', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    const reconnects: number[] = [];
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: notSleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+      },
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+    });
+    await link.tick();
+    recovered.length = 0;
+
+    now += 5 * 60_000;
+    link.noteKeepaliveWake(now);
+    link.noteSocketFrame(now);
+    expect(recovered).toHaveLength(1);
+    expect(link.isDown()).toBe(false);
+
+    await link.tick();
+    expect(reconnects).toEqual([now]);
+    expect(recovered).toHaveLength(1);
+    expect(link.isDown()).toBe(false);
+  });
+
   it('emits one recovered outage after a 2 min probe failure while WS stays connected', async () => {
     let now = 1_700_000_000_000;
     const watermark = { value: now as number | undefined };
@@ -104,6 +450,8 @@ describe('FeishuLink', () => {
 
     now += 5 * 60_000;
     await link.tick();
+    expect(recovered).toHaveLength(0);
+    link.noteInbound(now);
     expect(recovered).toHaveLength(1);
     expect(recovered[0]!.since).toBe(start);
     expect(recovered[0]!.since).toBeLessThan(now - FEISHU_LINK_SLEEP_MS);
@@ -128,6 +476,8 @@ describe('FeishuLink', () => {
     recovered.length = 0;
     now += 5 * 60_000;
     await link.tick();
+    expect(recovered).toHaveLength(0);
+    link.noteInbound(now);
     expect(recovered).toHaveLength(1);
     expect(recovered[0]!.hostSuspended).toBe(true);
     expect(recovered[0]!.suspendStartedAt).toBe(now - 5 * 60_000);
@@ -155,6 +505,8 @@ describe('FeishuLink', () => {
     recovered.length = 0;
     now += 5 * 60_000;
     await link.tick();
+    expect(recovered).toHaveLength(0);
+    link.noteInbound(now);
     expect(recovered).toHaveLength(1);
     expect(recovered[0]!.hostSuspended).toBe(false);
   });
@@ -182,6 +534,9 @@ describe('FeishuLink', () => {
     const pending = link.tick();
     await vi.advanceTimersByTimeAsync(HOST_SLEEP_PROBE_TIMEOUT_MS);
     await pending;
+    expect(recovered).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+    link.noteInbound(now);
     expect(recovered).toHaveLength(1);
     expect(recovered[0]!.hostSuspended).toBe(false);
     expect(link.isDown()).toBe(false);
@@ -217,6 +572,8 @@ describe('FeishuLink', () => {
     state = 'connected';
     now += FEISHU_LINK_TICK_MS;
     await link.tick();
+    expect(recovered).toHaveLength(0);
+    link.noteInbound(now);
     expect(recovered).toHaveLength(1);
     expect(recovered[0]!.hostSuspended).toBe(true);
     expect(recovered[0]!.since).toBe(evidence);
@@ -640,6 +997,9 @@ describe('FeishuLink', () => {
 
     hanging[1]!(true);
     await probing;
+    expect(outages).toHaveLength(0);
+    expect(link.isDown()).toBe(true);
+    link.noteInbound(now);
     expect(outages).toHaveLength(1);
     expect(outages[0]!.hostSuspended).toBe(false);
     expect(outages[0]!.since).toBe(probeStartedAt);
@@ -689,6 +1049,8 @@ describe('FeishuLink', () => {
     hang = false;
     now += FEISHU_LINK_TICK_MS;
     await link.tick();
+    expect(outages).toHaveLength(0);
+    link.noteInbound(now);
     expect(outages).toHaveLength(1);
     expect(outages[0]!.hostSuspended).toBe(false);
   });

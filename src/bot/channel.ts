@@ -325,6 +325,8 @@ export interface BridgeChannel {
   recover(outage?: Outage): Promise<void>;
   recoverMissed(outage?: Outage): Promise<void>;
   tickLink(): Promise<void>;
+  /** Frame on the socket opened by the current wake reconnect. */
+  noteLinkFrame(at?: number): void;
   /** Local wake entry (A5 owns transport). Already-started fire keys stay silent. */
   wakeAutomation(fireKey: string): Promise<void>;
 }
@@ -463,6 +465,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     log.warn('chat', 'mode-overridden-by-thread', fields);
   };
 
+  let feishuLink: ReturnType<typeof startFeishuLink> | undefined;
   const opts: LarkChannelOptions = {
     appId: cfg.accounts.app.id,
     appSecret,
@@ -495,10 +498,17 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     },
     // Transport-only reconnect: the SDK watchdog force-reconnects a stuck
     // WebSocket. The bridge never calls controls.restart for link problems.
+    // A suspend gap uses the same socket reconnect and waits for a new frame.
     keepalive: {
       enabled: true,
       onUnrecoverable: (err) => {
         log.fail('ws', err, { kind: 'unrecoverable' });
+      },
+      onWake: () => {
+        feishuLink?.noteKeepaliveWake();
+      },
+      onSocketFrame: () => {
+        feishuLink?.noteSocketFrame();
       },
     },
     // 8s handshake timeout (replaces hardcoded 15s). Fast-fail + fast-retry
@@ -883,6 +893,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   const started = startFeishuLink({
     channel,
+    reconnect: () => {
+      if (typeof channel.forceReconnect !== 'function') return;
+      return channel.forceReconnect();
+    },
     probe: deps.probe ?? createFeishuProbe(channel),
     watermark: {
       get: () => ledger?.getLiveAt(),
@@ -1005,6 +1019,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       })(), 'auto');
     }
   });
+  feishuLink = started;
   const link = started;
 
   channel.on({
@@ -1217,6 +1232,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     recover,
     recoverMissed: recover,
     tickLink: () => started.tick(),
+    noteLinkFrame: (at?: number) => {
+      started.noteSocketFrame(at);
+    },
     wakeAutomation: async (fireKey) => {
       if (!automationsScheduler) return;
       await automationsScheduler.wake(fireKey);

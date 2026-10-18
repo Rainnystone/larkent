@@ -159,6 +159,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     h.setNow(t0 + 61_000);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
+    h.bridge.noteLinkFrame();
     await waitFor(() => resultBodies(h.channel).length === 1);
     expect(resultBodies(h.channel)).toEqual([
       `${GROK_ANSWER}\n\n（补跑，原定 12:00）\n\n${FOOTER}`,
@@ -507,6 +508,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     h.setNow(t0 + 61_000);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
+    h.bridge.noteLinkFrame();
     await waitFor(() => resultBodies(h.channel).length === 1);
 
     expect(resultBodies(h.channel)).toEqual([
@@ -560,6 +562,7 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     first.setNow(t0 + 61_000);
     first.channel.connectionState = 'connected';
     await first.bridge.tickLink();
+    first.bridge.noteLinkFrame();
     await waitFor(() => first.agent.runs.length === 1);
     await waitFor(async () => (await readStatus(first.statusPath)).items[0]?.lastStatus === 'running');
 

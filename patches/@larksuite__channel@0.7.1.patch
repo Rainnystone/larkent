@@ -1,8 +1,39 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745852f277c 100644
+index 989d2fcaee8d47d01d7e235c6995d538771404ec..21606c4913a846e9c3f6b25902f6bc59d1793e81 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -3840,6 +3840,7 @@ function detectReceiveIdType(to) {
+@@ -418,7 +418,7 @@ const HTTP_PROBE_TIMEOUT_MS = 5e3;
+ const DEAD_THRESHOLD = 3;
+ const NETWORK_DOWN_LOG_EVERY = 20;
+ function startKeepalive(deps) {
+-	const { getConnectionStatus, domain, forceReconnect, onUnrecoverable, logger } = deps;
++	const { getConnectionStatus, domain, forceReconnect, onUnrecoverable, onWake, logger } = deps;
+ 	const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
+ 	let lastTick = 0;
+ 	let consecutiveDown = 0;
+@@ -434,6 +434,21 @@ function startKeepalive(deps) {
+ 			consecutiveDown = 0;
+ 			networkDownTicks = 0;
+ 			lastTick = now;
++			if (onWake) {
++				try {
++					onWake();
++				} catch (err) {
++					logger.error?.("channel: keepalive wake-up handler failed", err);
++				}
++				return;
++			}
++			logger.warn?.("channel: keepalive force-reconnect", { reason: "wake-up" });
++			try {
++				await forceReconnect();
++			} catch (err) {
++				logger.error?.("channel: keepalive force-reconnect failed", err);
++				onUnrecoverable?.(err);
++			}
+ 			return;
+ 		}
+ 		lastTick = now;
+@@ -3840,6 +3855,7 @@ function detectReceiveIdType(to) {
  var Throttle = class {
  	opts;
  	fire;
@@ -10,7 +41,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  	pendingChars = 0;
  	timer;
  	/** Tracks the in-flight fire as a Promise so `flushNow` can await it. */
-@@ -3848,6 +3849,7 @@ var Throttle = class {
+@@ -3848,6 +3864,7 @@ var Throttle = class {
  	constructor(opts, fire) {
  		this.opts = opts;
  		this.fire = fire;
@@ -18,7 +49,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  	}
  	/**
  	* Accumulate bytes and decide whether to fire now, schedule a timer,
-@@ -3869,7 +3871,7 @@ var Throttle = class {
+@@ -3869,7 +3886,7 @@ var Throttle = class {
  		if (this.timer) clearTimeout(this.timer);
  		this.timer = setTimeout(() => {
  			this.timer = void 0;
@@ -27,7 +58,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}, delay);
  	}
  	/**
-@@ -3959,7 +3961,11 @@ var CardStreamControllerImpl = class {
+@@ -3959,7 +3976,11 @@ var CardStreamControllerImpl = class {
  		const cfg = sender.config;
  		this.throttle = new Throttle({
  			ms: cfg.streamThrottleMs ?? DEFAULT_THROTTLE_MS$1,
@@ -40,7 +71,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}, () => this.patch());
  	}
  	get messageId() {
-@@ -3991,7 +3997,8 @@ var CardStreamControllerImpl = class {
+@@ -3991,7 +4012,8 @@ var CardStreamControllerImpl = class {
  			msgType: "interactive",
  			content: this._current,
  			replyTo: this.opts.replyTo,
@@ -50,7 +81,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		});
  		this._messageId = id;
  	}
-@@ -4131,6 +4138,7 @@ var MarkdownStreamControllerImpl = class {
+@@ -4131,6 +4153,7 @@ var MarkdownStreamControllerImpl = class {
  	* still runs on a best-effort basis.
  	*/
  	streamingFailed = false;
@@ -58,7 +89,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  	/** messageIds of every rollover card created after the head. */
  	rolloverMessageIds = [];
  	maxChars;
-@@ -4142,7 +4150,11 @@ var MarkdownStreamControllerImpl = class {
+@@ -4142,7 +4165,11 @@ var MarkdownStreamControllerImpl = class {
  		const cfg = this.sender.config;
  		this.throttle = new Throttle({
  			ms: cfg.streamThrottleMs ?? DEFAULT_THROTTLE_MS,
@@ -71,7 +102,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}, () => this.pushContent());
  		this.maxChars = cfg.streamMaxElementChars ?? DEFAULT_MAX_ELEMENT_CHARS;
  	}
-@@ -4186,6 +4198,7 @@ var MarkdownStreamControllerImpl = class {
+@@ -4186,6 +4213,7 @@ var MarkdownStreamControllerImpl = class {
  				await this.pushSnapshot();
  			} catch (e) {
  				this.streamingFailed = true;
@@ -79,7 +110,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  				this.sender.logger.warn?.("[stream] update failed", e);
  			}
  		});
-@@ -4237,8 +4250,11 @@ var MarkdownStreamControllerImpl = class {
+@@ -4237,8 +4265,11 @@ var MarkdownStreamControllerImpl = class {
  		try {
  			await this.sender.finishStreamingCard(this.cardId, ++this.sequence, truncateSummary(this.content || DEFAULT_EMPTY));
  		} catch (e) {
@@ -91,7 +122,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  	}
  	async failTerminal(_err) {
  		this.throttle.dispose();
-@@ -4267,6 +4283,13 @@ var MarkdownStreamController = class {
+@@ -4267,6 +4298,13 @@ var MarkdownStreamController = class {
  //#endregion
  //#region src/outbound/sender.ts
  const DEFAULT_CHUNK_LIMIT = 3500;
@@ -105,7 +136,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  var OutboundSender = class {
  	client;
  	config;
-@@ -4316,7 +4339,8 @@ var OutboundSender = class {
+@@ -4316,7 +4354,8 @@ var OutboundSender = class {
  				msgType: "post",
  				content: post,
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -115,7 +146,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  			});
  			ids.push(id);
  		}
-@@ -4332,7 +4356,8 @@ var OutboundSender = class {
+@@ -4332,7 +4371,8 @@ var OutboundSender = class {
  				msgType: "text",
  				content: { text: chunks[i] },
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -125,7 +156,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  			});
  			ids.push(id);
  		}
-@@ -4345,7 +4370,8 @@ var OutboundSender = class {
+@@ -4345,7 +4385,8 @@ var OutboundSender = class {
  			msgType: "post",
  			content: post,
  			replyTo: opts.replyTo,
@@ -135,7 +166,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	convertMarkdown(md, mentions) {
-@@ -4364,7 +4390,8 @@ var OutboundSender = class {
+@@ -4364,7 +4405,8 @@ var OutboundSender = class {
  			msgType: "image",
  			content: { image_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -145,7 +176,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	async sendFile(to, idType, input, opts) {
-@@ -4379,7 +4406,8 @@ var OutboundSender = class {
+@@ -4379,7 +4421,8 @@ var OutboundSender = class {
  			msgType: "file",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -155,7 +186,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	async sendAudio(to, idType, input, opts) {
-@@ -4394,7 +4422,8 @@ var OutboundSender = class {
+@@ -4394,7 +4437,8 @@ var OutboundSender = class {
  			msgType: "audio",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -165,7 +196,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	async sendVideo(to, idType, input, opts) {
-@@ -4410,7 +4439,8 @@ var OutboundSender = class {
+@@ -4410,7 +4454,8 @@ var OutboundSender = class {
  			msgType: "media",
  			content,
  			replyTo: opts.replyTo,
@@ -175,7 +206,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	async sendCard(to, idType, card, opts) {
-@@ -4420,7 +4450,8 @@ var OutboundSender = class {
+@@ -4420,7 +4465,8 @@ var OutboundSender = class {
  			msgType: "interactive",
  			content: card,
  			replyTo: opts.replyTo,
@@ -185,7 +216,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	async sendShareChat(to, idType, chatId, opts) {
-@@ -4430,7 +4461,8 @@ var OutboundSender = class {
+@@ -4430,7 +4476,8 @@ var OutboundSender = class {
  			msgType: "share_chat",
  			content: { chat_id: chatId },
  			replyTo: opts.replyTo,
@@ -195,7 +226,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	async sendShareUser(to, idType, userId, opts) {
-@@ -4440,7 +4472,8 @@ var OutboundSender = class {
+@@ -4440,7 +4487,8 @@ var OutboundSender = class {
  			msgType: "share_user",
  			content: { user_id: userId },
  			replyTo: opts.replyTo,
@@ -205,7 +236,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	async sendSticker(to, idType, fileKey, opts) {
-@@ -4450,7 +4483,8 @@ var OutboundSender = class {
+@@ -4450,7 +4498,8 @@ var OutboundSender = class {
  			msgType: "sticker",
  			content: { file_key: fileKey },
  			replyTo: opts.replyTo,
@@ -215,7 +246,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		}) };
  	}
  	/**
-@@ -4486,14 +4520,17 @@ var OutboundSender = class {
+@@ -4486,14 +4535,17 @@ var OutboundSender = class {
  			msg_type: args.msgType,
  			content: JSON.stringify(args.content)
  		};
@@ -238,7 +269,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  			})).data?.message_id;
  			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
  			return id;
-@@ -4522,11 +4559,19 @@ var OutboundSender = class {
+@@ -4522,11 +4574,19 @@ var OutboundSender = class {
  	* native streaming APIs (cardElement.content for typewriter effect).
  	*/
  	async createCardInstance(spec) {
@@ -261,7 +292,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		return cardId;
  	}
  	/**
-@@ -4543,7 +4588,8 @@ var OutboundSender = class {
+@@ -4543,7 +4603,8 @@ var OutboundSender = class {
  				data: { card_id: cardId }
  			},
  			replyTo: opts.replyTo,
@@ -271,8 +302,47 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..f91fb906bdfb9c90401f7fe6812b0745
  		});
  	}
  	/**
+@@ -5399,6 +5460,7 @@ var LarkChannel = class {
+ 			domain: String(this.opts.domain ?? _larksuiteoapi_node_sdk.Domain.Feishu),
+ 			forceReconnect: () => this.forceReconnect(),
+ 			onUnrecoverable: this.opts.keepalive.onUnrecoverable,
++			onWake: this.opts.keepalive.onWake,
+ 			logger: this.logger,
+ 			intervalMs: this.opts.keepalive.intervalMs
+ 		});
+@@ -5464,6 +5526,22 @@ var LarkChannel = class {
+ 		this.logger.info?.("channel: proxy detected", { proxy: redactProxyUrl(proxyUrl) });
+ 		return this.proxyAgent;
+ 	}
++	watchInboundFrames(client) {
++		const orig = client?.communicate?.bind(client);
++		if (!orig) return;
++		client.communicate = () => {
++			orig();
++			const socket = client.wsConfig?.getWSInstance?.();
++			if (!socket) return;
++			if (!this.frameSockets) this.frameSockets = new WeakSet();
++			if (this.frameSockets.has(socket)) return;
++			this.frameSockets.add(socket);
++			socket.on("message", () => {
++				if (this.rawWsClient !== client) return;
++				this.opts.keepalive?.onSocketFrame?.();
++			});
++		};
++	}
+ 	/**
+ 	* Construct the underlying WSClient and wait for its `onReady` callback —
+ 	* so `connect()` only resolves after the first WebSocket handshake
+@@ -5513,6 +5591,7 @@ var LarkChannel = class {
+ 				onReconnecting: () => this.handlers.reconnecting?.(),
+ 				onReconnected: () => this.handlers.reconnected?.()
+ 			});
++			this.watchInboundFrames(attemptClient);
+ 			this.rawWsClient = attemptClient;
+ 			attemptClient.start({ eventDispatcher: this.dispatcher });
+ 		});
 diff --git a/dist/index.d.cts b/dist/index.d.cts
-index 14a25d553bdba19b2be5e4c89c2bc90dd0ff590a..22c6f667db7efeadef29f00aedee16865c8cb7fe 100644
+index 14a25d553bdba19b2be5e4c89c2bc90dd0ff590a..6361cc7a802b54fd9fc9044c6a66e9a8f84884fc 100644
 --- a/dist/index.d.cts
 +++ b/dist/index.d.cts
 @@ -206,6 +206,12 @@ interface MediaSource {
@@ -288,8 +358,28 @@ index 14a25d553bdba19b2be5e4c89c2bc90dd0ff590a..22c6f667db7efeadef29f00aedee1686
    mentions?: MentionInfo[];
    /**
     * Rewrite plaintext `@<name>` tokens in a `{ text }` / `{ markdown }` body
+@@ -492,6 +498,10 @@ interface LarkChannelOptions {
+     enabled?: boolean;
+     onUnrecoverable?: (err: unknown) => void; /** Heartbeat interval in ms (default 15000). */
+     intervalMs?: number;
++    /** Suspend gap. The app force-reconnects and waits for a frame on the new socket. */
++    onWake?: () => void;
++    /** Every inbound WebSocket frame on the current socket, including pong. */
++    onSocketFrame?: () => void;
+   };
+   /**
+    * Per-request timeout (ms) for outbound REST calls. Without it a hung
+@@ -1251,7 +1261,7 @@ declare class LarkChannel {
+    * keepalive watchdog when the connection looks stuck. Throws if the fresh
+    * handshake fails, so keepalive can surface it via `onUnrecoverable`.
+    */
+-  private forceReconnect;
++  forceReconnect(): Promise<void>;
+   /**
+    * Shared by `connect()` and `forceReconnect()` so the two can't drift apart.
+    * Value domain and the reason for the fallback: see
 diff --git a/dist/index.d.mts b/dist/index.d.mts
-index 8ebb5c0be3f6c5f8711d4ec100f62289d859d9af..e854ad2a9ce4541323d5948b72ae677595b162a5 100644
+index 8ebb5c0be3f6c5f8711d4ec100f62289d859d9af..08cae5a87be2a7cfa9061b1b6fc2e70a0ec9313f 100644
 --- a/dist/index.d.mts
 +++ b/dist/index.d.mts
 @@ -206,6 +206,12 @@ interface MediaSource {
@@ -305,11 +395,62 @@ index 8ebb5c0be3f6c5f8711d4ec100f62289d859d9af..e854ad2a9ce4541323d5948b72ae6775
    mentions?: MentionInfo[];
    /**
     * Rewrite plaintext `@<name>` tokens in a `{ text }` / `{ markdown }` body
+@@ -492,6 +498,10 @@ interface LarkChannelOptions {
+     enabled?: boolean;
+     onUnrecoverable?: (err: unknown) => void; /** Heartbeat interval in ms (default 15000). */
+     intervalMs?: number;
++    /** Suspend gap. The app force-reconnects and waits for a frame on the new socket. */
++    onWake?: () => void;
++    /** Every inbound WebSocket frame on the current socket, including pong. */
++    onSocketFrame?: () => void;
+   };
+   /**
+    * Per-request timeout (ms) for outbound REST calls. Without it a hung
+@@ -1251,7 +1261,7 @@ declare class LarkChannel {
+    * keepalive watchdog when the connection looks stuck. Throws if the fresh
+    * handshake fails, so keepalive can surface it via `onUnrecoverable`.
+    */
+-  private forceReconnect;
++  forceReconnect(): Promise<void>;
+   /**
+    * Shared by `connect()` and `forceReconnect()` so the two can't drift apart.
+    * Value domain and the reason for the fallback: see
 diff --git a/dist/index.mjs b/dist/index.mjs
-index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025b05b6856 100644
+index 6cf990f0a7499178016e151e3545bc4626d6ab65..d39ab36b2ee0f16e42fa58b8b6396d11698a0faa 100644
 --- a/dist/index.mjs
 +++ b/dist/index.mjs
-@@ -3813,6 +3813,7 @@ function detectReceiveIdType(to) {
+@@ -391,7 +391,7 @@ const HTTP_PROBE_TIMEOUT_MS = 5e3;
+ const DEAD_THRESHOLD = 3;
+ const NETWORK_DOWN_LOG_EVERY = 20;
+ function startKeepalive(deps) {
+-	const { getConnectionStatus, domain, forceReconnect, onUnrecoverable, logger } = deps;
++	const { getConnectionStatus, domain, forceReconnect, onUnrecoverable, onWake, logger } = deps;
+ 	const intervalMs = deps.intervalMs ?? DEFAULT_INTERVAL_MS;
+ 	let lastTick = 0;
+ 	let consecutiveDown = 0;
+@@ -407,6 +407,21 @@ function startKeepalive(deps) {
+ 			consecutiveDown = 0;
+ 			networkDownTicks = 0;
+ 			lastTick = now;
++			if (onWake) {
++				try {
++					onWake();
++				} catch (err) {
++					logger.error?.("channel: keepalive wake-up handler failed", err);
++				}
++				return;
++			}
++			logger.warn?.("channel: keepalive force-reconnect", { reason: "wake-up" });
++			try {
++				await forceReconnect();
++			} catch (err) {
++				logger.error?.("channel: keepalive force-reconnect failed", err);
++				onUnrecoverable?.(err);
++			}
+ 			return;
+ 		}
+ 		lastTick = now;
+@@ -3813,6 +3828,7 @@ function detectReceiveIdType(to) {
  var Throttle = class {
  	opts;
  	fire;
@@ -317,7 +458,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  	pendingChars = 0;
  	timer;
  	/** Tracks the in-flight fire as a Promise so `flushNow` can await it. */
-@@ -3821,6 +3822,7 @@ var Throttle = class {
+@@ -3821,6 +3837,7 @@ var Throttle = class {
  	constructor(opts, fire) {
  		this.opts = opts;
  		this.fire = fire;
@@ -325,7 +466,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  	}
  	/**
  	* Accumulate bytes and decide whether to fire now, schedule a timer,
-@@ -3842,7 +3844,7 @@ var Throttle = class {
+@@ -3842,7 +3859,7 @@ var Throttle = class {
  		if (this.timer) clearTimeout(this.timer);
  		this.timer = setTimeout(() => {
  			this.timer = void 0;
@@ -334,7 +475,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}, delay);
  	}
  	/**
-@@ -3932,7 +3934,11 @@ var CardStreamControllerImpl = class {
+@@ -3932,7 +3949,11 @@ var CardStreamControllerImpl = class {
  		const cfg = sender.config;
  		this.throttle = new Throttle({
  			ms: cfg.streamThrottleMs ?? DEFAULT_THROTTLE_MS$1,
@@ -347,7 +488,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}, () => this.patch());
  	}
  	get messageId() {
-@@ -3964,7 +3970,8 @@ var CardStreamControllerImpl = class {
+@@ -3964,7 +3985,8 @@ var CardStreamControllerImpl = class {
  			msgType: "interactive",
  			content: this._current,
  			replyTo: this.opts.replyTo,
@@ -357,7 +498,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		});
  		this._messageId = id;
  	}
-@@ -4104,6 +4111,7 @@ var MarkdownStreamControllerImpl = class {
+@@ -4104,6 +4126,7 @@ var MarkdownStreamControllerImpl = class {
  	* still runs on a best-effort basis.
  	*/
  	streamingFailed = false;
@@ -365,7 +506,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  	/** messageIds of every rollover card created after the head. */
  	rolloverMessageIds = [];
  	maxChars;
-@@ -4115,7 +4123,11 @@ var MarkdownStreamControllerImpl = class {
+@@ -4115,7 +4138,11 @@ var MarkdownStreamControllerImpl = class {
  		const cfg = this.sender.config;
  		this.throttle = new Throttle({
  			ms: cfg.streamThrottleMs ?? DEFAULT_THROTTLE_MS,
@@ -378,7 +519,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}, () => this.pushContent());
  		this.maxChars = cfg.streamMaxElementChars ?? DEFAULT_MAX_ELEMENT_CHARS;
  	}
-@@ -4159,6 +4171,7 @@ var MarkdownStreamControllerImpl = class {
+@@ -4159,6 +4186,7 @@ var MarkdownStreamControllerImpl = class {
  				await this.pushSnapshot();
  			} catch (e) {
  				this.streamingFailed = true;
@@ -386,7 +527,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  				this.sender.logger.warn?.("[stream] update failed", e);
  			}
  		});
-@@ -4210,8 +4223,11 @@ var MarkdownStreamControllerImpl = class {
+@@ -4210,8 +4238,11 @@ var MarkdownStreamControllerImpl = class {
  		try {
  			await this.sender.finishStreamingCard(this.cardId, ++this.sequence, truncateSummary(this.content || DEFAULT_EMPTY));
  		} catch (e) {
@@ -398,7 +539,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  	}
  	async failTerminal(_err) {
  		this.throttle.dispose();
-@@ -4240,6 +4256,13 @@ var MarkdownStreamController = class {
+@@ -4240,6 +4271,13 @@ var MarkdownStreamController = class {
  //#endregion
  //#region src/outbound/sender.ts
  const DEFAULT_CHUNK_LIMIT = 3500;
@@ -412,7 +553,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  var OutboundSender = class {
  	client;
  	config;
-@@ -4289,7 +4312,8 @@ var OutboundSender = class {
+@@ -4289,7 +4327,8 @@ var OutboundSender = class {
  				msgType: "post",
  				content: post,
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -422,7 +563,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  			});
  			ids.push(id);
  		}
-@@ -4305,7 +4329,8 @@ var OutboundSender = class {
+@@ -4305,7 +4344,8 @@ var OutboundSender = class {
  				msgType: "text",
  				content: { text: chunks[i] },
  				replyTo: replyTargetForChunk(i, opts, ids),
@@ -432,7 +573,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  			});
  			ids.push(id);
  		}
-@@ -4318,7 +4343,8 @@ var OutboundSender = class {
+@@ -4318,7 +4358,8 @@ var OutboundSender = class {
  			msgType: "post",
  			content: post,
  			replyTo: opts.replyTo,
@@ -442,7 +583,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	convertMarkdown(md, mentions) {
-@@ -4337,7 +4363,8 @@ var OutboundSender = class {
+@@ -4337,7 +4378,8 @@ var OutboundSender = class {
  			msgType: "image",
  			content: { image_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -452,7 +593,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	async sendFile(to, idType, input, opts) {
-@@ -4352,7 +4379,8 @@ var OutboundSender = class {
+@@ -4352,7 +4394,8 @@ var OutboundSender = class {
  			msgType: "file",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -462,7 +603,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	async sendAudio(to, idType, input, opts) {
-@@ -4367,7 +4395,8 @@ var OutboundSender = class {
+@@ -4367,7 +4410,8 @@ var OutboundSender = class {
  			msgType: "audio",
  			content: { file_key: up.fileKey },
  			replyTo: opts.replyTo,
@@ -472,7 +613,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	async sendVideo(to, idType, input, opts) {
-@@ -4383,7 +4412,8 @@ var OutboundSender = class {
+@@ -4383,7 +4427,8 @@ var OutboundSender = class {
  			msgType: "media",
  			content,
  			replyTo: opts.replyTo,
@@ -482,7 +623,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	async sendCard(to, idType, card, opts) {
-@@ -4393,7 +4423,8 @@ var OutboundSender = class {
+@@ -4393,7 +4438,8 @@ var OutboundSender = class {
  			msgType: "interactive",
  			content: card,
  			replyTo: opts.replyTo,
@@ -492,7 +633,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	async sendShareChat(to, idType, chatId, opts) {
-@@ -4403,7 +4434,8 @@ var OutboundSender = class {
+@@ -4403,7 +4449,8 @@ var OutboundSender = class {
  			msgType: "share_chat",
  			content: { chat_id: chatId },
  			replyTo: opts.replyTo,
@@ -502,7 +643,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	async sendShareUser(to, idType, userId, opts) {
-@@ -4413,7 +4445,8 @@ var OutboundSender = class {
+@@ -4413,7 +4460,8 @@ var OutboundSender = class {
  			msgType: "share_user",
  			content: { user_id: userId },
  			replyTo: opts.replyTo,
@@ -512,7 +653,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	async sendSticker(to, idType, fileKey, opts) {
-@@ -4423,7 +4456,8 @@ var OutboundSender = class {
+@@ -4423,7 +4471,8 @@ var OutboundSender = class {
  			msgType: "sticker",
  			content: { file_key: fileKey },
  			replyTo: opts.replyTo,
@@ -522,7 +663,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		}) };
  	}
  	/**
-@@ -4459,14 +4493,17 @@ var OutboundSender = class {
+@@ -4459,14 +4508,17 @@ var OutboundSender = class {
  			msg_type: args.msgType,
  			content: JSON.stringify(args.content)
  		};
@@ -545,7 +686,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  			})).data?.message_id;
  			if (!id) throw new LarkChannelError("unknown", "message_id missing from reply response");
  			return id;
-@@ -4495,11 +4532,19 @@ var OutboundSender = class {
+@@ -4495,11 +4547,19 @@ var OutboundSender = class {
  	* native streaming APIs (cardElement.content for typewriter effect).
  	*/
  	async createCardInstance(spec) {
@@ -568,7 +709,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		return cardId;
  	}
  	/**
-@@ -4516,7 +4561,8 @@ var OutboundSender = class {
+@@ -4516,7 +4576,8 @@ var OutboundSender = class {
  				data: { card_id: cardId }
  			},
  			replyTo: opts.replyTo,
@@ -578,3 +719,42 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..b85625ea424210b6502bf53b06626025
  		});
  	}
  	/**
+@@ -5372,6 +5433,7 @@ var LarkChannel = class {
+ 			domain: String(this.opts.domain ?? Domain.Feishu),
+ 			forceReconnect: () => this.forceReconnect(),
+ 			onUnrecoverable: this.opts.keepalive.onUnrecoverable,
++			onWake: this.opts.keepalive.onWake,
+ 			logger: this.logger,
+ 			intervalMs: this.opts.keepalive.intervalMs
+ 		});
+@@ -5437,6 +5499,22 @@ var LarkChannel = class {
+ 		this.logger.info?.("channel: proxy detected", { proxy: redactProxyUrl(proxyUrl) });
+ 		return this.proxyAgent;
+ 	}
++	watchInboundFrames(client) {
++		const orig = client?.communicate?.bind(client);
++		if (!orig) return;
++		client.communicate = () => {
++			orig();
++			const socket = client.wsConfig?.getWSInstance?.();
++			if (!socket) return;
++			if (!this.frameSockets) this.frameSockets = new WeakSet();
++			if (this.frameSockets.has(socket)) return;
++			this.frameSockets.add(socket);
++			socket.on("message", () => {
++				if (this.rawWsClient !== client) return;
++				this.opts.keepalive?.onSocketFrame?.();
++			});
++		};
++	}
+ 	/**
+ 	* Construct the underlying WSClient and wait for its `onReady` callback —
+ 	* so `connect()` only resolves after the first WebSocket handshake
+@@ -5486,6 +5564,7 @@ var LarkChannel = class {
+ 				onReconnecting: () => this.handlers.reconnecting?.(),
+ 				onReconnected: () => this.handlers.reconnected?.()
+ 			});
++			this.watchInboundFrames(attemptClient);
+ 			this.rawWsClient = attemptClient;
+ 			attemptClient.start({ eventDispatcher: this.dispatcher });
+ 		});

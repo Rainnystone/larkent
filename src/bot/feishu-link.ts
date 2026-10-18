@@ -34,6 +34,10 @@ export interface FeishuLink {
   outageEpoch(): number;
   onRecovered(fn: (o: Outage) => void): () => void;
   noteInbound(at?: number): void;
+  /** Pong or any other frame on the current socket. Ignored unless a wake reconnect is open. */
+  noteSocketFrame(at?: number): void;
+  /** SDK keepalive noticed a suspend gap. Forces the same reconnect as a tick gap. */
+  noteKeepaliveWake(at?: number): void;
   stop(): void;
 }
 
@@ -54,6 +58,8 @@ export interface FeishuLinkDeps {
   outbound?: OutboundMessageIds;
   outboundTimeoutMs?: number;
   sleepProbe?: HostSleepProbe;
+  /** Force a new WebSocket after a tick gap or keepalive wake-up. */
+  reconnect?: () => void | Promise<void>;
 }
 
 export function createFeishuProbe(
@@ -108,6 +114,10 @@ function abortError(): Error {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === 'AbortError';
+}
+
+function isThenable(value: void | Promise<void>): value is Promise<void> {
+  return typeof (value as Promise<void> | null | undefined)?.then === 'function';
 }
 
 function probeResultFromError(err: unknown): FeishuProbeResult {
@@ -167,6 +177,16 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let suspendStartedAt: number | undefined;
   let sleepDetect: Promise<void> | undefined;
   let wsDownTicks = 0;
+  /** Set on a tick gap until a frame arrives on the socket opened after it. */
+  let awaitingFreshInbound = false;
+  let lastWakeArmAt = 0;
+  /** Bumped each time a wake reconnect is armed. A frame or open from an older wake does not count. */
+  let wakeEpoch = 0;
+  let openedEpoch = 0;
+  let frameEpoch = 0;
+  /** Wake reconnect rejected. A frame counts only after the socket has been down and is connected again. */
+  let wakeFailed = false;
+  let sawSocketDown = false;
 
   const touchHeartbeat = (): void => {
     if (!deps.heartbeatPath) return;
@@ -226,18 +246,81 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   const noteEvidence = (at: number, wsConnected: boolean): void => {
     lastEvidenceAt = at;
     if (down) {
-      if (wsConnected) goUp(at);
+      if (wsConnected && !awaitingFreshInbound) goUp(at);
       return;
     }
     deps.watermark.set(at);
   };
 
+  const recentlyArmed = (at: number): boolean =>
+    lastWakeArmAt > 0 && at - lastWakeArmAt < FEISHU_LINK_SLEEP_MS;
+
   const wsConnected = (): boolean => deps.channel.getConnectionStatus()?.state === 'connected';
+
+  const maybeFinishWake = (at: number): void => {
+    if (stopped || !awaitingFreshInbound) return;
+    if (openedEpoch !== wakeEpoch || frameEpoch !== wakeEpoch) return;
+    if (!wsConnected()) return;
+    awaitingFreshInbound = false;
+    noteEvidence(at, true);
+  };
+
+  const armWakeReconnect = (at: number, gapMs: number): void => {
+    if (recentlyArmed(at)) return;
+    lastWakeArmAt = at;
+    awaitingFreshInbound = true;
+    wakeFailed = false;
+    sawSocketDown = false;
+    wakeEpoch += 1;
+    const epoch = wakeEpoch;
+    const markOpened = (): void => {
+      if (stopped || epoch !== wakeEpoch) return;
+      openedEpoch = epoch;
+      maybeFinishWake(nowFn());
+    };
+    if (!deps.reconnect) {
+      markOpened();
+      return;
+    }
+    log.info('link', 'wake-reconnect', { gapMs });
+    let result: void | Promise<void>;
+    try {
+      result = deps.reconnect();
+    } catch (err) {
+      log.fail('link', err, { step: 'wake-reconnect' });
+      wakeFailed = true;
+      frameEpoch = 0;
+      return;
+    }
+    if (isThenable(result)) {
+      void result.then(markOpened, (err: unknown) => {
+        log.fail('link', err, { step: 'wake-reconnect' });
+        if (stopped || epoch !== wakeEpoch) return;
+        wakeFailed = true;
+        frameEpoch = 0;
+      });
+      return;
+    }
+    markOpened();
+  };
+
+  const noteSocketPresence = (connected: boolean): void => {
+    if (!awaitingFreshInbound) return;
+    if (!connected) {
+      sawSocketDown = true;
+      return;
+    }
+    if (wakeFailed && sawSocketDown && openedEpoch !== wakeEpoch) {
+      openedEpoch = wakeEpoch;
+    }
+  };
 
   const noteSuspendIfGap = (at: number): void => {
     const sinceLast = lastTickAt > 0 ? at - lastTickAt : 0;
     if (lastTickAt > 0 && sinceLast > FEISHU_LINK_SLEEP_MS) {
       log.info('link', 'tick-gap', { gapMs: sinceLast });
+      const sameWake = recentlyArmed(at);
+      if (sameWake && !awaitingFreshInbound) return;
       goDown(lastTickAt);
       probeSeq += 1;
       probing = false;
@@ -255,6 +338,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
           suspendStartedAt: evidence.suspendStartedAt ?? gapFrom,
         });
       });
+      if (!sameWake) armWakeReconnect(at, sinceLast);
     }
     void Promise.resolve()
       .then(() => sleepProbe.note(at))
@@ -288,6 +372,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
     const status = deps.channel.getConnectionStatus();
     const connected = status?.state === 'connected';
+    noteSocketPresence(connected);
     if (!connected) {
       goDown(lastEvidenceAt ?? downSince);
       wsDownTicks += 1;
@@ -331,6 +416,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     switch (ok) {
       case true:
         noteEvidence(nowFn(), wsConnected());
+        maybeFinishWake(nowFn());
         lastTickAt = nowFn();
         return;
       case false:
@@ -392,7 +478,29 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     },
     noteInbound(at) {
       if (stopped) return;
-      noteEvidence(at ?? nowFn(), wsConnected());
+      const stamp = at ?? nowFn();
+      if (!awaitingFreshInbound) {
+        noteEvidence(stamp, wsConnected());
+        return;
+      }
+      // A message handler can still be the socket we are replacing.
+      if (openedEpoch !== wakeEpoch || !wsConnected()) return;
+      frameEpoch = wakeEpoch;
+      maybeFinishWake(stamp);
+    },
+    noteSocketFrame(at) {
+      if (stopped || !awaitingFreshInbound) return;
+      if (wakeFailed && openedEpoch !== wakeEpoch && !wsConnected()) return;
+      frameEpoch = wakeEpoch;
+      maybeFinishWake(at ?? nowFn());
+    },
+    noteKeepaliveWake(at) {
+      if (stopped) return;
+      const stamp = at ?? nowFn();
+      if (recentlyArmed(stamp)) return;
+      const sinceLast = lastTickAt > 0 ? stamp - lastTickAt : 0;
+      goDown(lastTickAt > 0 ? lastTickAt : stamp);
+      armWakeReconnect(stamp, sinceLast);
     },
     stop() {
       stopped = true;

@@ -160,6 +160,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     h.setNow(t0 + 61_000);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
+    h.bridge.noteLinkFrame();
     await waitFor(async () => {
       if (reminderBodies(h.channel).length !== 1) return false;
       try {
@@ -210,6 +211,7 @@ describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
     h.setNow(t0 + CATCH_UP_WINDOW_MS + 1);
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
+    h.bridge.noteLinkFrame();
     await waitFor(async () => {
       if (missedBodies(h.channel).length !== 1) return false;
       try {
