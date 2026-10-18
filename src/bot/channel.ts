@@ -109,7 +109,7 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { classify, isNotInChat, rateLimitResetDelayMs } from './feishu-error';
+import { classify, isNotInChat, isSupersededMessageGone, rateLimitResetDelayMs } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
@@ -2926,11 +2926,22 @@ async function reconcileReplacePromise(input: {
       return;
     }
     const messageId = sent.messageId?.trim();
-    if (input.turnId) {
-      input.journal?.reviseDeliveredReply(input.turnId, correctedBody, messageId || undefined);
-      input.journal?.replyDelivered(input.turnId);
+    if (input.journal && input.turnId && messageId) {
+      input.journal.noteReplyReceipt(input.turnId, messageId);
+      await input.journal.flush();
     }
-    await recallReplacedMessage(input.channel, previousMessageId);
+    const recall = await recallReplacedMessage(input.channel, previousMessageId);
+    switch (recall) {
+      case 'done':
+        if (input.turnId) input.journal?.replyDelivered(input.turnId);
+        break;
+      case 'retry':
+        break;
+      default: {
+        const _exhaustive: never = recall;
+        throw _exhaustive;
+      }
+    }
     await input.journal?.flush();
     return;
   }
@@ -2993,13 +3004,25 @@ async function stageFailedPromiseCorrection(input: {
   await input.journal.flush();
 }
 
-async function recallReplacedMessage(channel: LarkChannel, messageId: string): Promise<void> {
+type SupersedeRecall = 'done' | 'retry';
+
+/**
+ * Recall a promise the correction replaced.
+ * Success, or an already recalled / deleted / not-found message, is done.
+ * Every other failure stays retryable and does not fail the turn or recovery:
+ * the staged correction already holds the new receipt, so a later pass recalls
+ * this id and does not send the correction again.
+ */
+async function recallReplacedMessage(channel: LarkChannel, messageId: string): Promise<SupersedeRecall> {
   try {
     await channel.recallMessage(messageId);
+    return 'done';
   } catch (error) {
+    if (isSupersededMessageGone(error)) return 'done';
     log.warn('auto', 'promise-recall-failed', {
       err: error instanceof Error ? error.message : String(error),
     });
+    return 'retry';
   }
 }
 
@@ -3178,19 +3201,29 @@ async function resendJournalReply(input: {
     if (settled.error !== undefined) throw settled.error;
     return false;
   }
-  if (delivered) {
-    const superseded = reply.supersedes?.trim();
-    if (superseded && messageId !== superseded) {
-      await recallReplacedMessage(input.channel, superseded);
+  if (!delivered) return false;
+  const superseded = reply.supersedes?.trim();
+  if (superseded && messageId !== superseded) {
+    if (input.journal) await input.journal.flush();
+    const recall = await recallReplacedMessage(input.channel, superseded);
+    switch (recall) {
+      case 'done':
+        break;
+      case 'retry':
+        return false;
+      default: {
+        const _exhaustive: never = recall;
+        throw _exhaustive;
+      }
     }
-    log.info('outbound', 'journal-resend', {
-      scope: entry.scope,
-      turnId: entry.turnId,
-      chatId: entry.chatId,
-      messageId,
-    });
   }
-  return delivered;
+  log.info('outbound', 'journal-resend', {
+    scope: entry.scope,
+    turnId: entry.turnId,
+    chatId: entry.chatId,
+    messageId,
+  });
+  return true;
 }
 
 function journalReplyMode(mode: string | undefined): ReturnType<typeof getMessageReplyMode> {

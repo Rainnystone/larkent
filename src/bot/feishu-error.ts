@@ -147,6 +147,29 @@ export function isGoneMessage(err: unknown): boolean {
 }
 
 /**
+ * Codes that mean a superseded message can no longer be recalled: already
+ * recalled, deleted, or not found. 230025 is a content-length rejection,
+ * not this. 230110 / 230011 / 10020 / 10037 match the board's deleted-message set.
+ */
+const SUPERSEDED_MESSAGE_GONE_CODES = new Set([
+  230026,
+  230011,
+  230110,
+  10020,
+  10037,
+]);
+
+/** True when recall is finished because the old message is already gone. */
+export function isSupersededMessageGone(err: unknown): boolean {
+  for (const node of causeChain(err)) {
+    if (httpStatus(node) === 404) return true;
+    const code = feishuCode(node);
+    if (code !== undefined && SUPERSEDED_MESSAGE_GONE_CODES.has(code)) return true;
+  }
+  return false;
+}
+
+/**
  * A rejected 4xx that means the bot is outside the group or the chat was
  * dissolved. Distinct from {@link isGoneMessage}: 230002 is not a gone card.
  */

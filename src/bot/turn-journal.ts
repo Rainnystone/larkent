@@ -42,6 +42,9 @@ export interface TurnReply {
   /**
    * Message this reply replaces. Recovery recalls it after the replacement
    * send lands, and never treats that id as the correction itself.
+   * The reply stays staged, with the correction receipt in `messageId`,
+   * until recall succeeds or Feishu says this message is already gone.
+   * Recovery must not send the correction again while that receipt is known.
    */
   supersedes?: string;
   state?: OutboxItemState;

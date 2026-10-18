@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LarkChannelError } from '@larksuite/channel';
-import { classify, isGoneMessage, isNotInChat, rateLimitResetDelayMs } from '../../../src/bot/feishu-error';
+import { classify, isGoneMessage, isNotInChat, isSupersededMessageGone, rateLimitResetDelayMs } from '../../../src/bot/feishu-error';
 import { OutboundTimeoutError } from '../../../src/bot/self-message';
 import {
   axiosErrno,
@@ -164,6 +164,34 @@ describe('isGoneMessage', () => {
     const err = sdkShapedSendError('unknown', axiosHttpError(400));
     expect(classify(err)).toBe('rejected');
     expect(isGoneMessage(err)).toBe(false);
+  });
+});
+
+describe('isSupersededMessageGone', () => {
+  it.each([230026, 230011, 230110, 10020, 10037])(
+    'treats Feishu %s as a superseded message that recall cannot bring back',
+    (code) => {
+      const err = sdkShapedSendError('unknown', axiosLike('message not found', {
+        response: { status: 400, data: { code } },
+      }));
+      expect(isSupersededMessageGone(err)).toBe(true);
+    },
+  );
+
+  it('treats HTTP 404 as already gone', () => {
+    expect(isSupersededMessageGone(sdkShapedSendError('unknown', axiosHttpError(404)))).toBe(true);
+  });
+
+  it('keeps a content-length rejection and a transient failure retryable', () => {
+    const tooLong = sdkShapedSendError('unknown', axiosLike('message not found', {
+      response: { status: 400, data: { code: 230025 } },
+    }));
+    expect(isGoneMessage(tooLong)).toBe(true);
+    expect(isSupersededMessageGone(tooLong)).toBe(false);
+    expect(isSupersededMessageGone(axiosErrno('ECONNRESET', 'connect ECONNRESET'))).toBe(false);
+    expect(isSupersededMessageGone(sdkShapedSendError('unknown', axiosHttpError(429)))).toBe(false);
+    expect(isSupersededMessageGone(sdkShapedSendError('unknown', axiosHttpError(503)))).toBe(false);
+    expect(isSupersededMessageGone(sdkShapedSendError('unknown', axiosHttpError(400)))).toBe(false);
   });
 });
 

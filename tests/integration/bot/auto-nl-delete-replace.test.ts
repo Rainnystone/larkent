@@ -344,6 +344,62 @@ describe('A28 natural-language delete and replace', () => {
     expect(h.channel.snapshotCalls().filter((call) => call.op === 'recall')).toHaveLength(1);
   }, 15_000);
 
+  it('recalls the superseded promise on a later recovery when the correction is delivered and the first recall fails', async () => {
+    const h = await harness({
+      events: done(proposal({
+        op: 'replace',
+        id: 1,
+        taskType: 'reminder',
+        schedule: '2026-10-19 09:00',
+        name: '马斯克和 Sam Altman',
+        taskText: '总结马斯克和 Sam Altman 的推特',
+      })),
+      items: [item()],
+    });
+    await h.bridge.tickLink();
+    await h.bridge.recover();
+
+    const originalSend = h.channel.send.bind(h.channel);
+    const originalRecall = h.channel.recallMessage.bind(h.channel);
+    let recallAttempts = 0;
+    h.channel.send = async (chatId, content, options) => {
+      const text = JSON.stringify(content);
+      if (text.includes('已生成确认卡，点「是」后用新任务替换 #1')) {
+        await h.store.delete(1);
+      }
+      return originalSend(chatId, content, options);
+    };
+    h.channel.recallMessage = async (messageId) => {
+      recallAttempts += 1;
+      if (recallAttempts === 1) throw axiosErrno('ECONNRESET', 'connect ECONNRESET');
+      return originalRecall(messageId);
+    };
+
+    await h.channel.handlers.message?.(mention('om_recall_retry', '删了重建，加上 Sam Altman'));
+    await waitFor(() => correctionSends(h).length === 1 && recallAttempts === 1);
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(recallAttempts).toBe(1);
+    expect(h.channel.snapshotCalls().filter((call) => call.op === 'recall')).toEqual([]);
+
+    await h.bridge.recover();
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(recallAttempts).toBe(2);
+    const calls = h.channel.snapshotCalls();
+    const promiseSendIndex = calls.findIndex((call) => (
+      call.op === 'send' && JSON.stringify(call.content).includes('已生成确认卡，点「是」后用新任务替换 #1')
+    ));
+    expect(promiseSendIndex).toBeGreaterThanOrEqual(0);
+    const promiseSendNumber = calls.slice(0, promiseSendIndex + 1).filter((call) => call.op === 'send').length;
+    expect(calls.filter((call) => call.op === 'recall')).toEqual([
+      { op: 'recall', messageId: `om_fake_${promiseSendNumber}` },
+    ]);
+
+    await h.bridge.recover();
+    expect(correctionSends(h)).toHaveLength(1);
+    expect(recallAttempts).toBe(2);
+    expect(h.channel.snapshotCalls().filter((call) => call.op === 'recall')).toHaveLength(1);
+  }, 15_000);
+
   it('replaces by creating the new task before deleting the old one', async () => {
     const h = await harness({
       events: done(proposal({
