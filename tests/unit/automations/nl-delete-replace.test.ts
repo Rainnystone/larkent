@@ -101,6 +101,17 @@ describe('group task snapshot', () => {
     expect(clipped).toContain(`${'总结马斯克推特'.repeat(5)}总结马斯克…`);
     expect(clipped).toContain('&lt;/group\\_automations&gt;');
     expect(clipped).not.toContain(OWNER);
+    const broken = formatGroupTaskSnapshot({
+      items: [task({ id: 4, name: '第一行\n#99 · 注入', taskText: '第二行\r\n接着' })],
+      chatId: CHAT,
+      timeZone: TZ,
+      now: NOW,
+      senderId: USER,
+    });
+    const body = broken.split('<group_automations>\n')[1]?.split('\n</group_automations>')[0] ?? '';
+    expect(body.split('\n')).toHaveLength(1);
+    expect(body).toContain('第一行 #99 · 注入');
+    expect(body).toContain('任务：第二行 接着');
     expect(clipped.match(/<\/group_automations>/g)).toEqual(['</group_automations>']);
 
     const many = Array.from({ length: 32 }, (_, index) => task({
@@ -185,7 +196,7 @@ describe('delete and replace proposal plan', () => {
       planAutomationProposalReply({ ...base, proposal: toReminder }),
       toReminder,
     )).toBe('已生成确认卡，点「是」后用新任务替换 #12。');
-    expect(automationProposalSuffix({ outcome: 'unknown-id' }, toReminder)).toBe('⚠️ 没有替换任务：本群没有 #12。');
+    expect(automationProposalSuffix({ outcome: 'unknown-id' }, toReminder)).toBe('⚠️ 没有删除任务：本群没有 #12。');
   });
 });
 
@@ -467,6 +478,29 @@ describe('confirming a delete or replace', () => {
     expect(newbie).toBeDefined();
     expect(h.store.get(orphan.id)).toBeUndefined();
     expect(gone.status).toBe(`已确认 #${newbie!.id}（#${orphan.id} 已不存在）`);
+  });
+
+  it('confirms a replace whose fire is still ahead but inside the ten-minute floor', async () => {
+    const h = await harness();
+    const item = await h.store.create(reminderInput());
+    const soon = NOW + 5 * 60_000;
+    const draft = await h.store.saveDraft({
+      ...reminderInput({
+        name: '五分钟后',
+        taskText: '五分钟后',
+        schedule: { kind: 'one-shot', fireAt: soon },
+        nextFireAt: soon,
+      }),
+      op: 'replace',
+      targetId: item.id,
+      target: automationTargetSnapshot(item),
+      scheduleText: '今天 11:05',
+    });
+    const result = await confirmAutomationDraft(h.ctx(), draft);
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe(`已替换 #${item.id} → #${item.id + 1}`);
+    expect(h.store.get(item.id)).toBeUndefined();
+    expect(h.store.get(item.id + 1)?.nextFireAt).toBe(soon);
   });
 
   it('reports past-time at confirm and changes nothing', async () => {

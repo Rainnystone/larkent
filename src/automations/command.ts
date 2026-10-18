@@ -295,7 +295,7 @@ export function automationProposalSuffix(
       return undefined;
     case 'unknown-id':
       if (proposal.op === 'create') return undefined;
-      return `⚠️ ${verb}：本群没有 #${proposal.id}。`;
+      return `⚠️ 没有删除任务：本群没有 #${proposal.id}。`;
     case 'reject':
       return automationRejectReplyLine(
         rejectMessage(verdict.reason, verdict),
@@ -1406,7 +1406,12 @@ function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): Automa
     return { outcome: 'reject', reason: 'past-time', clock: `${pad(parts.hour)}:${pad(parts.minute)}` };
   }
   const parsed = parseSchedule(stored, { taskType: draft.taskType, now });
-  if (!parsed.ok) return { outcome: 'reject', reason: parsed.reason };
+  if (!parsed.ok) {
+    if (parsed.reason === 'lead-too-soon' && hasRemainingFire(stored, now)) {
+      return { outcome: 'confirm', schedule: stored };
+    }
+    return { outcome: 'reject', reason: parsed.reason };
+  }
   if (!hasRemainingFire(parsed.schedule, now)) {
     return { outcome: 'reject', reason: 'no-remaining-fires' };
   }

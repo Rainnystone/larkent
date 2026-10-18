@@ -227,7 +227,7 @@ function formatSnapshotLine(item: AutomationItem, senderId: string): string {
 }
 
 function snapshotField(value: string): string {
-  const trimmed = value.trim();
+  const trimmed = value.replace(/[\r\n\u2028\u2029]+/g, ' ').trim();
   const cut = trimmed.length > GROUP_TASK_TEXT_LIMIT
     ? `${trimmed.slice(0, GROUP_TASK_TEXT_LIMIT)}…`
     : trimmed;
