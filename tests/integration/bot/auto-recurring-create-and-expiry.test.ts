@@ -14,6 +14,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { expectSettledKeepsBody } from '../../helpers/settled-oneshot';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -219,10 +220,12 @@ describe('A2 recurring creation and expiry', () => {
     expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
     await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已指定结束时间')));
     const settled = latestSettledCard(h);
-    expect(settled).toContain('已指定结束时间');
-    expect(settled).not.toContain('auto.end.');
-    expect(settled).not.toContain('auto.reject');
-    expect(settled).not.toContain(MATE);
+    expectSettledKeepsBody({
+      settledJson: settled,
+      originalJson: endCard,
+      status: '已指定结束时间',
+      absent: ['auto.end.', 'auto.reject', '一个月', 'end_at', MATE, 'Op', USER],
+    });
 
     const second = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId, 'auto.end.1m'));
     expect(second).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
@@ -244,9 +247,12 @@ describe('A2 recurring creation and expiry', () => {
     expect(h.store.listDrafts()).toEqual([]);
     await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已取消')));
     const settled = latestSettledCard(h);
-    expect(settled).toContain('已取消');
-    expect(settled).not.toContain('auto.end.');
-    expect(settled).not.toContain(MATE);
+    expectSettledKeepsBody({
+      settledJson: settled,
+      originalJson: endCard,
+      status: '已取消',
+      absent: ['auto.end.', 'auto.reject', '一个月', 'end_at', MATE, 'Op', USER],
+    });
   });
 
   it('rejects a reminder interval under 10 minutes and an agent-task interval under 1 hour', async () => {

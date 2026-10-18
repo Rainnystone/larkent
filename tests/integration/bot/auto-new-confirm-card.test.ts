@@ -10,6 +10,7 @@ import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { expectSettledKeepsBody } from '../../helpers/settled-oneshot';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -65,12 +66,12 @@ describe('/auto new confirm card', () => {
     expect(h.store.listDrafts()).toHaveLength(0);
     await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已确认 #1')));
     const settled = latestSettledCard(h);
-    expect(settled).toContain('已确认 #1');
-    expect(settled).not.toContain('auto.confirm');
-    expect(settled).not.toContain('auto.reject');
-    expect(settled).not.toContain('MATE');
-    expect(settled).not.toContain(MATE);
-    expect(settled).not.toContain('Op');
+    expectSettledKeepsBody({
+      settledJson: settled,
+      originalJson: card,
+      status: '已确认 #1',
+      absent: ['auto.confirm', 'auto.reject', 'MATE', MATE, 'Op', USER],
+    });
 
     expect(h.store.listDrafts()).toHaveLength(0);
     const item = h.store.list()[0];
@@ -162,10 +163,12 @@ describe('/auto new confirm card', () => {
     expect(h.store.listDrafts()).toEqual([]);
     await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已取消')));
     const settled = latestSettledCard(h);
-    expect(settled).toContain('已取消');
-    expect(settled).not.toContain('auto.confirm');
-    expect(settled).not.toContain('auto.reject');
-    expect(settled).not.toContain(MATE);
+    expectSettledKeepsBody({
+      settledJson: settled,
+      originalJson: card,
+      status: '已取消',
+      absent: ['auto.confirm', 'auto.reject', MATE, 'Op', USER],
+    });
   });
 
   it('still settles expired confirm cards to 已过期 after restart with automations disabled', async () => {
@@ -191,6 +194,12 @@ describe('/auto new confirm card', () => {
     await h.restart();
     await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已过期')));
     expect(settledCardUpdates(h).filter((text) => text.includes('已过期'))).toHaveLength(1);
+    expectSettledKeepsBody({
+      settledJson: latestSettledCard(h),
+      originalJson: card,
+      status: '已过期',
+      absent: ['auto.confirm', 'auto.reject', 'Op', MATE, USER],
+    });
     const expired = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId));
     expect(expired).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.store.list()).toEqual([]);
@@ -220,6 +229,14 @@ describe('/auto new confirm card', () => {
     ))).toHaveLength(1);
     expect(h.store.list()).toHaveLength(1);
     expect(h.store.listDrafts()).toEqual([]);
+    await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已确认 #1')));
+    expect(settledCardUpdates(h)).toHaveLength(1);
+    expectSettledKeepsBody({
+      settledJson: latestSettledCard(h),
+      originalJson: confirmCard(h),
+      status: '已确认 #1',
+      absent: ['auto.confirm', 'auto.reject', 'Op', MATE, USER],
+    });
   });
 
   it('creates nothing from a bot-sent /auto new', async () => {

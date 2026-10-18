@@ -13,6 +13,11 @@ import {
 } from '../../../src/automations/status-push';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { automationBoardCard } from '../../../src/automations/board-card';
+import { draftCardBodyFromCard } from '../../../src/automations/card-body';
+import { automationConfirmCard } from '../../../src/automations/confirm-card';
+import { expireDueDraftCards } from '../../../src/automations/draft-card';
+import { createFakeChannel } from '../../helpers/fake-channel';
+import { expectSettledKeepsBody } from '../../helpers/settled-oneshot';
 import { simplifiedBoardRender } from '../../../src/automations/status-block';
 import {
   createAutomationScheduler,
@@ -296,6 +301,50 @@ describe('automation scheduler', () => {
     expect(expired).toEqual([draft.draftId]);
     expect(h.store.listDrafts()).toEqual([]);
     expect(h.fires).toEqual([]);
+  });
+
+  it('keeps the confirm-card body when the scheduler segment reaches TTL', async () => {
+    const channel = createFakeChannel();
+    const card = automationConfirmCard({
+      taskType: 'reminder',
+      name: '交周报',
+      taskText: '调度过期正文标记',
+      timezone: 'Asia/Shanghai',
+      schedule: { kind: 'one-shot', fireAt: t0 + 10 * HOUR },
+      now: t0,
+      confirmToken: 'auto_cb.v1.confirm-secret',
+      rejectToken: 'auto_cb.v1.reject-secret',
+    });
+    const h = await harness(t0, {
+      onExpireDrafts: () => expireDueDraftCards({ store: h.store, channel: channel as never }),
+    });
+    const draft = await h.store.saveDraft(reminderInput({
+      nextFireAt: t0 + 10 * HOUR,
+      name: 'draft',
+      taskText: '草稿字段不是卡片正文',
+    }));
+    const created = await channel.createCard(card);
+    const sent = await channel.send('oc_group', { cardId: created.cardId });
+    await h.store.bindDraftCard(
+      draft.draftId,
+      sent.messageId,
+      created.cardId,
+      draftCardBodyFromCard(card),
+    );
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(channel.updatedCards).toEqual([]);
+    h.clock.jump(AUTOMATIONS_DRAFT_TTL_MS + 1);
+    await h.clock.advanceTo(h.clock.now(), () => h.scheduler.idle());
+    expect(channel.updatedCards).toHaveLength(1);
+    const settled = JSON.stringify(channel.updatedCards[0]?.card);
+    expectSettledKeepsBody({
+      settledJson: settled,
+      originalJson: JSON.stringify(card),
+      status: '已过期',
+      absent: ['auto_cb.v1', '草稿字段不是卡片正文', 'ou_alice'],
+    });
+    expect(h.store.listDrafts()).toEqual([]);
   });
 
   it('expires posted drafts that aged out while the process was down', async () => {

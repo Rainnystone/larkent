@@ -4,6 +4,7 @@ import { updateCardByCardId } from '../card/cardkit-update';
 import { readCardApiError } from '../card/card-api-error';
 import { card2, md } from '../card/v2';
 import { log } from '../core/logger';
+import { renderSettledCard } from './card-body';
 import type { AutomationDraft, AutomationsStore } from './store';
 
 export const DRAFT_SETTLED_CANCELLED = '已取消';
@@ -24,14 +25,16 @@ export function automationSettledCard(status: string): object {
   });
 }
 
+export type DraftCardRef = Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence' | 'cardBody'>;
+
 export async function settleDraftCard(
   channel: LarkChannel,
-  draft: Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'>,
+  draft: DraftCardRef,
   status: string,
   store?: AutomationsStore,
 ): Promise<void> {
   if (!draft.cardMessageId) return;
-  const card = automationSettledCard(status);
+  const card = draft.cardBody ? renderSettledCard(draft.cardBody, status) : automationSettledCard(status);
   if (draft.cardId) {
     const sequence = (draft.sequence ?? 0) + 1;
     await updateCardByCardId(channel, draft.cardId, card, sequence);
@@ -64,7 +67,7 @@ export async function expireDueDraftCards(input: {
 
 export function scheduleDraftCardSettle(
   channel: LarkChannel,
-  draft: Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'>,
+  draft: DraftCardRef,
   status: string,
   store?: AutomationsStore,
 ): void {
@@ -75,7 +78,7 @@ export function scheduleDraftCardSettle(
 
 async function settleDraftCardWithRetry(
   channel: LarkChannel,
-  draft: Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'>,
+  draft: DraftCardRef,
   status: string,
   store: AutomationsStore | undefined,
 ): Promise<void> {

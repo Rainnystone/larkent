@@ -3,12 +3,17 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { LarkChannelError } from '@larksuite/channel';
+import { draftCardBodyFromCard } from '../../../src/automations/card-body';
+import { automationConfirmCard } from '../../../src/automations/confirm-card';
 import {
   automationSettledCard,
+  DRAFT_SETTLED_END_CHOSEN,
   expireDueDraftCards,
   scheduleDraftCardSettle,
   settleDraftCard,
 } from '../../../src/automations/draft-card';
+import { automationEndCard, type EndCardTokens } from '../../../src/automations/end-card';
+import type { Schedule } from '../../../src/automations/schedule';
 import { AUTOMATIONS_DRAFT_TTL_MS, AutomationsStore } from '../../../src/automations/store';
 import { CardKitApiError } from '../../../src/card/cardkit-update';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
@@ -150,6 +155,120 @@ describe('draft card settle', () => {
     await settleDraftCard(h.channel as never, h.store.getDraft(draft.draftId)!, '已确认 #1', h.store);
     expect(h.store.getDraft(draft.draftId)?.sequence).toBe(1);
   });
+
+  it('keeps the registered card body after the draft is consumed and the task is deleted', async () => {
+    const h = await harness();
+    const cardNow = NOW - 5 * 24 * 60 * 60_000;
+    const card = automationConfirmCard({
+      taskType: 'reminder',
+      name: '交周报',
+      taskText: '卡片正文标记-周报',
+      timezone: 'Asia/Shanghai',
+      schedule: weekday(cardNow),
+      now: cardNow,
+      confirmToken: 'auto_cb.v1.confirm-secret',
+      rejectToken: 'auto_cb.v1.reject-secret',
+    });
+    const originalFires = fireLines(card);
+    const laterFires = fireLines(automationConfirmCard({
+      taskType: 'reminder',
+      name: '交周报',
+      taskText: '卡片正文标记-周报',
+      timezone: 'Asia/Shanghai',
+      schedule: weekday(cardNow),
+      now: NOW + 30 * 24 * 60 * 60_000,
+      confirmToken: 'auto_cb.v1.confirm-secret',
+      rejectToken: 'auto_cb.v1.reject-secret',
+    }));
+    expect(laterFires[0]).not.toBe(originalFires[0]);
+
+    const draft = await h.store.saveDraft(reminder());
+    const created = await h.channel.createCard(card);
+    const sent = await h.channel.send(CHAT, { cardId: created.cardId });
+    const body = draftCardBodyFromCard(card);
+    expect(body, 'card registration stores the rendered body').toBeDefined();
+    await h.store.bindDraftCard(draft.draftId, sent.messageId, created.cardId, body);
+
+    const persisted = await readFile(join(h.dir, 'automations.json'), 'utf8');
+    expect(persisted).not.toContain('auto_cb.v1.confirm-secret');
+    expect(persisted).toContain('卡片正文标记-周报');
+
+    const reloaded = new AutomationsStore({
+      path: join(h.dir, 'automations.json'),
+      logPath: join(h.dir, 'automations.log'),
+      statusPath: join(h.dir, 'automations-status.json'),
+      now: () => NOW + 30 * 24 * 60 * 60_000,
+    });
+    await reloaded.load();
+    const item = await reloaded.create({
+      ...reminder(),
+      name: '已删除的任务',
+      taskText: '任务已删除标记',
+    });
+    expect(await reloaded.delete(item.id)).toBe(true);
+    const taken = await reloaded.takeDraft(draft.draftId);
+    expect(taken).toBeDefined();
+    expect(reloaded.getDraft(draft.draftId)).toBeUndefined();
+    expect(reloaded.get(item.id)).toBeUndefined();
+
+    await settleDraftCard(h.channel as never, taken!, '已确认 #7', reloaded);
+    const settled = JSON.stringify(h.channel.updatedCards.at(-1)?.card);
+    expect(fireLines(JSON.parse(settled) as object)).toEqual(originalFires);
+    expect(settled).toContain('卡片正文标记-周报');
+    expect(settled).toContain('每个工作日 09:30');
+    expect(settled).not.toContain('任务已删除标记');
+    expect(settled).not.toContain('一次性');
+    expect(settled).not.toContain('"tag":"button"');
+    expect(settled).not.toContain('auto_cb.v1');
+    expect(markdownContents(settled).filter((text) => text === '已确认 #7')).toEqual(['已确认 #7']);
+    expect(topTags(settled)).toEqual(['markdown', 'hr', 'markdown']);
+  });
+
+  it('keeps the end-card prompt when settle uses the pre-rebind snapshot', async () => {
+    const h = await harness();
+    const end = automationEndCard(END_TOKENS);
+    const confirm = automationConfirmCard({
+      taskType: 'reminder',
+      name: '不该出现的确认正文',
+      taskText: '确认卡任务原文',
+      timezone: 'Asia/Shanghai',
+      schedule: { kind: 'one-shot', fireAt: NOW + 60 * 60_000 },
+      now: NOW,
+      confirmToken: 'auto_cb.v1.confirm',
+      rejectToken: 'auto_cb.v1.reject',
+    });
+    const draft = await h.store.saveDraft(reminder());
+    const endCreated = await h.channel.createCard(end);
+    const endSent = await h.channel.send(CHAT, { cardId: endCreated.cardId });
+    await h.store.bindDraftCard(
+      draft.draftId,
+      endSent.messageId,
+      endCreated.cardId,
+      draftCardBodyFromCard(end),
+    );
+    const snapshot = h.store.getDraft(draft.draftId)!;
+    const confirmCreated = await h.channel.createCard(confirm);
+    const confirmSent = await h.channel.send(CHAT, { cardId: confirmCreated.cardId });
+    await h.store.bindDraftCard(
+      draft.draftId,
+      confirmSent.messageId,
+      confirmCreated.cardId,
+      draftCardBodyFromCard(confirm),
+    );
+
+    await settleDraftCard(h.channel as never, snapshot, DRAFT_SETTLED_END_CHOSEN, h.store);
+    const settled = JSON.stringify(h.channel.updatedCards.at(-1)?.card);
+    expect(settled).toContain('周期任务必须指定结束时间。请选择常用时长，或输入结束日期。');
+    expect(settled).not.toContain('不该出现的确认正文');
+    expect(settled).not.toContain('确认卡任务原文');
+    expect(settled).not.toContain('一个月');
+    expect(settled).not.toContain('end_at');
+    expect(settled).not.toContain('"tag":"button"');
+    expect(settled).not.toContain('"tag":"form"');
+    expect(markdownContents(settled).filter((text) => text === '已指定结束时间')).toEqual(['已指定结束时间']);
+    expect(topTags(settled)).toEqual(['markdown', 'markdown', 'hr']);
+    expect(h.channel.updatedCards.at(-1)?.messageId).toBe(endSent.messageId);
+  });
 });
 
 async function harness() {
@@ -166,6 +285,7 @@ async function harness() {
   });
   await store.load();
   return {
+    dir,
     logsDir,
     store,
     channel: createFakeChannel(),
@@ -173,6 +293,53 @@ async function harness() {
       nowMs = next;
     },
   };
+}
+
+const END_TOKENS: EndCardTokens = {
+  'auto.end.1m': 'auto_cb.v1.1m',
+  'auto.end.3m': 'auto_cb.v1.3m',
+  'auto.end.eoy': 'auto_cb.v1.eoy',
+  'auto.end.1y': 'auto_cb.v1.1y',
+  'auto.end.custom': 'auto_cb.v1.custom',
+  'auto.reject': 'auto_cb.v1.reject',
+};
+
+function weekday(startAt: number): Schedule {
+  return {
+    kind: 'weekday',
+    timezone: 'Asia/Shanghai',
+    times: [{ hour: 9, minute: 30 }],
+    startAt,
+    endAt: NOW + 120 * 24 * 60 * 60_000,
+  };
+}
+
+function fireLines(card: object): string[] {
+  return markdownContents(JSON.stringify(card))
+    .join('\n')
+    .split('\n')
+    .filter((line) => /^- \d{4}-\d{2}-\d{2}/.test(line));
+}
+
+function markdownContents(cardJson: string): string[] {
+  const texts: string[] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) {
+      for (const entry of node) walk(entry);
+      return;
+    }
+    if (!node || typeof node !== 'object') return;
+    const rec = node as { tag?: unknown; content?: unknown };
+    if (rec.tag === 'markdown' && typeof rec.content === 'string') texts.push(rec.content);
+    for (const value of Object.values(rec)) walk(value);
+  };
+  walk(JSON.parse(cardJson) as unknown);
+  return texts;
+}
+
+function topTags(cardJson: string): string[] {
+  const card = JSON.parse(cardJson) as { body?: { elements?: Array<{ tag?: string }> } };
+  return (card.body?.elements ?? []).map((element) => element.tag ?? '');
 }
 
 function reminder() {

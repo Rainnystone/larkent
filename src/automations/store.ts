@@ -1,5 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
+import {
+  cloneDraftCardBody,
+  parseDraftCardBody,
+  type DraftCardBody,
+} from './card-body';
 import type { PolicyGuardReason } from './policy-guard';
 import { parseFireKey, type PendingRecurring } from './schedule';
 import { writeFileAtomic } from '../platform/atomic-write';
@@ -18,6 +23,7 @@ export type AutomationTriggerSource = 'startup' | 'link-recovered' | 'wake' | 't
 export type AutomationLogResult = 'missed' | 'catch-up' | 'policy-guard' | 'skipped';
 export type AutomationPolicyGuardReason = PolicyGuardReason;
 export type AutomationSkipReason = 'previous-run-unsettled';
+export type { DraftCardBody };
 export type MarkStartedResult = 'started' | 'already-started';
 
 export interface AutomationFireRecord {
@@ -79,6 +85,8 @@ export interface AutomationDraft extends CreateAutomationInput {
   cardMessageId?: string;
   cardId?: string;
   sequence?: number;
+  /** Rendered body captured when the card was registered. Settle reuses it. */
+  cardBody?: DraftCardBody;
   pendingRecurring?: PendingRecurring;
 }
 
@@ -382,27 +390,32 @@ export class AutomationsStore {
     };
     this.drafts.push(draft);
     await this.persistNow();
-    return { ...draft };
+    return cloneDraft(draft);
   }
 
   listDrafts(): AutomationDraft[] {
     this.pruneDrafts();
-    return this.drafts.map((draft) => ({ ...draft }));
+    return this.drafts.map((draft) => cloneDraft(draft));
   }
 
   getDraft(draftId: string): AutomationDraft | undefined {
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.draftId === draftId);
-    return draft ? { ...draft } : undefined;
+    return draft ? cloneDraft(draft) : undefined;
   }
 
   findDraftByCardMessageId(cardMessageId: string): AutomationDraft | undefined {
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.cardMessageId === cardMessageId);
-    return draft ? { ...draft } : undefined;
+    return draft ? cloneDraft(draft) : undefined;
   }
 
-  async bindDraftCard(draftId: string, cardMessageId: string, cardId?: string): Promise<boolean> {
+  async bindDraftCard(
+    draftId: string,
+    cardMessageId: string,
+    cardId?: string,
+    cardBody?: DraftCardBody,
+  ): Promise<boolean> {
     this.assertMutable();
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.draftId === draftId);
@@ -411,6 +424,8 @@ export class AutomationsStore {
     if (cardId) draft.cardId = cardId;
     else delete draft.cardId;
     delete draft.sequence;
+    if (cardBody) draft.cardBody = cloneDraftCardBody(cardBody);
+    else delete draft.cardBody;
     await this.persistNow();
     return true;
   }
@@ -419,7 +434,7 @@ export class AutomationsStore {
     const cutoff = this.now() - AUTOMATIONS_DRAFT_TTL_MS;
     return this.drafts
       .filter((draft) => draft.createdAt <= cutoff && Boolean(draft.cardMessageId))
-      .map((draft) => ({ ...draft }));
+      .map((draft) => cloneDraft(draft));
   }
 
   async takeDraft(draftId: string): Promise<AutomationDraft | undefined> {
@@ -430,7 +445,7 @@ export class AutomationsStore {
     const [draft] = this.drafts.splice(index, 1);
     if (!draft) return undefined;
     await this.persistNow();
-    return { ...draft };
+    return cloneDraft(draft);
   }
 
   async updateDraft(draftId: string, patch: UpdateDraftPatch): Promise<AutomationDraft | undefined> {
@@ -453,7 +468,7 @@ export class AutomationsStore {
     if (patch.pendingRecurring === null) delete draft.pendingRecurring;
     else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
     await this.persistNow();
-    return { ...draft };
+    return cloneDraft(draft);
   }
 
   async writeStatus(botDisplayName: string): Promise<void> {
@@ -769,7 +784,7 @@ export class AutomationsStore {
       schemaVersion: AUTOMATIONS_SCHEMA_VERSION,
       nextId: this.nextId,
       items: this.items.map(cloneItem),
-      drafts: this.drafts.map((draft) => ({ ...draft })),
+      drafts: this.drafts.map((draft) => cloneDraft(draft)),
       started: [...this.started],
       boards: this.boards.map((board) => ({ ...board })),
     };
@@ -973,7 +988,20 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
     ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
     ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
     ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
+    ...parsedCardBody(raw.cardBody),
     ...(isPendingRecurring(raw.pendingRecurring) ? { pendingRecurring: raw.pendingRecurring } : {}),
+  };
+}
+
+function parsedCardBody(raw: unknown): { cardBody: DraftCardBody } | undefined {
+  const cardBody = parseDraftCardBody(raw);
+  return cardBody ? { cardBody } : undefined;
+}
+
+function cloneDraft(draft: AutomationDraft): AutomationDraft {
+  return {
+    ...draft,
+    ...(draft.cardBody ? { cardBody: cloneDraftCardBody(draft.cardBody) } : {}),
   };
 }
 

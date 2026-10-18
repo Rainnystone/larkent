@@ -26,16 +26,17 @@ import {
   confirmAutomationDraft,
   resolveEndAt,
 } from '../automations/command';
+import { cloneDraftCardBody } from '../automations/card-body';
 import {
   DRAFT_SETTLED_CANCELLED,
   DRAFT_SETTLED_END_CHOSEN,
+  type DraftCardRef,
   draftConfirmedStatus,
   scheduleDraftCardSettle,
 } from '../automations/draft-card';
 import type { AutomationScheduler } from '../automations/scheduler';
 import {
   AUTOMATIONS_DRAFT_TTL_MS,
-  type AutomationDraft,
   type AutomationItem,
   type AutomationsStore,
 } from '../automations/store';
@@ -562,14 +563,13 @@ function actionToast(type: 'success' | 'error', content: string): CardActionResp
   return { toast: { type, content } };
 }
 
-function draftCardRef(
-  draft: Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'>,
-): Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'> {
+function draftCardRef(draft: DraftCardRef): DraftCardRef {
   return {
     draftId: draft.draftId,
     ...(draft.cardMessageId ? { cardMessageId: draft.cardMessageId } : {}),
     ...(draft.cardId ? { cardId: draft.cardId } : {}),
     ...(draft.sequence !== undefined ? { sequence: draft.sequence } : {}),
+    ...(draft.cardBody ? { cardBody: cloneDraftCardBody(draft.cardBody) } : {}),
   };
 }
 
