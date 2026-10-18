@@ -261,7 +261,9 @@ describe('A28 natural-language delete and replace', () => {
     };
 
     await h.channel.handlers.message?.(mention('om_gone_mid', '删了重建，加上 Sam Altman'));
-    await waitFor(() => markdowns(h).some((text) => text.includes(VISIBLE)));
+    // The promise is delivered first. Staging the correction flushes before the
+    // correction send, so wait for that correction instead of the shared visible line.
+    await waitFor(() => lastMarkdown(h).includes('没有删除任务：本群没有 #1'));
 
     expect(h.store.listDrafts()).toEqual([]);
     expect(sentText(h)).not.toContain('确认替换');
