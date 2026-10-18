@@ -37,6 +37,8 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A28](A28-nl-delete-replace.md) | Natural-language delete / replace: per-turn group task snapshot (that group's session only, no open_ids, data-not-instructions tag); proposal `op` = create/delete/replace; bridge validates (unified 「本群没有 #N」); one confirm card for delete, one for replace (create new, then delete old); anyone can confirm; edit requests get 替换 / 另建 options, never 已修改 (user decision 2026-10-18, high) | A22, A27 | ready-for-agent |
 | [A29](A29-status-push-updatedat-monotonic.md) | Status push `updatedAt` strictly increasing: the pusher holds a persisted monotonic value; every push whose body differs (incl. retry and startup) carries a strictly greater one; an identical retry may reuse it (lands on #49, before merge; closes an A19 acceptance gap) | A19 | ready-for-agent |
 | [A30](A30-ws-liveness-watchdog.md) | WS liveness watchdog must not tear down a healthy link: replace the 3 s `pingTimeout` with a first-principles bound; dead link still detected in bounded time (lands on #49, before merge; root cause of 「目标回调服务当前未在线」 taps) | — | ready-for-agent |
+| [A31](A31-wake-from-suspend-false-recovery.md) | Wake from suspend: force an immediate WS reconnect on tick gap or keepalive wake-up; no `recovered` until inbound on the new socket (lands on #49, before merge; 85 s dead link after wake in A11) | — | ready-for-agent |
+| [A32](A32-past-time-rejection-copy.md) | OBS-1 past-time rejection copy: one line, one suggestion, absolute example derived from now (lands on #49, before merge) | — | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -105,4 +107,5 @@ graph LR
   A19 --> A29
   A29 --> A11
   A30 --> A11
+  A31 --> A11
 ```
