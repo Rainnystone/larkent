@@ -39,10 +39,11 @@ export async function updateCardByCardId(
     }),
   );
   const rec = isRecord(res) ? res : undefined;
-  const code = typeof rec?.code === 'number' ? rec.code : 0;
+  const code = rec?.code;
   if (code === 0) return;
+  const numeric = typeof code === 'number' ? code : -1;
   const msg = typeof rec?.msg === 'string' && rec.msg ? rec.msg : 'cardkit.card.update failed';
-  throw new CardKitApiError(code, msg);
+  throw new CardKitApiError(numeric, msg);
 }
 
 function cardUpdate(channel: LarkChannel): ((params: unknown) => Promise<unknown>) | undefined {

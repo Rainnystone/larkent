@@ -50,6 +50,17 @@ describe('board card.update', () => {
     ]);
   });
 
+  it('does not bump sequence when cardkit update omits code', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const firstMessageId = h.store.getBoard(CHAT)!.messageId;
+    h.channel.rawClient.cardkit.v1.card.update = async () => ({ msg: 'ok' });
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.sequence).toBeUndefined();
+    expect(h.store.getBoard(CHAT)?.messageId).not.toBe(firstMessageId);
+  });
+
   it('bumps sequence after cardkit update returns code 0', async () => {
     const h = await harness();
     await h.board.refresh();

@@ -49,13 +49,7 @@ export async function expireDueDraftCards(input: {
     try {
       await settleDraftCard(input.channel, draft, DRAFT_SETTLED_EXPIRED, input.store);
     } catch (error) {
-      const api = readCardApiError(error);
-      log.fail('auto', error, {
-        event: 'draft-card',
-        draftId: draft.draftId,
-        ...(api.code !== undefined ? { code: api.code } : {}),
-        ...(api.msg !== undefined ? { msg: api.msg } : {}),
-      });
+      logDraftCardFail(draft.draftId, error);
       continue;
     }
     await input.store.takeDraft(draft.draftId);
@@ -70,13 +64,17 @@ export function scheduleDraftCardSettle(
 ): void {
   setImmediate(() => {
     void settleDraftCard(channel, draft, status, store).catch((error: unknown) => {
-      const api = readCardApiError(error);
-      log.fail('auto', error, {
-        event: 'draft-card',
-        draftId: draft.draftId,
-        ...(api.code !== undefined ? { code: api.code } : {}),
-        ...(api.msg !== undefined ? { msg: api.msg } : {}),
-      });
+      logDraftCardFail(draft.draftId, error);
     });
+  });
+}
+
+function logDraftCardFail(draftId: string, error: unknown): void {
+  const api = readCardApiError(error);
+  log.fail('auto', error, {
+    event: 'draft-card',
+    draftId,
+    ...(api.code !== undefined ? { code: api.code } : {}),
+    ...(api.msg !== undefined ? { msg: api.msg } : {}),
   });
 }
