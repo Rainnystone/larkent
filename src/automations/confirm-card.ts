@@ -63,6 +63,22 @@ export function describeEnd(schedule: Schedule, timezone: string): string {
   }
 }
 
+function frequencyLine(schedule: Schedule, now: number): string | undefined {
+  switch (schedule.kind) {
+    case 'one-shot':
+      return undefined;
+    case 'daily':
+    case 'weekday':
+    case 'weekly':
+    case 'interval':
+      return `约每月 ${monthlyFireCount(schedule, now)} 次`;
+    default: {
+      const _exhaustive: never = schedule;
+      return _exhaustive;
+    }
+  }
+}
+
 export function describeIdentity(taskType: AutomationTaskType, cwd?: string): string {
   if (taskType === 'reminder') return '本 bot 发送提醒（不跑 agent）';
   const cwdNote = cwd ? '；已快照工作目录' : '';
@@ -81,7 +97,7 @@ export function automationConfirmCard(input: {
   cwd?: string;
 }): object {
   const fires = nextFires(input.schedule, input.now, 3);
-  const monthly = monthlyFireCount(input.schedule, input.now);
+  const frequency = frequencyLine(input.schedule, input.now);
   const fireLines = fires.length === 0
     ? '- （无后续触发）'
     : fires.map((fireAt) => `- ${formatZonedDateTime(input.timezone, fireAt)}`).join('\n');
@@ -96,7 +112,7 @@ export function automationConfirmCard(input: {
     `**结束：** ${escapeMd(describeEnd(input.schedule, input.timezone))}`,
     `**任务：** ${escapeMd(input.taskText)}`,
     `**执行身份：** ${escapeMd(describeIdentity(input.taskType, input.cwd))}`,
-    `约每月 ${monthly} 次`,
+    ...(frequency ? [frequency] : []),
   ].join('\n\n');
 
   return card2({

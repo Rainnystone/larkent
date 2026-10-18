@@ -32,6 +32,50 @@ describe('GrokJsonlTranslator', () => {
     expect(t.terminalEmitted()).toBe(true);
   });
 
+  it('drops a final answer that is only a model control token', () => {
+    const eos = new GrokJsonlTranslator();
+    const eosEvents = collect(eos, [
+      { type: 'text', data: ' <|eos|>\n' },
+      { type: 'end', sessionId: SESSION },
+    ]);
+    expect(eosEvents.some((event) => event.type === 'final_text' || event.type === 'text')).toBe(false);
+    expect(JSON.stringify(eosEvents)).not.toContain('<|eos|>');
+    expect(eosEvents.at(-1)).toMatchObject({ type: 'done', terminationReason: 'normal' });
+
+    const sibling = new GrokJsonlTranslator();
+    const siblingEvents = collect(sibling, [
+      { type: 'text', data: '<|end' },
+      { type: 'text', data: '_of_turn|>  ' },
+      END,
+    ]);
+    expect(siblingEvents.some((event) => event.type === 'final_text' || event.type === 'text')).toBe(false);
+    expect(JSON.stringify(siblingEvents)).not.toContain('<|end_of_turn|>');
+
+    const kept = new GrokJsonlTranslator();
+    const keptEvents = collect(kept, [
+      { type: 'text', data: 'see <|eos|> in the answer' },
+      { type: 'end', sessionId: SESSION },
+    ]);
+    expect(keptEvents.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: 'see <|eos|> in the answer',
+    });
+  });
+
+  it('does not prefix a failed finish with a control-token-only buffer', () => {
+    const t = new GrokJsonlTranslator();
+    t.translate({ type: 'text', data: '<|eos|>' });
+    const events = t.finish();
+    expect(events).toEqual([
+      {
+        type: 'error',
+        message: 'grok stream ended before a terminal event',
+        terminationReason: 'failed',
+      },
+    ]);
+    expect(JSON.stringify(events)).not.toContain('<|eos|>');
+  });
+
   it('concatenates incremental text chunks into one final_text', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [

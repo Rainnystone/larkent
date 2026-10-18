@@ -28,6 +28,19 @@ describe('confirm card copy', () => {
     }, TZ)).toBe('每 1 小时');
   });
 
+  it('shows the one-shot fire time without a monthly frequency', () => {
+    const soon = NOW + 15 * 60_000;
+    const later = NOW + 40 * 24 * 60 * 60_000;
+    const soonCard = confirmBody({ kind: 'one-shot', fireAt: soon });
+    const laterCard = confirmBody({ kind: 'one-shot', fireAt: later });
+    expect(soonCard).not.toContain('约每月');
+    expect(laterCard).not.toContain('约每月');
+    expect(soonCard).not.toContain('约每月 1 次');
+    expect(laterCard).not.toContain('约每月 0 次');
+    expect(soonCard).toContain('2026-10-17 11:15');
+    expect(laterCard).toContain('2026-11-26 11:00');
+  });
+
   it('renders weekday 不计调休, monthly count, and identity on the card', () => {
     const card = JSON.stringify(automationConfirmCard({
       taskType: 'reminder',
@@ -50,6 +63,19 @@ describe('confirm card copy', () => {
     expect(describeIdentity('agent')).toContain('纵深防御不是安全边界');
   });
 });
+
+function confirmBody(schedule: Schedule): string {
+  return JSON.stringify(automationConfirmCard({
+    taskType: 'reminder',
+    name: '一次性提醒',
+    taskText: '只响一次',
+    timezone: TZ,
+    schedule,
+    now: NOW,
+    confirmToken: 'auto_cb.v1.confirm',
+    rejectToken: 'auto_cb.v1.reject',
+  }));
+}
 
 function daily(): Schedule {
   return {

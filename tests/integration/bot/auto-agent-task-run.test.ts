@@ -16,6 +16,7 @@ import { log } from '../../../src/core/logger';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
+import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import type { AgentEvent } from '../../../src/agent/types';
 import { FakeAgentAdapter, type FakeAgentEvents } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
@@ -161,6 +162,26 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     await waitFor(() => resultBodies(h.channel).length === 1);
     expect(resultBodies(h.channel)).toEqual([
       `${GROK_ANSWER}\n\n（补跑，原定 12:00）\n\n${FOOTER}`,
+    ]);
+  });
+
+  it('posts the empty-result line when Grok final text is only a control token', async () => {
+    const translator = new GrokJsonlTranslator();
+    const events = [
+      { type: 'text', data: ' <|eos|>\n' },
+      { type: 'end', sessionId: 'sess-eos', stopReason: 'end_turn' },
+    ].flatMap((line) => translator.translate(line));
+    const h = await harness({
+      nowMs: t0,
+      seed: true,
+      agentKind: 'grok',
+      events: [events],
+    });
+    await waitFor(() => resultBodies(h.channel).length === 1);
+    const post = resultBodies(h.channel).join('\n');
+    expect(post).not.toContain('<|eos|>');
+    expect(resultBodies(h.channel)).toEqual([
+      `任务已完成，agent 没有给出文字结果。\n\n${FOOTER}`,
     ]);
   });
 
