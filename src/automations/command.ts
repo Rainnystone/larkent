@@ -6,6 +6,7 @@ import { classify, isNotInChat } from '../bot/feishu-error';
 import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
+import { DEFAULT_AUTOMATION_TIMEZONE } from '../config/profile-schema';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
 import { draftCardBodyFromCard } from './card-body';
 import {
@@ -268,18 +269,40 @@ function hasRemainingFire(schedule: Schedule, now: number): boolean {
   return nextFires(schedule, now, 1).length > 0;
 }
 
+/** Clock used to build a rejection example. Never a hard-coded calendar date. */
+export type RejectionExampleClock = {
+  now: number;
+  timezone: string;
+};
+
+const REJECTION_EXAMPLE_HOUR = 15;
+const REJECTION_EXAMPLE_MINUTE = 50;
+
+function rejectionAbsoluteExample(clock: RejectionExampleClock): string {
+  const tomorrow = shiftLocalDate(clock.timezone, clock.now, 1);
+  const pad = (value: number): string => String(value).padStart(2, '0');
+  return `${tomorrow.year}-${pad(tomorrow.month)}-${pad(tomorrow.day)} ${pad(REJECTION_EXAMPLE_HOUR)}:${pad(REJECTION_EXAMPLE_MINUTE)}`;
+}
+
+function rejectionClock(clock?: RejectionExampleClock): RejectionExampleClock {
+  return clock ?? { now: Date.now(), timezone: DEFAULT_AUTOMATION_TIMEZONE };
+}
+
 export function automationRejectReplyLine(
   reasonMessage: string,
   scheduleText: string,
   verb = '没有创建任务',
+  clock?: RejectionExampleClock,
 ): string {
   const stem = reasonMessage.endsWith('。') ? reasonMessage.slice(0, -1) : reasonMessage;
-  return `⚠️ ${verb}：${stem}「${scheduleText}」。可写成「明天 09:00」「2026-10-18 15:50」「10 分钟后」。`;
+  const example = rejectionAbsoluteExample(rejectionClock(clock));
+  return `⚠️ ${verb}：${stem}「${scheduleText}」。可写成「明天 09:00」「${example}」「10 分钟后」。`;
 }
 
 export function automationProposalSuffix(
   verdict: AutomationProposalVerdict,
   proposalOrSchedule: AutomationProposalFields | string,
+  clock?: RejectionExampleClock,
 ): string | undefined {
   const proposal = typeof proposalOrSchedule === 'string'
     ? createProposalFromLegacy('reminder', proposalOrSchedule)
@@ -297,10 +320,14 @@ export function automationProposalSuffix(
       if (proposal.op === 'create') return undefined;
       return `⚠️ 没有删除任务：本群没有 #${proposal.id}。`;
     case 'reject':
+      if (verdict.reason === 'past-time') {
+        return `⚠️ ${verb}：${rejectMessage(verdict.reason, verdict)}`;
+      }
       return automationRejectReplyLine(
         rejectMessage(verdict.reason, verdict),
         proposalScheduleText(proposal),
         verb,
+        clock,
       );
     case 'refuse':
       return `⚠️ ${verb}：${verdict.message}`;
@@ -795,7 +822,7 @@ export function rejectMessage(
       return AUTO_LEAD_TOO_SOON;
     case 'past-time': {
       const clock = detail?.clock ?? 'HH:MM';
-      return `今天 ${clock} 已过。例如：明天 ${clock}`;
+      return `今天 ${clock} 已过，可改为「明天 ${clock}」。`;
     }
     case 'one-shot-too-far':
       return AUTO_ONE_SHOT_TOO_FAR;

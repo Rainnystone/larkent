@@ -67,7 +67,7 @@ describe('proposal schedule acceptance', () => {
     await h.propose('今天 15:00', 'proposal');
 
     expect(h.store.listDrafts()).toEqual([]);
-    expect(markdowns(h.channel)).toEqual(['今天 15:00 已过。例如：明天 15:00']);
+    expect(markdowns(h.channel)).toEqual(['今天 15:00 已过，可改为「明天 15:00」。']);
     const rejected = await logEvents(h.logsDir, 'rejected');
     expect(rejected).toEqual([
       expect.objectContaining({
@@ -127,8 +127,11 @@ describe('proposal schedule acceptance', () => {
       hasCwd: true,
     });
     expect(verdict).toMatchObject({ outcome: 'reject', reason: 'no-remaining-fires' });
-    expect(automationProposalSuffix(verdict, scheduleText)).toBe(
-      `⚠️ 没有创建任务：结束前已没有可触发的时刻「${scheduleText}」。可写成「明天 09:00」「2026-10-18 15:50」「10 分钟后」。`,
+    expect(automationProposalSuffix(verdict, scheduleText, {
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toBe(
+      `⚠️ 没有创建任务：结束前已没有可触发的时刻「${scheduleText}」。可写成「明天 09:00」「2026-10-19 15:50」「10 分钟后」。`,
     );
 
     await h.command(`new ${scheduleText} | ${NAME} | ${TASK}`);

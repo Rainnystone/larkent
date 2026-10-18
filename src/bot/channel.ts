@@ -145,6 +145,7 @@ import {
   submitAutomationProposal,
   submitAutomationReplaceProposal,
   type AutomationProposalVerdict,
+  type RejectionExampleClock,
   type ReplaceProposalApplyResult,
 } from '../automations/command';
 import { expireDueDraftCards } from '../automations/draft-card';
@@ -2088,6 +2089,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             targetInChat: Boolean(target && target.chatId === lastMsg.chatId),
           });
         },
+        clock: (): RejectionExampleClock => ({
+          now: (now ?? Date.now)(),
+          timezone: controls.profileConfig.automations.timezone,
+        }),
         apply: (parsed: AutomationProposalFields): Promise<ReplaceProposalApplyResult | void> => {
           const proposalCtx = {
             channel,
@@ -2623,6 +2628,7 @@ async function deliverFinalReply(input: {
   automation?: {
     honor: boolean;
     plan: (parsed: AutomationProposalFields) => AutomationProposalVerdict;
+    clock: () => RejectionExampleClock;
     apply: (parsed: AutomationProposalFields) => Promise<ReplaceProposalApplyResult | void>;
   };
 }): Promise<void> {
@@ -2643,7 +2649,7 @@ async function deliverFinalReply(input: {
   let deliverProposal = false;
   if (parsed && input.automation && honor && completed) {
     const verdict = input.automation.plan(parsed);
-    proposalSuffix = automationProposalSuffix(verdict, parsed);
+    proposalSuffix = automationProposalSuffix(verdict, parsed, input.automation.clock());
     switch (verdict.outcome) {
       case 'confirm':
       case 'needs-end':

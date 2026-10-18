@@ -15,7 +15,10 @@ const NOW = Date.UTC(2026, 9, 17, 3, 0, 0);
 
 describe('automation proposal reply suffix', () => {
   it('quotes the original schedule and a usable example on one line', () => {
-    expect(automationRejectReplyLine('无法解析时间表。', '今天 15:50')).toBe(
+    expect(automationRejectReplyLine('无法解析时间表。', '今天 15:50', '没有创建任务', {
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+    })).toBe(
       '⚠️ 没有创建任务：无法解析时间表「今天 15:50」。可写成「明天 09:00」「2026-10-18 15:50」「10 分钟后」。',
     );
   });
