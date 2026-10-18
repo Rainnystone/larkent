@@ -62,6 +62,32 @@ describe('confirm card copy', () => {
     expect(describeIdentity('agent', '/tmp/ws')).toContain('仅 bot 身份');
     expect(describeIdentity('agent')).toContain('纵深防御不是安全边界');
   });
+
+  it('writes a future start under the schedule line and counts fires from that start', () => {
+    const startAt = Date.UTC(2026, 9, 18, 7, 40);
+    const endAt = Date.UTC(2026, 9, 18, 8, 5);
+    const schedule: Schedule = {
+      kind: 'interval',
+      timezone: TZ,
+      everyMs: 10 * 60_000,
+      window: { from: { hour: 15, minute: 40 }, to: { hour: 16, minute: 5 } },
+      startAt,
+      endAt,
+    };
+    const card = confirmBody(schedule);
+    const scheduleAt = card.indexOf('**时间表：**');
+    const startLine = card.indexOf('从 2026-10-18 15:40 开始');
+    const nextAt = card.indexOf('**接下来 3 次：**');
+    expect(scheduleAt).toBeGreaterThanOrEqual(0);
+    expect(startLine).toBeGreaterThan(scheduleAt);
+    expect(nextAt).toBeGreaterThan(startLine);
+    expect(card).toContain('2026-10-18 15:40');
+    expect(card).not.toContain('2026-10-17 15:40');
+  });
+
+  it('omits the start line when the recurring rule already started', () => {
+    expect(confirmBody(daily())).not.toMatch(/从 \d{4}-\d{2}-\d{2} \d{2}:\d{2} 开始/);
+  });
 });
 
 function confirmBody(schedule: Schedule): string {

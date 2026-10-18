@@ -14,7 +14,9 @@ export interface AutomationProposalFields {
 export const AUTOMATION_PROPOSAL_INSTRUCTION = [
   '当用户要用自然语言在本群创建定时提醒或 agent 任务时，在最终回复末尾附加一个 <automation_proposal> JSON 块。',
   '块内仅一段 JSON：{"taskType":"reminder 或 agent","schedule":"<时间表>","name":"<短名称>","taskText":"<任务原文>"}。',
-  '时间表用与 /auto new 相同的语法（如 10 分钟后、每个工作日 09:00、every 30m 09:00-18:00 until 2026-12-31）；相对时间由 bridge 换成绝对时刻。',
+  '时间表用与 /auto new 相同的语法（如 10 分钟后、2026-10-18 15:50、今天 15:50、明天 09:00、每个工作日 09:00、every 30m 09:00-18:00 until 2026-12-31、从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 16:05）。',
+  '一次性绝对时刻用 YYYY-MM-DD HH:MM 或 今天/明天/后天 HH:MM；周期任务从某天开始时用「从 <日期> [HH:MM] 起」前缀。',
+  '相对时间由 bridge 换成绝对时刻。',
   '不要把该块当作给用户看的正文。群、scope、创建者由 bridge 从当前对话取；提案里即使写了 chatId/scope/createdBy 也会被忽略。',
   '仅在当前消息来自人类、且不是 auto: 或 meeting: 自动化 run 时产出提案。默认 taskType 为 reminder。',
 ].join('');

@@ -63,6 +63,24 @@ export function describeEnd(schedule: Schedule, timezone: string): string {
   }
 }
 
+function describeStart(schedule: Schedule, timezone: string, now: number): string | undefined {
+  switch (schedule.kind) {
+    case 'one-shot':
+      return undefined;
+    case 'daily':
+    case 'weekday':
+    case 'weekly':
+    case 'interval':
+      return schedule.startAt > now
+        ? `从 ${formatZonedDateTime(timezone, schedule.startAt)} 开始`
+        : undefined;
+    default: {
+      const _exhaustive: never = schedule;
+      return _exhaustive;
+    }
+  }
+}
+
 function frequencyLine(schedule: Schedule, now: number): string | undefined {
   switch (schedule.kind) {
     case 'one-shot':
@@ -103,10 +121,15 @@ export function automationConfirmCard(input: {
     : fires.map((fireAt) => `- ${formatZonedDateTime(input.timezone, fireAt)}`).join('\n');
   const weekdayNote = input.schedule.kind === 'weekday' ? '\n工作日不计调休' : '';
   const typeLabel = input.taskType === 'reminder' ? '提醒' : 'agent 任务';
+  const startLine = describeStart(input.schedule, input.timezone, input.now);
+  const scheduleBlock = [
+    `**时间表：** ${escapeMd(describeSchedule(input.schedule, input.timezone))}${weekdayNote}`,
+    ...(startLine ? [escapeMd(startLine)] : []),
+  ].join('\n');
   const body = [
     `**任务类型：** ${typeLabel}`,
     `**名称：** ${escapeMd(input.name)}`,
-    `**时间表：** ${escapeMd(describeSchedule(input.schedule, input.timezone))}${weekdayNote}`,
+    scheduleBlock,
     `**时区：** ${escapeMd(input.timezone)}`,
     `**接下来 3 次：**\n${fireLines}`,
     `**结束：** ${escapeMd(describeEnd(input.schedule, input.timezone))}`,

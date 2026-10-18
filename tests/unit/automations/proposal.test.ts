@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AUTOMATION_PROPOSAL_INSTRUCTION,
   extractAutomationProposal,
   parseAutomationProposalJson,
   proposalTextFromState,
@@ -102,6 +103,18 @@ describe('parseAutomationProposalJson', () => {
     expect(parseAutomationProposalJson('{"taskText":"x"}')).toBeUndefined();
     expect(parseAutomationProposalJson('{"schedule":"in 15m"}')).toBeUndefined();
     expect(parseAutomationProposalJson('not-json')).toBeUndefined();
+  });
+});
+
+describe('automation proposal instruction', () => {
+  it('shows absolute one-shot times and a recurring start prefix', () => {
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('2026-10-18 15:50');
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('今天 15:50');
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('明天 09:00');
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 16:05');
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('YYYY-MM-DD HH:MM');
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('今天/明天/后天 HH:MM');
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('从 <日期> [HH:MM] 起');
   });
 });
 

@@ -36,6 +36,11 @@ export const AUTO_AGENT_NEEDS_CWD = '请先用 `/cd` 设置工作目录。';
 export const AUTO_MISSING_END = '周期任务必须指定结束时间。';
 export const AUTO_INTERVAL_TOO_SMALL = '间隔过短。';
 export const AUTO_INVALID_SCHEDULE = '无法解析时间表。';
+export const AUTO_INVALID_START =
+  '无法识别开始时间。例如：从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 16:05';
+export const AUTO_START_BEFORE_TODAY = '开始时间不能早于今天。';
+export const AUTO_START_TOO_FAR = '开始时间不能超过 1 年。';
+export const AUTO_END_NOT_AFTER_START = '结束时间必须晚于开始时间。';
 export const AUTO_UNKNOWN_ID = '没有这个编号。';
 export const AUTO_LIST_EMPTY = '暂无';
 export const AUTO_INVALID_END = '无法解析结束时间。';
@@ -71,23 +76,49 @@ export function parseAutoNewArgs(args: string): ParsedAutoNew | { ok: false; rea
   return { taskType, scheduleText, name, taskText };
 }
 
+export type ScheduleTextRejectReason =
+  | ScheduleRejectReason
+  | 'past-time'
+  | 'invalid-start'
+  | 'start-before-today'
+  | 'start-too-far'
+  | 'end-not-after-start';
+
+export type ProposalRejectSource = 'proposal' | 'command';
+
 export type ParseScheduleTextResult =
   | { ok: true; schedule: Schedule }
-  | { ok: false; reason: ScheduleRejectReason; pending?: PendingRecurring };
+  | {
+      ok: false;
+      reason: ScheduleTextRejectReason;
+      pending?: PendingRecurring;
+      startAt?: number;
+      clock?: string;
+    };
 
 export function parseScheduleText(
   text: string,
   options: { taskType: TaskType; now: number; timezone: string },
 ): ParseScheduleTextResult {
-  const relative = parseRelative(text, options.now);
+  const trimmed = text.trim();
+  const relative = parseRelative(trimmed, options.now);
   if (relative !== undefined) {
     return parseSchedule({ kind: 'one-shot', fireAt: relative }, options);
   }
-  const absolute = parseAbsolute(text, options.timezone);
+  const absolute = parseAbsolute(trimmed, options.timezone);
   if (absolute !== undefined) {
     return parseSchedule({ kind: 'one-shot', fireAt: absolute }, options);
   }
-  return parseRecurringText(text, options);
+  const named = parseNamedDayTime(trimmed, options);
+  if (named) {
+    if (!named.ok) return named;
+    return parseSchedule({ kind: 'one-shot', fireAt: named.fireAt }, options);
+  }
+  const bare = parseBareClock(trimmed, options);
+  if (bare) {
+    return parseSchedule({ kind: 'one-shot', fireAt: bare.fireAt }, options);
+  }
+  return parseRecurringText(trimmed, options);
 }
 
 export function completePendingSchedule(
@@ -183,29 +214,167 @@ function parseRecurringText(
   text: string,
   options: { taskType: TaskType; now: number; timezone: string },
 ): ParseScheduleTextResult {
-  const { body, endText } = splitEndSuffix(text);
+  const prefix = parseStartPrefix(text, options.timezone, options.now);
+  if (prefix && !prefix.ok) return { ok: false, reason: prefix.reason };
+  const startAt = prefix ? prefix.startAt : options.now;
+  const source = prefix ? prefix.rest : text;
+  const { body, endText } = splitEndSuffix(source);
   const pending = parsePendingRecurring(body, options.timezone);
   if (!pending) return { ok: false, reason: 'invalid-schedule' };
 
-  const probe = completePendingSchedule(pending, options.now + 30 * 24 * 60 * 60_000, {
+  const probe = completePendingSchedule(pending, startAt + 30 * 24 * 60 * 60_000, {
     taskType: options.taskType,
     now: options.now,
-    startAt: options.now,
+    startAt,
   });
   if (!probe.ok && probe.reason !== 'missing-end-at' && probe.reason !== 'recurring-too-long') {
     return { ok: false, reason: probe.reason };
   }
 
   if (endText === undefined) {
-    return { ok: false, reason: 'missing-end-at', pending };
+    return prefix
+      ? { ok: false, reason: 'missing-end-at', pending, startAt }
+      : { ok: false, reason: 'missing-end-at', pending };
   }
   const endAt = parseEndAtText(endText, options.timezone);
   if (endAt === undefined) return { ok: false, reason: 'invalid-schedule' };
+  if (endAt <= startAt) return { ok: false, reason: 'end-not-after-start' };
   return completePendingSchedule(pending, endAt, {
     taskType: options.taskType,
     now: options.now,
-    startAt: options.now,
+    startAt,
   });
+}
+
+const DAY_OFFSET: Record<string, number> = { 今天: 0, 明天: 1, 后天: 2 };
+
+function parseNamedDayTime(
+  text: string,
+  options: { now: number; timezone: string },
+): { ok: true; fireAt: number } | { ok: false; reason: 'past-time' | 'invalid-schedule'; clock?: string } | undefined {
+  const match = text.match(/^(今天|明天|后天)\s+(\d{1,2})[:：](\d{2})$/);
+  if (!match) return undefined;
+  const day = match[1]!;
+  const hour = Number(match[2]);
+  const minute = Number(match[3]);
+  if (hour > 23 || minute > 59) return { ok: false, reason: 'invalid-schedule' };
+  const offset = DAY_OFFSET[day];
+  if (offset === undefined) return { ok: false, reason: 'invalid-schedule' };
+  const date = shiftLocalDate(options.timezone, options.now, offset);
+  const fireAt = zonedLocalToUtc(options.timezone, date.year, date.month, date.day, hour, minute);
+  if (day === '今天' && fireAt <= options.now) {
+    return { ok: false, reason: 'past-time', clock: formatClock(hour, minute) };
+  }
+  return { ok: true, fireAt };
+}
+
+function parseBareClock(
+  text: string,
+  options: { now: number; timezone: string },
+): { ok: true; fireAt: number } | undefined {
+  const clock = parseClock(text);
+  if (!clock) return undefined;
+  const today = shiftLocalDate(options.timezone, options.now, 0);
+  const todayAt = zonedLocalToUtc(
+    options.timezone,
+    today.year,
+    today.month,
+    today.day,
+    clock.hour,
+    clock.minute,
+  );
+  if (todayAt > options.now) return { ok: true, fireAt: todayAt };
+  const tomorrow = shiftLocalDate(options.timezone, options.now, 1);
+  return {
+    ok: true,
+    fireAt: zonedLocalToUtc(
+      options.timezone,
+      tomorrow.year,
+      tomorrow.month,
+      tomorrow.day,
+      clock.hour,
+      clock.minute,
+    ),
+  };
+}
+
+type StartPrefix =
+  | { ok: true; startAt: number; rest: string }
+  | { ok: false; reason: 'invalid-start' | 'start-before-today' | 'start-too-far' };
+
+function parseStartPrefix(text: string, timezone: string, now: number): StartPrefix | undefined {
+  const zh = text.match(
+    /^从\s+(今天|明天|后天|\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}[:：]\d{2}))?\s+起\s+(.+)$/,
+  );
+  const en = text.match(/^from\s+(\d{4}-\d{2}-\d{2})(?:\s+(\d{1,2}[:：]\d{2}))?\s+(.+)$/i);
+  const match = zh ?? en;
+  if (!match) {
+    if (/^从(?:\s|$)/.test(text) || /^from(?:\s|$)/i.test(text)) {
+      return { ok: false, reason: 'invalid-start' };
+    }
+    return undefined;
+  }
+  const dateToken = match[1]!;
+  const clockToken = match[2];
+  const rest = match[3]!.trim();
+  if (!rest) return { ok: false, reason: 'invalid-start' };
+  const date = resolveStartDate(dateToken, timezone, now);
+  if (!date) return { ok: false, reason: 'invalid-start' };
+  if (dateKey(date) < dateKey(localDate(timezone, now))) {
+    return { ok: false, reason: 'start-before-today' };
+  }
+  const clock = clockToken ? parseClock(clockToken) : { hour: 0, minute: 0 };
+  if (!clock) return { ok: false, reason: 'invalid-start' };
+  const startAt = zonedLocalToUtc(timezone, date.year, date.month, date.day, clock.hour, clock.minute);
+  if (startAt - now > ONE_YEAR_MS) return { ok: false, reason: 'start-too-far' };
+  return { ok: true, startAt, rest };
+}
+
+function resolveStartDate(
+  token: string,
+  timezone: string,
+  now: number,
+): { year: number; month: number; day: number } | undefined {
+  const offset = DAY_OFFSET[token];
+  if (offset !== undefined) return shiftLocalDate(timezone, now, offset);
+  const match = token.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return undefined;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (!isValidCalendarDate(year, month, day)) return undefined;
+  return { year, month, day };
+}
+
+function parseClock(text: string): { hour: number; minute: number } | undefined {
+  const match = text.match(/^(\d{1,2})[:：](\d{2})$/);
+  if (!match) return undefined;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return undefined;
+  return { hour, minute };
+}
+
+function formatClock(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+}
+
+function localDate(timezone: string, utcMs: number): { year: number; month: number; day: number } {
+  const parts = zonedParts(timezone, utcMs);
+  return { year: parts.year, month: parts.month, day: parts.day };
+}
+
+function shiftLocalDate(
+  timezone: string,
+  utcMs: number,
+  days: number,
+): { year: number; month: number; day: number } {
+  const today = localDate(timezone, utcMs);
+  return addLocalDays(today.year, today.month, today.day, days);
+}
+
+function dateKey(date: { year: number; month: number; day: number }): number {
+  return date.year * 10_000 + date.month * 100 + date.day;
 }
 
 function splitEndSuffix(text: string): { body: string; endText?: string } {
@@ -326,20 +495,63 @@ function addLocalMonths(
   return zonedLocalToUtc(timezone, year, month, Math.min(parts.day, lastDay), parts.hour, parts.minute);
 }
 
-export function rejectMessage(reason: ScheduleRejectReason): string {
+export function rejectMessage(
+  reason: ScheduleTextRejectReason,
+  detail?: { clock?: string },
+): string {
   switch (reason) {
     case 'lead-too-soon':
       return AUTO_LEAD_TOO_SOON;
+    case 'past-time': {
+      const clock = detail?.clock ?? 'HH:MM';
+      return `今天 ${clock} 已过。例如：明天 ${clock}`;
+    }
     case 'one-shot-too-far':
       return AUTO_ONE_SHOT_TOO_FAR;
+    case 'start-too-far':
+      return AUTO_START_TOO_FAR;
     case 'missing-end-at':
       return AUTO_MISSING_END;
     case 'interval-too-small':
       return AUTO_INTERVAL_TOO_SMALL;
+    case 'invalid-start':
+      return AUTO_INVALID_START;
+    case 'start-before-today':
+      return AUTO_START_BEFORE_TODAY;
+    case 'end-not-after-start':
+      return AUTO_END_NOT_AFTER_START;
     case 'invalid-timezone':
     case 'recurring-too-long':
     case 'invalid-schedule':
       return AUTO_INVALID_SCHEDULE;
+    default: {
+      const _exhaustive: never = reason;
+      return _exhaustive;
+    }
+  }
+}
+
+function rejectLogReason(reason: ScheduleTextRejectReason): string {
+  switch (reason) {
+    case 'lead-too-soon':
+      return 'below-floor';
+    case 'past-time':
+      return 'past-time';
+    case 'one-shot-too-far':
+    case 'start-too-far':
+    case 'recurring-too-long':
+      return 'too-far';
+    case 'invalid-start':
+    case 'start-before-today':
+      return 'invalid-start';
+    case 'end-not-after-start':
+    case 'invalid-schedule':
+    case 'invalid-timezone':
+      return 'invalid-schedule';
+    case 'missing-end-at':
+      return 'missing-end-at';
+    case 'interval-too-small':
+      return 'interval-too-small';
     default: {
       const _exhaustive: never = reason;
       return _exhaustive;
@@ -419,6 +631,7 @@ export async function handleAutoCommand(args: string, ctx: CommandContext): Prom
 export async function submitAutomationProposal(
   ctx: AutomationProposalContext,
   parsed: ParsedAutoNew,
+  source: ProposalRejectSource = 'command',
 ): Promise<void> {
   if (!ctx.controls.profileConfig.automations.enabled) return;
   if (isIgnoredAutoSender(ctx)) return;
@@ -446,7 +659,11 @@ export async function submitAutomationProposal(
     timezone,
   });
   if (!parsedSchedule.ok && !(parsedSchedule.reason === 'missing-end-at' && parsedSchedule.pending)) {
-    await replyAuto(ctx, rejectMessage(parsedSchedule.reason));
+    log.info('auto', 'rejected', {
+      reason: rejectLogReason(parsedSchedule.reason),
+      source,
+    });
+    await replyAuto(ctx, rejectMessage(parsedSchedule.reason, parsedSchedule));
     return;
   }
 
@@ -463,7 +680,7 @@ export async function submitAutomationProposal(
       taskType: parsed.taskType,
       schedule: parsedSchedule.pending,
       timezone,
-      startAt: now,
+      startAt: parsedSchedule.startAt ?? now,
       nextFireAt: 0,
       chatId: ctx.msg.chatId,
       createdBy: ctx.msg.senderId,
@@ -561,6 +778,7 @@ export async function completeDraftEnd(
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const pending = draft.pendingRecurring;
   if (!pending) return { ok: false, message: AUTO_INVALID_HINT };
+  if (endAt <= draft.startAt) return { ok: false, message: AUTO_END_NOT_AFTER_START };
   const now = (ctx.now ?? Date.now)();
   const parsed = completePendingSchedule(pending, endAt, {
     taskType: draft.taskType,

@@ -1998,7 +1998,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           ...(now ? { now } : {}),
           isLinkDown: () => Boolean(link?.isDown()),
           controls,
-        }, parsed),
+        }, parsed, 'proposal'),
       }
     : undefined;
 

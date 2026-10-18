@@ -478,7 +478,11 @@ async function dispatchAutoAction(
   }
   switch (cmd) {
     case 'auto.reject':
-      log.info('auto', 'rejected', { draftId: taken.draftId, chatId: taken.chatId });
+      log.info('auto', 'rejected', {
+        draftId: taken.draftId,
+        chatId: taken.chatId,
+        source: 'confirm-card',
+      });
       scheduleDraftCardSettle(deps.channel, taken, DRAFT_SETTLED_CANCELLED);
       return actionToast('success', DRAFT_SETTLED_CANCELLED);
     case 'auto.confirm': {

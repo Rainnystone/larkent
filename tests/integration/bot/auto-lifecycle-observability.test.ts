@@ -203,7 +203,9 @@ describe('automation lifecycle and observability', () => {
     );
     expect(h.store.listDrafts()).toEqual([]);
     expect(autoEvents().some((entry) => entry.event === 'draft')).toBe(true);
-    expect(autoEvents().some((entry) => entry.event === 'rejected')).toBe(true);
+    expect(autoEvents().some((entry) =>
+      entry.event === 'rejected' && entry.fields.source === 'confirm-card',
+    )).toBe(true);
 
     await confirmOne(h, CHAT, 'om_new');
     const board = boardForChat(h, CHAT);
