@@ -83,7 +83,9 @@ describe.skipIf(!RUN)('CodexAdapter real binary smoke', () => {
     expect(history.some(entry => entry.threadId === handle)).toBe(true);
   }, 420_000); // Three 90s turns plus process cleanup and history query.
 
-  it('stops an active tool, confirms exit, and can resume the interrupted thread', async () => {
+  // This pins CLI exit and conversation recovery. The shared runner does not
+  // promise to terminate independent processes created by the CLI's tools.
+  it('interrupts a run during a tool call, confirms CLI exit, and resumes the thread', async () => {
     const { dir, adapter } = await createSmoke();
     const run = adapter.run({
       runId: 'codex-smoke-stop', cwd: dir, model,
