@@ -174,17 +174,23 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - 看板卡**只给人看**，不含任何机读块（ADR-008，2026-10-18）。
 - **status push**（ADR-008、ADR-015）：事实源仍是 profile 数据目录下的本地 status 文件（随 scheduler 原子写）；看板与推送都由它派生。
   - 端点：`POST /v1/status`，位于私有 larkent-monitor Worker。只接受 POST，响应体为空。
-  - 鉴权：`HMAC-SHA256(secret, timestamp + "." + body)`，放在请求头；monitor 拒绝与自身时钟相差超过 ±5 分钟的 timestamp；`updatedAt` 单调递增，不大于已存值的推送丢弃（防回放、防乱序）。
+  - 鉴权：`HMAC-SHA256(secret, timestamp + "." + body)`，放在请求头。
+  - 防回放：timestamp 与 monitor 时钟相差 ±5 分钟以内，**且**同一 `botKey` 的 `updatedAt` 严格大于已存值；两条都满足才接受。`updatedAt` 只用于这条单调 upsert，**不参与 miss 判定**（它来自 bridge 时钟，与 monitor 时钟比较会受偏差影响）。
   - payload（时间均为 UTC 毫秒）：
 
 ```json
 {"v":2,"botKey":"<opaque>","updatedAt":0,"items":[{"id":"<opaque>","nextFires":[0],"lastFireAt":0,"paused":false,"endAt":0}]}
 ```
-  - `botKey` 与 `id` 都是不透明值（如对 profile / 编号加盐哈希），**永远不是飞书 ID**。`nextFires` 是未来最多 24 小时、最多 N 个计划时刻（N 在 ticket 定）。不含 chat id、群名、bot 名、任务内容、时间表规则、创建者。
+  - `botKey` 与 `id` 由 bridge 以共享 secret 为 key 做 HMAC 派生（如 `HMAC(secret, profile)`、`HMAC(secret, profile + 编号)` 截断），monitor 无法反推，**永远不是飞书 ID**。轮换 secret 会改变所有 `botKey` / `id`；monitor 把未知 `botKey` 当作新 bot，收到它的第一次推送之前不判 miss。
+  - `nextFires`：未来 24 小时内、最多 N 个计划时刻（N 在 ticket 定），**但只要存在下一次触发就至少 1 个**，哪怕它在 24 小时以后（例如每周任务）。paused 或无后续触发时为空。
+  - 不含 chat id、群名、bot 名、任务内容、时间表规则、创建者。
   - 语义是整份覆盖（幂等 PUT）：每次推送都是该 bot 的完整列表；不在列表里的 item 视为已删除。
-  - 何时推送：任何时间表变化（创建、确认、暂停/恢复、删除、到期）；每次 fire 后若窗口已用掉一半；启动时；link 恢复时。失败按退避重试，下一次触发时做一次全量同步。
+  - 何时推送：任何时间表变化（创建、确认、暂停/恢复、删除、到期）；**每次 fire 开始**（带上新的 `lastFireAt = t`；含推进状态的已跳过 / 已错过结果）；启动时；link 恢复时。允许去抖合并，但最多几秒。失败按退避重试，下一次触发时做一次全量同步。每次 fire 都推，一个 10 分钟 reminder 每天最多 144 次，在 D1 免费额度内。
   - 端点与 secret 是可选配置；未配置时自动化照常在本地运行，不推送。
-- **larkent-monitor**：接收端（存储、miss 判定、唤醒）是 larkent-monitor 仓库里的独立轨道，**不在本 spec 范围内**。Larkent 只依赖上面的端点契约；miss rule 与 fire key 仍按 §1，monitor 在 miss 之后唤醒、每个 fire key 至多一次（ADR-014）。
+- **larkent-monitor**：接收端（存储、扫描、唤醒）是 larkent-monitor 仓库里的独立轨道，**不在本 spec 范围内**。Larkent 依赖的判定契约（ADR-022）：
+  - 对每个未暂停的 item，`t` = `nextFires` 中最早的、`t > lastFireAt` 的时刻；`now > t + scanSlack` 即判 miss。`scanSlack` 是覆盖推送延迟的小常量（如 2 分钟）。
+  - 列出的 `nextFires` 全部 ≤ `lastFireAt` 或已过且未被覆盖时，按最早未覆盖的那个判 miss（即窗口耗尽而 bridge 没再推送）。
+  - fire key 仍按 §1（`id` + 计划时刻）；monitor 在 miss 之后唤醒、每个 fire key 至多一次（ADR-014）。
 - **本机唤醒入口**（Larkent 暴露，被唤醒的 box 调用）：一个新的 CLI 子命令，给定 fire key：Larkent 未运行则启动它（启动补跑生效）；在运行则通知运行中的进程（目前没有稳定的进程间通道，UI server 的 token 每进程随机，不能复用；传输方式在 A5 定义）。若该 fire 已 started → 无输出、不发任何消息、不向任何人报告；否则按 §4 补跑规则处理，补跑恰好一次，> 24 小时按“已错过”留痕。该入口幂等，可重复调用。
 - `/auto`：列出本群本 bot 的任务（任何人）；`/auto pause|resume|delete <编号>` 与按钮等价。
 
@@ -251,10 +257,11 @@ p2p 自动化；命令型自动化；超出 Outbox 1 小时 uuid 窗口的重复
 | 012 | bot 被移出群或群解散 → 删除该群任务（**用户确认 2026-10-16**） | — |
 | 013 | 无固定宽限；miss rule = 未暂停且 `now > nextFireAt` 且 `lastFireAt < nextFireAt`。miss 后 ≤ 24 h 补跑恰好一次（fire key = `id` + 计划 `nextFireAt` 幂等），消息注明原定时间；> 24 h 只标 missed。Larkent 重启 / link 恢复时自身执行同一规则；Larkent 先自行补跑时，monitor 后续唤醒静默（**用户确认 2026-10-17**） | ADR-004 |
 | 014 | larkent-monitor 私有，只服务常驻 Grok Bot box（其他 PC 不在范围）；~~只读置顶看板卡 status block~~ 改为接收 bridge 的 status push（2026-10-18）；接收端实现是 larkent-monitor 仓库的独立轨道，不在本 spec 范围；Cloudflare Worker 扫描 → wake webhook 唤醒 box，无 GitHub Action；每个 fire key 至多唤醒一次；被唤醒侧按 fire key 检查，已执行则静默、不向任何人报告（**用户确认 2026-10-17**） | Out of Scope 中“monitor 预唤醒” |
-| 015 | ~~status block v1：每项短 `id`、`paused`、卡片级 `updatedAt`，note 元素通道（2026-10-17）~~ **改为 push payload v2（用户决定 2026-10-18）**：`v`、不透明 `botKey`、`updatedAt`、`items[{不透明 id, nextFires[]（≤ 24 h / ≤ N 个）, lastFireAt, paused, endAt}]`；无 chat id、名称、内容、规则；整份覆盖；变化 / 窗口过半 / 启动 / link 恢复时推送，失败退避重试 | ADR-008 原字段集；status block v1 |
+| 015 | ~~status block v1：每项短 `id`、`paused`、卡片级 `updatedAt`，note 元素通道（2026-10-17）~~ **改为 push payload v2（用户决定 2026-10-18）**：`v`、不透明 `botKey`、`updatedAt`、`items[{不透明 id, nextFires[]（≤ 24 h / ≤ N 个）, lastFireAt, paused, endAt}]`；无 chat id、名称、内容、规则；整份覆盖；`nextFires` 至少含下一次触发；变化 / 每次 fire 开始 / 启动 / link 恢复时推送，失败退避重试；防回放 = ±5 min timestamp + 每 `botKey` 严格递增 `updatedAt` | ADR-008 原字段集；status block v1 |
 | 016 | 多个错过时刻只补 24 h 内最近一个；其余每个“已错过”必须留痕：看板逐条（含原定时间）+ 群内通知 + 本地日志（**用户确认 2026-10-17**） | Open question 1 |
 | 017 | one-shot 未补跑：`nextFireAt = 0`、看板“已错过”、24 h 后按到期删除；本地日志永久保留错过记录（**用户确认 2026-10-17**） | Open question 2 |
 | 018 | 超出 1 h uuid 窗口的重复投递为理论风险，不开 ticket、不处理（**用户确认 2026-10-17**） | Open question 3 |
 | 019 | agent 任务补跑上限保持 24 h；补跑 result post 注明“补跑，原定 HH:MM”，另写本地 catch-up 日志（**用户确认 2026-10-17**） | Open question 4 |
 | 020 | 任务类型改名 agent 任务（agent task），开关 `automations.agentTasks` 默认关（**用户确认 2026-10-17**） | “agent kind”、`automations.agentKind` |
 | 021 | 定时器每段 ≤ 60 秒，醒来按墙钟重算（取代单段约 24 天的 arm）。准点宽限 60 秒只决定是否标「补跑」：晚于 `nextFireAt` 不超过 60 秒且没有更早的漏跑则不标；miss rule 与 24 小时补跑上限不变。同一 agent 任务上一次未结束则跳过本次：看板“已跳过”+ 本地日志（原定时间与原因），不发群消息、不并发、不排队，`lastStatus` 不覆盖。started fire key 保留 48 小时（**用户确认 2026-10-18**） | ADR-006 的 agent 任务叠跑；长延迟单段 arm |
+| 022 | monitor 判定用 `now > t + scanSlack`（`t` = 最早的 `t > lastFireAt` 的 `nextFires`，`scanSlack` ≈ 2 分钟）。`scanSlack` 只是**检测延迟**，覆盖推送延迟；不改变 §1 的 miss 语义（错过 = `lastFireAt < t`）。`updatedAt` 不参与判定，只用于单调 upsert（**用户确认 2026-10-18**） | 推送后按 `updatedAt` 判覆盖 |
