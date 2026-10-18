@@ -101,19 +101,24 @@ describe('run outcome stream', () => {
     run.close();
     run.releaseCleanup();
     await drainIO();
-    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('PARTIAL_ANSWER')));
-    const answer = h.channel.sent
-      .map((item) => JSON.stringify(item.content))
-      .filter((body) => body.includes('PARTIAL_ANSWER'))
-      .join('\n');
-    expect(answer).toContain(warning);
-    expect(answer.split(warning).length - 1).toBe(1);
-    expect(answer.split('PARTIAL_ANSWER').length - 1).toBe(1);
-    expect(answer).not.toContain('probe_tool_xyz');
-    const staged = h.journal?.list().find((entry) => entry.reply?.markdown.includes('PARTIAL_ANSWER'));
-    expect(staged?.reply?.markdown ?? '').toContain(warning);
-    expect((staged?.reply?.markdown ?? '').split(warning).length - 1).toBe(1);
-    expect(staged?.reply?.markdown ?? '').not.toContain('probe_tool_xyz');
+    // stageReply lands before the fsync; the dedicated card is pushed after it.
+    // Join that writer, then assert those two surfaces. The progress stream is
+    // not in `sent`.
+    await waitFor(() => stagedReply(h.journal) !== undefined);
+    await h.journal?.flush();
+    await waitFor(() => sentCard(h.channel.sent) !== undefined);
+    const dedicated = sentCard(h.channel.sent) ?? '';
+    expect(dedicated).toContain('PARTIAL_ANSWER');
+    expect(dedicated).toContain(warning);
+    expect(dedicated.split(warning).length - 1).toBe(1);
+    expect(dedicated.split('PARTIAL_ANSWER').length - 1).toBe(1);
+    expect(dedicated).not.toContain('probe_tool_xyz');
+    const staged = stagedReply(h.journal) ?? '';
+    expect(staged).toContain('PARTIAL_ANSWER');
+    expect(staged).toContain(warning);
+    expect(staged.split(warning).length - 1).toBe(1);
+    expect(staged.split('PARTIAL_ANSWER').length - 1).toBe(1);
+    expect(staged).not.toContain('probe_tool_xyz');
   });
 
   it('shows redacted signature copy on the card instead of raw stderr paths', async () => {
@@ -303,6 +308,17 @@ function manualRun(recorded: AgentRun) {
   };
 }
 
+function stagedReply(journal: TurnJournal | undefined): string | undefined {
+  return journal?.list().find((entry) => entry.reply !== undefined)?.reply?.markdown;
+}
+
+function sentCard(sent: ReadonlyArray<{ content: unknown }>): string | undefined {
+  const card = sent.find((item) => (
+    typeof item.content === 'object' && item.content !== null && 'card' in item.content
+  ));
+  return card ? JSON.stringify(card.content) : undefined;
+}
+
 function rendered(channel: ReturnType<typeof createRecordingLarkChannel>) {
   return JSON.stringify({ sent: channel.sent, streams: channel.streams });
 }
@@ -326,5 +342,6 @@ async function waitFor(predicate: () => boolean) {
     if (predicate()) return;
     await yieldIO();
   }
+  if (predicate()) return;
   throw new Error('timed out');
 }
