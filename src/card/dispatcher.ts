@@ -1,4 +1,9 @@
-import type { CardActionEvent, LarkChannel, NormalizedMessage } from '@larksuite/channel';
+import type {
+  CardActionEvent,
+  CardActionResponse,
+  LarkChannel,
+  NormalizedMessage,
+} from '@larksuite/channel';
 import type { AgentAdapter } from '../agent/types';
 import type { ActiveRuns } from '../bot/active-runs';
 import type { BackfillLedger } from '../bot/backfill-ledger';
@@ -17,6 +22,7 @@ import {
   AUTO_END_BUSY,
   AUTO_INVALID_END,
   AUTO_INVALID_HINT,
+  AUTO_UNKNOWN_ID,
   completeDraftEnd,
   confirmAutomationDraft,
   resolveEndAt,
@@ -89,7 +95,7 @@ export interface CardDispatchDeps {
   }) => Promise<void> | void;
 }
 
-export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
+export async function handleCardAction(deps: CardDispatchDeps): Promise<CardActionResponse | void> {
   const value = deps.evt.action.value;
   if (!value || typeof value !== 'object') return;
   const payload = value as Record<string, unknown>;
@@ -143,8 +149,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<void> {
     return;
   }
   if (cmd === 'auto.pause' || cmd === 'auto.resume' || cmd === 'auto.delete') {
-    await dispatchBoardAction(deps, payload, cmd, accessDecision);
-    return;
+    return dispatchBoardAction(deps, payload, cmd, accessDecision);
   }
   if (cmd) {
     if (isSignedBridgeCallback(payload) && !verifyBridgeToken(deps, payload, scope, cmd)) {
@@ -490,62 +495,65 @@ async function dispatchBoardAction(
   payload: Record<string, unknown>,
   cmd: BoardCardAction,
   access: ReturnType<typeof evaluateAccess>,
-): Promise<void> {
+): Promise<CardActionResponse | void> {
   if (!access.ok) return;
   const botOpenId = deps.channel.botIdentity?.openId;
   if (botOpenId && deps.evt.operator.openId === botOpenId) {
-    await sendAutoInvalid(deps);
-    return;
+    return boardToast('error', AUTO_INVALID_HINT);
   }
   const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
   if (!deps.boardAuth || !deps.automations || !deps.automationsScheduler || !token) {
-    await sendAutoInvalid(deps);
-    return;
+    return boardToast('error', AUTO_INVALID_HINT);
   }
   if (!deps.controls.profileConfig.automations.enabled) {
-    await sendAutoInvalid(deps);
-    return;
+    return boardToast('error', AUTO_INVALID_HINT);
   }
   const registered = deps.automations.findBoardByMessageId(deps.evt.messageId);
   if (!registered) {
-    await sendAutoInvalid(deps);
-    return;
+    return boardToast('error', AUTO_INVALID_HINT);
   }
   const verified = deps.boardAuth.verify(token);
   if (!verified.ok || verified.payload.action !== cmd) {
-    await sendAutoInvalid(deps);
-    return;
+    return boardToast('error', AUTO_INVALID_HINT);
   }
   if (
     verified.payload.chatId !== deps.evt.chatId
     || verified.payload.chatId !== registered.chatId
   ) {
-    await sendAutoInvalid(deps);
-    return;
+    return boardToast('error', AUTO_INVALID_HINT);
   }
   const item = deps.automations.get(verified.payload.itemId);
   if (!item || item.chatId !== registered.chatId) {
-    await sendAutoInvalid(deps);
-    return;
+    return boardToast('error', AUTO_UNKNOWN_ID);
   }
   switch (cmd) {
-    case 'auto.pause':
-      await deps.automationsScheduler.pause(item.id);
+    case 'auto.pause': {
+      const ok = await deps.automationsScheduler.pause(item.id);
+      if (!ok) return boardToast('error', AUTO_UNKNOWN_ID);
       log.info('auto', 'paused', { id: item.id });
-      return;
-    case 'auto.resume':
-      await deps.automationsScheduler.resume(item.id);
+      return boardToast('success', `已暂停 #${item.id}`);
+    }
+    case 'auto.resume': {
+      const ok = await deps.automationsScheduler.resume(item.id);
+      if (!ok) return boardToast('error', AUTO_UNKNOWN_ID);
       log.info('auto', 'resumed', { id: item.id });
-      return;
-    case 'auto.delete':
-      await deps.automationsScheduler.delete(item.id);
+      return boardToast('success', `已恢复 #${item.id}`);
+    }
+    case 'auto.delete': {
+      const ok = await deps.automationsScheduler.delete(item.id);
+      if (!ok) return boardToast('error', AUTO_UNKNOWN_ID);
       log.info('auto', 'deleted', { id: item.id });
-      return;
+      return boardToast('success', `已删除 #${item.id}`);
+    }
     default: {
       const _exhaustive: never = cmd;
       return _exhaustive;
     }
   }
+}
+
+function boardToast(type: 'success' | 'error', content: string): CardActionResponse {
+  return { toast: { type, content } };
 }
 
 function readEndInput(

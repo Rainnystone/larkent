@@ -143,6 +143,7 @@ describe('automation lifecycle and observability', () => {
     );
     expect(gone.store.get(1)?.paused).toBe(true);
     expect(gone.store.list()).toHaveLength(1);
+    await waitFor(() => boardForChat(gone, CHAT).messageId !== first.messageId);
     const replaced = boardForChat(gone, CHAT);
     expect(replaced.messageId).not.toBe(first.messageId);
     expectNoStatusBlock(replaced.text);
@@ -207,9 +208,11 @@ describe('automation lifecycle and observability', () => {
     await h.channel.handlers.cardAction?.(
       boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
+    await waitFor(() => boardForChat(h, CHAT).text.includes('"cmd":"auto.resume"'));
     await h.channel.handlers.cardAction?.(
       boardClick(USER, resumeToken(boardForChat(h, CHAT).text), board.messageId, 'auto.resume'),
     );
+    await waitFor(() => boardForChat(h, CHAT).text.includes('"cmd":"auto.pause"'));
     await h.channel.handlers.cardAction?.(
       boardClick(USER, deleteToken(boardForChat(h, CHAT).text), board.messageId, 'auto.delete'),
     );
@@ -332,6 +335,9 @@ async function confirmOne(
   await h.channel.handlers.cardAction?.(
     cardClick(USER, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!, chatId),
   );
+  await waitFor(() => Boolean(h.store.getBoard(chatId)) && h.channel.sent.some((item) =>
+    item.chatId === chatId && isBoardContent(item.content),
+  ));
 }
 
 function mention(

@@ -190,6 +190,7 @@ export function wrapChannelOutbound(
     };
   }
   wrapMessageList(channel, timeoutMs, opts.onResult);
+  wrapCardkitUpdate(channel, timeoutMs, opts.onResult);
 }
 
 function wrapMessageList(
@@ -197,21 +198,47 @@ function wrapMessageList(
   timeoutMs: number,
   onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
 ): void {
-  const rawClient = (channel as { rawClient?: unknown }).rawClient;
-  if (!rawClient || typeof rawClient !== 'object') return;
-  const im = (rawClient as { im?: unknown }).im;
-  if (!im || typeof im !== 'object') return;
-  const v1 = (im as { v1?: unknown }).v1;
-  if (!v1 || typeof v1 !== 'object') return;
-  const message = (v1 as { message?: unknown }).message;
-  if (!message || typeof message !== 'object') return;
-  const rec = message as Record<string, unknown>;
-  const current = rec.list;
+  wrapTimedRawMethod(rawNested(channel, ['rawClient', 'im', 'v1', 'message']), 'list', 'message.list', timeoutMs, onResult);
+}
+
+function wrapCardkitUpdate(
+  channel: object,
+  timeoutMs: number,
+  onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
+): void {
+  wrapTimedRawMethod(
+    rawNested(channel, ['rawClient', 'cardkit', 'v1', 'card']),
+    'update',
+    'cardkit.card.update',
+    timeoutMs,
+    onResult,
+  );
+}
+
+function rawNested(root: object, path: string[]): Record<string, unknown> | undefined {
+  let current: unknown = root;
+  for (const key of path) {
+    if (!current || typeof current !== 'object') return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  if (!current || typeof current !== 'object') return undefined;
+  return current as Record<string, unknown>;
+}
+
+function wrapTimedRawMethod(
+  target: Record<string, unknown> | undefined,
+  method: string,
+  op: string,
+  timeoutMs: number,
+  onResult?: (result: { ok: true } | { ok: false; error: unknown }) => void,
+): void {
+  if (!target) return;
+  const current = target[method];
   if (typeof current !== 'function') return;
-  const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(message);
-  rec.list = (...args: unknown[]) => {
+  const orig = (current as (...args: unknown[]) => Promise<unknown>).bind(target);
+  target[method] = (...args: unknown[]) => {
     const work = Promise.resolve(orig(...args));
-    return withOutboundTimeout('message.list', work, timeoutMs).then(
+    return withOutboundTimeout(op, work, timeoutMs).then(
       (result) => {
         onResult?.({ ok: true });
         return result;

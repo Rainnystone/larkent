@@ -356,6 +356,10 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(await readStatus(h.statusPath)).toMatchObject({
       items: [expect.objectContaining({ lastStatus: 'running', lastFireAt: t0, missed: 0 })],
     });
+    await waitFor(() => {
+      const board = JSON.stringify(h.channel.sent) + JSON.stringify(h.channel.updatedCards);
+      return board.includes('已跳过 原定 2026-01-02 13:00');
+    });
     const board = JSON.stringify(h.channel.sent) + JSON.stringify(h.channel.updatedCards);
     expect(board).toContain('已跳过 原定 2026-01-02 13:00');
     expect(board).toContain('进行中');

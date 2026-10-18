@@ -281,6 +281,15 @@ export interface BridgeChannel {
   wakeAutomation(fireKey: string): Promise<void>;
 }
 
+/** Drain `onChanged`'s setImmediate board refresh, then wait until it is idle. */
+async function awaitDeferredBoard(board: AutomationBoard | undefined): Promise<void> {
+  if (!board) return;
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+  await board.idle();
+}
+
 export interface StartChannelDeps {
   cfg: AppConfig;
   agent: AgentAdapter;
@@ -897,7 +906,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       isLinkUp: () => !closing && !started.isDown(),
       enabled: () => controls.profileConfig.automations.enabled,
       agentTasks: () => controls.profileConfig.automations.agentTasks,
-      onChanged: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
+      onChanged: () => {
+        const board = automationsCtl.board;
+        if (!board) return Promise.resolve();
+        setImmediate(() => {
+          void board.refresh();
+        });
+        return Promise.resolve();
+      },
       wakeDir: deps.appPaths?.automationsWakeDir
         ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
       statusPush: {
@@ -961,8 +977,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     },
     cardAction: async (evt) => {
       if (closing) return;
-      await withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
-        await handleCardAction({
+      return withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
+        return handleCardAction({
           channel,
           evt,
           sessions,
@@ -1140,21 +1156,24 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
   if (automationsScheduler) await automationsScheduler.start();
+  await awaitDeferredBoard(automationsCtl.board);
 
   return {
     channel,
     recover,
     recoverMissed: recover,
     tickLink: () => started.tick(),
-    wakeAutomation: (fireKey) => automationsScheduler
-      ? automationsScheduler.wake(fireKey)
-      : Promise.resolve(),
+    wakeAutomation: async (fireKey) => {
+      if (!automationsScheduler) return;
+      await automationsScheduler.wake(fireKey);
+      await awaitDeferredBoard(automationsCtl.board);
+    },
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
       detachAutomationChatLifecycle();
       automationsScheduler?.stop();
       await automationsScheduler?.idle();
-      await automationsCtl.board?.idle();
+      await awaitDeferredBoard(automationsCtl.board);
       await recovery.stop();
       outboxSweep.stop();
       resumeCandidates.clear();

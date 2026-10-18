@@ -5,7 +5,7 @@ export interface RecordingLarkChannel extends FakeChannel {
   botIdentity: { openId: string; name: string };
   handlers: {
     message?: (msg: unknown) => Promise<void> | void;
-    cardAction?: (evt: unknown) => Promise<void> | void;
+    cardAction?: (evt: unknown) => Promise<unknown> | unknown;
     comment?: (evt: unknown) => Promise<void> | void;
     reconnecting?: () => void;
     reconnected?: () => void;

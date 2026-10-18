@@ -2,9 +2,10 @@ import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { BOARD_CARD_TTL_MS } from '../../../src/automations/board-auth';
+import { AUTO_INVALID_HINT, AUTO_P2P_HINT, AUTO_UNKNOWN_ID } from '../../../src/automations/command';
 import { CATCH_UP_WINDOW_MS } from '../../../src/automations/schedule';
 import { AutomationsStore } from '../../../src/automations/store';
-import { AUTO_INVALID_HINT, AUTO_P2P_HINT } from '../../../src/automations/command';
 import { FEISHU_LINK_SILENT_PROBE_MS, FEISHU_LINK_TICK_MS } from '../../../src/bot/feishu-link';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
@@ -47,6 +48,7 @@ describe('automation board card', () => {
     await h.channel.handlers.cardAction?.(
       cardClick(MATE, confirmToken(confirm), h.store.listDrafts()[0]!.cardMessageId!),
     );
+    await waitForBoard(h);
 
     const board = latestBoard(h);
     expect(board.text).toContain('#1');
@@ -89,17 +91,24 @@ describe('automation board card', () => {
     await expect(readFile(h.logPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
 
     const sendsBeforePause = h.channel.sent.filter((item) => isBoardContent(item.content)).length;
+    const updatesBeforePause = h.channel.updatedCards.length;
     const originalPause = pauseToken(board.text);
     h.setNow(h.now() + 1);
-    await h.channel.handlers.cardAction?.(
+    const pauseClick = await h.channel.handlers.cardAction?.(
       boardClick(USER, originalPause, board.messageId, 'auto.pause'),
     );
+    expect(pauseClick).toEqual({ toast: { type: 'success', content: '已暂停 #1' } });
+    expect(h.store.get(1)?.paused).toBe(true);
+    expect(h.channel.updatedCards).toHaveLength(updatesBeforePause);
+    expect(latestBoard(h).text).toContain('"cmd":"auto.pause"');
+    expect(latestBoard(h).text).not.toContain('"cmd":"auto.resume"');
 
+    await waitFor(() => latestBoard(h).text.includes('"cmd":"auto.resume"'));
     const paused = latestBoard(h);
     expect(paused.messageId).toBe(board.messageId);
     expect(h.channel.sent.filter((item) => isBoardContent(item.content))).toHaveLength(sendsBeforePause);
+    expect(h.channel.updatedCards).toHaveLength(updatesBeforePause + 1);
     expectNoStatusBlock(paused.text);
-    expect(h.store.get(1)?.paused).toBe(true);
     const pausedStatus = JSON.parse(await readFile(h.statusPath, 'utf8')) as {
       updatedAt: number;
       items: Array<{ paused: boolean }>;
@@ -112,11 +121,34 @@ describe('automation board card', () => {
     );
     expect(h.store.get(1)?.paused).toBe(true);
 
-    await h.channel.handlers.cardAction?.(
+    const forged = await h.channel.handlers.cardAction?.(
       boardClick(USER, 'forged-board-token', paused.messageId, 'auto.pause'),
     );
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    expect(forged).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+    expect(markdowns(h.channel)).not.toContain(AUTO_INVALID_HINT);
     expect(h.store.get(1)?.paused).toBe(true);
+  });
+
+  it('toasts AUTO_INVALID_HINT for an expired board token and AUTO_UNKNOWN_ID when the item is gone', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    const board = latestBoard(h);
+    const token = pauseToken(board.text);
+    h.setNow(h.now() + BOARD_CARD_TTL_MS + 1);
+    const expired = await h.channel.handlers.cardAction?.(
+      boardClick(USER, token, board.messageId, 'auto.pause'),
+    );
+    expect(expired).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+    expect(h.store.get(1)?.paused).toBe(false);
+    expect(markdowns(h.channel)).not.toContain(AUTO_INVALID_HINT);
+
+    h.setNow(NOW);
+    expect(await h.store.delete(1)).toBe(true);
+    const missing = await h.channel.handlers.cardAction?.(
+      boardClick(USER, token, board.messageId, 'auto.pause'),
+    );
+    expect(missing).toEqual({ toast: { type: 'error', content: AUTO_UNKNOWN_ID } });
+    expect(markdowns(h.channel)).not.toContain(AUTO_UNKNOWN_ID);
   });
 
   it('lists missed instants as 已错过 rows from the A0c snapshot, keeps the log, and drops the rows after 24 h', async () => {
@@ -168,6 +200,7 @@ describe('automation board card', () => {
     await h.channel.handlers.cardAction?.(
       boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
+    await waitFor(() => !latestBoard(h).text.includes('已错过 原定 2026-01-02 12:00'));
     const after = latestBoard(h);
     expect(after.text).not.toContain('已错过 原定 2026-01-02 12:00');
     expect(after.text).not.toContain('已错过 原定 2026-01-02 13:00');
@@ -184,6 +217,7 @@ describe('automation board card', () => {
     await h.channel.handlers.cardAction?.(
       boardClick(MATE, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
+    await waitFor(() => h.channel.pins.some((pin) => pin.messageId === board.messageId));
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([board.messageId]);
     expect(h.store.list()).toHaveLength(1);
     expect(latestBoard(h).messageId).toBe(board.messageId);
@@ -197,6 +231,7 @@ describe('automation board card', () => {
     expect(boardSends()).toBe(1);
 
     await h.restart();
+    await waitForBoard(h);
     expect(latestBoard(h).messageId).toBe(first.messageId);
     expect(boardSends()).toBe(1);
 
@@ -225,6 +260,7 @@ describe('automation board card', () => {
 
     await h.channel.handlers.message?.(mention('om_pause', '/auto pause 1'));
     expect(h.store.get(1)?.paused).toBe(true);
+    await waitFor(() => latestBoard(h).text.includes('"cmd":"auto.resume"'));
     expectNoStatusBlock(latestBoard(h).text);
 
     await h.channel.handlers.message?.(mention('om_resume', '/auto resume 1'));
@@ -232,7 +268,7 @@ describe('automation board card', () => {
 
     await h.channel.handlers.message?.(mention('om_delete', '/auto delete 1'));
     expect(h.store.list()).toEqual([]);
-    expect(latestBoard(h).text).toContain('暂无');
+    await waitFor(() => latestBoard(h).text.includes('暂无'));
     expect(h.channel.pins).toEqual([]);
   });
 
@@ -244,6 +280,11 @@ describe('automation board card', () => {
     await h.channel.handlers.cardAction?.(
       boardClick(USER, pauseToken(first.text), first.messageId, 'auto.pause'),
     );
+    await waitFor(() => {
+      const nextId = latestBoard(h).messageId;
+      return nextId !== first.messageId
+        && h.channel.pins.some((pin) => pin.messageId === nextId);
+    });
     const next = latestBoard(h);
     expect(next.messageId).not.toBe(first.messageId);
     expectNoStatusBlock(next.text);
@@ -262,6 +303,7 @@ describe('automation board card', () => {
       boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
     expect(h.store.get(1)?.paused).toBe(true);
+    await waitFor(() => h.channel.callLog.some((call) => call.op === 'updateCard'));
     expect(h.channel.callLog.some((call) => call.op === 'updateCard')).toBe(true);
     expect(h.channel.callLog.some((call) => call.op === 'updateCardById')).toBe(false);
   });
@@ -270,23 +312,28 @@ describe('automation board card', () => {
     const h = await harness();
     await confirmOne(h);
     const board = latestBoard(h);
-    await h.channel.handlers.cardAction?.(
+    const pausedTap = await h.channel.handlers.cardAction?.(
       boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
+    expect(pausedTap).toEqual({ toast: { type: 'success', content: '已暂停 #1' } });
     expect(h.store.get(1)?.paused).toBe(true);
+    await waitFor(() => latestBoard(h).text.includes('"cmd":"auto.resume"'));
 
     const paused = latestBoard(h);
-    await h.channel.handlers.cardAction?.(
+    const resumedTap = await h.channel.handlers.cardAction?.(
       boardClick(MATE, boardToken(paused.text, 'auto.resume'), paused.messageId, 'auto.resume'),
     );
+    expect(resumedTap).toEqual({ toast: { type: 'success', content: '已恢复 #1' } });
     expect(h.store.get(1)?.paused).toBe(false);
+    await waitFor(() => latestBoard(h).text.includes('"cmd":"auto.pause"'));
 
     const live = latestBoard(h);
-    await h.channel.handlers.cardAction?.(
+    const deletedTap = await h.channel.handlers.cardAction?.(
       boardClick(USER, boardToken(live.text, 'auto.delete'), live.messageId, 'auto.delete'),
     );
+    expect(deletedTap).toEqual({ toast: { type: 'success', content: '已删除 #1' } });
     expect(h.store.list()).toEqual([]);
-    expect(latestBoard(h).text).toContain('暂无');
+    await waitFor(() => latestBoard(h).text.includes('暂无'));
   });
 
   it('still refreshes the board when the first cardless draft fails on link recovery', async () => {
@@ -304,10 +351,10 @@ describe('automation board card', () => {
       order.push('create');
       return origCreate(card);
     };
-    const origUpdate = h.channel.updateCardById.bind(h.channel);
-    h.channel.updateCardById = async (cardId, card, sequence) => {
+    const origUpdate = h.channel.rawClient.cardkit.v1.card.update.bind(h.channel.rawClient.cardkit.v1.card);
+    h.channel.rawClient.cardkit.v1.card.update = async (params) => {
       order.push('update');
-      return origUpdate(cardId, card, sequence);
+      return origUpdate(params);
     };
     h.channel.cardErrors.create = new CardSchemaError();
     h.channel.connectionState = 'connected';
@@ -506,6 +553,16 @@ async function confirmOne(h: Awaited<ReturnType<typeof harness>>): Promise<void>
   await h.channel.handlers.cardAction?.(
     cardClick(USER, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!),
   );
+  await waitForBoard(h);
+}
+
+async function waitForBoard(h: { store: AutomationsStore; channel: ReturnType<typeof createRecordingLarkChannel> }): Promise<void> {
+  await waitFor(() => {
+    const binding = h.store.getBoard(CHAT);
+    return Boolean(binding)
+      && h.channel.sent.some((item) => isBoardContent(item.content))
+      && h.channel.pins.some((pin) => pin.messageId === binding!.messageId);
+  });
 }
 
 function mention(

@@ -226,7 +226,27 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
             },
             async update(params: unknown): Promise<unknown> {
               requests.push({ method: 'cardkit.v1.card.update', params });
-              return {};
+              throwCardUpdateIfArmed();
+              const path = asRecord(asRecord(params)?.path);
+              const cardId = typeof path?.card_id === 'string' ? path.card_id : '';
+              const payload = nestedData(params);
+              const wrapped = asRecord(payload?.card);
+              const rawCard = typeof wrapped?.data === 'string' ? wrapped.data : undefined;
+              let cardJson: unknown = undefined;
+              if (rawCard) {
+                try {
+                  cardJson = JSON.parse(rawCard) as unknown;
+                } catch {
+                  cardJson = undefined;
+                }
+              }
+              if (cardJson !== undefined) {
+                assertCardSchema2(cardJson);
+                cardById.set(cardId, cardJson);
+                const messageId = messageByCard.get(cardId);
+                if (messageId) applyCardToMessage(messageId, cardJson);
+              }
+              return { code: 0, msg: 'ok' };
             },
           },
         },

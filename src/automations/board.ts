@@ -3,9 +3,10 @@ import { dirname } from 'node:path';
 import type { LarkChannel } from '@larksuite/channel';
 import * as lockfile from 'proper-lockfile';
 import { readCardApiError } from '../card/card-api-error';
+import { updateCardByCardId } from '../card/cardkit-update';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
-import { classify, isGoneMessage, isNotInChat } from '../bot/feishu-error';
+import { classify, isNotInChat } from '../bot/feishu-error';
 import { automationBoardCard } from './board-card';
 import { listPinnedMessageIds, pinMessage, unpinMessage } from './board-pins';
 import type { BoardActionAuth } from './board-auth';
@@ -151,7 +152,13 @@ class Board implements AutomationBoard {
       } catch (error) {
         if (isNotInChat(error)) throw error;
         if (classify(error) === 'link') throw error;
-        if (!isGoneMessage(error)) throw error;
+        const api = readCardApiError(error);
+        log.fail('auto', error, {
+          event: 'board',
+          chatId,
+          ...(api.code !== undefined ? { code: api.code } : {}),
+          ...(api.msg !== undefined ? { msg: api.msg } : {}),
+        });
         log.warn('auto', 'board.resend', { chatId });
         await this.unpinQuietly(binding.messageId);
       }
@@ -169,7 +176,7 @@ class Board implements AutomationBoard {
   private async patch(binding: AutomationBoardBinding, card: object): Promise<void> {
     if (binding.cardId) {
       const sequence = (binding.sequence ?? 0) + 1;
-      await this.channel.updateCardById(binding.cardId, card, sequence);
+      await updateCardByCardId(this.channel, binding.cardId, card, sequence);
       await this.store.setBoard({ ...binding, sequence });
       return;
     }
