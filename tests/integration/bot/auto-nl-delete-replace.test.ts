@@ -478,7 +478,13 @@ describe('A28 natural-language delete and replace', () => {
     expect(recallAttempts).toBe(1);
     expect(h.store.list().map((entry) => entry.chatId)).toEqual([OTHER]);
     expect(h.journal.list().some((entry) => entry.reply?.state === 'staged' && entry.reply.supersedes)).toBe(false);
-    const removed = await logEvents(h.logsDir, 'removed-from-chat');
+    // removeChat updates the store, persists, then logs. The store can be
+    // empty while that log line is still unwritten.
+    const removed = await waitForLogged(
+      h.logsDir,
+      'removed-from-chat',
+      (events) => events.some((entry) => entry._chatId === CHAT),
+    );
     expect(removed).toEqual([expect.objectContaining({ _chatId: CHAT })]);
     expect(await logEvents(h.logsDir, 'promise-recall-failed')).toHaveLength(1);
   }, 15_000);
@@ -568,7 +574,11 @@ describe('A28 natural-language delete and replace', () => {
 
     await driven.h.bridge.recover();
     expect(driven.recallAttempts()).toBe(2);
-    expect(await logEvents(driven.h.logsDir, 'removed-from-chat')).toEqual([
+    expect(await waitForLogged(
+      driven.h.logsDir,
+      'removed-from-chat',
+      (events) => events.some((entry) => entry._chatId === CHAT),
+    )).toEqual([
       expect.objectContaining({ _chatId: CHAT }),
     ]);
   }, 15_000);
@@ -1054,6 +1064,28 @@ async function logEvents(logsDir: string, event: string): Promise<Array<Record<s
   return text.trim().split('\n')
     .map((line) => JSON.parse(line) as Record<string, unknown>)
     .filter((entry) => entry.event === event);
+}
+
+async function waitForLogged(
+  logsDir: string,
+  event: string,
+  ready: (events: Array<Record<string, unknown>>) => boolean,
+): Promise<Array<Record<string, unknown>>> {
+  const deadline = Date.now() + 8_000;
+  let found: Array<Record<string, unknown>> = [];
+  while (Date.now() < deadline) {
+    try {
+      found = await logEvents(logsDir, event);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== 'ENOENT') throw error;
+      found = [];
+    }
+    if (ready(found)) return found;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await yieldIO();
+  }
+  throw new Error('timed out waiting for the natural-language delete or replace flow');
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {
