@@ -264,6 +264,20 @@ export class TurnJournal {
     });
   }
 
+  reviseDeliveredReply(turnId: string, markdown: string, messageId?: string): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    if (!current?.reply) return;
+    const nextId = messageId?.trim();
+    this.patch(turnId, {
+      reply: {
+        ...current.reply,
+        markdown,
+        ...(nextId ? { messageId: nextId } : {}),
+        state: 'sent',
+      },
+    });
+  }
+
   replyDelivered(turnId: string, messageId?: string): void {
     if (messageId?.trim()) this.noteReplyReceipt(turnId, messageId);
     const current = this.entries.find((item) => item.turnId === turnId);

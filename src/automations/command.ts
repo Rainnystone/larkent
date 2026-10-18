@@ -311,6 +311,33 @@ export function automationProposalSuffix(
   }
 }
 
+export type ReplaceProposalApplyResult =
+  | { posted: true }
+  | { posted: false; reason: 'target-gone' | 'not-posted' };
+
+/**
+ * User-facing line after apply. A replace that did not post a draft must not
+ * keep a line that claims a confirmation card was generated.
+ */
+export function replaceProposalLineAfterApply(
+  planned: string | undefined,
+  proposal: AutomationProposalFields,
+  applied: ReplaceProposalApplyResult | void,
+): string | undefined {
+  if (!applied || applied.posted || proposal.op !== 'replace') return planned;
+  if (!planned?.includes('已生成确认卡')) return planned;
+  switch (applied.reason) {
+    case 'target-gone':
+      return automationProposalSuffix({ outcome: 'unknown-id' }, proposal);
+    case 'not-posted':
+      return undefined;
+    default: {
+      const _exhaustive: never = applied.reason;
+      return _exhaustive;
+    }
+  }
+}
+
 function proposalVerb(op: AutomationProposalFields['op']): string {
   switch (op) {
     case 'create':
@@ -1031,11 +1058,20 @@ export async function submitAutomationDeleteProposal(
 export async function submitAutomationReplaceProposal(
   ctx: AutomationProposalContext,
   proposal: Extract<AutomationProposalFields, { op: 'replace' }>,
-): Promise<void> {
-  if (!canPostMutationProposal(ctx)) return;
+): Promise<ReplaceProposalApplyResult> {
+  if (!canPostMutationProposal(ctx)) return { posted: false, reason: 'not-posted' };
   const item = ctx.automations?.get(proposal.id);
-  if (!item || item.chatId !== ctx.msg.chatId || !ctx.automations) return;
-  if (proposal.taskType === 'agent' && !ctx.controls.profileConfig.automations.agentTasks) return;
+  if (!item || item.chatId !== ctx.msg.chatId || !ctx.automations) {
+    log.info('auto', 'rejected', {
+      reason: 'unknown-id',
+      source: 'proposal',
+      id: proposal.id,
+    });
+    return { posted: false, reason: 'target-gone' };
+  }
+  if (proposal.taskType === 'agent' && !ctx.controls.profileConfig.automations.agentTasks) {
+    return { posted: false, reason: 'not-posted' };
+  }
 
   const now = (ctx.now ?? Date.now)();
   const timezone = ctx.controls.profileConfig.automations.timezone;
@@ -1056,7 +1092,7 @@ export async function submitAutomationReplaceProposal(
     case 'reject':
     case 'delete':
     case 'unknown-id':
-      return;
+      return { posted: false, reason: 'not-posted' };
     case 'needs-end': {
       const draft = await ctx.automations.saveDraft({
         op: 'replace',
@@ -1086,7 +1122,7 @@ export async function submitAutomationReplaceProposal(
           waiting: 'end',
         });
       }
-      return;
+      return draftPostResult(ctx.automations, draft.draftId);
     }
     case 'confirm': {
       const nextFireAt = nextFireAfter(verdict.schedule, now);
@@ -1121,13 +1157,19 @@ export async function submitAutomationReplaceProposal(
           chatId: ctx.msg.chatId,
         });
       }
-      return;
+      return draftPostResult(ctx.automations, draft.draftId);
     }
     default: {
       const _exhaustive: never = verdict;
       return _exhaustive;
     }
   }
+}
+
+function draftPostResult(store: AutomationsStore, draftId: string): ReplaceProposalApplyResult {
+  return store.getDraft(draftId)
+    ? { posted: true }
+    : { posted: false, reason: 'not-posted' };
 }
 
 function canPostMutationProposal(ctx: AutomationProposalContext): boolean {
@@ -1212,12 +1254,17 @@ export async function completeDraftEnd(
   if (!hasRemainingFire(parsed.schedule, now)) {
     return { ok: false, message: rejectMessage('no-remaining-fires') };
   }
+  // A second tap on this end card is still queued behind this await. Leave
+  // the binding in place until it can lose the nonce check, then drop the
+  // end card before the confirm send so a link failure can be retried.
+  await Promise.resolve();
   const nextFireAt = nextFireAfter(parsed.schedule, now);
   const updated = await ctx.automations.updateDraft(draft.draftId, {
     schedule: parsed.schedule,
     endAt,
     nextFireAt,
     pendingRecurring: null,
+    cardMessageId: null,
   });
   if (!updated || updated.op === 'delete') return { ok: false, message: AUTO_INVALID_HINT };
   await postConfirmCard({

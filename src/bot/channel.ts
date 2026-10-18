@@ -139,10 +139,12 @@ import {
   flushPendingDraftCards,
   noteAutomationRejected,
   planAutomationProposalReply,
+  replaceProposalLineAfterApply,
   submitAutomationDeleteProposal,
   submitAutomationProposal,
   submitAutomationReplaceProposal,
   type AutomationProposalVerdict,
+  type ReplaceProposalApplyResult,
 } from '../automations/command';
 import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
@@ -2033,7 +2035,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             targetInChat: Boolean(target && target.chatId === lastMsg.chatId),
           });
         },
-        apply: (parsed: AutomationProposalFields) => {
+        apply: (parsed: AutomationProposalFields): Promise<ReplaceProposalApplyResult | void> => {
           const proposalCtx = {
             channel,
             msg: lastMsg,
@@ -2560,7 +2562,7 @@ async function deliverFinalReply(input: {
   automation?: {
     honor: boolean;
     plan: (parsed: AutomationProposalFields) => AutomationProposalVerdict;
-    apply: (parsed: AutomationProposalFields) => Promise<void>;
+    apply: (parsed: AutomationProposalFields) => Promise<ReplaceProposalApplyResult | void>;
   };
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
@@ -2615,7 +2617,21 @@ async function deliverFinalReply(input: {
       return;
     }
     if (!deliverProposal) return;
-    await input.automation.apply(parsed);
+    const applied = await input.automation.apply(parsed);
+    const nextLine = replaceProposalLineAfterApply(proposalSuffix, parsed, applied);
+    if (nextLine === proposalSuffix || !proposalSuffix) return;
+    await reconcileReplacePromise({
+      channel: input.channel,
+      chatId: input.chatId,
+      replyMode: input.replyMode,
+      cardRenderOptions: input.cardRenderOptions,
+      journal: input.journal,
+      turnId: input.turnId,
+      state: replyState,
+      plannedSuffix: proposalSuffix,
+      replacement: nextLine,
+      sendOpts: input.sendOpts,
+    });
   };
   const visibleBody = renderText(replyState);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
@@ -2761,6 +2777,108 @@ function settledReplyCard(
       const _exhaustive: never = replyMode;
       return _exhaustive;
     }
+  }
+}
+
+function stateWithoutProposalLine(
+  state: RunState,
+  promise: string,
+  replacement: string | undefined,
+): RunState {
+  const needle = promise.trim();
+  let index = -1;
+  for (let i = state.blocks.length - 1; i >= 0; i -= 1) {
+    const block = state.blocks[i];
+    if (block?.kind === 'text' && block.content.trim() === needle) {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) return state;
+  const blocks = state.blocks.slice();
+  if (!replacement) {
+    blocks.splice(index, 1);
+    return { ...state, blocks };
+  }
+  const block = blocks[index];
+  if (block?.kind !== 'text') return state;
+  blocks[index] = { ...block, content: replacement };
+  return { ...state, blocks };
+}
+
+async function reconcileReplacePromise(input: {
+  channel: LarkChannel;
+  chatId: string;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+  cardRenderOptions: { signCallback?: (action: string) => string };
+  journal?: TurnJournal;
+  turnId?: string;
+  state: RunState;
+  plannedSuffix: string;
+  replacement: string | undefined;
+  sendOpts: { replyTo: string; replyInThread?: boolean };
+}): Promise<void> {
+  const corrected = stateWithoutProposalLine(input.state, input.plannedSuffix, input.replacement);
+  if (corrected === input.state) return;
+  const correctedBody = renderText(corrected);
+  const entry = input.journal && input.turnId ? input.journal.get(input.turnId) : undefined;
+  const reply = entry?.reply;
+  if (!reply || reply.state !== 'sent') {
+    if (input.journal && input.turnId && reply) {
+      input.journal.stageReply(input.turnId, {
+        markdown: correctedBody,
+        replyTo: reply.replyTo,
+        ...(reply.replyInThread ? { replyInThread: true } : {}),
+        ...(reply.threadId ? { threadId: reply.threadId } : {}),
+        replyMode: reply.replyMode,
+        ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
+        ...(reply.messageId ? { messageId: reply.messageId } : {}),
+        ...(reply.interactive ? { interactive: true } : {}),
+      });
+      await input.journal.flush();
+    }
+    return;
+  }
+  const interactive = reply.interactive === true || input.replyMode === 'card';
+  const previousMessageId = reply.messageId;
+  try {
+    if (interactive && previousMessageId) {
+      await input.channel.updateCard(
+        previousMessageId,
+        settledReplyCard(input.replyMode, corrected, correctedBody, input.cardRenderOptions),
+      );
+      if (input.turnId) input.journal?.reviseDeliveredReply(input.turnId, correctedBody);
+      await input.journal?.flush();
+      return;
+    }
+    if (previousMessageId) {
+      const sent = await input.channel.send(
+        input.chatId,
+        { markdown: correctedBody },
+        {
+          ...(input.sendOpts.replyTo ? { replyTo: input.sendOpts.replyTo } : {}),
+          ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+        },
+      );
+      const messageId = sent.messageId?.trim();
+      if (input.turnId) {
+        input.journal?.reviseDeliveredReply(input.turnId, correctedBody, messageId || undefined);
+      }
+      try {
+        await input.channel.recallMessage(previousMessageId);
+      } catch (error) {
+        log.warn('auto', 'promise-recall-failed', {
+          err: error instanceof Error ? error.message : String(error),
+        });
+      }
+      await input.journal?.flush();
+      return;
+    }
+    log.warn('auto', 'promise-uncorrected', {});
+  } catch (error) {
+    log.warn('auto', 'promise-correct-failed', {
+      err: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

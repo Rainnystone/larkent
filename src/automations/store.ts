@@ -144,7 +144,8 @@ export interface UpdateDraftPatch {
   endAt?: number;
   nextFireAt?: number;
   pendingRecurring?: PendingRecurring | null;
-  cardMessageId?: string;
+  /** `null` drops the bound card so recovery can send a replacement. */
+  cardMessageId?: string | null;
   cardId?: string;
   sequence?: number;
 }
@@ -535,7 +536,14 @@ export class AutomationsStore {
       if (patch.pendingRecurring === null) delete draft.pendingRecurring;
       else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
     }
-    if (patch.cardMessageId !== undefined) draft.cardMessageId = patch.cardMessageId;
+    if (patch.cardMessageId === null) {
+      delete draft.cardMessageId;
+      delete draft.cardId;
+      delete draft.sequence;
+      delete draft.cardBody;
+    } else if (patch.cardMessageId !== undefined) {
+      draft.cardMessageId = patch.cardMessageId;
+    }
     if (patch.cardId !== undefined) {
       if (patch.cardId) draft.cardId = patch.cardId;
       else delete draft.cardId;

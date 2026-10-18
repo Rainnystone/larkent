@@ -238,6 +238,53 @@ describe('A28 natural-language delete and replace', () => {
     expect(ignored.length).toBeGreaterThan(0);
   }, 15_000);
 
+  it('does not claim a replace card when the target disappears during final delivery', async () => {
+    const h = await harness({
+      events: done(proposal({
+        op: 'replace',
+        id: 1,
+        taskType: 'reminder',
+        schedule: '2026-10-19 09:00',
+        name: '马斯克和 Sam Altman',
+        taskText: '总结马斯克和 Sam Altman 的推特',
+      })),
+      items: [item()],
+    });
+    const originalSend = h.channel.send.bind(h.channel);
+    h.channel.send = async (chatId, content, options) => {
+      const text = JSON.stringify(content);
+      if (text.includes('已生成确认卡，点「是」后用新任务替换 #1')) {
+        await h.store.delete(1);
+      }
+      return originalSend(chatId, content, options);
+    };
+
+    await h.channel.handlers.message?.(mention('om_gone_mid', '删了重建，加上 Sam Altman'));
+    await waitFor(() => markdowns(h).some((text) => text.includes(VISIBLE)));
+
+    expect(h.store.listDrafts()).toEqual([]);
+    expect(sentText(h)).not.toContain('确认替换');
+    expect(sentText(h)).not.toContain('auto.confirm');
+    expect(lastMarkdown(h)).not.toContain('已生成确认卡');
+    expect(lastMarkdown(h)).toContain('没有删除任务：本群没有 #1');
+    expect(lastMarkdown(h)).toContain(VISIBLE);
+    const calls = h.channel.snapshotCalls();
+    const promiseSendIndex = calls.findIndex((call) => (
+      call.op === 'send' && JSON.stringify(call.content).includes('已生成确认卡，点「是」后用新任务替换 #1')
+    ));
+    expect(promiseSendIndex).toBeGreaterThanOrEqual(0);
+    const promiseSendNumber = calls.slice(0, promiseSendIndex + 1).filter((call) => call.op === 'send').length;
+    expect(calls.filter((call) => call.op === 'recall')).toEqual([
+      { op: 'recall', messageId: `om_fake_${promiseSendNumber}` },
+    ]);
+    const rejected = await logEvents(h.logsDir, 'rejected');
+    expect(rejected).toEqual([
+      expect.objectContaining({ reason: 'unknown-id', source: 'proposal', id: 1 }),
+    ]);
+    expect(JSON.stringify(rejected)).not.toContain('Sam Altman');
+    expect(h.store.get(1)).toBeUndefined();
+  }, 15_000);
+
   it('replaces by creating the new task before deleting the old one', async () => {
     const h = await harness({
       events: done(proposal({

@@ -7,11 +7,15 @@ import { AutoActionAuth } from '../../../src/automations/action-auth';
 import {
   AUTO_AGENT_DISABLED,
   AUTO_P2P_HINT,
+  automationProposalSuffix,
+  completeDraftEnd,
   confirmAutomationDraft,
   flushPendingDraftCards,
   handleAutoCommand,
   planAutomationProposalReply,
-  automationProposalSuffix,
+  presetEndAt,
+  replaceProposalLineAfterApply,
+  submitAutomationReplaceProposal,
 } from '../../../src/automations/command';
 import {
   automationDeleteCard,
@@ -36,6 +40,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { assertCardSchema2 } from '../../helpers/card-schema2';
 import { createFakeChannel } from '../../helpers/fake-channel';
+import { axiosErrno } from '../../helpers/sdk-feishu-errors';
 
 const CHAT = 'oc_group';
 const OTHER = 'oc_other';
@@ -336,6 +341,98 @@ describe('delete and replace drafts', () => {
     });
   });
 
+  it('resends the replace card when the confirm send fails after the end is chosen', async () => {
+    const h = await harness();
+    const item = await h.store.create(reminderInput());
+    await submitAutomationReplaceProposal(h.proposalCtx(), {
+      op: 'replace',
+      id: item.id,
+      taskType: 'reminder',
+      scheduleText: '每个工作日 09:00',
+      name: '工作日总结',
+      taskText: '总结马斯克推特',
+    });
+    const waiting = scheduleDraft(h.store.listDrafts()[0]);
+    expect(waiting.pendingRecurring?.kind).toBe('weekday');
+    expect(waiting.cardMessageId).toBeTruthy();
+    const endMessageId = waiting.cardMessageId!;
+
+    h.channel.cardErrors.create = axiosErrno('ECONNRESET', 'connect ECONNRESET');
+    const chosen = await completeDraftEnd({
+      automations: h.store,
+      autoAuth: h.autoAuth,
+      automationsScheduler: h.scheduler,
+      channel: h.channel as never,
+      now: () => h.now(),
+    }, waiting, presetEndAt('auto.end.1m', TZ, h.now(), waiting.startAt), endMessageId);
+    expect(chosen).toEqual({ ok: true });
+
+    const restarted = new AutomationsStore({
+      path: h.store.getFilePath(),
+      logPath: join(h.dir, 'automations.log'),
+      statusPath: join(h.dir, 'automations-status.json'),
+      now: () => h.now(),
+    });
+    await restarted.load();
+    const stuck = scheduleDraft(restarted.listDrafts()[0]);
+    expect(stuck.pendingRecurring).toBeUndefined();
+    expect(stuck.cardMessageId).toBeUndefined();
+    expect(stuck.op).toBe('replace');
+
+    h.channel.cardErrors.create = undefined;
+    await flushPendingDraftCards({
+      channel: h.channel as never,
+      automations: restarted,
+      autoAuth: h.autoAuth,
+      automationsScheduler: h.scheduler,
+      now: () => h.now(),
+    });
+    const recovered = scheduleDraft(restarted.listDrafts()[0]);
+    expect(recovered.cardMessageId).toBeTruthy();
+    expect(recovered.cardMessageId).not.toBe(endMessageId);
+    const cards = h.channel.sent.map((entry) => JSON.stringify(entry.content));
+    expect(cards.some((body) => body.includes('确认替换 #') && body.includes('将删除：'))).toBe(true);
+    expect(h.store.get(item.id)?.name).toBe('总结马斯克推特');
+  });
+
+  it('does not promise a replace card when the target is gone at apply', async () => {
+    const h = await harness();
+    const item = await h.store.create(reminderInput());
+    const proposal = {
+      op: 'replace' as const,
+      id: item.id,
+      taskType: 'reminder' as const,
+      scheduleText: '2026-10-19 09:00',
+      name: '合并后',
+      taskText: '总结马斯克和 Sam Altman 的推特',
+    };
+    const verdict = planAutomationProposalReply({
+      proposal,
+      now: h.now(),
+      timezone: TZ,
+      agentTasks: false,
+      hasCwd: true,
+      group: true,
+      canSave: true,
+      targetInChat: true,
+    });
+    const planned = automationProposalSuffix(verdict, proposal);
+    expect(planned).toContain('已生成确认卡');
+
+    await h.store.delete(item.id);
+    const applied = await submitAutomationReplaceProposal(h.proposalCtx(), proposal);
+    expect(applied).toEqual({ posted: false, reason: 'target-gone' });
+    expect(h.store.listDrafts()).toEqual([]);
+    const line = replaceProposalLineAfterApply(planned, proposal, applied);
+    expect(line).toBe(`⚠️ 没有删除任务：本群没有 #${item.id}。`);
+    expect(line).not.toContain('已生成确认卡');
+    const rejected = await logEvents(h.logsDir, 'rejected');
+    expect(rejected).toEqual([
+      expect.objectContaining({ reason: 'unknown-id', source: 'proposal', id: item.id }),
+    ]);
+    expect(JSON.stringify(rejected)).not.toContain('总结马斯克推特');
+  });
+
   it('flushes a deferred delete or replace into that card, not a create card', async () => {
     const h = await harness();
     const item = await h.store.create(reminderInput({ name: '总结马斯克推特', taskText: '总结马斯克推特' }));
@@ -542,6 +639,11 @@ describe('confirming a delete or replace', () => {
   });
 });
 
+function scheduleDraft(draft: ReturnType<AutomationsStore['listDrafts']>[number] | undefined) {
+  if (!draft || draft.op === 'delete') throw new Error('expected a schedule draft');
+  return draft;
+}
+
 function task(overrides: Partial<AutomationItem> & { id: number }): AutomationItem {
   return {
     taskType: 'reminder',
@@ -661,10 +763,45 @@ async function harness() {
     setNow(next: number) {
       nowMs = next;
     },
+    scheduler,
     ctx: () => ({
       automations: store,
       automationsScheduler: scheduler,
       now: () => nowMs,
+    }),
+    proposalCtx: () => ({
+      channel: channel as never,
+      msg: {
+        messageId: 'om_cmd',
+        content: '',
+        chatId: CHAT,
+        chatType: 'group' as const,
+        senderId: USER,
+        senderName: 'User',
+        rawContentType: 'text',
+        resources: [],
+        mentionedBot: true,
+        createTime: NOW,
+        raw: { sender: { sender_type: 'user', sender_id: { open_id: USER } } },
+      } as unknown as NormalizedMessage,
+      scope: CHAT,
+      chatMode: 'group' as const,
+      workspaces,
+      automations: store,
+      autoAuth,
+      automationsScheduler: scheduler,
+      now: () => nowMs,
+      controls: {
+        profile: 'test',
+        profileConfig: cfg,
+        cfg: cfg as never,
+        ownerRefreshState: 'ok' as const,
+        async refreshOwner() {},
+        async restart() {},
+        async exit() {},
+        configPath: join(dir, 'config.json'),
+        processId: 'test',
+      },
     }),
   };
 }
