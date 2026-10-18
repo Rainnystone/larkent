@@ -13,6 +13,7 @@ import { automationEndCard, type EndCardTokens } from './end-card';
 import {
   ONE_YEAR_MS,
   nextFireAfter,
+  nextFires,
   parseSchedule,
   readSchedule,
   type LocalTime,
@@ -42,6 +43,7 @@ export const AUTO_INVALID_START =
 export const AUTO_START_BEFORE_TODAY = '开始时间不能早于今天。';
 export const AUTO_START_TOO_FAR = '开始时间不能超过 1 年。';
 export const AUTO_END_NOT_AFTER_START = '结束时间必须晚于开始时间。';
+export const AUTO_NO_REMAINING_FIRES = '结束前已没有可触发的时刻。';
 export const AUTO_UNKNOWN_ID = '没有这个编号。';
 export const AUTO_LIST_EMPTY = '暂无';
 export const AUTO_INVALID_END = '无法解析结束时间。';
@@ -83,7 +85,8 @@ export type ScheduleTextRejectReason =
   | 'invalid-start'
   | 'start-before-today'
   | 'start-too-far'
-  | 'end-not-after-start';
+  | 'end-not-after-start'
+  | 'no-remaining-fires';
 
 export type ProposalRejectSource = 'proposal' | 'command';
 
@@ -125,6 +128,9 @@ export function assessAutomationProposal(input: {
       ...(parsed.startAt !== undefined ? { startAt: parsed.startAt } : {}),
     };
   }
+  if (!hasRemainingFire(parsed.schedule, input.now)) {
+    return { outcome: 'reject', reason: 'no-remaining-fires' };
+  }
   if (input.taskType === 'agent' && !input.hasCwd) {
     return { outcome: 'refuse', message: AUTO_AGENT_NEEDS_CWD };
   }
@@ -148,6 +154,10 @@ export function planAutomationProposalReply(input: {
   }
   if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
   return assessAutomationProposal(input);
+}
+
+function hasRemainingFire(schedule: Schedule, now: number): boolean {
+  return nextFires(schedule, now, 1).length > 0;
 }
 
 export function automationRejectReplyLine(reasonMessage: string, scheduleText: string): string {
@@ -619,6 +629,8 @@ export function rejectMessage(
       return AUTO_START_BEFORE_TODAY;
     case 'end-not-after-start':
       return AUTO_END_NOT_AFTER_START;
+    case 'no-remaining-fires':
+      return AUTO_NO_REMAINING_FIRES;
     case 'invalid-timezone':
     case 'recurring-too-long':
     case 'invalid-schedule':
@@ -647,6 +659,8 @@ function rejectLogReason(reason: ScheduleTextRejectReason): string {
     case 'invalid-schedule':
     case 'invalid-timezone':
       return 'invalid-schedule';
+    case 'no-remaining-fires':
+      return 'no-remaining-fires';
     case 'missing-end-at':
       return 'missing-end-at';
     case 'interval-too-small':
@@ -888,6 +902,9 @@ export async function completeDraftEnd(
     startAt: draft.startAt,
   });
   if (!parsed.ok) return { ok: false, message: rejectMessage(parsed.reason) };
+  if (!hasRemainingFire(parsed.schedule, now)) {
+    return { ok: false, message: rejectMessage('no-remaining-fires') };
+  }
   const nextFireAt = nextFireAfter(parsed.schedule, now);
   const updated = await ctx.automations.updateDraft(draft.draftId, {
     schedule: parsed.schedule,
@@ -1050,6 +1067,27 @@ async function postConfirmCard(
   replyTo: string,
 ): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth) return;
+  if (!hasRemainingFire(schedule, now)) {
+    try {
+      await ctx.channel.send(
+        ctx.msg.chatId,
+        { markdown: AUTO_NO_REMAINING_FIRES },
+        {
+          ...(replyTo ? { replyTo } : {}),
+          ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+        },
+      );
+    } catch (error) {
+      if (await abandonIfNotInChat(error, ctx.msg.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
+        return;
+      }
+      if (classify(error) === 'link') return;
+      log.warn('auto', 'reply-failed', { err: error instanceof Error ? error.message : String(error) });
+    }
+    await ctx.automations.takeDraft(draft.draftId);
+    noteAutomationRejected('no-remaining-fires', 'command');
+    return;
+  }
   const confirmToken = ctx.autoAuth.sign({
     draftId: draft.draftId,
     chatId: draft.chatId,

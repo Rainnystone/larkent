@@ -95,6 +95,31 @@ describe('automation draft card delivery', () => {
     expect(markdowns(h.channel)).toEqual([]);
   });
 
+  it('drops a deferred draft instead of posting a card once no fire remains', async () => {
+    const h = await harness();
+    h.down = true;
+    await h.command('om_late', 'new every 10m 11:00-11:20 until 2026-10-17 11:20 | 短窗 | 提醒');
+    expect(h.store.listDrafts()).toHaveLength(1);
+    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+
+    await flushPendingDraftCards({
+      channel: h.channel as never,
+      automations: h.store,
+      autoAuth: h.autoAuth,
+      now: () => Date.UTC(2026, 9, 17, 3, 15, 0),
+    });
+
+    expect(h.store.listDrafts()).toEqual([]);
+    expect(JSON.stringify(h.channel.sent)).not.toContain('auto.confirm');
+    expect(markdowns(h.channel)).toEqual(['结束前已没有可触发的时刻。']);
+    const rejected = await logEvents(h.logsDir, 'rejected');
+    expect(rejected).toEqual([
+      expect.objectContaining({ reason: 'no-remaining-fires', source: 'command' }),
+    ]);
+    expect(JSON.stringify(rejected)).not.toContain('11:00-11:20');
+    expect(JSON.stringify(rejected)).not.toContain('短窗');
+  });
+
   it('keeps flushing the next draft and still refreshes the board when the first create fails', async () => {
     const h = await harness();
     h.down = true;

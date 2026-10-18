@@ -4,7 +4,13 @@ import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
-import { completeDraftEnd, handleAutoCommand, submitAutomationProposal } from '../../../src/automations/command';
+import {
+  assessAutomationProposal,
+  automationProposalSuffix,
+  completeDraftEnd,
+  handleAutoCommand,
+  submitAutomationProposal,
+} from '../../../src/automations/command';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
@@ -108,6 +114,51 @@ describe('proposal schedule acceptance', () => {
     const reasons = (await logEvents(h.logsDir, 'rejected')).map((entry) => entry.reason);
     expect(reasons).toEqual(['invalid-start', 'invalid-start', 'invalid-schedule', 'too-far']);
     expect(h.store.listDrafts()).toEqual([]);
+  });
+
+  it('rejects a recurring window that has no fire left before the end', async () => {
+    const h = await harness();
+    const scheduleText = 'every 10m 15:40-16:05 until 2026-10-18 15:10';
+    const verdict = assessAutomationProposal({
+      taskType: 'reminder',
+      scheduleText,
+      now: NOW,
+      timezone: 'Asia/Shanghai',
+      hasCwd: true,
+    });
+    expect(verdict).toMatchObject({ outcome: 'reject', reason: 'no-remaining-fires' });
+    expect(automationProposalSuffix(verdict, scheduleText)).toBe(
+      `⚠️ 没有创建任务：结束前已没有可触发的时刻「${scheduleText}」。可写成「明天 09:00」「2026-10-18 15:50」「10 分钟后」。`,
+    );
+
+    await h.command(`new ${scheduleText} | ${NAME} | ${TASK}`);
+    expect(h.store.listDrafts()).toEqual([]);
+    expect(markdowns(h.channel)).toEqual(['结束前已没有可触发的时刻。']);
+    const rejected = await logEvents(h.logsDir, 'rejected');
+    expect(rejected).toEqual([
+      expect.objectContaining({ reason: 'no-remaining-fires', source: 'command' }),
+    ]);
+    const blob = JSON.stringify(rejected);
+    expect(blob).not.toContain(scheduleText);
+    expect(blob).not.toContain(TASK);
+    expect(blob).not.toContain(NAME);
+  });
+
+  it('does not replace the end card when the chosen end leaves no fire', async () => {
+    const h = await harness();
+    await h.propose('every 10m 15:40-16:05', 'command');
+    const draft = h.store.listDrafts()[0]!;
+    expect(draft.pendingRecurring?.kind).toBe('interval');
+    const sentBefore = h.channel.sent.length;
+    const rejected = await completeDraftEnd({
+      automations: h.store,
+      autoAuth: h.autoAuth,
+      channel: h.channel as never,
+      now: () => NOW,
+    }, draft, Date.UTC(2026, 9, 18, 7, 10, 0), 'om_end');
+    expect(rejected).toEqual({ ok: false, message: '结束前已没有可触发的时刻。' });
+    expect(h.store.listDrafts()[0]?.pendingRecurring?.kind).toBe('interval');
+    expect(h.channel.sent).toHaveLength(sentBefore);
   });
 
   it('keeps a prefixed start on a draft that is still waiting for an end', async () => {
