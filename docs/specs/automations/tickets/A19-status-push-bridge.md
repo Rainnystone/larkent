@@ -2,7 +2,7 @@
 
 Status: ready-for-agent
 Severity: **medium**（用户决定 2026-10-18：看板里的大块 JSON 影响阅读；status push 取代 status block）
-Blocked by: —（只依赖 A20 定下的端点契约，不依赖 A20 部署）
+Blocked by: —（只依赖 spec §7 的端点契约，不依赖 monitor 部署）
 Track: 推到现有 code 分支 `feat/automations-v2`（PR #49），**#49 合入前完成**，不开新 PR
 Spec: [../../automations.md](../../automations.md) §7（status push）、ADR-008 / ADR-014 / ADR-015
 
@@ -38,7 +38,7 @@ Spec: [../../automations.md](../../automations.md) §7（status push）、ADR-00
 
 ## 不做
 
-- 不实现 monitor 一侧（见 A20）。
+- 不实现 monitor 一侧（larkent-monitor 仓库的独立轨道）。
 - 不改补跑规则与唤醒入口（A0c、A5）。
 - 不把 secret 写进仓库或日志。
 
@@ -49,4 +49,4 @@ Spec: [../../automations.md](../../automations.md) §7（status push）、ADR-00
 
 ## A11 需重跑的场景
 
-看板不再显示 JSON；配好 endpoint 后创建 / 暂停 / 删除各触发一次推送，monitor 侧 D1 行随之更新（需要 A20 已部署）；停掉 bridge 让窗口过期，monitor 唤醒一次 box。
+看板不再显示 JSON；配好 endpoint 后创建 / 暂停 / 删除各触发一次推送，monitor 侧收到对应推送（需要 monitor 接收端已部署）；停掉 bridge 让窗口过期，monitor 唤醒一次 box。

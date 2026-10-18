@@ -1,6 +1,6 @@
 # A5: Monitor hook contract and local wake entry
 
-> **Superseded in part:** status block 契约部分已被 [A19](A19-status-push-bridge.md) / [A20](A20-monitor-d1-ingest.md) 取代（2026-10-18）；本机唤醒入口不变。
+> **Superseded in part:** status block 契约部分已被 [A19](A19-status-push-bridge.md) 取代（2026-10-18）；本机唤醒入口不变。
 
 Spec: [../../automations.md](../../automations.md) §1 (miss rule, fire key), §4, §7, ADR-013/014/015
 
