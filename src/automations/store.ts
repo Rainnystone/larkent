@@ -250,6 +250,10 @@ export class AutomationsStore {
     return this.path;
   }
 
+  getStatusPath(): string {
+    return this.statusPath;
+  }
+
   load(): Promise<void> {
     if (this.loading) return this.loading;
     this.loading = this.loadDocument().finally(() => {

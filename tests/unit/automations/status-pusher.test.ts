@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -51,6 +51,10 @@ class ManualClock {
   clearTimeout = (id: unknown): void => {
     if (typeof id === 'number') this.timers.delete(id);
   };
+
+  jump(ms: number): void {
+    this.nowMs += ms;
+  }
 
   async advanceTo(target: number, idle: () => Promise<void>): Promise<void> {
     for (;;) {
@@ -105,7 +109,7 @@ async function harness(opts: {
     fetch: fetchImpl as typeof fetch,
   });
   pushers.push(pusher);
-  return { clock, store, pusher, posts, fetchImpl };
+  return { dir, clock, store, pusher, posts, fetchImpl };
 }
 
 function headersOf(headers: RequestInit['headers']): Record<string, string> {
@@ -144,6 +148,38 @@ function reminderInput(): CreateAutomationInput {
     name: '交周报',
     taskText: 'secret ping body',
   };
+}
+
+/** Next fire is the last instant inside a 24h window, so a later `now` lists more. */
+function slidingReminder(): CreateAutomationInput {
+  return {
+    ...reminderInput(),
+    schedule: {
+      kind: 'interval',
+      timezone: 'UTC',
+      everyMs: 12 * HOUR,
+      startAt: NOW,
+      endAt: NOW + 40 * 24 * HOUR,
+    },
+    startAt: NOW,
+    endAt: NOW + 40 * 24 * HOUR,
+    nextFireAt: NOW + 24 * HOUR,
+  };
+}
+
+function withoutUpdatedAt(body: string): string {
+  const parsed = JSON.parse(body) as { updatedAt: number };
+  parsed.updatedAt = 0;
+  return JSON.stringify(parsed);
+}
+
+async function cursorFiles(dir: string): Promise<string[]> {
+  const names = await readdir(dir);
+  return names.filter((name) =>
+    name !== 'automations.json'
+    && name !== 'automations.log'
+    && name !== 'automations-status.json'
+    && !name.startsWith('.'));
 }
 
 describe('status pusher', () => {
@@ -416,5 +452,211 @@ describe('status pusher', () => {
     } finally {
       fail.mockRestore();
     }
+  });
+
+  it('raises updatedAt when nextFires move and the status file stays unchanged', async () => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(slidingReminder());
+    await h.store.writeStatus('Grok Bot');
+    const statusPath = join(h.dir, 'automations-status.json');
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    const statusBefore = await readFile(statusPath, 'utf8');
+    const first = JSON.parse(h.posts[0]!.body) as {
+      updatedAt: number;
+      items: Array<{ nextFires: number[] }>;
+    };
+    expect(first.items[0]?.nextFires).toEqual([NOW + 24 * HOUR]);
+
+    h.clock.jump(25 * HOUR);
+    h.pusher.notify();
+    await h.clock.advanceTo(h.clock.nowMs + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    expect(await readFile(statusPath, 'utf8')).toBe(statusBefore);
+    expect(h.posts).toHaveLength(2);
+    const second = JSON.parse(h.posts[1]!.body) as {
+      updatedAt: number;
+      items: Array<{ nextFires: number[] }>;
+    };
+    expect(second.items[0]?.nextFires.length).toBeGreaterThan(1);
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
+  });
+
+  it('reuses updatedAt when a 5xx retry sends the same body', async () => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(reminderInput());
+    await h.store.writeStatus('Grok Bot');
+    let calls = 0;
+    h.fetchImpl.mockImplementation(async (input, init) => {
+      calls += 1;
+      h.posts.push({
+        url: String(input),
+        headers: headersOf(init?.headers),
+        body: String(init?.body ?? ''),
+      });
+      if (calls === 1) return new Response(null, { status: 503 });
+      return new Response(null, { status: 204 });
+    });
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    await h.clock.advanceTo(
+      NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_RETRY_MIN_MS,
+      () => h.pusher.idle(),
+    );
+    expect(h.posts).toHaveLength(2);
+    const first = JSON.parse(h.posts[0]!.body) as { updatedAt: number };
+    const second = JSON.parse(h.posts[1]!.body) as { updatedAt: number };
+    expect(withoutUpdatedAt(h.posts[1]!.body)).toBe(withoutUpdatedAt(h.posts[0]!.body));
+    expect(second.updatedAt).toBe(first.updatedAt);
+  });
+
+  it('raises updatedAt when a 5xx retry runs after the clock passes a planned instant', async () => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(slidingReminder());
+    await h.store.writeStatus('Grok Bot');
+    let calls = 0;
+    h.fetchImpl.mockImplementation(async (input, init) => {
+      calls += 1;
+      h.posts.push({
+        url: String(input),
+        headers: headersOf(init?.headers),
+        body: String(init?.body ?? ''),
+      });
+      if (calls === 1) return new Response(null, { status: 503 });
+      return new Response(null, { status: 204 });
+    });
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    const first = JSON.parse(h.posts[0]!.body) as {
+      updatedAt: number;
+      items: Array<{ nextFires: number[] }>;
+    };
+    const saved = await cursorFiles(h.dir);
+    expect(saved).toHaveLength(1);
+    const cursor = await readFile(join(h.dir, saved[0]!), 'utf8');
+    expect(cursor).toContain(String(first.updatedAt));
+
+    h.clock.jump(25 * HOUR);
+    await h.clock.advanceTo(h.clock.nowMs, () => h.pusher.idle());
+    expect(h.posts).toHaveLength(2);
+    const second = JSON.parse(h.posts[1]!.body) as {
+      updatedAt: number;
+      items: Array<{ nextFires: number[] }>;
+    };
+    expect(second.items[0]?.nextFires.length).toBeGreaterThan(first.items[0]!.nextFires.length);
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
+  });
+
+  it('sends a higher updatedAt from a new pusher after the clock is rewound', async () => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(reminderInput());
+    await h.store.writeStatus('Grok Bot');
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    const first = JSON.parse(h.posts[0]!.body) as { updatedAt: number; items: unknown };
+    const sentAt = h.clock.nowMs;
+    h.pusher.stop();
+
+    const clock = new ManualClock(sentAt - 1);
+    const store = new AutomationsStore({
+      path: join(h.dir, 'automations.json'),
+      logPath: join(h.dir, 'automations.log'),
+      statusPath: join(h.dir, 'automations-status.json'),
+      now: clock.now,
+    });
+    await store.load();
+    const posts: Array<{ body: string }> = [];
+    const pusher = createStatusPusher({
+      endpoint: ENDPOINT,
+      secret: SECRET,
+      profile: PROFILE,
+      store,
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      fetch: (async (_input: string | URL, init?: RequestInit) => {
+        posts.push({ body: String(init?.body ?? '') });
+        return new Response(null, { status: 204 });
+      }) as typeof fetch,
+    });
+    pushers.push(pusher);
+    pusher.notify();
+    await clock.advanceTo(sentAt - 1 + STATUS_PUSH_DEBOUNCE_MS, () => pusher.idle());
+    const second = JSON.parse(posts[0]!.body) as { updatedAt: number; items: unknown };
+    expect(second.items).toEqual(first.items);
+    expect(second.updatedAt).toBeGreaterThan(first.updatedAt);
+  });
+
+  it('sets updatedAt one above the previous send when two different bodies share a millisecond', async () => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(reminderInput());
+    await h.store.writeStatus('Grok Bot');
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    const first = JSON.parse(h.posts[0]!.body) as { updatedAt: number; items: unknown };
+    const sentAt = h.clock.nowMs;
+    h.clock.nowMs = sentAt - STATUS_PUSH_DEBOUNCE_MS;
+    await h.store.pause(1);
+    h.pusher.notify();
+    await h.clock.advanceTo(sentAt, () => h.pusher.idle());
+    expect(h.clock.nowMs).toBe(sentAt);
+    const second = JSON.parse(h.posts[1]!.body) as { updatedAt: number; items: unknown };
+    expect(second.items).not.toEqual(first.items);
+    expect(second.updatedAt).toBe(first.updatedAt + 1);
+  });
+
+  it('persists only a number and a hash, and skips that file when push is not configured', async () => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(reminderInput());
+    await h.store.writeStatus('Grok Bot');
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    const files = await cursorFiles(h.dir);
+    expect(files).toHaveLength(1);
+    const text = await readFile(join(h.dir, files[0]!), 'utf8');
+    expect(text).toMatch(/^\{"updatedAt":\d+,"hash":"[0-9a-f]{64}"\}\n$/);
+    expect(text).not.toMatch(/oc_|ou_|om_|cli_/);
+    expect(text).not.toContain(SECRET);
+    expect(text).not.toContain('Grok Bot');
+    expect(text).not.toContain('交周报');
+    expect(text).not.toContain('secret ping body');
+    expect(text).not.toContain(PROFILE);
+    const first = JSON.parse(h.posts[0]!.body) as { updatedAt: number };
+    expect(JSON.parse(text)).toMatchObject({ updatedAt: first.updatedAt });
+
+    const none = await harness();
+    await none.store.create(reminderInput());
+    await none.store.writeStatus('Grok Bot');
+    none.pusher.notify();
+    await none.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS + 1, () => none.pusher.idle());
+    expect(await cursorFiles(none.dir)).toEqual([]);
+
+    const noSecret = await harness({ endpoint: ENDPOINT });
+    await noSecret.store.create(reminderInput());
+    await noSecret.store.writeStatus('Grok Bot');
+    noSecret.pusher.notify();
+    await noSecret.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS + 1, () => noSecret.pusher.idle());
+    expect(noSecret.posts).toEqual([]);
+    expect(await cursorFiles(noSecret.dir)).toEqual([]);
+  });
+
+  it.each([400, 401, 409, 413])('does not retry status %s', async (status) => {
+    const h = await harness({ endpoint: ENDPOINT, secret: SECRET });
+    await h.store.create(reminderInput());
+    await h.store.writeStatus('Grok Bot');
+    h.fetchImpl.mockImplementation(async (input, init) => {
+      h.posts.push({
+        url: String(input),
+        headers: headersOf(init?.headers),
+        body: String(init?.body ?? ''),
+      });
+      return new Response(null, { status });
+    });
+    h.pusher.notify();
+    await h.clock.advanceTo(NOW + STATUS_PUSH_DEBOUNCE_MS, () => h.pusher.idle());
+    await h.clock.advanceTo(
+      NOW + STATUS_PUSH_DEBOUNCE_MS + STATUS_PUSH_RETRY_MAX_MS + 1,
+      () => h.pusher.idle(),
+    );
+    expect(h.posts).toHaveLength(1);
   });
 });

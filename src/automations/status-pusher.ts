@@ -1,4 +1,8 @@
+import { createHash } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
 import { log } from '../core/logger';
+import { writeFileAtomic } from '../platform/atomic-write';
 import {
   STATUS_PUSH_DEBOUNCE_MS,
   STATUS_PUSH_RETRY_MAX_MS,
@@ -8,8 +12,12 @@ import {
   STATUS_PUSH_TIMESTAMP_HEADER,
   buildStatusPushPayload,
   signStatusPush,
+  type StatusPushPayload,
 } from './status-push';
 import type { AutomationsStore } from './store';
+
+/** Same directory as the status file. Digits and a body hash only. */
+const STATUS_PUSH_CURSOR_NAME = 'automations-status-push.json';
 
 export interface StatusPusher {
   notify(): void;
@@ -47,6 +55,15 @@ class Pusher implements StatusPusher {
   private closed = false;
   private chain: Promise<void> = Promise.resolve();
   private inflightAbort: AbortController | undefined;
+  /**
+   * Set by notify(). A new push advances `updatedAt` even when the body matches,
+   * so a second send of the same items and a restarted pusher stay strictly
+   * increasing. A retry leaves this clear and reuses the value when the body matches.
+   */
+  private advanceUpdatedAt = false;
+  private cursorLoaded = false;
+  private lastUpdatedAt = 0;
+  private lastHash: string | undefined;
 
   constructor(deps: StatusPusherDeps) {
     this.endpoint = trimmed(deps.endpoint);
@@ -63,6 +80,7 @@ class Pusher implements StatusPusher {
     if (this.closed || !this.endpoint || !this.secret) return;
     this.clearRetry();
     this.failCount = 0;
+    this.advanceUpdatedAt = true;
     this.armDebounce();
   }
 
@@ -117,21 +135,34 @@ class Pusher implements StatusPusher {
     const endpoint = this.endpoint;
     const secret = this.secret;
     if (this.closed || !endpoint || !secret) return;
+    const advance = this.advanceUpdatedAt;
+    this.advanceUpdatedAt = false;
     const abort = new AbortController();
     this.inflightAbort = abort;
     let timeout: unknown;
     try {
-      const snapshot = await this.store.readStatus();
+      await this.loadCursor();
       if (this.closed) return;
-      const payload = buildStatusPushPayload({
+      const now = this.now();
+      const canonical = buildStatusPushPayload({
         secret,
         profile: this.profile,
-        updatedAt: snapshot?.updatedAt ?? this.now(),
-        now: this.now(),
+        updatedAt: 0,
+        now,
         items: this.store.list(),
       });
-      const body = JSON.stringify(payload);
-      const timestamp = String(this.now());
+      const hash = hashStatusBody(canonical);
+      const updatedAt = !advance && this.lastHash === hash
+        ? this.lastUpdatedAt
+        : Math.max(now, this.lastUpdatedAt + 1);
+      if (updatedAt !== this.lastUpdatedAt || hash !== this.lastHash) {
+        await this.writeCursor(updatedAt, hash);
+        this.lastUpdatedAt = updatedAt;
+        this.lastHash = hash;
+        if (this.closed) return;
+      }
+      const body = JSON.stringify({ ...canonical, updatedAt });
+      const timestamp = String(now);
       const url = `${endpoint.replace(/\/+$/, '')}/v1/status`;
       timeout = this.setTimeout(() => abort.abort(), STATUS_PUSH_TIMEOUT_MS);
       const response = await this.fetch(url, {
@@ -166,6 +197,30 @@ class Pusher implements StatusPusher {
     }
   }
 
+  private cursorPath(): string {
+    return join(dirname(this.store.getStatusPath()), STATUS_PUSH_CURSOR_NAME);
+  }
+
+  private async loadCursor(): Promise<void> {
+    if (this.cursorLoaded) return;
+    const parsed = await readCursor(this.cursorPath());
+    if (parsed) {
+      this.lastUpdatedAt = parsed.updatedAt;
+      this.lastHash = parsed.hash;
+      this.cursorLoaded = true;
+      return;
+    }
+    const snapshot = await this.store.readStatus();
+    this.lastUpdatedAt = Math.max(this.now(), snapshot?.updatedAt ?? 0);
+    this.lastHash = undefined;
+    this.cursorLoaded = true;
+  }
+
+  private async writeCursor(updatedAt: number, hash: string): Promise<void> {
+    const body = `${JSON.stringify({ updatedAt, hash })}\n`;
+    await writeFileAtomic(this.cursorPath(), body, { mode: 0o600 });
+  }
+
   private clearDebounce(): void {
     if (this.debounceTimer === undefined) return;
     this.clearTimeout(this.debounceTimer);
@@ -197,4 +252,35 @@ function trimmed(value: string | undefined): string | undefined {
   if (typeof value !== 'string') return undefined;
   const next = value.trim();
   return next ? next : undefined;
+}
+
+function hashStatusBody(payload: StatusPushPayload): string {
+  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+}
+
+async function readCursor(path: string): Promise<{ updatedAt: number; hash: string } | undefined> {
+  try {
+    return parseCursor(await readFile(path, 'utf8'));
+  } catch {
+    return undefined;
+  }
+}
+
+function parseCursor(text: string): { updatedAt: number; hash: string } | undefined {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const record = raw as Record<string, unknown>;
+  const keys = Object.keys(record);
+  if (keys.length !== 2 || !Object.hasOwn(record, 'updatedAt') || !Object.hasOwn(record, 'hash')) {
+    return undefined;
+  }
+  const { updatedAt, hash } = record;
+  if (typeof updatedAt !== 'number' || !Number.isSafeInteger(updatedAt) || updatedAt < 0) return undefined;
+  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) return undefined;
+  return { updatedAt, hash };
 }

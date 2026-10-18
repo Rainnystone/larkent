@@ -1681,6 +1681,89 @@ describe('automation scheduler', () => {
     expect(recovered.items[0]?.nextFires[0]).toBe(t0 + HOUR);
   });
 
+  it('raises status-push updatedAt when startup or link recovery sends a different body', async () => {
+    const posts: string[] = [];
+    const h = await harness(t0, {
+      statusPush: {
+        endpoint: 'https://status.test',
+        secret: 'unit-status-secret',
+        profile: 'test-profile',
+        fetch: (async (_url: string | URL, init?: RequestInit) => {
+          posts.push(String(init?.body ?? ''));
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      },
+    });
+    await h.store.create(reminderInput({
+      schedule: {
+        kind: 'interval',
+        timezone: 'UTC',
+        everyMs: 12 * HOUR,
+        startAt: t0,
+        endAt: t0 + 40 * 24 * HOUR,
+      },
+      startAt: t0,
+      endAt: t0 + 40 * 24 * HOUR,
+      nextFireAt: t0 + 24 * HOUR,
+    }));
+    await h.scheduler.start();
+    await h.clock.advanceTo(t0 + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    expect(posts).toHaveLength(1);
+    const started = JSON.parse(posts[0]!) as {
+      updatedAt: number;
+      items: Array<{ nextFires: number[] }>;
+    };
+    expect(started.items[0]?.nextFires).toEqual([t0 + 24 * HOUR]);
+
+    h.clock.jump(13 * HOUR);
+    posts.length = 0;
+    await h.scheduler.onLinkRecovered();
+    await h.clock.advanceTo(h.clock.now() + STATUS_PUSH_DEBOUNCE_MS, () => h.scheduler.idle());
+    expect(posts).toHaveLength(1);
+    const recovered = JSON.parse(posts[0]!) as {
+      updatedAt: number;
+      items: Array<{ nextFires: number[] }>;
+    };
+    expect(recovered.items[0]?.nextFires).toEqual([t0 + 24 * HOUR, t0 + 36 * HOUR]);
+    expect(recovered.updatedAt).toBeGreaterThan(started.updatedAt);
+    expect(h.fires).toEqual([]);
+
+    h.scheduler.stop();
+    const restartedPosts: string[] = [];
+    const clock = new ManualClock(t0);
+    const store = new AutomationsStore({
+      path: join(h.dir, 'automations.json'),
+      logPath: h.logPath,
+      statusPath: h.statusPath,
+      now: clock.now,
+    });
+    await store.load();
+    const scheduler = createAutomationScheduler({
+      store,
+      sender: { send: async () => {} },
+      notifier: { notify: async () => {} },
+      now: clock.now,
+      setTimeout: clock.setTimeout,
+      clearTimeout: clock.clearTimeout,
+      botDisplayName: () => 'Grok Bot',
+      statusPush: {
+        endpoint: 'https://status.test',
+        secret: 'unit-status-secret',
+        profile: 'test-profile',
+        fetch: (async (_url: string | URL, init?: RequestInit) => {
+          restartedPosts.push(String(init?.body ?? ''));
+          return new Response(null, { status: 204 });
+        }) as typeof fetch,
+      },
+    });
+    schedulers.push(scheduler);
+    await scheduler.start();
+    await clock.advanceTo(t0 + STATUS_PUSH_DEBOUNCE_MS, () => scheduler.idle());
+    expect(restartedPosts).toHaveLength(1);
+    const again = JSON.parse(restartedPosts[0]!) as { updatedAt: number };
+    expect(again.updatedAt).toBeGreaterThan(recovered.updatedAt);
+  });
+
   it('pushes after a missed instant advances nextFireAt', async () => {
     const posts: string[] = [];
     const fireAt = t0;
