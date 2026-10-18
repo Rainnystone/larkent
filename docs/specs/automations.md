@@ -19,7 +19,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 ## Solution
 
 - 群里 @bot，用自然语言或 `/auto new` 创建 **automation**：**一次性**或**周期**（iPhone 日历模型），任务类型为 **reminder**（纯文本，无成本）或 **agent 任务**（agent task，跑一次 agent prompt）。
-- bridge 校验时间表；缺结束时间时发**确定性脚本卡**索要；齐全后发**确认卡**（逐字列出类型、时间表、时区、接下来 3 次触发、结束时间、任务原文、执行身份），群里任何人点「是」即生效。
+- bridge 校验时间表；缺结束时间时发**确定性脚本卡**索要；齐全后发**确认卡**（逐字列出类型、时间表、时区、接下来至多 3 次触发（按实际个数标注，A27）、结束时间、任务原文、执行身份），群里任何人（飞书应用可用范围内的成员，见 §3）点「是」即生效；点「是」之前任务没有创建，bot 不得说「已提交 / 已创建」（A24）。
 - 到点：reminder 发一条文本；agent 任务在后台新开 session 跑一次，结果发为一条 **result post**，可在其话题里追问。reminder 的 fire 互不阻塞。同一 agent 任务上一次未结束时，本次到点跳过：不并发、不排队、不发群消息。
 - 每个有自动化的 bot 在群里置顶一张自己的 **board**：每任务一行（内容、下次触发、结束），带【暂停】【删除】按钮，任何人可点。看板只给人看，不含机读块。被取消置顶会在下次看板更新时重新置顶。
 - `/auto` 列表命令作为备用查看入口。
@@ -107,6 +107,11 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
   - 无每日次数上限。
 - 下限：reminder 最小提前量与间隔 10 分钟；agent 最小间隔 1 小时（多时刻规则按相邻时刻差校验）。one-shot ≤ 1 年后；recurring `endAt − startAt ≤ 1 年`。
 - 时区：profile 设置 `automations.timezone`（IANA），未设则 `Asia/Shanghai`；创建时写入任务；不依赖主机时区。DST：不存在的本地时刻顺延到下一个有效分钟；重复的本地时刻只取第一次。
+- **一次性时刻的输入形式**（A23）：`N 分钟后` / `N 小时后` / `in Nm|Nh`；`YYYY-MM-DD HH:MM`；`今天|明天|后天 HH:MM`；单独 `HH:MM`。均按任务时区换算。
+  - `今天 HH:MM` 已过（≤ now）→ 拒绝并说明，不自动顺延。
+  - 单独 `HH:MM` = **下一次出现**：今天该时刻晚于 now 就是今天，否则是明天。
+  - 换算后仍受下限约束：不足 10 分钟（reminder）即拒绝（「最早 10 分钟后。」），单独 `HH:MM` 也**不**因此跳到明天。
+- **周期起点**（A23）：周期时间表可加前缀 `从 <今天|明天|后天|YYYY-MM-DD> [HH:MM] 起`（英文 `from YYYY-MM-DD [HH:MM]`），省略时刻为该日 00:00；`startAt` 取该时刻，第一次 fire 是 `≥ max(now, startAt)` 的第一个规则时刻；未写前缀时 `startAt = now`。起点早于今天、`endAt ≤ startAt`、起点超过 1 年或写法无法识别 → 拒绝并说明，不忽略起点。确认卡在 `startAt > now` 时写「从 YYYY-MM-DD HH:MM 开始」。
 - 缺 `endAt` 的 recurring：bridge 发 scripted card 索要（按钮给常用选项 + 文本输入），收到前不出确认卡。
 - 到期：最后一次 fire 后或过 `endAt` 即删除，看板移除该行；无续期提醒、无保留。例外：one-shot 未补跑（已错过）时 `nextFireAt = 0`、看板显示“已错过”，24 小时后才按到期删除（ADR-017）。
 
@@ -114,9 +119,13 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 
 - 任何能 @bot 且通过该群 access 的**人**可创建；bot 消息与 automation run 产生的提案一律忽略（防自我复制）。
 - 自然语言：agent 产出结构化提案（含任务类型、时间表、任务文本）；群、scope、创建者取自当前 run 上下文。bridge 校验后建 draft，发确认卡；内容与落库逐字一致。
+  - **先校验、后投递正文**（A24）：bridge 在投递最终回复正文之前校验提案。失败时拒绝原因（含原始时间表与可用写法示例）追加在**同一条回复**末尾，不另发消息，不建 draft，写 `auto.rejected`；成功时 bridge 在正文末尾追加固定一行「已生成确认卡，点「是」后生效。」。
+  - 确认前的措辞：任务在有人点「是」之前没有创建；提示词要求正文不说「已提交 / 已创建 / 已设置」，bridge 追加的那一行不依赖模型。
+  - 提示词给出绝对时刻写法示例（`YYYY-MM-DD HH:MM`、`今天/明天 HH:MM`、`从 … 起`），见 §2。
 - `/auto new <时间表> | <名称> | <任务>` 走同一张卡；`|` 只切前两个；任务类型默认 reminder，`/auto new agent ...` 指定 agent 任务。
 - 创建时落库：群绑定、`createdBy`、名称、任务原文、时区，以及 agent 任务的 cwd 快照（`auto:` scope 没有自己的工作区，fire 时不能再按 scope 解析 cwd）。
 - 确认卡按钮使用**新签名 action**：绑定 draft、群、动作、一次性 nonce、TTL；不绑 operator、不要求运行中 run；授权 = 回调点击者为人 + 通过该群 access；只接受 bridge 登记过的卡片。仿照 interruption notice 的签名 action（不绑 operator），**不**沿用绑定 operator + run 的 bridge callback 签名。
+- **谁能点确认卡 / 看板卡**：飞书应用**可用范围**内的群成员。可用范围外的成员点击时，飞书在上游直接返回 403，回调不会到达 bridge（实测 2026-10-18：另一账号不在范围内时点击失败；加入可用范围后再点，成功「已确认 #32」）。bridge 侧的授权规则不变（A18）。
 - 编辑：v1 不提供原地编辑；删除后重建。
 
 ### 4. Scheduler, fire and catch-up（ADR-006/013/021）
@@ -164,13 +173,17 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 ### 7. Board（ADR-007）与 status push（ADR-008）
 
 - 每 bot 每群一张卡，只含本 bot 的任务；同数据根内锁 + 租约保证单写者；去抖更新。
-- 行：名称/内容摘要、任务类型、下次触发、结束时间、状态；按钮【暂停/恢复】【删除】，**群里任何人可点**（暂无权限校验；被滥用再议）。点击后卡片原地更新。
+- 行：名称/内容摘要、任务类型、下次触发、结束时间、状态；按钮【暂停/恢复】【删除】，**群里任何人可点**（应用可用范围内的成员，见 §3；暂无权限校验；被滥用再议）。点击后卡片原地更新。
 - 已错过：每个已错过时刻单列一行“已错过 原定 YYYY-MM-DD HH:MM”，在看板上保留 24 小时（与 ADR-017 的 one-shot 保留期一致），之后从看板移除；automations log 永久保留。
 - 已跳过：agent 任务因上一次未结算而跳过的时刻单列一行“已跳过 原定 YYYY-MM-DD HH:MM”，同样在看板上保留 24 小时；automations log 永久保留原定时刻与原因。不发群消息。
 - 按钮签名：notice 式 token 是一次性 nonce + 24 小时 TTL，看板长期存在，所以按钮要么用可重复使用的签名 action（动作幂等），要么每次渲染重新签名并在 TTL 前刷新。
 - link 恢复后刷新看板（订阅 FeishuLink 的 recovered 信号）。
 - 置顶：无 unpin 事件，每次更新看板时查询本群 pins，若本卡不在则重新置顶；pin 失败提示一次。取消置顶不影响任务。本 bot 在群内无任务时卡片显示“暂无”并取消置顶。
-- 卡片无法更新（丢失/过期）时重发并置顶，尝试取消旧卡置顶。
+- 卡片无法更新（丢失/过期：CardKit 200740 / 200750 / 300311，或消息已删除）时重发并置顶，尝试取消旧卡置顶。**只有**这些情况重发（A25）：
+  - 300317（sequence 未递增）表示本地 sequence 落后，卡片仍可用：用单调更大的 sequence（`max(stored + 1, 自 2026-01-01 起的秒数)`）原地重试一次，成功则持久化，不重发；仍失败则记日志、保留绑定，下次刷新再试。
+  - 其它 `code != 0` 只记日志、不重发。
+  - 重发后旧卡尽力更新为**无按钮**说明「此看板已更新，请查看置顶的新看板。」；待取消置顶的旧卡以列表记录，逐个取消置顶，不遗忘任何仍置顶的卡（A26）。
+  - 点非当前看板（含待取消置顶的旧卡）的按钮：不执行动作，toast「此看板已更新，请使用置顶的新看板。」（A26）。
 - 看板卡**只给人看**，不含任何机读块（ADR-008，2026-10-18）。
 - **status push**（ADR-008、ADR-015）：事实源仍是 profile 数据目录下的本地 status 文件（随 scheduler 原子写）；看板与推送都由它派生。
   - 端点：`POST /v1/status`，位于私有 larkent-monitor Worker。只接受 POST，响应体为空。
@@ -198,7 +211,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 
 - bot 被移出群或群解散：订阅飞书事件 `im.chat.member.bot.deleted_v1` 与 `im.chat.disbanded_v1`（需在开放平台为应用开通事件订阅），或发送被拒为“不在群内”（发送/回复错误码 230002 “The bot can not be outside the group”）或“群已解散”（232009）：该群任务删除，看板不再写；日志一条。需要一个明确的 not-in-chat 错误类，不能复用“消息已不存在”的判断。
 - 私聊：不支持（回复“仅支持群”）。
-- 无每群 / 每人硬限额（ADR-009）；周期任务的确认卡写出“约每月 N 次”。一次性不写每月次数：只显示该次触发时刻，或写「共 1 次」（A17）。
+- 无每群 / 每人硬限额（ADR-009）；周期任务的确认卡写出“约每月 N 次”；`endAt` 距 now 不足 30 天时改写「共 N 次」（实际数出的触发数，A27）。一次性不写每月次数：只显示该次触发时刻并写「共 1 次」，不出现「接下来 N 次」（A17、A27）。确认卡的「接下来 N 次」按实际个数（≤ 3）标注。
 
 ### 9. Storage and rollout
 
@@ -207,7 +220,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 
 ### 10. Observability
 
-结构化事件：`auto.draft`、`auto.confirmed`、`auto.rejected`、`auto.fire`、`auto.missed`、`auto.catch-up`（含原定时刻与触发来源：startup / link-recovered / wake / confirm）、`auto.skipped`（agent 任务重叠跳过：原定时刻与原因；不发群消息）、`auto.wake.already-started`（静默，仅本地日志）、`auto.result`（outcome）、`auto.paused`、`auto.deleted`、`auto.expired`、`auto.policy-guard`、`auto.board.repin`、`auto.removed-from-chat`。不含任务正文。`auto.missed`、`auto.catch-up` 与 `auto.skipped` 同时写入永久的 automations log（ADR-016/017/019/021）。确认卡点击后的 `nudge()` 使用触发来源 `confirm`；automations log 读回接受 `confirm`。
+结构化事件：`auto.draft`、`auto.confirmed`、`auto.rejected`、`auto.fire`、`auto.missed`、`auto.catch-up`（含原定时刻与触发来源：startup / link-recovered / wake / confirm）、`auto.skipped`（agent 任务重叠跳过：原定时刻与原因；不发群消息）、`auto.wake.already-started`（静默，仅本地日志）、`auto.result`（outcome）、`auto.paused`、`auto.deleted`、`auto.expired`、`auto.policy-guard`、`auto.board.repin`、`auto.board.patch`（成功，含 cardId 后 4 位与 sequence、是否重试）、`auto.board.resend`（含原因码）、`auto.removed-from-chat`。不含任务正文。`auto.rejected` 同时覆盖用户点「否」（`source=confirm-card`）与 bridge 拒绝提案 / 命令（`source=proposal|command`，带 `reason`，不记时间表原文，A23）。`auto.missed`、`auto.catch-up` 与 `auto.skipped` 同时写入永久的 automations log（ADR-016/017/019/021）。确认卡点击后的 `nudge()` 使用触发来源 `confirm`；automations log 读回接受 `confirm`。
 
 ### 11. Backfill fix (F20)
 
