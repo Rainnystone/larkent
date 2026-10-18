@@ -1367,6 +1367,60 @@ describe('automation scheduler', () => {
     ]);
   });
 
+  it('records a catch-up as startup when the link comes up during the final status write', async () => {
+    let linkUp = false;
+    let recovered = false;
+    const schedulerBox: { scheduler?: { onLinkRecovered(): Promise<void> } } = {};
+    let statusWrites = 0;
+    const now = t0 + HOUR + 61_000;
+    const h = await harness(now, {
+      isLinkUp: () => linkUp,
+      onChanged: () => {
+        statusWrites += 1;
+        if (statusWrites < 2 || recovered) return;
+        linkUp = true;
+        recovered = true;
+        void schedulerBox.scheduler?.onLinkRecovered();
+      },
+    });
+    schedulerBox.scheduler = h.scheduler;
+    await h.store.create(reminderInput({ nextFireAt: t0 }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        scheduledAt: t0,
+        result: 'missed',
+        triggerSource: 'startup',
+      }),
+      expect.objectContaining({
+        scheduledAt: t0 + HOUR,
+        result: 'catch-up',
+        triggerSource: 'startup',
+      }),
+    ]);
+  });
+
+  it('records a confirm nudge as confirm', async () => {
+    const h = await harness(t0);
+    await h.store.create(reminderInput({ nextFireAt: t0 + HOUR }));
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    h.clock.jump(HOUR + 61_000);
+    await h.scheduler.nudge();
+    await h.scheduler.idle();
+    expect(h.fires).toEqual([
+      expect.objectContaining({ fireAt: t0 + HOUR, catchUp: true }),
+    ]);
+    expect(await h.store.readLog()).toEqual([
+      expect.objectContaining({
+        scheduledAt: t0 + HOUR,
+        result: 'catch-up',
+        triggerSource: 'confirm',
+      }),
+    ]);
+  });
+
   it('records a wake catch-up as wake', async () => {
     const h = await harness(t0);
     await h.store.create(reminderInput({ nextFireAt: t0 + HOUR }));

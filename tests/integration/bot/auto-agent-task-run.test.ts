@@ -3,10 +3,13 @@ import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { CATCH_UP_PROMPT_MARKER } from '../../../src/automations/agent-run';
+import { fireTurnId } from '../../../src/automations/delivery';
 import {
   formatFireKey,
   type Schedule,
 } from '../../../src/automations/schedule';
+import { automationRunScope } from '../../../src/bot/scope';
 import { AutomationsStore } from '../../../src/automations/store';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { log } from '../../../src/core/logger';
@@ -565,6 +568,33 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     await waitFor(async () => (await readStatus(restarted.statusPath)).items[0]?.lastStatus === 'failed');
   });
 
+  it('dates a recovered catch-up interrupt against recovery time', async () => {
+    const recoveryNow = t0 + 24 * HOUR + 61_000;
+    const h = await harness({
+      nowMs: recoveryNow,
+      seed: agentInput({ paused: true, nextFireAt: t0 + 48 * HOUR }),
+      events: [],
+      beforeStart: async ({ journal }) => {
+        journal.enqueue({
+          turnId: fireTurnId(formatFireKey(1, t0)),
+          scope: automationRunScope(1, t0),
+          chatId: CHAT,
+          messageIds: [],
+          senderId: 'ou_bot',
+          initiatorId: 'ou_bot',
+          initiatorType: 'bot',
+          status: 'running',
+          userInput: `${CATCH_UP_PROMPT_MARKER}12:00。请按原定任务执行。\n\n${TASK}`,
+        });
+        await journal.flush();
+      },
+    });
+    await waitFor(() => bodies(h.channel).some((body) => body.includes('原定')));
+    const notice = bodies(h.channel).filter((body) => body.includes('原定')).join('\n');
+    expect(notice).toContain('原定 01-02 12:00');
+    expect(notice).not.toContain(FOOTER);
+  });
+
   it('skips the bridge result post when the agent already IM-sent to the group', async () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     const h = await harness({
@@ -598,6 +628,7 @@ async function harness(opts: {
   tmp?: Awaited<ReturnType<typeof createTmpProfile>>;
   store?: AutomationsStore;
   reuseCleanup?: boolean;
+  beforeStart?: (ctx: { journal: TurnJournal; store: AutomationsStore }) => Promise<void>;
 } = { nowMs: t0 }) {
   const tmp = opts.tmp ?? await createTmpProfile('auto-agent-');
   let nowMs = opts.nowMs;
@@ -618,6 +649,7 @@ async function harness(opts: {
 
   const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
   await journal.load();
+  if (opts.beforeStart) await opts.beforeStart({ journal, store });
   const cfg = createDefaultProfileConfig({
     agentKind: opts.agentKind ?? 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },

@@ -648,12 +648,15 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         if (isAutomationRunScope(entry.scope) && !owned.get(entry.turnId)?.reply) {
           const parsed = parseAutomationRunScope(entry.scope);
           const item = parsed ? deps.automations?.get(parsed.id) : undefined;
+          const timezone = item?.timezone;
+          const fireAt = parsed?.fireAt;
           owned.stageReply(entry.turnId, {
             markdown: formatAgentFailureNotice(outcome, {
+              now: (deps.now ?? Date.now)(),
               catchUp: typeof entry.userInput === 'string'
                 && entry.userInput.includes(CATCH_UP_PROMPT_MARKER),
-              timezone: item?.timezone ?? 'UTC',
-              fireAt: parsed?.fireAt ?? 0,
+              ...(typeof timezone === 'string' && timezone.length > 0 ? { timezone } : {}),
+              ...(typeof fireAt === 'number' ? { fireAt } : {}),
             }),
             replyTo: '',
             replyMode: 'text',
@@ -2124,7 +2127,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
-        ? finalReplyState(progress, visible)
+        ? finalReplyState(stream, visible)
         : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
       await deliverFinalReply({
         channel,
@@ -2201,7 +2204,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
       const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
-        ? finalReplyState(progress, visible)
+        ? finalReplyState(stream, visible)
         : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
       await deliverFinalReply({
         channel,
@@ -2370,10 +2373,10 @@ function shouldOpenProgressStream(state: RunState): boolean {
  *
  * Terminal notices are dropped for the same reason — the stream rendered them.
  */
-function finalReplyState(progress: LazyProgressStream, state: RunState): RunState {
+function finalReplyState(stream: StreamDelivery, state: RunState): RunState {
   return finalReplyFor(state, {
     replyMode: 'final-answer',
-    streamed: progress.opened() && !progress.abandoned(),
+    streamed: stream.kind === 'confirmed',
   });
 }
 

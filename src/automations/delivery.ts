@@ -37,7 +37,7 @@ export function missedTurnId(id: number, missedFires: readonly number[]): string
 
 export function formatReminderText(
   fire: Pick<FireSend, 'name' | 'taskText' | 'catchUp' | 'timezone' | 'fireAt'>,
-  now = fire.fireAt,
+  now: number,
 ): string {
   const base = `⏰ ${fire.name}：${fire.taskText}`;
   if (!fire.catchUp) return base;
@@ -46,7 +46,7 @@ export function formatReminderText(
 
 export function formatMissedNoticeText(
   notice: Pick<MissedNotify, 'name' | 'timezone' | 'missedFires'>,
-  now = notice.missedFires[0] ?? 0,
+  now: number,
 ): string {
   const times = notice.missedFires.map((fireAt) => `原定 ${formatScheduledLabel(notice.timezone, fireAt, now)}`);
   return [`已错过：${notice.name}`, ...times].join('\n');

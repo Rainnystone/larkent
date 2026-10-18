@@ -14,7 +14,7 @@ export const AUTOMATIONS_STARTED_KEY_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 export type AutomationTaskType = 'reminder' | 'agent';
 export type AutomationLastStatus = 'ok' | 'missed' | 'failed' | 'running';
-export type AutomationTriggerSource = 'startup' | 'link-recovered' | 'wake' | 'timer';
+export type AutomationTriggerSource = 'startup' | 'link-recovered' | 'wake' | 'timer' | 'confirm';
 export type AutomationLogResult = 'missed' | 'catch-up' | 'policy-guard' | 'skipped';
 export type AutomationPolicyGuardReason = PolicyGuardReason;
 export type AutomationSkipReason = 'previous-run-unsettled';
@@ -981,8 +981,9 @@ function parseLogEntry(raw: unknown): AutomationsLogEntry | undefined {
   const triggerSource =
     raw.triggerSource === 'startup'
     || raw.triggerSource === 'link-recovered'
-    || raw.triggerSource === 'wake'
+    ||     raw.triggerSource === 'wake'
     || raw.triggerSource === 'timer'
+    || raw.triggerSource === 'confirm'
       ? raw.triggerSource
       : undefined;
   if (raw.result !== 'policy-guard' && !triggerSource) return undefined;

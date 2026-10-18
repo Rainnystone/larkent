@@ -3,6 +3,7 @@ import { setImmediate as yieldIO } from 'node:timers/promises';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
+import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import * as logger from '../../../src/core/logger';
 import { SessionStore } from '../../../src/session/store';
@@ -82,6 +83,37 @@ describe('run outcome stream', () => {
     const text = rendered(h.channel);
     expect(text).toContain('输出不完整（打印超时），可稍后继续');
     expect(text.split('输出不完整（打印超时），可稍后继续').length - 1).toBe(1);
+  });
+
+  it('keeps the agy partial warning when the progress stream finish is rejected', async () => {
+    const warning = '输出不完整（打印超时），可稍后继续';
+    const h = await harness({ agentKind: 'antigravity', journal: true });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'tool_use', id: 'tool-probe', name: 'probe_tool_xyz', input: {} });
+    await waitFor(() => rendered(h.channel).includes('probe_tool_xyz'));
+    h.channel.streamErrors.finish = new Error('stream finish rejected');
+    run.stderrSnapshot = '[agy] print timeout after 5m0s with turn in progress; returning partial output';
+    run.push({ type: 'final_text', content: 'PARTIAL_ANSWER' });
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('PARTIAL_ANSWER')));
+    const answer = h.channel.sent
+      .map((item) => JSON.stringify(item.content))
+      .filter((body) => body.includes('PARTIAL_ANSWER'))
+      .join('\n');
+    expect(answer).toContain(warning);
+    expect(answer.split(warning).length - 1).toBe(1);
+    expect(answer.split('PARTIAL_ANSWER').length - 1).toBe(1);
+    expect(answer).not.toContain('probe_tool_xyz');
+    const staged = h.journal?.list().find((entry) => entry.reply?.markdown.includes('PARTIAL_ANSWER'));
+    expect(staged?.reply?.markdown ?? '').toContain(warning);
+    expect((staged?.reply?.markdown ?? '').split(warning).length - 1).toBe(1);
+    expect(staged?.reply?.markdown ?? '').not.toContain('probe_tool_xyz');
   });
 
   it('shows redacted signature copy on the card instead of raw stderr paths', async () => {
@@ -178,9 +210,14 @@ describe('run outcome stream', () => {
 
 async function harness(options?: {
   agentKind?: 'claude' | 'cursor' | 'antigravity';
+  journal?: boolean;
 }) {
   const tmp = await createTmpProfile('run-outcome-stream-');
   const agentKind = options?.agentKind ?? 'claude';
+  const journal = options?.journal
+    ? new TurnJournal(join(tmp.profile, 'turn-journal.json'))
+    : undefined;
+  if (journal) await journal.load();
   const cfg = createDefaultProfileConfig({
     agentKind,
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
@@ -195,6 +232,7 @@ async function harness(options?: {
   sdk.channel = channel;
   const bridge = await startChannel({
     cfg, agent, sessions, workspaces,
+    ...(journal ? { journal } : {}),
     controls: { profile: agentKind, profileConfig: cfg, cfg, ownerRefreshState: 'unknown',
       async refreshOwner() {}, async restart() {}, async exit() {},
       configPath: join(tmp.root, 'config.json'), processId: 'test-outcome',
@@ -205,10 +243,11 @@ async function harness(options?: {
     for (const run of agent.manual) run.releaseCleanup();
     await bridge.disconnect();
     await drainIO();
+    await journal?.flush().catch(() => {});
     await Promise.all([sessions.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
-  return { channel, agent };
+  return { channel, agent, journal };
 }
 
 class StreamingFakeAgent extends FakeAgentAdapter {

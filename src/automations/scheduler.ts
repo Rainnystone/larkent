@@ -141,7 +141,6 @@ class Scheduler implements AutomationScheduler {
       this.armWakeWatch();
       await this.drainWake();
       this.opened = true;
-      if (this.isLinkUp()) this.linkSeenUp = true;
     });
   }
 
@@ -194,7 +193,7 @@ class Scheduler implements AutomationScheduler {
     return this.enqueue(async () => {
       if (this.closed || !this.enabled()) return;
       await this.abandonOrphansOnce();
-      await this.handleDue('startup');
+      await this.handleDue('confirm');
     });
   }
 
@@ -261,6 +260,7 @@ class Scheduler implements AutomationScheduler {
 
   private async catchUp(source: AutomationTriggerSource): Promise<void> {
     if (!this.enabled()) return;
+    if (this.isLinkUp()) this.linkSeenUp = true;
     for (const item of this.store.list()) {
       await this.reconcileStarted(item);
     }
@@ -544,6 +544,7 @@ class Scheduler implements AutomationScheduler {
 
   private async handleDue(source: AutomationTriggerSource): Promise<void> {
     if (this.closed || !this.enabled()) return;
+    if (this.isLinkUp()) this.linkSeenUp = true;
     await this.store.pruneStartedFireKeys(this.now());
     const now = this.now();
     if (!this.isLinkUp()) {

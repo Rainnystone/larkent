@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   AGENT_RESULT_FOOTER,
   automationScopeForReply,
@@ -10,6 +10,7 @@ import {
   formatAutomationAgentPrompt,
   formatCatchUpPromptHint,
 } from '../../../src/automations/agent-run';
+import { log } from '../../../src/core/logger';
 import {
   automationFollowUpScope,
   automationRunScope,
@@ -34,7 +35,7 @@ describe('agent-task result copy and follow-up mapping', () => {
       catchUp: false,
       timezone: 'UTC',
       fireAt,
-    }, 'ou_bot');
+    }, fireAt, 'ou_bot');
     expect(prompt).toContain('<bridge_context>');
     expect(prompt).toContain('"chatId":"oc_group"');
     expect(prompt).toContain('"chatType":"group"');
@@ -47,12 +48,14 @@ describe('agent-task result copy and follow-up mapping', () => {
       catchUp: false,
       timezone: 'UTC',
       fireAt,
+      now: fireAt,
     })).toBe(`汇总完成\n\n${AGENT_RESULT_FOOTER}`);
     expect(formatAgentResultPost({
       body: '汇总完成',
       catchUp: true,
       timezone: 'UTC',
       fireAt,
+      now: fireAt,
     })).toBe(`汇总完成\n\n（补跑，原定 12:00）\n\n${AGENT_RESULT_FOOTER}`);
     expect(formatCatchUpPromptHint('UTC', fireAt, fireAt)).toContain('补跑');
     expect(formatCatchUpPromptHint('UTC', fireAt, fireAt)).toContain('12:00');
@@ -70,25 +73,25 @@ describe('agent-task result copy and follow-up mapping', () => {
       reason: { type: 'shutdown-signal' },
       retriable: true,
       needsHuman: false,
-    })).toBe('自动化任务中断：进程退出');
+    }, { now: fireAt })).toBe('自动化任务中断：进程退出');
     expect(formatAgentFailureNotice({
       kind: 'interrupted',
       reason: { type: 'bridge-idle-watchdog' },
       retriable: true,
       needsHuman: false,
-    })).toBe('自动化任务中断：空闲超时');
+    }, { now: fireAt })).toBe('自动化任务中断：空闲超时');
     expect(formatAgentFailureNotice({
       kind: 'failed',
       cause: 'unclassified',
       retriable: false,
       needsHuman: true,
-    })).toBe('自动化任务中断：出错');
+    }, { now: fireAt })).toBe('自动化任务中断：出错');
     expect(formatAgentFailureNotice({
       kind: 'interrupted',
       reason: { type: 'policy-guard' },
       retriable: false,
       needsHuman: false,
-    }, { policyGuard: 'members' })).toBe(
+    }, { now: fireAt, policyGuard: 'members' })).toBe(
       '自动化任务中断：策略拦截（成员增删）。任务已暂停，可在看板恢复或删除。',
     );
     expect(formatAgentResultPost({
@@ -96,6 +99,7 @@ describe('agent-task result copy and follow-up mapping', () => {
       catchUp: false,
       timezone: 'UTC',
       fireAt,
+      now: fireAt,
       followUp: false,
     })).toBe('自动化任务中断：缺少工作目录');
     for (const notice of [
@@ -104,19 +108,19 @@ describe('agent-task result copy and follow-up mapping', () => {
         reason: { type: 'shutdown-signal' },
         retriable: true,
         needsHuman: false,
-      }),
+      }, { now: fireAt }),
       formatAgentFailureNotice({
         kind: 'interrupted',
         reason: { type: 'policy-guard' },
         retriable: false,
         needsHuman: false,
-      }, { policyGuard: 'members' }),
+      }, { now: fireAt, policyGuard: 'members' }),
       formatAgentFailureNotice({
         kind: 'failed',
         cause: 'unclassified',
         retriable: false,
         needsHuman: true,
-      }),
+      }, { now: fireAt }),
     ]) {
       expect(notice).not.toContain(AGENT_RESULT_FOOTER);
     }
@@ -125,14 +129,32 @@ describe('agent-task result copy and follow-up mapping', () => {
       reason: { type: 'shutdown-signal' },
       retriable: true,
       needsHuman: false,
-    }, { catchUp: true, timezone: 'UTC', fireAt })).toBe(
+    }, { catchUp: true, timezone: 'UTC', fireAt, now: fireAt })).toBe(
       '自动化任务中断：进程退出\n\n（补跑，原定 12:00）',
     );
+    expect(formatAgentFailureNotice({
+      kind: 'interrupted',
+      reason: { type: 'shutdown-signal' },
+      retriable: true,
+      needsHuman: false,
+    }, { catchUp: true, timezone: 'UTC', fireAt, now: fireAt + 24 * 60 * 60_000 })).toBe(
+      '自动化任务中断：进程退出\n\n（补跑，原定 01-02 12:00）',
+    );
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    expect(formatAgentFailureNotice({
+      kind: 'interrupted',
+      reason: { type: 'shutdown-signal' },
+      retriable: true,
+      needsHuman: false,
+    }, { catchUp: true, now: fireAt })).toBe('自动化任务中断：进程退出');
+    expect(warn.mock.calls.some((call) => call[0] === 'auto' && call[1] === 'catch-up-label-missing')).toBe(true);
+    warn.mockRestore();
     expect(formatAgentResultPost({
       body: '  ',
       catchUp: false,
       timezone: 'UTC',
       fireAt,
+      now: fireAt,
     })).toBe(AGENT_RESULT_FOOTER);
   });
 

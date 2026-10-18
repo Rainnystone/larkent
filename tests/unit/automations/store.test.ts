@@ -168,6 +168,14 @@ describe('AutomationsStore', () => {
       result: 'skipped',
       skipReason: 'previous-run-unsettled',
     });
+    await store.recordLog({
+      id: item.id,
+      taskType: item.taskType,
+      scheduledAt: 1_760_000_240_000,
+      decidedAt: now.t,
+      triggerSource: 'confirm',
+      result: 'catch-up',
+    });
 
     for (let i = 0; i < 25; i += 1) {
       now.t += 60_000;
@@ -206,6 +214,14 @@ describe('AutomationsStore', () => {
         triggerSource: 'timer',
         result: 'skipped',
         skipReason: 'previous-run-unsettled',
+      },
+      {
+        id: item.id,
+        taskType: 'reminder',
+        scheduledAt: 1_760_000_240_000,
+        decidedAt: 1_760_000_000_000,
+        triggerSource: 'confirm',
+        result: 'catch-up',
       },
     ]);
 

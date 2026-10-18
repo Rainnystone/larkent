@@ -65,14 +65,14 @@ export const AGENT_RESULT_FOOTER = '在本消息话题里追问';
 export const AGENT_EMPTY_RESULT = '任务已完成，agent 没有给出文字结果。';
 export const CATCH_UP_PROMPT_MARKER = '本次为补跑，原定 ';
 
-export function formatCatchUpPromptHint(timezone: string, fireAt: number, now = fireAt): string {
+export function formatCatchUpPromptHint(timezone: string, fireAt: number, now: number): string {
   return `${CATCH_UP_PROMPT_MARKER}${formatScheduledLabel(timezone, fireAt, now)}。请按原定任务执行。`;
 }
 
 export function formatAutomationAgentPrompt(
   fire: Pick<FireSend, 'chatId' | 'createdBy' | 'taskText' | 'catchUp' | 'timezone' | 'fireAt'>,
+  now: number,
   botOpenId?: string,
-  now = fire.fireAt,
 ): string {
   const userInput = fire.catchUp
     ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt, now)}\n\n${fire.taskText}`
@@ -94,13 +94,13 @@ export function formatAgentResultPost(input: {
   catchUp: boolean;
   timezone: string;
   fireAt: number;
-  now?: number;
+  now: number;
   /** Completed and partial result posts invite a thread follow-up. Interrupt notices do not. */
   followUp?: boolean;
 }): string {
   const lines = [input.body.trim()].filter((line) => line.length > 0);
   if (input.catchUp) {
-    lines.push(`（补跑，原定 ${formatScheduledLabel(input.timezone, input.fireAt, input.now ?? input.fireAt)}）`);
+    lines.push(`（补跑，原定 ${formatScheduledLabel(input.timezone, input.fireAt, input.now)}）`);
   }
   if (input.followUp !== false) lines.push(AGENT_RESULT_FOOTER);
   return lines.join('\n\n');
@@ -108,18 +108,30 @@ export function formatAgentResultPost(input: {
 
 export function formatAgentFailureNotice(
   outcome: RunOutcome,
-  meta?: {
+  meta: {
+    now: number;
     catchUp?: boolean;
     timezone?: string;
     fireAt?: number;
     policyGuard?: PolicyGuardReason;
   },
 ): string {
+  const dated = meta.catchUp === true
+    && typeof meta.timezone === 'string'
+    && meta.timezone.length > 0
+    && typeof meta.fireAt === 'number';
+  if (meta.catchUp === true && !dated) {
+    log.warn('auto', 'catch-up-label-missing', {
+      ...(meta.timezone !== undefined ? { timezone: meta.timezone } : {}),
+      ...(meta.fireAt !== undefined ? { fireAt: meta.fireAt } : {}),
+    });
+  }
   return formatAgentResultPost({
-    body: formatAgentFailureBody(outcome, meta?.policyGuard),
-    catchUp: meta?.catchUp === true,
-    timezone: meta?.timezone ?? 'UTC',
-    fireAt: meta?.fireAt ?? 0,
+    body: formatAgentFailureBody(outcome, meta.policyGuard),
+    catchUp: dated,
+    timezone: meta.timezone ?? '',
+    fireAt: meta.fireAt ?? 0,
+    now: meta.now,
     followUp: false,
   });
 }
@@ -205,8 +217,8 @@ async function runAutomationAgentFireBody(
 
   const prompt = formatAutomationAgentPrompt(
     fire,
-    runtime.botOpenId() || undefined,
     now,
+    runtime.botOpenId() || undefined,
   );
   const journal = runtime.journal;
   if (journal && !journal.get(turnId)) {

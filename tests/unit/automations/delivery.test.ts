@@ -34,14 +34,14 @@ describe('automation outbox ids and copy', () => {
       catchUp: false,
       timezone: 'UTC',
       fireAt,
-    })).toBe('⏰ 交周报：提醒交周报');
+    }, fireAt)).toBe('⏰ 交周报：提醒交周报');
     expect(formatReminderText({
       name: '交周报',
       taskText: '提醒交周报',
       catchUp: true,
       timezone: 'UTC',
       fireAt,
-    })).toBe('⏰ 交周报：提醒交周报（补跑，原定 12:00）');
+    }, fireAt)).toBe('⏰ 交周报：提醒交周报（补跑，原定 12:00）');
     expect(formatMissedNoticeText({
       name: '交周报',
       timezone: 'UTC',
