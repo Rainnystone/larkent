@@ -3,7 +3,7 @@
 Status: ready-for-agent · Docs track: PR #44（本分支）· Code track: draft PR #49（`feat/automations-v2`，from `master@d056198`；取代已关闭的 #45），tickets claimed from #44, one ticket per session
 Tickets: [`automations/tickets/`](automations/tickets/README.md)
 Baseline: `master@d056198`（run-reliability 与 link-recovery PR #47 均已合入）。只依赖 link-recovery 的**契约**：fire 结果与通知的投递复用 **Outbox**（turn journal：stage → send → delivered → recovery 时 redeliver），link down / recovered 信号来自 **FeishuLink**；**永不**使用 **Continuations**（fire 被中断不提供“继续”，也不自动续跑）。
-Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-013..015（补跑规则、larkent-monitor 路线、status block v1），ADR-013 **取代** ADR-004；用户 2026-10-17 决定 ADR-016..020（见 Resolved decisions，取代原 Open questions）；用户 2026-10-18 决定 ADR-021（短段墙钟重算、60 秒准点标注、agent 任务重叠跳过）。见文末 Decision log。本文只写行为、决策、边界与验收；代码锚点（file:line，已对 `master@d056198` 核对）写在各 ticket。
+Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-013..015（补跑规则、larkent-monitor 路线、status block v1；ADR-008/014/015 于 2026-10-18 改为推送到 D1），ADR-013 **取代** ADR-004；用户 2026-10-17 决定 ADR-016..020（见 Resolved decisions，取代原 Open questions）；用户 2026-10-18 决定 ADR-021（短段墙钟重算、60 秒准点标注、agent 任务重叠跳过）。见文末 Decision log。本文只写行为、决策、边界与验收；代码锚点（file:line，已对 `master@d056198` 核对）写在各 ticket。
 
 ---
 
@@ -14,14 +14,14 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - 群里的人工对话不能被打扰、排队或混入自动化内容。
 - agent 默认 full 权限、自动批准工具；profile 的 lark-cli 同时持有 bot 与 owner 用户身份（含加/减群成员）。自动化把它变成“无人值守、延迟、重复”的能力。
 - 飞书卡片只能由发送身份更新；多个 bot 共处一群；飞书**没有**置顶/取消置顶事件（实测，见 Further Notes）。
-- 承载 bridge 的进程会停（崩溃、重启、主机睡眠）或 link 断开，到点的 fire 会错过。Larkent 自己在重启 / link 恢复时按同一规则补跑；私有的 larkent-monitor（只服务常驻的 Grok Bot box）读取看板里的机读 status block，发现 miss 后唤醒 box。两条路径都按 fire key 幂等，同一 fire 只执行一次。
+- 承载 bridge 的进程会停（崩溃、重启、主机睡眠）或 link 断开，到点的 fire 会错过。Larkent 自己在重启 / link 恢复时按同一规则补跑；bridge 把不透明的状态摘要推送到私有的 larkent-monitor（只服务常驻的 Grok Bot box；Worker + D1），monitor 发现 miss 后唤醒 box。两条路径都按 fire key 幂等，同一 fire 只执行一次。
 
 ## Solution
 
 - 群里 @bot，用自然语言或 `/auto new` 创建 **automation**：**一次性**或**周期**（iPhone 日历模型），任务类型为 **reminder**（纯文本，无成本）或 **agent 任务**（agent task，跑一次 agent prompt）。
 - bridge 校验时间表；缺结束时间时发**确定性脚本卡**索要；齐全后发**确认卡**（逐字列出类型、时间表、时区、接下来 3 次触发、结束时间、任务原文、执行身份），群里任何人点「是」即生效。
 - 到点：reminder 发一条文本；agent 任务在后台新开 session 跑一次，结果发为一条 **result post**，可在其话题里追问。reminder 的 fire 互不阻塞。同一 agent 任务上一次未结束时，本次到点跳过：不并发、不排队、不发群消息。
-- 每个有自动化的 bot 在群里置顶一张自己的 **board**：每任务一行（内容、下次触发、结束），带【暂停】【删除】按钮，任何人可点；卡内含可见的机读 **monitor hook** 文本块。被取消置顶会在下次看板更新时重新置顶。
+- 每个有自动化的 bot 在群里置顶一张自己的 **board**：每任务一行（内容、下次触发、结束），带【暂停】【删除】按钮，任何人可点。看板只给人看，不含机读块。被取消置顶会在下次看板更新时重新置顶。
 - `/auto` 列表命令作为备用查看入口。
 - 周期任务到期即删除，无续期提醒、无保留。
 - 错过的 fire（计划时刻已过、未执行、未暂停）在 **24 小时内**补跑**恰好一次**（按 fire key 幂等），消息注明“补跑，原定 HH:MM”；同一任务错过多个时刻只补最近一个。没补的每个时刻都留痕：看板逐条列为“已错过”（含原定时间）、群里发一条通知、本地日志记一条。按设计 miss / 补跑**不应发生**，所以发生了就必须可见（ADR-016..019）。
@@ -55,8 +55,8 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 25. As an operator, I want a restart, a link recovery and a monitor wake to never fire the same fire key twice, whichever comes first, so that duplicates don't happen.
 26. As an operator, I want fire results delivered through the link-recovery outbox, so that a failed send is redelivered after recovery.
 27. As an operator, I want automation runs blocked from personnel/org operations by a bridge whitelist, so that an unattended run can't add or remove members.
-28. As an operator, I want a machine-readable status block in the board card (per-item short `id`, `paused`, card-level `updatedAt`), so that larkent-monitor can detect a miss and wake the always-on box after it.
-29. As an operator, I want that block to contain no Feishu IDs, task content or creator, so that nothing sensitive leaks.
+28. As an operator, I want the bridge to push a signed status digest (per-item opaque `id`, `nextFires[]`, `lastFireAt`, `paused`, `endAt`, top-level `updatedAt`) to the private larkent-monitor, so that it can detect a miss and wake the always-on box after it, while the board card stays human-only.
+29. As an operator, I want that digest to contain no Feishu IDs, chat names, task content, schedule rules or creator, so that no company data reaches the public internet.
 30. As an operator, I want structured log events for create/confirm/fire/missed/result/policy-guard, so that I can audit behaviour.
 31. As an operator, I want the feature off by default per profile, so that rollout is controlled.
 32. As an operator, I want reminders to ship before agent tasks, so that the zero-cost path proves the scheduler first.
@@ -92,8 +92,8 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - **scripted card**：bridge 确定性渲染的固定卡片（缺结束时间、校验失败），不经 agent。
 - **draft**：等待确认的自动化，TTL 24 小时。
 - **board**：每 bot 每群一张置顶卡；行 + 暂停/删除按钮。
-- **monitor hook** / **status block**：board 内可见的机读文本块（“note”= 现有 markdown 元素 + `text_size: 'notation'`）；事实源为本地 status 文件。
-- **larkent-monitor**：私有的外部监视器，只服务常驻的 Grok Bot box；路线为 Cloudflare Worker 扫描看板 → wake webhook 唤醒 box；不涉及 GitHub Action。其实现不在本仓库。
+- **status push**：bridge 向 larkent-monitor 推送的状态摘要（ADR-008/015）；事实源为本地 status 文件。看板卡不含机读块。旧称 monitor hook / status block（看板内 note 块）已废弃（2026-10-18）。
+- **larkent-monitor**：私有的外部监视器，只服务常驻的 Grok Bot box；路线为 bridge 推送状态到 Worker（存 D1）→ Worker cron 判定 miss → wake webhook 唤醒 box；不涉及 GitHub Action。其实现不在本仓库。
 - **scheduler**：按 `nextFireAt` 产生 fire 的定时器，归 profile 所有。每段最多睡 60 秒，醒来按墙钟重算到期项。启动、短段醒来、link 恢复与本机唤醒入口执行同一补跑规则；与 backfill 无关。
 - **automation creator**（`createdBy`）：促成创建那条消息的人；**bot owner** 即现 `isCreator()`，改名 `isBotOwner()`（避免与 creator 混淆）。
 
@@ -161,7 +161,7 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - bridge 层 **tool whitelist**：人事/组织能力（建群、成员增删、退群、群设置、通讯录、人事）或请求用户身份 → 立即停止，`StopRequest` 新增 `policy-guard`，outcome `interrupted(policy-guard)`，群内通知，自动化暂停。审计日志脱敏。
 - 诚实边界：agent 有完整 shell，这是纵深防御，不是安全边界；确认卡如实说明。**whitelist 与仅 bot 身份验证前，agent 任务不得在线上开启**；reminder 不受此限。
 
-### 7. Board（ADR-007）与 monitor hook（ADR-008）
+### 7. Board（ADR-007）与 status push（ADR-008）
 
 - 每 bot 每群一张卡，只含本 bot 的任务；同数据根内锁 + 租约保证单写者；去抖更新。
 - 行：名称/内容摘要、任务类型、下次触发、结束时间、状态；按钮【暂停/恢复】【删除】，**群里任何人可点**（暂无权限校验；被滥用再议）。点击后卡片原地更新。
@@ -171,16 +171,24 @@ Decisions: grill 2026-10-16 锁定 ADR-001..012；grill 2026-10-17 新增 ADR-01
 - link 恢复后刷新看板（订阅 FeishuLink 的 recovered 信号）。
 - 置顶：无 unpin 事件，每次更新看板时查询本群 pins，若本卡不在则重新置顶；pin 失败提示一次。取消置顶不影响任务。本 bot 在群内无任务时卡片显示“暂无”并取消置顶。
 - 卡片无法更新（丢失/过期）时重发并置顶，尝试取消旧卡置顶。
-- **monitor hook / status block**（ADR-008、ADR-015；沿用现有 “note” 通道 = markdown 元素 `text_size: 'notation'`）：卡内一个**可见**文本块（HTML 注释与按钮 value 对读者不可见），一行 JSON，`v` 仍为 1：
+- 看板卡**只给人看**，不含任何机读块（ADR-008，2026-10-18）。
+- **status push**（ADR-008、ADR-015）：事实源仍是 profile 数据目录下的本地 status 文件（随 scheduler 原子写）；看板与推送都由它派生。
+  - 端点：`POST /v1/status`，位于私有 larkent-monitor Worker。只接受 POST，响应体为空。
+  - 鉴权：`HMAC-SHA256(secret, timestamp + "." + body)`，放在请求头；monitor 拒绝与自身时钟相差超过 ±5 分钟的 timestamp；`updatedAt` 单调递增，不大于已存值的推送丢弃（防回放、防乱序）。
+  - payload（时间均为 UTC 毫秒）：
 
 ```json
-{"v":1,"bot":"<display name>","updatedAt":0,"items":[{"id":3,"paused":false,"nextFireAt":0,"lastFireAt":0,"lastStatus":"ok|missed|failed|running","endAt":0,"missed":0}]}
+{"v":2,"botKey":"<opaque>","updatedAt":0,"items":[{"id":"<opaque>","nextFires":[0],"lastFireAt":0,"paused":false,"endAt":0}]}
 ```
-  - 时间均为 UTC 毫秒。`id` 是 §1 的短编号（与 `/auto` 编号相同），**永远不是飞书 ID**。`updatedAt` 为卡片级，每次渲染写入。`nextFireAt = 0` 表示无后续触发。
-  - 不含飞书 ID、任务内容、创建者。事实源为 profile 数据目录下的本地 status 文件（随 scheduler 原子写），卡片由其渲染。已错过的逐条时刻只在看板可见行与 automations log 中，status block 字段不变（仍是 `missed` 计数）。
-- **larkent-monitor 契约**（monitor 私有，只服务常驻的 Grok Bot box；其他 PC 不在范围内）：
-  - 只从置顶看板卡的 status block 读状态；路线为 Cloudflare Worker 扫描 → wake webhook 唤醒 box；不涉及 GitHub Action。
-  - 按 §1 的 miss rule 判定；对每个 fire key（`id` + 当时的 `nextFireAt`）**至多唤醒一次**。
+  - `botKey` 与 `id` 都是不透明值（如对 profile / 编号加盐哈希），**永远不是飞书 ID**。`nextFires` 是未来最多 24 小时、最多 N 个计划时刻（N 在 ticket 定）。不含 chat id、群名、bot 名、任务内容、时间表规则、创建者。
+  - 语义是整份覆盖（幂等 PUT）：每次推送都是该 bot 的完整列表；不在列表里的 item 视为已删除。
+  - 何时推送：任何时间表变化（创建、确认、暂停/恢复、删除、到期）；每次 fire 后若窗口已用掉一半；启动时；link 恢复时。失败按退避重试，下一次触发时做一次全量同步。
+  - 端点与 secret 是可选配置；未配置时自动化照常在本地运行，不推送。
+- **larkent-monitor 契约**（monitor 私有，只服务常驻的 Grok Bot box；其他 PC 不在范围内；ADR-014）：
+  - 从 D1 读状态（每个 `botKey` 一行，无额外索引）；路线为 Cloudflare Worker cron 扫描 → wake webhook 唤醒 box；不涉及 GitHub Action。不再读置顶卡片，也不再需要飞书读消息权限。
+  - miss：未暂停，`now >` 最早的未覆盖 `nextFires` 时刻，且之后没有更新的推送或 `lastFireAt` 覆盖它。
+  - 过期：窗口耗尽（`nextFires` 全部已过）而没有新推送，视为 miss。
+  - 对每个 fire key（`id` + 计划时刻）**至多唤醒一次**；去重记录放在 `MONITOR_KV` 或 D1 一张表。
   - monitor 在 miss **之后**唤醒，不做预唤醒。
 - **本机唤醒入口**（Larkent 暴露，被唤醒的 box 调用）：一个新的 CLI 子命令，给定 fire key：Larkent 未运行则启动它（启动补跑生效）；在运行则通知运行中的进程（目前没有稳定的进程间通道，UI server 的 token 每进程随机，不能复用；传输方式在 A5 定义）。若该 fire 已 started → 无输出、不发任何消息、不向任何人报告；否则按 §4 补跑规则处理，补跑恰好一次，> 24 小时按“已错过”留痕。该入口幂等，可重复调用。
 - `/auto`：列出本群本 bot 的任务（任何人）；`/auto pause|resume|delete <编号>` 与按钮等价。
@@ -206,7 +214,7 @@ backfill 从 scope 推导 chat id 时，`auto:` 与 `meeting:` scope 永不进�
 
 ## Testing Decisions
 
-- 只测外部行为：群里看到什么（消息、卡片状态、置顶）、落库与 hook 文本。用 recording channel、scripted CLI、fake executable、fake clock。
+- 只测外部行为：群里看到什么（消息、卡片状态、置顶）、落库与 status push payload。用 recording channel、scripted CLI、fake executable、fake clock。
 - 最高测试缝：channel 级“推进时钟 → 群里可见输出 + 日志/状态文件”；与 run outcome / turn journal 集成测试同层。时间表解析与下次触发为纯函数，注入 `now()`，在 UTC 宿主时区跑表驱动用例（DST、跨午夜窗口、下限、1 年上限）。
 - 真飞书层：`e2e/test-bridge/`（默认 fake CLI，硬围栏）在 Bot Arena 跑；使用 fake clock 或**仅测试可用**的下限覆盖，不使用“1 分钟后”的生产输入。证据脱敏，不含任何 ID。
 - 补跑与幂等：fake clock 表驱动覆盖 miss rule 边界（`now == nextFireAt` 不算 miss、paused 不算、`lastFireAt == nextFireAt` 不算）、24 小时边界、多个错过时刻只补最近一个且其余每个都有看板行 / 群通知 / 日志、重启 / link 恢复 / 唤醒入口任意顺序与并发到达都只执行一次。短段重算：40 天后的一次性任务每段 ≤ 60 秒且不空转；墙钟前跳 2 小时后下一段醒来补发并按准点规则标注。准点标注：晚 50ms 与晚 59s 不标补跑，晚 61s 且确实错过则标补跑。agent 任务重叠：上一次未结算时跳过本次，看板与日志留痕，`lastStatus` 不被覆盖。started fire key 超出 48 小时后清除。
@@ -241,14 +249,14 @@ p2p 自动化；命令型自动化；超出 Outbox 1 小时 uuid 窗口的重复
 | 005 | reminder / agent 任务两类；reminder 先上线 | 只有 agent |
 | 006 | 每 fire 独立、暂无硬并发上限。~~允许重叠~~ 中「同一 agent 任务允许叠跑」**已被 ADR-021 取代（2026-10-18）**；reminder 与不同任务仍互不阻塞 | 运行中则跳过、子池上限 |
 | 007 | 置顶看板带暂停/删除，任何人可点；重新置顶；列表命令兜底 | D3 仅创建者、D6 只读看板 |
-| 008 | monitor hook = 看板内可见机读块（note 元素）；本地 status 文件为事实源；字段见 ADR-015 | — |
+| 008 | ~~monitor hook = 看板内可见机读块（note 元素）~~ **改为 status push（用户决定 2026-10-18）**：看板只给人看；本地 status 文件为事实源；bridge 向 larkent-monitor `POST /v1/status`（HMAC-SHA256，±5 min，`updatedAt` 单调），存 D1。理由：看板里的大块 JSON 影响阅读；KV 免费额度 1,000 写/天不够（一个 10 分钟 reminder 每天 144 写）；D1 免费 100,000 行写/天；数据最小化，公司数据不暴露到公网。端点与 secret 可选 | 看板内机读块 |
 | 009 | 暂无每群硬限额 | 10 / 5 |
 | 010 | v1 不做原地编辑：删除后重建（**用户确认 2026-10-16**） | `/auto edit` |
 | 011 | 每次 fire 自起 session，无并发上限，永不 `pool-full` 失败（**用户确认 2026-10-16**） | 子池/主池 tryAcquire |
 | 012 | bot 被移出群或群解散 → 删除该群任务（**用户确认 2026-10-16**） | — |
 | 013 | 无固定宽限；miss rule = 未暂停且 `now > nextFireAt` 且 `lastFireAt < nextFireAt`。miss 后 ≤ 24 h 补跑恰好一次（fire key = `id` + 计划 `nextFireAt` 幂等），消息注明原定时间；> 24 h 只标 missed。Larkent 重启 / link 恢复时自身执行同一规则；Larkent 先自行补跑时，monitor 后续唤醒静默（**用户确认 2026-10-17**） | ADR-004 |
-| 014 | larkent-monitor 私有，只服务常驻 Grok Bot box（其他 PC 不在范围）；只读置顶看板卡 status block；Cloudflare Worker 扫描 → wake webhook 唤醒 box，无 GitHub Action；每个 fire key 至多唤醒一次；被唤醒侧按 fire key 检查，已执行则静默、不向任何人报告（**用户确认 2026-10-17**） | Out of Scope 中“monitor 预唤醒” |
-| 015 | status block v1 增加每项 `id`（每 profile 自增短编号，同 `/auto` 编号，永不复用，绝非飞书 ID）、每项 `paused`、卡片级 `updatedAt`；时间均为 UTC 毫秒；沿用 note 元素通道（**用户确认 2026-10-17**） | ADR-008 原字段集 |
+| 014 | larkent-monitor 私有，只服务常驻 Grok Bot box（其他 PC 不在范围）；~~只读置顶看板卡 status block~~ 改为读 D1 中的 status push（2026-10-18），不再需要飞书读消息权限；窗口耗尽无新推送视为 miss；Cloudflare Worker 扫描 → wake webhook 唤醒 box，无 GitHub Action；每个 fire key 至多唤醒一次；被唤醒侧按 fire key 检查，已执行则静默、不向任何人报告（**用户确认 2026-10-17**） | Out of Scope 中“monitor 预唤醒” |
+| 015 | ~~status block v1：每项短 `id`、`paused`、卡片级 `updatedAt`，note 元素通道（2026-10-17）~~ **改为 push payload v2（用户决定 2026-10-18）**：`v`、不透明 `botKey`、`updatedAt`、`items[{不透明 id, nextFires[]（≤ 24 h / ≤ N 个）, lastFireAt, paused, endAt}]`；无 chat id、名称、内容、规则；整份覆盖；变化 / 窗口过半 / 启动 / link 恢复时推送，失败退避重试 | ADR-008 原字段集；status block v1 |
 | 016 | 多个错过时刻只补 24 h 内最近一个；其余每个“已错过”必须留痕：看板逐条（含原定时间）+ 群内通知 + 本地日志（**用户确认 2026-10-17**） | Open question 1 |
 | 017 | one-shot 未补跑：`nextFireAt = 0`、看板“已错过”、24 h 后按到期删除；本地日志永久保留错过记录（**用户确认 2026-10-17**） | Open question 2 |
 | 018 | 超出 1 h uuid 窗口的重复投递为理论风险，不开 ticket、不处理（**用户确认 2026-10-17**） | Open question 3 |

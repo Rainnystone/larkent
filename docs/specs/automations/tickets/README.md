@@ -25,6 +25,8 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A15](A15-notice-wording-and-trigger-source.md) | Cross-day 原定 labels, accurate `triggerSource`, no 追问 footer on interrupted/policy-guard notices | A14 | ready-for-agent |
 | [A17](A17-oneshot-confirm-and-grok-eos.md) | One-shot confirm card omits monthly frequency; Grok control-token-only text counts as empty | — | ready-for-agent |
 | [A18](A18-card-button-access.md) | Automation card buttons are not gated by allowedUsers; denied card actions return a toast | — (after #49 merges) | ready-for-agent |
+| [A19](A19-status-push-bridge.md) | Board card drops the status block; bridge pushes a signed status digest to larkent-monitor (lands on #49, before merge) | — (A20 contract only) | ready-for-agent |
+| [A20](A20-monitor-d1-ingest.md) | **Cross-repo** (larkent-monitor): D1 ingest via `POST /v1/status`, miss detection reads D1, Feishu read path retired | — | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -35,6 +37,8 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 - **Last:** A11.
 - **From the first A11 run (2026-10-18):** A13 and A14 now (in parallel), A15 after A14; then rerun the A11 scenarios each ticket lists.
 - **From the A11 run on `91b9dec`:** [A17](A17-oneshot-confirm-and-grok-eos.md) (one-shot confirm frequency, Grok `<|eos|>` empty result); then rerun the scenarios that ticket lists.
+
+- **Status push (user decision 2026-10-18):** [A20](A20-monitor-d1-ingest.md) in larkent-monitor (deployable on its own) and [A19](A19-status-push-bridge.md) on #49 before merge; then rerun the A11 monitor scenarios.
 
 Reminders ship after A0a–A1', A2, A4, A5, A7. Agent tasks (`automations.agentTasks`, default off) ship after A8–A9.
 
@@ -67,4 +71,6 @@ graph LR
   A14 --> A15
   A11 -.finds.-> A17
   A18
+  A20 -.contract.-> A19
+  A19 & A20 --> A11
 ```

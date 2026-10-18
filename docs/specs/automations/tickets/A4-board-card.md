@@ -1,5 +1,7 @@
 # A4: Pinned board with Pause/Delete and status block v1
 
+> **Superseded in part:** status block 部分已被 [A19](A19-status-push-bridge.md) 取代（2026-10-18）：看板不再含机读块。
+
 Spec: [../../automations.md](../../automations.md) §7, ADR-007/008/015/016/017
 
 **What to build:** per-bot per-group board card listing this bot's tasks (`id`, content summary, task type, next fire, end, status) with Pause/Resume and Delete buttons any group member can tap; in-place update; single writer per data root (lock + lease); debounced; on every board update check pins and re-pin if missing; "暂无" and unpin when no tasks; re-send and pin if the card can't be patched. **Missed items** (ADR-016/017): each 已错过 instant is its own row "已错过 原定 YYYY-MM-DD HH:MM" for 24 h, then drops off the board (the automations log keeps it); a one-shot not caught up shows 已错过 until it expires. The card carries the visible **status block v1**, rendered from the A0c status file: `{v:1, bot, updatedAt, items:[{id, paused, nextFireAt, lastFireAt, lastStatus, endAt, missed}]}`, UTC ms, `id` = the `/auto` number. `/auto`, `/auto pause|resume|delete <id>` as fallback.
