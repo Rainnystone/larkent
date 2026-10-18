@@ -34,6 +34,7 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A25](A25-board-sequence-retry-in-place.md) | Board 300317: retry in place with a monotonic higher sequence; resend only on 200740/200750/300311/message deleted; `auto.board.patch` success log with sequence (A11 r5, high) | A22 | ready-for-agent |
 | [A26](A26-board-settle-old-and-pending-list.md) | After a resend, settle the old board to a button-less note; taps on a non-current board get a board-specific toast; A21 pending unpin ids become a list (no permanent double pin); amends A21 (A11 r5, medium) | A25 | ready-for-agent |
 | [A27](A27-confirm-card-fire-count.md) | Confirm card: 「接下来 N 次」 uses the actual count; one-shot shows its single time / 共 1 次; windows ending within 30 days show 共 N 次 (A11 r5, low) | A22 | ready-for-agent |
+| [A28](A28-nl-delete-replace.md) | Natural-language delete / replace: per-turn group task snapshot (that group's session only, no open_ids, data-not-instructions tag); proposal `op` = create/delete/replace; bridge validates (unified 「本群没有 #N」); one confirm card for delete, one for replace (create new, then delete old); anyone can confirm; edit requests get 替换 / 另建 options, never 已修改 (user decision 2026-10-18, high) | A22, A27 | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
@@ -46,6 +47,8 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 - **From the A11 run on `91b9dec`:** [A17](A17-oneshot-confirm-and-grok-eos.md) (one-shot confirm frequency, Grok `<|eos|>` empty result); then rerun the scenarios that ticket lists.
 
 - **From the A11 r5 run (2026-10-18, code `5552726` + A22):** A23 → A24 (both touch the proposal prompt); A25 → A26 (board resend path); A27 after A22. Rerun the scenarios each ticket lists.
+
+- **Natural-language delete / replace (user decision 2026-10-18):** [A28](A28-nl-delete-replace.md) after A27 (serial; both touch `confirm-card.ts`; settles like A22). Then run the A28 live E2E steps 1–6.
 
 - **Status push (user decision 2026-10-18):** [A19](A19-status-push-bridge.md) on #49 before merge; the receiver is a separate track in the larkent-monitor repo; then rerun the A11 monitor scenarios.
 
@@ -94,4 +97,6 @@ graph LR
   A22 --> A25
   A25 --> A26
   A22 --> A27
+  A22 --> A28
+  A27 --> A28
 ```
