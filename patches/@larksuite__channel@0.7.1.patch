@@ -310,7 +310,7 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..21606c4913a846e9c3f6b25902f6bc59
  			logger: this.logger,
  			intervalMs: this.opts.keepalive.intervalMs
  		});
-@@ -5464,6 +5526,22 @@ var LarkChannel = class {
+@@ -5464,6 +5526,27 @@ var LarkChannel = class {
  		this.logger.info?.("channel: proxy detected", { proxy: redactProxyUrl(proxyUrl) });
  		return this.proxyAgent;
  	}
@@ -321,19 +321,24 @@ index 989d2fcaee8d47d01d7e235c6995d538771404ec..21606c4913a846e9c3f6b25902f6bc59
 +			orig();
 +			const socket = client.wsConfig?.getWSInstance?.();
 +			if (!socket) return;
-+			if (!this.frameSockets) this.frameSockets = new WeakSet();
-+			if (this.frameSockets.has(socket)) return;
-+			this.frameSockets.add(socket);
-+			socket.on("message", () => {
++			if (this.frameSocket === socket) return;
++			if (this.frameSocket && this.frameListener) {
++				this.frameSocket.removeListener("message", this.frameListener);
++			}
++			const onFrame = () => {
 +				if (this.rawWsClient !== client) return;
++				if (client.wsConfig?.getWSInstance?.() !== socket) return;
 +				this.opts.keepalive?.onSocketFrame?.();
-+			});
++			};
++			this.frameSocket = socket;
++			this.frameListener = onFrame;
++			socket.on("message", onFrame);
 +		};
 +	}
  	/**
  	* Construct the underlying WSClient and wait for its `onReady` callback —
  	* so `connect()` only resolves after the first WebSocket handshake
-@@ -5513,6 +5591,7 @@ var LarkChannel = class {
+@@ -5513,6 +5596,7 @@ var LarkChannel = class {
  				onReconnecting: () => this.handlers.reconnecting?.(),
  				onReconnected: () => this.handlers.reconnected?.()
  			});
@@ -727,7 +732,7 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..d39ab36b2ee0f16e42fa58b8b6396d11
  			logger: this.logger,
  			intervalMs: this.opts.keepalive.intervalMs
  		});
-@@ -5437,6 +5499,22 @@ var LarkChannel = class {
+@@ -5437,6 +5499,27 @@ var LarkChannel = class {
  		this.logger.info?.("channel: proxy detected", { proxy: redactProxyUrl(proxyUrl) });
  		return this.proxyAgent;
  	}
@@ -738,19 +743,24 @@ index 6cf990f0a7499178016e151e3545bc4626d6ab65..d39ab36b2ee0f16e42fa58b8b6396d11
 +			orig();
 +			const socket = client.wsConfig?.getWSInstance?.();
 +			if (!socket) return;
-+			if (!this.frameSockets) this.frameSockets = new WeakSet();
-+			if (this.frameSockets.has(socket)) return;
-+			this.frameSockets.add(socket);
-+			socket.on("message", () => {
++			if (this.frameSocket === socket) return;
++			if (this.frameSocket && this.frameListener) {
++				this.frameSocket.removeListener("message", this.frameListener);
++			}
++			const onFrame = () => {
 +				if (this.rawWsClient !== client) return;
++				if (client.wsConfig?.getWSInstance?.() !== socket) return;
 +				this.opts.keepalive?.onSocketFrame?.();
-+			});
++			};
++			this.frameSocket = socket;
++			this.frameListener = onFrame;
++			socket.on("message", onFrame);
 +		};
 +	}
  	/**
  	* Construct the underlying WSClient and wait for its `onReady` callback —
  	* so `connect()` only resolves after the first WebSocket handshake
-@@ -5486,6 +5564,7 @@ var LarkChannel = class {
+@@ -5486,6 +5569,7 @@ var LarkChannel = class {
  				onReconnecting: () => this.handlers.reconnecting?.(),
  				onReconnected: () => this.handlers.reconnected?.()
  			});

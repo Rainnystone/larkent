@@ -11,6 +11,7 @@ import {
   startFeishuLink,
   type Outage,
 } from '../../../src/bot/feishu-link';
+import { reviewActiveRuns, type ReviewableRun } from '../../../src/bot/recovery';
 import { HOST_SLEEP_PROBE_TIMEOUT_MS } from '../../../src/platform/host-sleep';
 import {
   axiosErrno,
@@ -368,6 +369,44 @@ describe('FeishuLink', () => {
     expect(reconnects).toEqual([now]);
     expect(recovered).toHaveLength(1);
     expect(link.isDown()).toBe(false);
+  });
+
+  it('records host suspend when a wake frame arrives before the interval tick', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+    let now = 1_700_000_000_000;
+    const reconnects: number[] = [];
+    const recovered: Outage[] = [];
+    const openTool: ReviewableRun = {
+      lastEventAt: now - 1,
+      interrupted: false,
+      hasOpenToolCall: true,
+    };
+    const link = startFeishuLink({
+      channel: fakeChannel(() => 'connected'),
+      probe: async () => true,
+      watermark: memoryWatermark(now),
+      now: () => now,
+      sleepProbe: sleepingProbe(),
+      reconnect: () => {
+        reconnects.push(now);
+      },
+    });
+    await link.tick();
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+      reviewActiveRuns([openTool], outage);
+    });
+
+    now += 5 * 60_000;
+    link.noteKeepaliveWake(now);
+    link.noteSocketFrame(now);
+    expect(link.isDown()).toBe(false);
+
+    await link.tick();
+    expect(reconnects).toEqual([now]);
+    expect(link.isDown()).toBe(false);
+    expect(recovered.some((outage) => outage.hostSuspended)).toBe(true);
+    expect(openTool.stallDeadlineMs).toBe(2 * 60_000);
   });
 
   it('emits one recovered outage after a 2 min probe failure while WS stays connected', async () => {

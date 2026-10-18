@@ -187,6 +187,8 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   /** Wake reconnect rejected. A frame counts only after the socket has been down and is connected again. */
   let wakeFailed = false;
   let sawSocketDown = false;
+  /** Last outage handed to recovery. A late sleep result merges into this window. */
+  let lastRecovered: Outage | undefined;
 
   const touchHeartbeat = (): void => {
     if (!deps.heartbeatPath) return;
@@ -240,7 +242,43 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
       hostSuspended: outage.hostSuspended,
       ...(outage.suspendStartedAt !== undefined ? { suspendStartedAt: outage.suspendStartedAt } : {}),
     });
+    lastRecovered = outage;
     emitRecovered(outage);
+  };
+
+  const publishSuspend = (
+    gapFrom: number,
+    gapTo: number,
+    evidence: HostSleepEvidence,
+    sleptMs: number,
+  ): void => {
+    if (!evidence.suspended || stopped) return;
+    const startedAt = evidence.suspendStartedAt ?? gapFrom;
+    log.info('link', 'sleep', {
+      sleptMs,
+      ...(evidence.suspendStartedAt !== undefined ? { suspendStartedAt: evidence.suspendStartedAt } : {}),
+    });
+    if (down) {
+      goDown(gapFrom, { hostSuspended: true, suspendStartedAt: startedAt });
+      return;
+    }
+    if (lastRecovered?.hostSuspended) return;
+    const since = lastRecovered ? Math.min(lastRecovered.since, gapFrom) : gapFrom;
+    const until = lastRecovered ? Math.max(lastRecovered.until, gapTo) : gapTo;
+    const amended: Outage = {
+      since,
+      until,
+      hostSuspended: true,
+      suspendStartedAt: startedAt,
+    };
+    lastRecovered = amended;
+    log.info('link', 'recovered', {
+      since: amended.since,
+      until: amended.until,
+      hostSuspended: true,
+      suspendStartedAt: startedAt,
+    });
+    emitRecovered(amended);
   };
 
   const noteEvidence = (at: number, wsConnected: boolean): void => {
@@ -320,23 +358,19 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     if (lastTickAt > 0 && sinceLast > FEISHU_LINK_SLEEP_MS) {
       log.info('link', 'tick-gap', { gapMs: sinceLast });
       const sameWake = recentlyArmed(at);
-      if (sameWake && !awaitingFreshInbound) return;
-      goDown(lastTickAt);
-      probeSeq += 1;
-      probing = false;
-      probeAbort?.abort();
+      // A frame on the new socket can finish this wake before the interval
+      // tick. Still record the suspend; do not take the link down again.
+      const wakeAlreadyRecovered = sameWake && !awaitingFreshInbound;
+      if (!wakeAlreadyRecovered) {
+        goDown(lastTickAt);
+        probeSeq += 1;
+        probing = false;
+        probeAbort?.abort();
+      }
       const gapFrom = lastTickAt;
       const gapTo = at;
       sleepDetect = detectSleep(sleepProbe, { fromMs: gapFrom, toMs: gapTo }).then((evidence) => {
-        if (!evidence.suspended) return;
-        log.info('link', 'sleep', {
-          sleptMs: sinceLast,
-          ...(evidence.suspendStartedAt !== undefined ? { suspendStartedAt: evidence.suspendStartedAt } : {}),
-        });
-        goDown(gapFrom, {
-          hostSuspended: true,
-          suspendStartedAt: evidence.suspendStartedAt ?? gapFrom,
-        });
+        publishSuspend(gapFrom, gapTo, evidence, sinceLast);
       });
       if (!sameWake) armWakeReconnect(at, sinceLast);
     }
@@ -390,7 +424,10 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
     const silentMs = lastEvidenceAt === undefined ? Number.POSITIVE_INFINITY : now - lastEvidenceAt;
     const shouldProbe = down || silentMs >= FEISHU_LINK_SILENT_PROBE_MS;
-    if (!shouldProbe || probing) return;
+    if (!shouldProbe || probing) {
+      if (!probing) await applySleepEvidence();
+      return;
+    }
 
     const seq = ++probeSeq;
     probing = true;
