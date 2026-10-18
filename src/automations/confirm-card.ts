@@ -1,7 +1,7 @@
 import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
-import { monthlyFireCount, nextFires, type Schedule } from './schedule';
+import { monthlyFireCount, nextFires, readSchedule, type Schedule } from './schedule';
 import { zonedParts } from './zoned-time';
-import type { AutomationTaskType } from './store';
+import type { AutomationItem, AutomationTargetSnapshot, AutomationTaskType } from './store';
 
 function escapeMd(s: string): string {
   return s.replace(/([*_`\\])/g, '\\$1');
@@ -129,17 +129,17 @@ export function describeIdentity(taskType: AutomationTaskType, cwd?: string): st
   return `本 profile 的 agent，仅 bot 身份${cwdNote}；默认自动批准工具；agent 有完整 shell，这是纵深防御不是安全边界`;
 }
 
-export function automationConfirmCard(input: {
+export interface AutomationConfirmBodyInput {
   taskType: AutomationTaskType;
   name: string;
   taskText: string;
   timezone: string;
   schedule: Schedule;
   now: number;
-  confirmToken: string;
-  rejectToken: string;
   cwd?: string;
-}): object {
+}
+
+export function automationConfirmBody(input: AutomationConfirmBodyInput): string {
   const frequency = frequencyLine(input.schedule, input.now);
   const weekdayNote = input.schedule.kind === 'weekday' ? '\n工作日不计调休' : '';
   const typeLabel = input.taskType === 'reminder' ? '提醒' : 'agent 任务';
@@ -148,7 +148,7 @@ export function automationConfirmCard(input: {
     `**时间表：** ${escapeMd(describeSchedule(input.schedule, input.timezone))}${weekdayNote}`,
     ...(startLine ? [escapeMd(startLine)] : []),
   ].join('\n');
-  const body = [
+  return [
     `**任务类型：** ${typeLabel}`,
     `**名称：** ${escapeMd(input.name)}`,
     scheduleBlock,
@@ -159,24 +159,94 @@ export function automationConfirmCard(input: {
     `**执行身份：** ${escapeMd(describeIdentity(input.taskType, input.cwd))}`,
     ...(frequency ? [frequency] : []),
   ].join('\n\n');
+}
 
+function confirmButtons(confirmToken: string, rejectToken: string): object {
+  return buttonRow([
+    callbackButton({
+      text: '是',
+      value: { cmd: 'auto.confirm', auto_token: confirmToken },
+      style: 'primary',
+    }),
+    callbackButton({
+      text: '否',
+      value: { cmd: 'auto.reject', auto_token: rejectToken },
+    }),
+  ]);
+}
+
+export function automationConfirmCard(input: AutomationConfirmBodyInput & {
+  confirmToken: string;
+  rejectToken: string;
+}): object {
   return card2({
     title: '确认自动化',
     summary: '确认自动化',
     elements: [
+      md(automationConfirmBody(input)),
+      hr,
+      confirmButtons(input.confirmToken, input.rejectToken),
+    ],
+  });
+}
+
+export function automationTargetSnapshot(item: AutomationItem): AutomationTargetSnapshot {
+  const schedule = readSchedule(item.schedule);
+  const scheduleLabel = schedule ? describeSchedule(schedule, item.timezone) : '时间表未知';
+  const nextFireLabel = item.nextFireAt > 0
+    ? formatZonedDateTime(item.timezone, item.nextFireAt)
+    : '无';
+  const endLabel = schedule
+    ? describeEnd(schedule, item.timezone)
+    : (item.endAt > 0 ? formatZonedDateTime(item.timezone, item.endAt) : '无');
+  return {
+    id: item.id,
+    name: item.name,
+    taskType: item.taskType,
+    scheduleLabel,
+    nextFireLabel,
+    endLabel,
+  };
+}
+
+export function automationDeleteCard(input: {
+  target: AutomationTargetSnapshot;
+  confirmToken: string;
+  rejectToken: string;
+}): object {
+  const typeLabel = input.target.taskType === 'reminder' ? '提醒' : 'agent 任务';
+  const body = [
+    `确认删除 #${input.target.id} ${escapeMd(input.target.name)}？`,
+    `**类型：** ${typeLabel}`,
+    `**时间表：** ${escapeMd(input.target.scheduleLabel)}`,
+    `**下次触发：** ${escapeMd(input.target.nextFireLabel)}`,
+    `**结束：** ${escapeMd(input.target.endLabel)}`,
+  ].join('\n\n');
+  return card2({
+    title: '确认删除',
+    summary: '确认删除',
+    elements: [
       md(body),
       hr,
-      buttonRow([
-        callbackButton({
-          text: '是',
-          value: { cmd: 'auto.confirm', auto_token: input.confirmToken },
-          style: 'primary',
-        }),
-        callbackButton({
-          text: '否',
-          value: { cmd: 'auto.reject', auto_token: input.rejectToken },
-        }),
-      ]),
+      confirmButtons(input.confirmToken, input.rejectToken),
+    ],
+  });
+}
+
+export function automationReplaceCard(input: AutomationConfirmBodyInput & {
+  target: AutomationTargetSnapshot;
+  confirmToken: string;
+  rejectToken: string;
+}): object {
+  const removed = `将删除：#${input.target.id} ${escapeMd(input.target.name)} · ${escapeMd(input.target.scheduleLabel)}`;
+  const title = `确认替换 #${input.target.id}`;
+  return card2({
+    title,
+    summary: title,
+    elements: [
+      md(`${removed}\n\n${automationConfirmBody(input)}`),
+      hr,
+      confirmButtons(input.confirmToken, input.rejectToken),
     ],
   });
 }

@@ -15,7 +15,7 @@ export function formatAutomationListLine(item: AutomationItem): string {
     item.taskType === 'reminder' ? '提醒' : 'agent 任务',
     `下次 ${formatNextFire(item)}`,
     `结束 ${formatEnd(item)}`,
-    describeItemStatus(item),
+    automationStatusLabel(item),
   ].join(' · ');
 }
 
@@ -61,7 +61,7 @@ export function automationBoardCard(input: {
 function formatTaskRow(item: AutomationItem): string {
   return [
     `**#${item.id} ${escapeMd(item.name)}** · ${item.taskType === 'reminder' ? '提醒' : 'agent 任务'}`,
-    `下次 ${escapeMd(formatNextFire(item))} · 结束 ${escapeMd(formatEnd(item))} · ${describeItemStatus(item)}`,
+    `下次 ${escapeMd(formatNextFire(item))} · 结束 ${escapeMd(formatEnd(item))} · ${automationStatusLabel(item)}`,
   ].join('\n');
 }
 
@@ -76,7 +76,7 @@ function formatEnd(item: AutomationItem): string {
   return describeEnd(schedule, item.timezone);
 }
 
-function describeItemStatus(item: AutomationItem): string {
+export function automationStatusLabel(item: AutomationItem): string {
   if (item.paused) return '已暂停';
   switch (item.lastStatus) {
     case 'ok':

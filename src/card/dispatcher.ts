@@ -32,7 +32,6 @@ import {
   DRAFT_SETTLED_CANCELLED,
   DRAFT_SETTLED_END_CHOSEN,
   type DraftCardRef,
-  draftConfirmedStatus,
   scheduleDraftCardSettle,
 } from '../automations/draft-card';
 import type { AutomationScheduler } from '../automations/scheduler';
@@ -438,6 +437,7 @@ async function dispatchAutoAction(
     return actionToast('error', AUTO_INVALID_HINT);
   }
   if (isAutoEndAction(cmd)) {
+    if (registered.op === 'delete') return actionToast('error', AUTO_INVALID_HINT);
     const snapshot = draftCardRef(registered);
     const nonce = verified.payload.nonce;
     if (!deps.autoAuth.claimNonce(nonce)) {
@@ -487,13 +487,14 @@ async function dispatchAutoAction(
       scheduleDraftCardSettle(deps.channel, taken, DRAFT_SETTLED_CANCELLED);
       return actionToast('success', DRAFT_SETTLED_CANCELLED);
     case 'auto.confirm': {
-      const item = await confirmAutomationDraft(deps, taken);
-      if (!item) {
-        scheduleDraftCardSettle(deps.channel, taken, DRAFT_SETTLED_CANCELLED);
-        return actionToast('error', AUTO_INVALID_HINT);
-      }
-      scheduleDraftCardSettle(deps.channel, taken, draftConfirmedStatus(item.id));
-      return actionToast('success', draftConfirmedStatus(item.id));
+      const result = await confirmAutomationDraft({
+        automations: deps.automations,
+        automationsScheduler: deps.automationsScheduler,
+        onAutomationConfirmed: deps.onAutomationConfirmed,
+        now: deps.now,
+      }, taken);
+      scheduleDraftCardSettle(deps.channel, taken, result.status);
+      return actionToast(result.ok ? 'success' : 'error', result.toast);
     }
     default: {
       const _exhaustive: never = cmd;

@@ -79,16 +79,65 @@ export interface CreateAutomationInput {
   paused?: boolean;
 }
 
-export interface AutomationDraft extends CreateAutomationInput {
+export interface AutomationDraftBase {
   draftId: string;
   createdAt: number;
+  chatId: string;
+  createdBy: string;
   cardMessageId?: string;
   cardId?: string;
   sequence?: number;
   /** Rendered body captured when the card was registered. Settle reuses it. */
   cardBody?: DraftCardBody;
+}
+
+/** Frozen at proposal time so a later delete still leaves the card body intact. */
+export interface AutomationTargetSnapshot {
+  id: number;
+  name: string;
+  taskType: AutomationTaskType;
+  scheduleLabel: string;
+  nextFireLabel: string;
+  endLabel: string;
+}
+
+export interface CreateAutomationDraft extends AutomationDraftBase, CreateAutomationInput {
+  op: 'create';
   pendingRecurring?: PendingRecurring;
 }
+
+export interface DeleteAutomationDraft extends AutomationDraftBase {
+  op: 'delete';
+  targetId: number;
+  target: AutomationTargetSnapshot;
+}
+
+export interface ReplaceAutomationDraft extends AutomationDraftBase, CreateAutomationInput {
+  op: 'replace';
+  targetId: number;
+  target: AutomationTargetSnapshot;
+  scheduleText: string;
+  pendingRecurring?: PendingRecurring;
+}
+
+export type AutomationDraft = CreateAutomationDraft | DeleteAutomationDraft | ReplaceAutomationDraft;
+
+export type SaveAutomationDraftInput =
+  | (CreateAutomationInput & { op?: 'create'; pendingRecurring?: PendingRecurring })
+  | {
+      op: 'delete';
+      chatId: string;
+      createdBy: string;
+      targetId: number;
+      target: AutomationTargetSnapshot;
+    }
+  | (CreateAutomationInput & {
+      op: 'replace';
+      targetId: number;
+      target: AutomationTargetSnapshot;
+      scheduleText: string;
+      pendingRecurring?: PendingRecurring;
+    });
 
 export interface UpdateDraftPatch {
   schedule?: unknown;
@@ -395,14 +444,21 @@ export class AutomationsStore {
     return this.logEntries.map((entry) => ({ ...entry }));
   }
 
-  async saveDraft(input: CreateAutomationInput & { pendingRecurring?: PendingRecurring }): Promise<AutomationDraft> {
+  async saveDraft(
+    input: CreateAutomationInput & { op?: 'create'; pendingRecurring?: PendingRecurring },
+  ): Promise<CreateAutomationDraft>;
+  async saveDraft(
+    input: Extract<SaveAutomationDraftInput, { op: 'delete' }>,
+  ): Promise<DeleteAutomationDraft>;
+  async saveDraft(
+    input: Extract<SaveAutomationDraftInput, { op: 'replace' }>,
+  ): Promise<ReplaceAutomationDraft>;
+  async saveDraft(input: SaveAutomationDraftInput): Promise<AutomationDraft> {
     this.assertMutable();
     this.pruneDrafts();
-    const draft: AutomationDraft = {
-      ...input,
-      draftId: `draft-${this.now()}-${randomBytes(4).toString('hex')}`,
-      createdAt: this.now(),
-    };
+    const draftId = `draft-${this.now()}-${randomBytes(4).toString('hex')}`;
+    const createdAt = this.now();
+    const draft = draftFromInput(input, draftId, createdAt);
     this.drafts.push(draft);
     await this.persistNow();
     return cloneDraft(draft);
@@ -468,9 +524,13 @@ export class AutomationsStore {
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.draftId === draftId);
     if (!draft) return undefined;
-    if (patch.schedule !== undefined) draft.schedule = patch.schedule;
-    if (patch.endAt !== undefined) draft.endAt = patch.endAt;
-    if (patch.nextFireAt !== undefined) draft.nextFireAt = patch.nextFireAt;
+    if (draft.op !== 'delete') {
+      if (patch.schedule !== undefined) draft.schedule = patch.schedule;
+      if (patch.endAt !== undefined) draft.endAt = patch.endAt;
+      if (patch.nextFireAt !== undefined) draft.nextFireAt = patch.nextFireAt;
+      if (patch.pendingRecurring === null) delete draft.pendingRecurring;
+      else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
+    }
     if (patch.cardMessageId !== undefined) draft.cardMessageId = patch.cardMessageId;
     if (patch.cardId !== undefined) {
       if (patch.cardId) draft.cardId = patch.cardId;
@@ -480,8 +540,6 @@ export class AutomationsStore {
       if (typeof patch.sequence === 'number') draft.sequence = patch.sequence;
       else delete draft.sequence;
     }
-    if (patch.pendingRecurring === null) delete draft.pendingRecurring;
-    else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
     await this.persistNow();
     return cloneDraft(draft);
   }
@@ -1077,14 +1135,64 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
   if (!isObject(raw)) return undefined;
   if (typeof raw.draftId !== 'string' || !raw.draftId) return undefined;
   if (!isFiniteNumber(raw.createdAt)) return undefined;
+  if (typeof raw.chatId !== 'string' || typeof raw.createdBy !== 'string') return undefined;
+  const op = raw.op;
+  if (op !== undefined && op !== 'create' && op !== 'delete' && op !== 'replace') return undefined;
+  const card = {
+    ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
+    ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
+    ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
+    ...parsedCardBody(raw.cardBody),
+  };
+  if (op === 'delete') {
+    const target = parseTargetSnapshot(raw.target);
+    if (!isPositiveInt(raw.targetId) || !target || target.id !== raw.targetId) return undefined;
+    return {
+      op: 'delete',
+      draftId: raw.draftId,
+      createdAt: raw.createdAt,
+      chatId: raw.chatId,
+      createdBy: raw.createdBy,
+      targetId: raw.targetId,
+      target,
+      ...card,
+    };
+  }
+  const schedulable = parseSchedulableDraftFields(raw);
+  if (!schedulable) return undefined;
+  if (op === 'replace') {
+    const target = parseTargetSnapshot(raw.target);
+    if (!isPositiveInt(raw.targetId) || !target || target.id !== raw.targetId) return undefined;
+    if (typeof raw.scheduleText !== 'string' || !raw.scheduleText.trim()) return undefined;
+    return {
+      op: 'replace',
+      ...schedulable,
+      draftId: raw.draftId,
+      createdAt: raw.createdAt,
+      targetId: raw.targetId,
+      target,
+      scheduleText: raw.scheduleText.trim(),
+      ...card,
+    };
+  }
+  return {
+    op: 'create',
+    ...schedulable,
+    draftId: raw.draftId,
+    createdAt: raw.createdAt,
+    ...card,
+  };
+}
+
+function parseSchedulableDraftFields(raw: Record<string, unknown>): CreateAutomationInput & {
+  pendingRecurring?: PendingRecurring;
+} | undefined {
   if (raw.taskType !== 'reminder' && raw.taskType !== 'agent') return undefined;
   if (typeof raw.timezone !== 'string' || !raw.timezone) return undefined;
   if (!isFiniteNumber(raw.startAt) || !isFiniteNumber(raw.nextFireAt)) return undefined;
   if (typeof raw.chatId !== 'string' || typeof raw.createdBy !== 'string') return undefined;
   if (typeof raw.name !== 'string' || typeof raw.taskText !== 'string') return undefined;
   return {
-    draftId: raw.draftId,
-    createdAt: raw.createdAt,
     taskType: raw.taskType,
     schedule: raw.schedule,
     timezone: raw.timezone,
@@ -1097,12 +1205,36 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
     taskText: raw.taskText,
     ...(typeof raw.cwd === 'string' && raw.cwd ? { cwd: raw.cwd } : {}),
     ...(raw.paused === true ? { paused: true } : {}),
-    ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
-    ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
-    ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
-    ...parsedCardBody(raw.cardBody),
     ...(isPendingRecurring(raw.pendingRecurring) ? { pendingRecurring: raw.pendingRecurring } : {}),
   };
+}
+
+function parseTargetSnapshot(raw: unknown): AutomationTargetSnapshot | undefined {
+  if (!isObject(raw)) return undefined;
+  if (!isPositiveInt(raw.id)) return undefined;
+  if (raw.taskType !== 'reminder' && raw.taskType !== 'agent') return undefined;
+  if (typeof raw.name !== 'string' || !raw.name) return undefined;
+  if (typeof raw.scheduleLabel !== 'string' || !raw.scheduleLabel) return undefined;
+  if (typeof raw.nextFireLabel !== 'string' || !raw.nextFireLabel) return undefined;
+  if (typeof raw.endLabel !== 'string' || !raw.endLabel) return undefined;
+  return {
+    id: raw.id,
+    name: raw.name,
+    taskType: raw.taskType,
+    scheduleLabel: raw.scheduleLabel,
+    nextFireLabel: raw.nextFireLabel,
+    endLabel: raw.endLabel,
+  };
+}
+
+function draftFromInput(input: SaveAutomationDraftInput, draftId: string, createdAt: number): AutomationDraft {
+  if (input.op === 'delete') {
+    return { ...input, op: 'delete', draftId, createdAt };
+  }
+  if (input.op === 'replace') {
+    return { ...input, op: 'replace', draftId, createdAt };
+  }
+  return { ...input, op: 'create', draftId, createdAt };
 }
 
 function parsedCardBody(raw: unknown): { cardBody: DraftCardBody } | undefined {
@@ -1111,10 +1243,19 @@ function parsedCardBody(raw: unknown): { cardBody: DraftCardBody } | undefined {
 }
 
 function cloneDraft(draft: AutomationDraft): AutomationDraft {
-  return {
-    ...draft,
-    ...(draft.cardBody ? { cardBody: cloneDraftCardBody(draft.cardBody) } : {}),
-  };
+  const cardBody = draft.cardBody ? { cardBody: cloneDraftCardBody(draft.cardBody) } : {};
+  switch (draft.op) {
+    case 'delete':
+      return { ...draft, target: { ...draft.target }, ...cardBody };
+    case 'replace':
+      return { ...draft, target: { ...draft.target }, ...cardBody };
+    case 'create':
+      return { ...draft, ...cardBody };
+    default: {
+      const _exhaustive: never = draft;
+      return _exhaustive;
+    }
+  }
 }
 
 function isPendingRecurring(value: unknown): value is PendingRecurring {

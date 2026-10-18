@@ -139,7 +139,9 @@ import {
   flushPendingDraftCards,
   noteAutomationRejected,
   planAutomationProposalReply,
+  submitAutomationDeleteProposal,
   submitAutomationProposal,
+  submitAutomationReplaceProposal,
   type AutomationProposalVerdict,
 } from '../automations/command';
 import { expireDueDraftCards } from '../automations/draft-card';
@@ -148,8 +150,10 @@ import {
   AUTOMATION_PROPOSAL_INSTRUCTION,
   appendReplyLine,
   extractAutomationProposal,
+  formatGroupTaskSnapshot,
   proposalTextFromState,
   shouldHonorAutomationProposal,
+  shouldInjectGroupTaskSnapshot,
   stripProposalFromState,
   type AutomationProposalFields,
 } from '../automations/proposal';
@@ -1780,6 +1784,21 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     && !scope.startsWith('meeting:')
   ) {
     extraInstructions.push(AUTOMATION_PROPOSAL_INSTRUCTION);
+    if (shouldInjectGroupTaskSnapshot({
+      enabled: true,
+      scope,
+      mode,
+      chatType: firstMsg.chatType,
+      hasStore: Boolean(automations),
+    }) && automations) {
+      extraInstructions.push(formatGroupTaskSnapshot({
+        items: automations.list(),
+        chatId: firstMsg.chatId,
+        timeZone: controls.profileConfig.automations.timezone,
+        now: (now ?? Date.now)(),
+        senderId: lastMsg.senderId,
+      }));
+    }
   }
   if (modelSwitched) {
     extraInstructions.push(
@@ -1996,33 +2015,56 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           ...(channel.botIdentity?.openId ? { botOpenId: channel.botIdentity.openId } : {}),
         }),
         plan: (parsed: AutomationProposalFields): AutomationProposalVerdict => {
-          const cwd = parsed.taskType === 'agent'
+          const taskType = parsed.op === 'delete' ? 'reminder' : parsed.taskType;
+          const cwd = parsed.op !== 'delete' && taskType === 'agent'
             ? workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default
             : undefined;
+          const target = parsed.op === 'create' ? undefined : automations?.get(parsed.id);
           return planAutomationProposalReply({
-            taskType: parsed.taskType,
-            scheduleText: parsed.scheduleText,
+            proposal: parsed,
             now: (now ?? Date.now)(),
             timezone: controls.profileConfig.automations.timezone,
             agentTasks: controls.profileConfig.automations.agentTasks,
-            hasCwd: parsed.taskType !== 'agent' || (typeof cwd === 'string' && cwd.trim().length > 0),
+            hasCwd: parsed.op === 'delete' || taskType !== 'agent' || (typeof cwd === 'string' && cwd.trim().length > 0),
             group: mode !== 'p2p' && lastMsg.chatType !== 'p2p',
-            canSave: Boolean(automations && autoAuth),
+            canSave: parsed.op === 'create'
+              ? Boolean(automations && autoAuth)
+              : Boolean(automations && autoAuth && automationsScheduler),
+            targetInChat: Boolean(target && target.chatId === lastMsg.chatId),
           });
         },
-        apply: (parsed: AutomationProposalFields) => submitAutomationProposal({
-          channel,
-          msg: lastMsg,
-          scope,
-          chatMode: mode,
-          workspaces,
-          automations,
-          autoAuth,
-          automationsScheduler,
-          ...(now ? { now } : {}),
-          isLinkDown: () => Boolean(link?.isDown()),
-          controls,
-        }, parsed, 'proposal'),
+        apply: (parsed: AutomationProposalFields) => {
+          const proposalCtx = {
+            channel,
+            msg: lastMsg,
+            scope,
+            chatMode: mode,
+            workspaces,
+            automations,
+            autoAuth,
+            automationsScheduler,
+            ...(now ? { now } : {}),
+            isLinkDown: () => Boolean(link?.isDown()),
+            controls,
+          };
+          switch (parsed.op) {
+            case 'delete':
+              return submitAutomationDeleteProposal(proposalCtx, parsed);
+            case 'replace':
+              return submitAutomationReplaceProposal(proposalCtx, parsed);
+            case 'create':
+              return submitAutomationProposal(proposalCtx, {
+                taskType: parsed.taskType,
+                scheduleText: parsed.scheduleText,
+                name: parsed.name,
+                taskText: parsed.taskText,
+              }, 'proposal');
+            default: {
+              const _exhaustive: never = parsed;
+              return _exhaustive;
+            }
+          }
+        },
       }
     : undefined;
 
@@ -2538,14 +2580,22 @@ async function deliverFinalReply(input: {
   let deliverProposal = false;
   if (parsed && input.automation && honor && completed) {
     const verdict = input.automation.plan(parsed);
-    proposalSuffix = automationProposalSuffix(verdict, parsed.scheduleText);
+    proposalSuffix = automationProposalSuffix(verdict, parsed);
     switch (verdict.outcome) {
       case 'confirm':
       case 'needs-end':
+      case 'delete':
         deliverProposal = true;
         break;
       case 'reject':
         noteAutomationRejected(verdict.reason, 'proposal');
+        break;
+      case 'unknown-id':
+        log.info('auto', 'rejected', {
+          reason: 'unknown-id',
+          source: 'proposal',
+          ...(parsed.op === 'create' ? {} : { id: parsed.id }),
+        });
         break;
       case 'refuse':
         break;

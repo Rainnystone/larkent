@@ -335,7 +335,7 @@ describe('AutomationsStore', () => {
 
     const restarted = new AutomationsStore({ path, logPath, statusPath, now: () => now.t });
     await restarted.load();
-    expect(restarted.listDrafts().map((draft) => draft.name)).toEqual(['still-fresh']);
+    expect(restarted.listDrafts().map((draft) => ('name' in draft ? draft.name : undefined))).toEqual(['still-fresh']);
   });
 
   it('removeChat drops that chat’s items, drafts and board and leaves other chats', async () => {

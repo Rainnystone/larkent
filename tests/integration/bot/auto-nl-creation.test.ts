@@ -84,7 +84,7 @@ describe('A6 natural-language creation', () => {
       createdBy: USER,
       nextFireAt: FIRE_AT,
     });
-    expect(draft?.nextFireAt).toBe(FIRE_AT);
+    expect(draft && 'nextFireAt' in draft ? draft.nextFireAt : undefined).toBe(FIRE_AT);
 
     const turn = h.journal.list().find((entry) => entry.messageIds.includes('om_nl'));
     expect(turn?.reply?.markdown).toContain(VISIBLE);

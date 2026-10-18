@@ -8,7 +8,13 @@ import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
 import { draftCardBodyFromCard } from './card-body';
-import { automationConfirmCard } from './confirm-card';
+import {
+  automationConfirmCard,
+  automationDeleteCard,
+  automationReplaceCard,
+  automationTargetSnapshot,
+} from './confirm-card';
+import type { AutomationProposalFields } from './proposal';
 import { automationEndCard, type EndCardTokens } from './end-card';
 import {
   ONE_YEAR_MS,
@@ -25,7 +31,21 @@ import {
 } from './schedule';
 import { addLocalDays, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
 import { formatAutomationListLine } from './board-card';
-import type { AutomationDraft, AutomationItem, AutomationTaskType, AutomationsStore } from './store';
+import {
+  draftConfirmedStatus,
+  draftDeletedStatus,
+  draftReplacedStatus,
+  draftTargetGoneStatus,
+  DRAFT_SETTLED_CANCELLED,
+} from './draft-card';
+import type {
+  AutomationDraft,
+  AutomationItem,
+  AutomationTaskType,
+  AutomationsStore,
+  DeleteAutomationDraft,
+  ReplaceAutomationDraft,
+} from './store';
 
 export const AUTO_NEW_USAGE = '用法：`/auto new <时间表> | <名称> | <任务>`';
 export const AUTO_P2P_HINT = '仅支持群';
@@ -96,7 +116,9 @@ export type AutomationProposalVerdict =
   | { outcome: 'confirm'; schedule: Schedule }
   | { outcome: 'needs-end'; pending: PendingRecurring; startAt?: number }
   | { outcome: 'reject'; reason: ScheduleTextRejectReason; clock?: string }
-  | { outcome: 'refuse'; message: string };
+  | { outcome: 'refuse'; message: string }
+  | { outcome: 'delete' }
+  | { outcome: 'unknown-id' };
 
 /** Schedule, floor, ceiling, and cwd checks shared with proposal delivery. */
 export function assessAutomationProposal(input: {
@@ -139,47 +161,180 @@ export function assessAutomationProposal(input: {
 
 /** Gates that would otherwise become a second chat message after the model reply. */
 export function planAutomationProposalReply(input: {
-  taskType: AutomationTaskType;
-  scheduleText: string;
+  proposal?: AutomationProposalFields;
+  taskType?: AutomationTaskType;
+  scheduleText?: string;
   now: number;
   timezone: string;
   agentTasks: boolean;
   hasCwd: boolean;
   group: boolean;
   canSave: boolean;
+  targetInChat?: boolean;
+}): AutomationProposalVerdict {
+  const proposal = input.proposal ?? createProposalFromLegacy(input.taskType, input.scheduleText);
+  switch (proposal.op) {
+    case 'delete':
+      return planDeleteProposal(input);
+    case 'replace':
+      return planReplaceProposal(input, proposal);
+    case 'create':
+      return planCreateProposal(input, proposal);
+    default: {
+      const _exhaustive: never = proposal;
+      return _exhaustive;
+    }
+  }
+}
+
+function createProposalFromLegacy(
+  taskType: AutomationTaskType | undefined,
+  scheduleText: string | undefined,
+): AutomationProposalFields {
+  const text = scheduleText ?? '';
+  return {
+    op: 'create',
+    taskType: taskType ?? 'reminder',
+    scheduleText: text,
+    name: text,
+    taskText: text,
+  };
+}
+
+function planDeleteProposal(input: {
+  group: boolean;
+  canSave: boolean;
+  targetInChat?: boolean;
 }): AutomationProposalVerdict {
   if (!input.group) return { outcome: 'refuse', message: AUTO_P2P_HINT };
-  if (input.taskType === 'agent' && !input.agentTasks) {
+  if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
+  if (!input.targetInChat) return { outcome: 'unknown-id' };
+  return { outcome: 'delete' };
+}
+
+function planReplaceProposal(
+  input: {
+    now: number;
+    timezone: string;
+    agentTasks: boolean;
+    hasCwd: boolean;
+    group: boolean;
+    canSave: boolean;
+    targetInChat?: boolean;
+  },
+  proposal: Extract<AutomationProposalFields, { op: 'replace' }>,
+): AutomationProposalVerdict {
+  if (!input.group) return { outcome: 'refuse', message: AUTO_P2P_HINT };
+  if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
+  if (!input.targetInChat) return { outcome: 'unknown-id' };
+  if (proposal.taskType === 'agent' && !input.agentTasks) {
+    return { outcome: 'refuse', message: AUTO_AGENT_DISABLED };
+  }
+  return assessAutomationProposal({
+    taskType: proposal.taskType,
+    scheduleText: proposal.scheduleText,
+    now: input.now,
+    timezone: input.timezone,
+    hasCwd: input.hasCwd,
+  });
+}
+
+function planCreateProposal(
+  input: {
+    now: number;
+    timezone: string;
+    agentTasks: boolean;
+    hasCwd: boolean;
+    group: boolean;
+    canSave: boolean;
+  },
+  proposal: Extract<AutomationProposalFields, { op: 'create' }>,
+): AutomationProposalVerdict {
+  if (!input.group) return { outcome: 'refuse', message: AUTO_P2P_HINT };
+  if (proposal.taskType === 'agent' && !input.agentTasks) {
     return { outcome: 'refuse', message: AUTO_AGENT_DISABLED };
   }
   if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
-  return assessAutomationProposal(input);
+  return assessAutomationProposal({
+    taskType: proposal.taskType,
+    scheduleText: proposal.scheduleText,
+    now: input.now,
+    timezone: input.timezone,
+    hasCwd: input.hasCwd,
+  });
 }
 
 function hasRemainingFire(schedule: Schedule, now: number): boolean {
   return nextFires(schedule, now, 1).length > 0;
 }
 
-export function automationRejectReplyLine(reasonMessage: string, scheduleText: string): string {
+export function automationRejectReplyLine(
+  reasonMessage: string,
+  scheduleText: string,
+  verb = '没有创建任务',
+): string {
   const stem = reasonMessage.endsWith('。') ? reasonMessage.slice(0, -1) : reasonMessage;
-  return `⚠️ 没有创建任务：${stem}「${scheduleText}」。可写成「明天 09:00」「2026-10-18 15:50」「10 分钟后」。`;
+  return `⚠️ ${verb}：${stem}「${scheduleText}」。可写成「明天 09:00」「2026-10-18 15:50」「10 分钟后」。`;
 }
 
 export function automationProposalSuffix(
   verdict: AutomationProposalVerdict,
-  scheduleText: string,
+  proposalOrSchedule: AutomationProposalFields | string,
 ): string | undefined {
+  const proposal = typeof proposalOrSchedule === 'string'
+    ? createProposalFromLegacy('reminder', proposalOrSchedule)
+    : proposalOrSchedule;
+  const verb = proposalVerb(proposal.op);
   switch (verdict.outcome) {
     case 'confirm':
+      if (proposal.op === 'replace') return `已生成确认卡，点「是」后用新任务替换 #${proposal.id}。`;
       return AUTOMATION_CONFIRM_PENDING_LINE;
+    case 'delete':
+      return proposal.op === 'delete' ? `已生成确认卡，点「是」后删除 #${proposal.id}。` : undefined;
     case 'needs-end':
       return undefined;
+    case 'unknown-id':
+      if (proposal.op === 'create') return undefined;
+      return `⚠️ ${verb}：本群没有 #${proposal.id}。`;
     case 'reject':
-      return automationRejectReplyLine(rejectMessage(verdict.reason, verdict), scheduleText);
+      return automationRejectReplyLine(
+        rejectMessage(verdict.reason, verdict),
+        proposalScheduleText(proposal),
+        verb,
+      );
     case 'refuse':
-      return `⚠️ 没有创建任务：${verdict.message}`;
+      return `⚠️ ${verb}：${verdict.message}`;
     default: {
       const _exhaustive: never = verdict;
+      return _exhaustive;
+    }
+  }
+}
+
+function proposalVerb(op: AutomationProposalFields['op']): string {
+  switch (op) {
+    case 'create':
+      return '没有创建任务';
+    case 'delete':
+      return '没有删除任务';
+    case 'replace':
+      return '没有替换任务';
+    default: {
+      const _exhaustive: never = op;
+      return _exhaustive;
+    }
+  }
+}
+
+function proposalScheduleText(proposal: AutomationProposalFields): string {
+  switch (proposal.op) {
+    case 'create':
+    case 'replace':
+      return proposal.scheduleText;
+    case 'delete':
+      return '';
+    default: {
+      const _exhaustive: never = proposal;
       return _exhaustive;
     }
   }
@@ -838,11 +993,149 @@ export async function submitAutomationProposal(
       }
       return;
     }
+    case 'delete':
+    case 'unknown-id':
+      return;
     default: {
       const _exhaustive: never = verdict;
       return _exhaustive;
     }
   }
+}
+
+export async function submitAutomationDeleteProposal(
+  ctx: AutomationProposalContext,
+  proposal: Extract<AutomationProposalFields, { op: 'delete' }>,
+): Promise<void> {
+  if (!canPostMutationProposal(ctx)) return;
+  const item = ctx.automations?.get(proposal.id);
+  if (!item || item.chatId !== ctx.msg.chatId || !ctx.automations) return;
+  const draft = await ctx.automations.saveDraft({
+    op: 'delete',
+    chatId: ctx.msg.chatId,
+    createdBy: ctx.msg.senderId,
+    targetId: item.id,
+    target: automationTargetSnapshot(item),
+  });
+  if (!ctx.isLinkDown?.()) await postDeleteCard(ctx, draft);
+  if (ctx.automations.getDraft(draft.draftId)) {
+    log.info('auto', 'draft', {
+      draftId: draft.draftId,
+      op: 'delete',
+      targetId: item.id,
+      chatId: ctx.msg.chatId,
+    });
+  }
+}
+
+export async function submitAutomationReplaceProposal(
+  ctx: AutomationProposalContext,
+  proposal: Extract<AutomationProposalFields, { op: 'replace' }>,
+): Promise<void> {
+  if (!canPostMutationProposal(ctx)) return;
+  const item = ctx.automations?.get(proposal.id);
+  if (!item || item.chatId !== ctx.msg.chatId || !ctx.automations) return;
+  if (proposal.taskType === 'agent' && !ctx.controls.profileConfig.automations.agentTasks) return;
+
+  const now = (ctx.now ?? Date.now)();
+  const timezone = ctx.controls.profileConfig.automations.timezone;
+  const cwd = proposal.taskType === 'agent'
+    ? ctx.workspaces.cwdFor(ctx.scope) ?? ctx.controls.profileConfig.workspaces.default
+    : undefined;
+  const hasCwd = typeof cwd === 'string' && cwd.trim().length > 0;
+  const verdict = assessAutomationProposal({
+    taskType: proposal.taskType,
+    scheduleText: proposal.scheduleText,
+    now,
+    timezone,
+    hasCwd,
+  });
+  const target = automationTargetSnapshot(item);
+  switch (verdict.outcome) {
+    case 'refuse':
+    case 'reject':
+    case 'delete':
+    case 'unknown-id':
+      return;
+    case 'needs-end': {
+      const draft = await ctx.automations.saveDraft({
+        op: 'replace',
+        targetId: item.id,
+        target,
+        scheduleText: proposal.scheduleText,
+        taskType: proposal.taskType,
+        schedule: verdict.pending,
+        timezone,
+        startAt: verdict.startAt ?? now,
+        nextFireAt: 0,
+        chatId: ctx.msg.chatId,
+        createdBy: ctx.msg.senderId,
+        name: proposal.name,
+        taskText: proposal.taskText,
+        pendingRecurring: verdict.pending,
+        ...(cwd ? { cwd } : {}),
+      });
+      if (!ctx.isLinkDown?.()) await postEndCard(ctx, draft);
+      if (ctx.automations.getDraft(draft.draftId)) {
+        log.info('auto', 'draft', {
+          draftId: draft.draftId,
+          op: 'replace',
+          targetId: item.id,
+          taskType: proposal.taskType,
+          chatId: ctx.msg.chatId,
+          waiting: 'end',
+        });
+      }
+      return;
+    }
+    case 'confirm': {
+      const nextFireAt = nextFireAfter(verdict.schedule, now);
+      const startAt = scheduleStartAt(verdict.schedule, now);
+      const endAt = scheduleEndAt(verdict.schedule);
+      const draft = await ctx.automations.saveDraft({
+        op: 'replace',
+        targetId: item.id,
+        target,
+        scheduleText: proposal.scheduleText,
+        taskType: proposal.taskType,
+        schedule: verdict.schedule,
+        timezone,
+        startAt,
+        ...(endAt !== undefined ? { endAt } : {}),
+        nextFireAt,
+        chatId: ctx.msg.chatId,
+        createdBy: ctx.msg.senderId,
+        name: proposal.name,
+        taskText: proposal.taskText,
+        ...(cwd ? { cwd } : {}),
+      });
+      if (!ctx.isLinkDown?.()) {
+        await postConfirmCard(ctx, draft, verdict.schedule, now, ctx.msg.messageId);
+      }
+      if (ctx.automations.getDraft(draft.draftId)) {
+        log.info('auto', 'draft', {
+          draftId: draft.draftId,
+          op: 'replace',
+          targetId: item.id,
+          taskType: proposal.taskType,
+          chatId: ctx.msg.chatId,
+        });
+      }
+      return;
+    }
+    default: {
+      const _exhaustive: never = verdict;
+      return _exhaustive;
+    }
+  }
+}
+
+function canPostMutationProposal(ctx: AutomationProposalContext): boolean {
+  if (!ctx.controls.profileConfig.automations.enabled) return false;
+  if (isIgnoredAutoSender(ctx)) return false;
+  if (ctx.scope.startsWith('auto:') || ctx.scope.startsWith('meeting:')) return false;
+  if (ctx.chatMode === 'p2p' || ctx.msg.chatType === 'p2p') return false;
+  return Boolean(ctx.automations && ctx.autoAuth && ctx.automationsScheduler);
 }
 
 export async function flushPendingDraftCards(ctx: {
@@ -866,13 +1159,27 @@ export async function flushPendingDraftCards(ctx: {
       msg: { chatId: draft.chatId, messageId: '', threadId: undefined },
     };
     try {
-      if (draft.pendingRecurring) {
-        await postEndCard(cardCtx, draft);
-        continue;
+      switch (draft.op) {
+        case 'delete':
+          await postDeleteCard(cardCtx, draft);
+          break;
+        case 'create':
+        case 'replace':
+          if (draft.pendingRecurring) {
+            await postEndCard(cardCtx, draft);
+            break;
+          }
+          {
+            const schedule = readSchedule(draft.schedule);
+            if (!schedule) break;
+            await postConfirmCard(cardCtx, draft, schedule, now, '');
+          }
+          break;
+        default: {
+          const _exhaustive: never = draft;
+          return _exhaustive;
+        }
       }
-      const schedule = readSchedule(draft.schedule);
-      if (!schedule) continue;
-      await postConfirmCard(cardCtx, draft, schedule, now, '');
     } catch (error) {
       log.fail('auto', error, { event: 'draft.flush', draftId: draft.draftId });
     }
@@ -888,7 +1195,7 @@ export async function completeDraftEnd(
     now?: () => number;
     chatMode?: CommandContext['chatMode'];
   },
-  draft: AutomationDraft,
+  draft: Exclude<AutomationDraft, DeleteAutomationDraft>,
   endAt: number,
   replyTo: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
@@ -912,7 +1219,7 @@ export async function completeDraftEnd(
     nextFireAt,
     pendingRecurring: null,
   });
-  if (!updated) return { ok: false, message: AUTO_INVALID_HINT };
+  if (!updated || updated.op === 'delete') return { ok: false, message: AUTO_INVALID_HINT };
   await postConfirmCard({
     channel: ctx.channel,
     automations: ctx.automations,
@@ -946,11 +1253,37 @@ export function resolveEndAt(
   }
 }
 
+export interface AutomationConfirmOutcome {
+  ok: boolean;
+  status: string;
+  toast: string;
+}
+
 export async function confirmAutomationDraft(
-  ctx: Pick<CommandContext, 'automations' | 'onAutomationConfirmed'>,
+  ctx: Pick<CommandContext, 'automations' | 'automationsScheduler' | 'onAutomationConfirmed'> & {
+    now?: () => number;
+  },
   draft: AutomationDraft,
-): Promise<AutomationItem | undefined> {
-  if (!ctx.automations || draft.pendingRecurring) return undefined;
+): Promise<AutomationConfirmOutcome> {
+  switch (draft.op) {
+    case 'create':
+      return confirmCreateDraft(ctx, draft);
+    case 'delete':
+      return confirmDeleteDraft(ctx, draft);
+    case 'replace':
+      return confirmReplaceDraft(ctx, draft);
+    default: {
+      const _exhaustive: never = draft;
+      return _exhaustive;
+    }
+  }
+}
+
+async function confirmCreateDraft(
+  ctx: Pick<CommandContext, 'automations' | 'onAutomationConfirmed'>,
+  draft: Exclude<AutomationDraft, DeleteAutomationDraft | ReplaceAutomationDraft>,
+): Promise<AutomationConfirmOutcome> {
+  if (!ctx.automations || draft.pendingRecurring) return confirmInvalid();
   const item = await ctx.automations.create({
     taskType: draft.taskType,
     schedule: draft.schedule,
@@ -966,7 +1299,118 @@ export async function confirmAutomationDraft(
   });
   await ctx.onAutomationConfirmed?.(item);
   log.info('auto', 'confirmed', { id: item.id, taskType: item.taskType, chatId: item.chatId });
-  return item;
+  const status = draftConfirmedStatus(item.id);
+  return { ok: true, status, toast: status };
+}
+
+async function confirmDeleteDraft(
+  ctx: Pick<CommandContext, 'automations' | 'automationsScheduler'>,
+  draft: DeleteAutomationDraft,
+): Promise<AutomationConfirmOutcome> {
+  if (!ctx.automations || !ctx.automationsScheduler) return confirmInvalid();
+  const item = ctx.automations.get(draft.targetId);
+  if (!item || item.chatId !== draft.chatId) {
+    const status = draftTargetGoneStatus(draft.targetId);
+    return { ok: false, status, toast: status };
+  }
+  const ok = await ctx.automationsScheduler.delete(draft.targetId);
+  if (!ok) {
+    const status = draftTargetGoneStatus(draft.targetId);
+    return { ok: false, status, toast: status };
+  }
+  log.info('auto', 'deleted', { id: draft.targetId, source: 'proposal' });
+  const status = draftDeletedStatus(draft.targetId);
+  return { ok: true, status, toast: status };
+}
+
+async function confirmReplaceDraft(
+  ctx: Pick<CommandContext, 'automations' | 'automationsScheduler' | 'onAutomationConfirmed'> & {
+    now?: () => number;
+  },
+  draft: ReplaceAutomationDraft,
+): Promise<AutomationConfirmOutcome> {
+  if (!ctx.automations || !ctx.automationsScheduler || draft.pendingRecurring) return confirmInvalid();
+  const now = (ctx.now ?? Date.now)();
+  const blocked = replaceConfirmBlock(draft, now);
+  if (blocked.outcome !== 'confirm') {
+    if (blocked.outcome === 'reject') noteAutomationRejected(blocked.reason, 'proposal');
+    const message = blocked.outcome === 'reject'
+      ? rejectMessage(blocked.reason, blocked)
+      : blocked.outcome === 'refuse'
+        ? blocked.message
+        : AUTO_INVALID_HINT;
+    return { ok: false, status: message, toast: message };
+  }
+  let created: AutomationItem;
+  try {
+    const nextFireAt = nextFireAfter(blocked.schedule, now);
+    const startAt = scheduleStartAt(blocked.schedule, now);
+    const endAt = scheduleEndAt(blocked.schedule);
+    created = await ctx.automations.create({
+      taskType: draft.taskType,
+      schedule: blocked.schedule,
+      timezone: draft.timezone,
+      startAt,
+      ...(endAt !== undefined ? { endAt } : {}),
+      nextFireAt,
+      chatId: draft.chatId,
+      createdBy: draft.createdBy,
+      name: draft.name,
+      taskText: draft.taskText,
+      ...(draft.cwd ? { cwd: draft.cwd } : {}),
+    });
+  } catch (error) {
+    log.fail('auto', error, { event: 'replace', oldId: draft.targetId });
+    const status = `没有替换 #${draft.targetId}：新任务未创建`;
+    return { ok: false, status, toast: status };
+  }
+  await ctx.onAutomationConfirmed?.(created);
+  log.info('auto', 'confirmed', { id: created.id, taskType: created.taskType, chatId: created.chatId });
+  const old = ctx.automations.get(draft.targetId);
+  if (!old || old.chatId !== draft.chatId) {
+    const status = `已确认 #${created.id}（${draftTargetGoneStatus(draft.targetId)}）`;
+    return { ok: true, status, toast: status };
+  }
+  const deleted = await ctx.automationsScheduler.delete(draft.targetId);
+  if (!deleted) {
+    const status = `已确认 #${created.id}（${draftTargetGoneStatus(draft.targetId)}）`;
+    return { ok: true, status, toast: status };
+  }
+  log.info('auto', 'replaced', { oldId: draft.targetId, newId: created.id });
+  const status = draftReplacedStatus(draft.targetId, created.id);
+  return { ok: true, status, toast: status };
+}
+
+function confirmInvalid(): AutomationConfirmOutcome {
+  return { ok: false, status: DRAFT_SETTLED_CANCELLED, toast: AUTO_INVALID_HINT };
+}
+
+function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): AutomationProposalVerdict {
+  if (draft.taskType === 'agent' && !(draft.cwd && draft.cwd.trim())) {
+    return { outcome: 'refuse', message: AUTO_AGENT_NEEDS_CWD };
+  }
+  const textVerdict = assessAutomationProposal({
+    taskType: draft.taskType,
+    scheduleText: draft.scheduleText,
+    now,
+    timezone: draft.timezone,
+    hasCwd: true,
+  });
+  if (textVerdict.outcome === 'reject' && textVerdict.reason === 'past-time') return textVerdict;
+  if (textVerdict.outcome === 'refuse') return textVerdict;
+  const stored = readSchedule(draft.schedule);
+  if (!stored) return { outcome: 'reject', reason: 'invalid-schedule' };
+  if (stored.kind === 'one-shot' && stored.fireAt <= now) {
+    const parts = zonedParts(draft.timezone, stored.fireAt);
+    const pad = (value: number): string => String(value).padStart(2, '0');
+    return { outcome: 'reject', reason: 'past-time', clock: `${pad(parts.hour)}:${pad(parts.minute)}` };
+  }
+  const parsed = parseSchedule(stored, { taskType: draft.taskType, now });
+  if (!parsed.ok) return { outcome: 'reject', reason: parsed.reason };
+  if (!hasRemainingFire(parsed.schedule, now)) {
+    return { outcome: 'reject', reason: 'no-remaining-fires' };
+  }
+  return { outcome: 'confirm', schedule: parsed.schedule };
 }
 
 async function listAutos(ctx: CommandContext): Promise<void> {
@@ -1029,7 +1473,7 @@ async function postEndCard(
     chatMode: CommandContext['chatMode'];
     msg: { chatId: string; messageId?: string; threadId?: string };
   },
-  draft: AutomationDraft,
+  draft: Exclude<AutomationDraft, DeleteAutomationDraft>,
 ): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth) return;
   const tokens = signEndTokens(ctx.autoAuth, draft);
@@ -1061,7 +1505,7 @@ async function postConfirmCard(
     chatMode: CommandContext['chatMode'];
     msg: { chatId: string; threadId?: string };
   },
-  draft: AutomationDraft,
+  draft: Exclude<AutomationDraft, DeleteAutomationDraft>,
   schedule: Schedule,
   now: number,
   replyTo: string,
@@ -1100,7 +1544,7 @@ async function postConfirmCard(
     action: 'auto.reject',
     ttlMs: AUTO_CARD_TTL_MS,
   });
-  const card = automationConfirmCard({
+  const body = {
     taskType: draft.taskType,
     name: draft.name,
     taskText: draft.taskText,
@@ -1110,7 +1554,10 @@ async function postConfirmCard(
     confirmToken,
     rejectToken,
     ...(draft.cwd ? { cwd: draft.cwd } : {}),
-  });
+  };
+  const card = draft.op === 'replace'
+    ? automationReplaceCard({ ...body, target: draft.target })
+    : automationConfirmCard(body);
   let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
     sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
@@ -1119,6 +1566,53 @@ async function postConfirmCard(
     });
   } catch (error) {
     await settleDraftCardFailure(ctx, draft, error, replyTo);
+    return;
+  }
+  await ctx.automations.bindDraftCard(
+    draft.draftId,
+    sent.messageId,
+    sent.cardId,
+    draftCardBodyFromCard(card),
+  );
+}
+
+async function postDeleteCard(
+  ctx: {
+    channel: CommandContext['channel'];
+    automations?: AutomationsStore;
+    autoAuth?: AutoActionAuth;
+    automationsScheduler?: CommandContext['automationsScheduler'];
+    chatMode: CommandContext['chatMode'];
+    msg: { chatId: string; messageId?: string; threadId?: string };
+  },
+  draft: DeleteAutomationDraft,
+): Promise<void> {
+  if (!ctx.automations || !ctx.autoAuth) return;
+  const confirmToken = ctx.autoAuth.sign({
+    draftId: draft.draftId,
+    chatId: draft.chatId,
+    action: 'auto.confirm',
+    ttlMs: AUTO_CARD_TTL_MS,
+  });
+  const rejectToken = ctx.autoAuth.sign({
+    draftId: draft.draftId,
+    chatId: draft.chatId,
+    action: 'auto.reject',
+    ttlMs: AUTO_CARD_TTL_MS,
+  });
+  const card = automationDeleteCard({
+    target: draft.target,
+    confirmToken,
+    rejectToken,
+  });
+  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
+  try {
+    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+      ...(ctx.msg.messageId ? { replyTo: ctx.msg.messageId } : {}),
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+    });
+  } catch (error) {
+    await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
   await ctx.automations.bindDraftCard(

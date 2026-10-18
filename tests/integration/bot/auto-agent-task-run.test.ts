@@ -268,7 +268,9 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     await h.channel.handlers.message?.(mention('om_human', 'please answer the standup'));
     await waitFor(() => h.agent.runs.length === 1);
     expect(h.agent.runOptions[0]?.prompt).toContain('please answer the standup');
-    expect(h.agent.runOptions[0]?.prompt).not.toContain(TASK);
+    expect(h.agent.runOptions[0]?.prompt).toContain('group_automations');
+    expect(h.agent.runOptions[0]?.prompt).toContain(TASK);
+    expect(h.agent.runOptions[0]?.prompt).not.toContain(FIRE_ONE);
 
     h.setNow(t0 + HOUR);
     await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));

@@ -18,6 +18,18 @@ export function draftConfirmedStatus(id: number): string {
   return `已确认 #${id}`;
 }
 
+export function draftDeletedStatus(id: number): string {
+  return `已删除 #${id}`;
+}
+
+export function draftReplacedStatus(oldId: number, newId: number): string {
+  return `已替换 #${oldId} → #${newId}`;
+}
+
+export function draftTargetGoneStatus(id: number): string {
+  return `#${id} 已不存在`;
+}
+
 export function automationSettledCard(status: string): object {
   return card2({
     title: status,

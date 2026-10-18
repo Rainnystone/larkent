@@ -137,7 +137,7 @@ describe('A2 recurring creation and expiry', () => {
       { end_at: '2026-10-21' },
     ));
     expect(confirmCard(h)).toContain('auto.confirm');
-    expect(h.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
+    expect(pendingOf(h.store.listDrafts()[0])).toBeUndefined();
   });
 
   it('lets one of two concurrent end-card taps win and keeps a typo retryable', async () => {
@@ -166,7 +166,7 @@ describe('A2 recurring creation and expiry', () => {
     expect(bodies.filter((body) => body.includes('auto.confirm'))).toHaveLength(1);
     expect(bodies.some((body) => body.includes(AUTO_END_BUSY))).toBe(false);
     expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
+    expect(pendingOf(h.store.listDrafts()[0])).toBeUndefined();
     const confirm = confirmCard(h);
     const winners = [confirm.includes('2026-10-21'), confirm.includes('2026-11-21')].filter(Boolean);
     expect(winners).toHaveLength(1);
@@ -202,7 +202,7 @@ describe('A2 recurring creation and expiry', () => {
       { end_at: '2026-10-21' },
     ));
     expect(confirmCard(retry)).toContain('auto.confirm');
-    expect(retry.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
+    expect(pendingOf(retry.store.listDrafts()[0])).toBeUndefined();
   });
 
   it('turns one preset tap into a confirm card and ignores a second tap on the same card', async () => {
@@ -266,6 +266,13 @@ describe('A2 recurring creation and expiry', () => {
     expect(h.store.list()).toEqual([]);
   });
 });
+
+function pendingOf(
+  draft: { op: 'create' | 'delete' | 'replace'; pendingRecurring?: { kind: string } } | undefined,
+): { kind: string } | undefined {
+  if (!draft || draft.op === 'delete') return undefined;
+  return draft.pendingRecurring;
+}
 
 async function harness(opts: { agentTasks?: boolean } = {}) {
   const tmp = await createTmpProfile('auto-recurring-');

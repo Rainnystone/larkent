@@ -40,7 +40,7 @@ describe('proposal schedule acceptance', () => {
     await h.propose('今天 15:50', 'proposal');
 
     expect(h.store.listDrafts()).toHaveLength(1);
-    const draft = h.store.listDrafts()[0]!;
+    const draft = scheduleDraft(h.store.listDrafts()[0]);
     expect(draft.nextFireAt).toBe(Date.UTC(2026, 9, 18, 7, 50, 0));
     const card = JSON.stringify(draft.cardBody);
     expect(card).toContain('一次性 2026-10-18 15:50');
@@ -51,7 +51,7 @@ describe('proposal schedule acceptance', () => {
     const h = await harness();
     await h.propose('从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 16:05', 'proposal');
 
-    const draft = h.store.listDrafts()[0]!;
+    const draft = scheduleDraft(h.store.listDrafts()[0]);
     expect(draft.startAt).toBe(Date.UTC(2026, 9, 19, 7, 40, 0));
     expect(draft.nextFireAt).toBe(Date.UTC(2026, 9, 19, 7, 40, 0));
     const card = JSON.stringify(draft.cardBody);
@@ -147,7 +147,7 @@ describe('proposal schedule acceptance', () => {
   it('does not replace the end card when the chosen end leaves no fire', async () => {
     const h = await harness();
     await h.propose('every 10m 15:40-16:05', 'command');
-    const draft = h.store.listDrafts()[0]!;
+    const draft = scheduleDraft(h.store.listDrafts()[0]);
     expect(draft.pendingRecurring?.kind).toBe('interval');
     const sentBefore = h.channel.sent.length;
     const rejected = await completeDraftEnd({
@@ -157,14 +157,14 @@ describe('proposal schedule acceptance', () => {
       now: () => NOW,
     }, draft, Date.UTC(2026, 9, 18, 7, 10, 0), 'om_end');
     expect(rejected).toEqual({ ok: false, message: '结束前已没有可触发的时刻。' });
-    expect(h.store.listDrafts()[0]?.pendingRecurring?.kind).toBe('interval');
+    expect(scheduleDraft(h.store.listDrafts()[0]).pendingRecurring?.kind).toBe('interval');
     expect(h.channel.sent).toHaveLength(sentBefore);
   });
 
   it('keeps a prefixed start on a draft that is still waiting for an end', async () => {
     const h = await harness();
     await h.propose('从 明天 15:40 起 every 10m 15:40-16:05', 'command');
-    const draft = h.store.listDrafts()[0]!;
+    const draft = scheduleDraft(h.store.listDrafts()[0]);
     expect(draft.startAt).toBe(Date.UTC(2026, 9, 19, 7, 40, 0));
     expect(draft.pendingRecurring?.kind).toBe('interval');
     const rejected = await completeDraftEnd({
@@ -174,9 +174,14 @@ describe('proposal schedule acceptance', () => {
       now: () => NOW,
     }, draft, draft.startAt, 'om_end');
     expect(rejected).toEqual({ ok: false, message: '结束时间必须晚于开始时间。' });
-    expect(h.store.listDrafts()[0]?.pendingRecurring?.kind).toBe('interval');
+    expect(scheduleDraft(h.store.listDrafts()[0]).pendingRecurring?.kind).toBe('interval');
   });
 });
+
+function scheduleDraft(draft: ReturnType<AutomationsStore['listDrafts']>[number] | undefined) {
+  if (!draft || draft.op === 'delete') throw new Error('expected a schedule draft');
+  return draft;
+}
 
 async function harness() {
   const dir = await mkdtemp(join(tmpdir(), 'auto-a23-'));

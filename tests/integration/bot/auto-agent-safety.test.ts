@@ -254,7 +254,8 @@ describe('automation agent-task safety whitelist', { timeout: 20_000 }, () => {
     expect(h.cfg.larkCli.identityPreset).toBe('user-default');
     expect(h.agent.runOptions[0]?.promptVariant).toBeUndefined();
     expect(h.agent.runOptions[0]?.prompt).toContain('please list yesterday');
-    expect(h.agent.runOptions[0]?.prompt).not.toContain(TASK);
+    expect(h.agent.runOptions[0]?.prompt).toContain('group_automations');
+    expect(h.agent.runOptions[0]?.prompt).toContain(TASK);
 
     h.setNow(t0 + HOUR);
     await h.bridge.wakeAutomation(formatFireKey(1, t0 + HOUR));

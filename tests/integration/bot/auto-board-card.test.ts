@@ -361,13 +361,14 @@ describe('automation board card', () => {
     await h.bridge.tickLink();
     await waitFor(() => {
       const drafts = h.store.listDrafts();
+      const first = drafts[0];
       return drafts.length === 1
-        && drafts[0]?.name === '乙'
-        && Boolean(drafts[0]?.cardMessageId)
+        && Boolean(first && 'name' in first && first.name === '乙')
+        && Boolean(first?.cardMessageId)
         && order.at(-1) === 'update';
     });
 
-    expect(h.store.listDrafts().map((draft) => draft.name)).toEqual(['乙']);
+    expect(h.store.listDrafts().map((draft) => ('name' in draft ? draft.name : undefined))).toEqual(['乙']);
     expect(markdowns(h.channel)).toContain('确认卡片发送失败（飞书错误 200610），未创建任务。请稍后重试。');
     expect(order.at(-1)).toBe('update');
   });
