@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { automationBoardCard } from '../../../src/automations/board-card';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
+import { automationSettledCard } from '../../../src/automations/draft-card';
 import { automationEndCard, type EndCardTokens } from '../../../src/automations/end-card';
 import type { AutomationItem } from '../../../src/automations/store';
 import { assertCardSchema2 } from '../../helpers/card-schema2';
@@ -37,6 +38,11 @@ describe('automation cards are CardKit schema 2.0', () => {
       confirmToken: 'auto_cb.v1.confirm',
       rejectToken: 'auto_cb.v1.reject',
     }));
+
+    assertCardSchema2(automationSettledCard('已确认 #1'));
+    assertCardSchema2(automationSettledCard('已取消'));
+    assertCardSchema2(automationSettledCard('已过期'));
+    assertCardSchema2(automationSettledCard('已指定结束时间'));
 
     const end = automationEndCard(TOKENS);
     assertCardSchema2(end);

@@ -77,6 +77,8 @@ export interface AutomationDraft extends CreateAutomationInput {
   draftId: string;
   createdAt: number;
   cardMessageId?: string;
+  cardId?: string;
+  sequence?: number;
   pendingRecurring?: PendingRecurring;
 }
 
@@ -86,6 +88,8 @@ export interface UpdateDraftPatch {
   nextFireAt?: number;
   pendingRecurring?: PendingRecurring | null;
   cardMessageId?: string;
+  cardId?: string;
+  sequence?: number;
 }
 
 export interface AutomationsLogEntry {
@@ -396,14 +400,24 @@ export class AutomationsStore {
     return draft ? { ...draft } : undefined;
   }
 
-  async bindDraftCard(draftId: string, cardMessageId: string): Promise<boolean> {
+  async bindDraftCard(draftId: string, cardMessageId: string, cardId?: string): Promise<boolean> {
     this.assertMutable();
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.draftId === draftId);
     if (!draft) return false;
     draft.cardMessageId = cardMessageId;
+    if (cardId) draft.cardId = cardId;
+    else delete draft.cardId;
+    delete draft.sequence;
     await this.persistNow();
     return true;
+  }
+
+  listExpiredDrafts(): AutomationDraft[] {
+    const cutoff = this.now() - AUTOMATIONS_DRAFT_TTL_MS;
+    return this.drafts
+      .filter((draft) => draft.createdAt <= cutoff && Boolean(draft.cardMessageId))
+      .map((draft) => ({ ...draft }));
   }
 
   async takeDraft(draftId: string): Promise<AutomationDraft | undefined> {
@@ -426,6 +440,14 @@ export class AutomationsStore {
     if (patch.endAt !== undefined) draft.endAt = patch.endAt;
     if (patch.nextFireAt !== undefined) draft.nextFireAt = patch.nextFireAt;
     if (patch.cardMessageId !== undefined) draft.cardMessageId = patch.cardMessageId;
+    if (patch.cardId !== undefined) {
+      if (patch.cardId) draft.cardId = patch.cardId;
+      else delete draft.cardId;
+    }
+    if (patch.sequence !== undefined) {
+      if (typeof patch.sequence === 'number') draft.sequence = patch.sequence;
+      else delete draft.sequence;
+    }
     if (patch.pendingRecurring === null) delete draft.pendingRecurring;
     else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
     await this.persistNow();
@@ -627,7 +649,9 @@ export class AutomationsStore {
   private pruneDrafts(): boolean {
     const cutoff = this.now() - AUTOMATIONS_DRAFT_TTL_MS;
     const before = this.drafts.length;
-    this.drafts = this.drafts.filter((draft) => draft.createdAt > cutoff);
+    this.drafts = this.drafts.filter((draft) =>
+      draft.createdAt > cutoff || Boolean(draft.cardMessageId),
+    );
     return this.drafts.length !== before;
   }
 
@@ -927,6 +951,8 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
     ...(typeof raw.cwd === 'string' && raw.cwd ? { cwd: raw.cwd } : {}),
     ...(raw.paused === true ? { paused: true } : {}),
     ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
+    ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
+    ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
     ...(isPendingRecurring(raw.pendingRecurring) ? { pendingRecurring: raw.pendingRecurring } : {}),
   };
 }

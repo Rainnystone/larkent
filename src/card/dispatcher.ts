@@ -17,7 +17,6 @@ import {
   type AutoCardAction,
 } from '../automations/action-auth';
 import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth';
-import { abandonIfNotInChat } from '../automations/chat-lifecycle';
 import {
   AUTO_END_BUSY,
   AUTO_INVALID_END,
@@ -27,8 +26,19 @@ import {
   confirmAutomationDraft,
   resolveEndAt,
 } from '../automations/command';
+import {
+  DRAFT_SETTLED_CANCELLED,
+  DRAFT_SETTLED_END_CHOSEN,
+  draftConfirmedStatus,
+  scheduleDraftCardSettle,
+} from '../automations/draft-card';
 import type { AutomationScheduler } from '../automations/scheduler';
-import type { AutomationItem, AutomationsStore } from '../automations/store';
+import {
+  AUTOMATIONS_DRAFT_TTL_MS,
+  type AutomationDraft,
+  type AutomationItem,
+  type AutomationsStore,
+} from '../automations/store';
 import type { CallbackAuth } from './callback-auth';
 import type { Continuations } from '../bot/continuation';
 import {
@@ -145,8 +155,7 @@ export async function handleCardAction(deps: CardDispatchDeps): Promise<CardActi
     return;
   }
   if (isAutoCardAction(cmd)) {
-    await dispatchAutoAction(deps, payload, cmd, accessDecision, formValue);
-    return;
+    return dispatchAutoAction(deps, payload, cmd, accessDecision, formValue);
   }
   if (cmd === 'auto.pause' || cmd === 'auto.resume' || cmd === 'auto.delete') {
     return dispatchBoardAction(deps, payload, cmd, accessDecision);
@@ -389,28 +398,24 @@ async function dispatchAutoAction(
   cmd: AutoCardAction,
   access: ReturnType<typeof evaluateAccess>,
   formValue?: Record<string, unknown>,
-): Promise<void> {
+): Promise<CardActionResponse | void> {
   if (!access.ok) return;
   const botOpenId = deps.channel.botIdentity?.openId;
   if (botOpenId && deps.evt.operator.openId === botOpenId) {
-    await sendAutoInvalid(deps);
-    return;
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
   if (!deps.autoAuth || !deps.automations || !token) {
     log.info('cardAction', 'skip-auto-auth-missing', { cmd });
-    await sendAutoInvalid(deps);
-    return;
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   const registered = deps.automations.findDraftByCardMessageId(deps.evt.messageId);
   if (!registered) {
     log.info('cardAction', 'skip-auto-unregistered', { cmd, messageId: deps.evt.messageId });
-    await sendAutoInvalid(deps);
-    return;
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   if (!deps.controls.profileConfig.automations.enabled) {
-    await sendAutoInvalid(deps);
-    return;
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   const verified = deps.autoAuth.verify(token, { consume: !isAutoEndAction(cmd) });
   if (!verified.ok || verified.payload.action !== cmd) {
@@ -418,25 +423,26 @@ async function dispatchAutoAction(
       cmd,
       reason: verified.ok ? 'action-mismatch' : verified.reason,
     });
-    await sendAutoInvalid(deps);
-    return;
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   if (
     verified.payload.chatId !== deps.evt.chatId
     || verified.payload.draftId !== registered.draftId
   ) {
-    await sendAutoInvalid(deps);
-    return;
+    return actionToast('error', AUTO_INVALID_HINT);
+  }
+  const now = (deps.now ?? Date.now)();
+  if (registered.createdAt + AUTOMATIONS_DRAFT_TTL_MS <= now) {
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   if (isAutoEndAction(cmd)) {
+    const snapshot = draftCardRef(registered);
     const nonce = verified.payload.nonce;
     if (!deps.autoAuth.claimNonce(nonce)) {
-      await sendAutoHint(deps, AUTO_END_BUSY);
-      return;
+      return actionToast('error', AUTO_END_BUSY);
     }
     let failure: string | undefined;
     try {
-      const now = (deps.now ?? Date.now)();
       const customText = readEndInput(payload, formValue);
       const endAt = resolveEndAt(cmd, {
         timezone: registered.timezone,
@@ -460,28 +466,28 @@ async function dispatchAutoAction(
     } finally {
       deps.autoAuth.releaseNonce(nonce);
     }
-    if (failure) await sendAutoHint(deps, failure);
-    return;
+    if (failure) return actionToast('error', failure);
+    scheduleDraftCardSettle(deps.channel, snapshot, DRAFT_SETTLED_END_CHOSEN, deps.automations);
+    return actionToast('success', DRAFT_SETTLED_END_CHOSEN);
   }
 
   const taken = await deps.automations.takeDraft(registered.draftId);
   if (!taken) {
-    await sendAutoInvalid(deps);
-    return;
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   switch (cmd) {
     case 'auto.reject':
       log.info('auto', 'rejected', { draftId: taken.draftId, chatId: taken.chatId });
-      await sendAutoHint(deps, '已取消该草稿。');
-      return;
+      scheduleDraftCardSettle(deps.channel, taken, DRAFT_SETTLED_CANCELLED);
+      return actionToast('success', DRAFT_SETTLED_CANCELLED);
     case 'auto.confirm': {
       const item = await confirmAutomationDraft(deps, taken);
       if (!item) {
-        await sendAutoInvalid(deps);
-        return;
+        scheduleDraftCardSettle(deps.channel, taken, DRAFT_SETTLED_CANCELLED);
+        return actionToast('error', AUTO_INVALID_HINT);
       }
-      await sendAutoHint(deps, `已确认：#${item.id} ${item.name}`);
-      return;
+      scheduleDraftCardSettle(deps.channel, taken, draftConfirmedStatus(item.id));
+      return actionToast('success', draftConfirmedStatus(item.id));
     }
     default: {
       const _exhaustive: never = cmd;
@@ -499,51 +505,51 @@ async function dispatchBoardAction(
   if (!access.ok) return;
   const botOpenId = deps.channel.botIdentity?.openId;
   if (botOpenId && deps.evt.operator.openId === botOpenId) {
-    return boardToast('error', AUTO_INVALID_HINT);
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
   if (!deps.boardAuth || !deps.automations || !deps.automationsScheduler || !token) {
-    return boardToast('error', AUTO_INVALID_HINT);
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   if (!deps.controls.profileConfig.automations.enabled) {
-    return boardToast('error', AUTO_INVALID_HINT);
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   const registered = deps.automations.findBoardByMessageId(deps.evt.messageId);
   if (!registered) {
-    return boardToast('error', AUTO_INVALID_HINT);
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   const verified = deps.boardAuth.verify(token);
   if (!verified.ok || verified.payload.action !== cmd) {
-    return boardToast('error', AUTO_INVALID_HINT);
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   if (
     verified.payload.chatId !== deps.evt.chatId
     || verified.payload.chatId !== registered.chatId
   ) {
-    return boardToast('error', AUTO_INVALID_HINT);
+    return actionToast('error', AUTO_INVALID_HINT);
   }
   const item = deps.automations.get(verified.payload.itemId);
   if (!item || item.chatId !== registered.chatId) {
-    return boardToast('error', AUTO_UNKNOWN_ID);
+    return actionToast('error', AUTO_UNKNOWN_ID);
   }
   switch (cmd) {
     case 'auto.pause': {
       const ok = await deps.automationsScheduler.pause(item.id);
-      if (!ok) return boardToast('error', AUTO_UNKNOWN_ID);
+      if (!ok) return actionToast('error', AUTO_UNKNOWN_ID);
       log.info('auto', 'paused', { id: item.id });
-      return boardToast('success', `已暂停 #${item.id}`);
+      return actionToast('success', `已暂停 #${item.id}`);
     }
     case 'auto.resume': {
       const ok = await deps.automationsScheduler.resume(item.id);
-      if (!ok) return boardToast('error', AUTO_UNKNOWN_ID);
+      if (!ok) return actionToast('error', AUTO_UNKNOWN_ID);
       log.info('auto', 'resumed', { id: item.id });
-      return boardToast('success', `已恢复 #${item.id}`);
+      return actionToast('success', `已恢复 #${item.id}`);
     }
     case 'auto.delete': {
       const ok = await deps.automationsScheduler.delete(item.id);
-      if (!ok) return boardToast('error', AUTO_UNKNOWN_ID);
+      if (!ok) return actionToast('error', AUTO_UNKNOWN_ID);
       log.info('auto', 'deleted', { id: item.id });
-      return boardToast('success', `已删除 #${item.id}`);
+      return actionToast('success', `已删除 #${item.id}`);
     }
     default: {
       const _exhaustive: never = cmd;
@@ -552,8 +558,19 @@ async function dispatchBoardAction(
   }
 }
 
-function boardToast(type: 'success' | 'error', content: string): CardActionResponse {
+function actionToast(type: 'success' | 'error', content: string): CardActionResponse {
   return { toast: { type, content } };
+}
+
+function draftCardRef(
+  draft: Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'>,
+): Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence'> {
+  return {
+    draftId: draft.draftId,
+    ...(draft.cardMessageId ? { cardMessageId: draft.cardMessageId } : {}),
+    ...(draft.cardId ? { cardId: draft.cardId } : {}),
+    ...(draft.sequence !== undefined ? { sequence: draft.sequence } : {}),
+  };
 }
 
 function readEndInput(
@@ -565,27 +582,6 @@ function readEndInput(
   const fromPayload = payload.end_at;
   if (typeof fromPayload === 'string' && fromPayload.trim()) return fromPayload.trim();
   return undefined;
-}
-
-async function sendAutoInvalid(deps: CardDispatchDeps): Promise<void> {
-  await sendAutoHint(deps, AUTO_INVALID_HINT);
-}
-
-async function sendAutoHint(deps: CardDispatchDeps, markdown: string): Promise<void> {
-  try {
-    await deps.channel.send(deps.evt.chatId, { markdown }, { replyTo: deps.evt.messageId });
-  } catch (error) {
-    if (await abandonIfNotInChat(
-      error,
-      deps.evt.chatId,
-      (chatId) => deps.automationsScheduler?.removeFromChat(chatId),
-    )) {
-      return;
-    }
-    log.warn('auto', 'hint-failed', {
-      err: error instanceof Error ? error.message : String(error),
-    });
-  }
 }
 
 async function sendNoticeInvalid(deps: CardDispatchDeps): Promise<void> {

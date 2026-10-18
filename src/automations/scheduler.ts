@@ -11,6 +11,7 @@ import {
   type Schedule,
 } from './schedule';
 import {
+  AUTOMATIONS_DRAFT_TTL_MS,
   AUTOMATIONS_MISSED_TTL_MS,
   type AutomationItem,
   type AutomationTaskType,
@@ -69,6 +70,7 @@ export interface AutomationSchedulerDeps {
   isLinkUp?: () => boolean;
   enabled?: () => boolean;
   onChanged?: () => void | Promise<void>;
+  onExpireDrafts?: () => void | Promise<void>;
   /** Profile `automations-wake/` directory. A5 local wake transport. */
   wakeDir?: string;
   agentTasks?: () => boolean;
@@ -110,6 +112,7 @@ class Scheduler implements AutomationScheduler {
   private readonly isLinkUp: () => boolean;
   private readonly enabled: () => boolean;
   private readonly onChanged?: () => void | Promise<void>;
+  private readonly onExpireDrafts?: () => void | Promise<void>;
   private readonly wakeDir?: string;
   private readonly agentTasks: () => boolean;
   private readonly statusPusher?: StatusPusher;
@@ -135,6 +138,7 @@ class Scheduler implements AutomationScheduler {
     this.isLinkUp = deps.isLinkUp ?? (() => true);
     this.enabled = deps.enabled ?? (() => true);
     this.onChanged = deps.onChanged;
+    this.onExpireDrafts = deps.onExpireDrafts;
     this.wakeDir = deps.wakeDir;
     this.agentTasks = deps.agentTasks ?? (() => true);
     if (deps.statusPush) {
@@ -594,6 +598,13 @@ class Scheduler implements AutomationScheduler {
   }
 
   private async expireDue(): Promise<void> {
+    if (this.isLinkUp()) {
+      try {
+        await this.onExpireDrafts?.();
+      } catch (error) {
+        log.fail('auto', error, { event: 'draft-card' });
+      }
+    }
     const dropped = await this.store.dropAgedInstants();
     const now = this.now();
     let changed = false;
@@ -675,6 +686,11 @@ class Scheduler implements AutomationScheduler {
     }
     const startedExpiry = this.store.earliestStartedKeyExpiry();
     if (startedExpiry !== undefined) next = Math.min(next, startedExpiry);
+    for (const draft of this.store.listDrafts()) {
+      if (!draft.cardMessageId) continue;
+      const expiry = draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS;
+      next = Math.min(next, expiry <= now ? now + SCHEDULER_SEGMENT_MS : expiry);
+    }
     return Number.isFinite(next) ? next : undefined;
   }
 

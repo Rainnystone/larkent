@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { formatFireKey } from '../../../src/automations/schedule';
-import { AutomationsStore } from '../../../src/automations/store';
+import { AUTOMATIONS_DRAFT_TTL_MS, AutomationsStore } from '../../../src/automations/store';
 import { AUTO_INVALID_HINT, AUTO_LEAD_TOO_SOON, AUTO_ONE_SHOT_TOO_FAR, AUTO_P2P_HINT } from '../../../src/automations/command';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
@@ -56,11 +56,22 @@ describe('/auto new confirm card', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const card = confirmCard(h);
     expect(card).toContain('提醒交周报');
-    await h.channel.handlers.cardAction?.(
+    const updatesBefore = h.channel.updatedCards.length;
+    const confirmed = await h.channel.handlers.cardAction?.(
       cardClick(MATE, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!),
     );
+    expect(confirmed).toEqual({ toast: { type: 'success', content: '已确认 #1' } });
+    expect(h.channel.updatedCards).toHaveLength(updatesBefore);
+    expect(h.store.listDrafts()).toHaveLength(0);
+    await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已确认 #1')));
+    const settled = latestSettledCard(h);
+    expect(settled).toContain('已确认 #1');
+    expect(settled).not.toContain('auto.confirm');
+    expect(settled).not.toContain('auto.reject');
+    expect(settled).not.toContain('MATE');
+    expect(settled).not.toContain(MATE);
+    expect(settled).not.toContain('Op');
 
-    expect(JSON.stringify(h.channel.sent)).toContain('已确认：#1 交周报');
     expect(h.store.listDrafts()).toHaveLength(0);
     const item = h.store.list()[0];
     expect(item).toMatchObject({
@@ -81,26 +92,26 @@ describe('/auto new confirm card', () => {
     const token = confirmToken(confirmCard(h));
     const messageId = h.store.listDrafts()[0]!.cardMessageId!;
 
-    await h.channel.handlers.cardAction?.(cardClick(USER, 'forged-token', messageId));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    const forged = await h.channel.handlers.cardAction?.(cardClick(USER, 'forged-token', messageId));
+    expect(forged).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.store.list()).toEqual([]);
 
-    await h.channel.handlers.cardAction?.(cardClick(USER, token, 'om_other'));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    const other = await h.channel.handlers.cardAction?.(cardClick(USER, token, 'om_other'));
+    expect(other).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.store.list()).toEqual([]);
 
     await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId));
     expect(h.store.list()).toHaveLength(1);
-    await h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    const duplicate = await h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId));
+    expect(duplicate).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.store.list()).toHaveLength(1);
 
     await h.channel.handlers.message?.(mention('om_stale', '/auto new in 20m | 过期 | 过期任务'));
     const staleToken = confirmToken(confirmCard(h));
     const staleId = h.store.listDrafts()[0]!.cardMessageId!;
     h.setNow(NOW + 24 * 60 * 60 * 1000 + 1);
-    await h.channel.handlers.cardAction?.(cardClick(USER, staleToken, staleId));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    const stale = await h.channel.handlers.cardAction?.(cardClick(USER, staleToken, staleId));
+    expect(stale).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.store.list()).toHaveLength(1);
   });
 
@@ -128,8 +139,8 @@ describe('/auto new confirm card', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const token = confirmToken(confirmCard(h));
     const messageId = h.store.listDrafts()[0]!.cardMessageId!;
-    await h.channel.handlers.cardAction?.(cardClick('ou_bot', token, messageId));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    const botTap = await h.channel.handlers.cardAction?.(cardClick('ou_bot', token, messageId));
+    expect(botTap).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.store.list()).toEqual([]);
     expect(h.store.listDrafts()).toHaveLength(1);
 
@@ -143,9 +154,58 @@ describe('/auto new confirm card', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const card = confirmCard(h);
     const messageId = h.store.listDrafts()[0]!.cardMessageId!;
-    await h.channel.handlers.cardAction?.(cardClick(MATE, rejectToken(card), messageId, 'auto.reject'));
-    expect(JSON.stringify(h.channel.sent)).toContain('已取消该草稿。');
+    const updatesBefore = h.channel.updatedCards.length;
+    const rejected = await h.channel.handlers.cardAction?.(cardClick(MATE, rejectToken(card), messageId, 'auto.reject'));
+    expect(rejected).toEqual({ toast: { type: 'success', content: '已取消' } });
+    expect(h.channel.updatedCards).toHaveLength(updatesBefore);
     expect(h.store.list()).toEqual([]);
+    expect(h.store.listDrafts()).toEqual([]);
+    await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已取消')));
+    const settled = latestSettledCard(h);
+    expect(settled).toContain('已取消');
+    expect(settled).not.toContain('auto.confirm');
+    expect(settled).not.toContain('auto.reject');
+    expect(settled).not.toContain(MATE);
+  });
+
+  it('updates the original confirm card to 已过期 after TTL and still toasts 此确认已失效', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    const card = confirmCard(h);
+    const token = confirmToken(card);
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    h.setNow(NOW + AUTOMATIONS_DRAFT_TTL_MS + 1);
+    await h.restart();
+    await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已过期')));
+    expect(settledCardUpdates(h).filter((text) => text.includes('已过期'))).toHaveLength(1);
+    const expired = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId));
+    expect(expired).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+    expect(h.store.list()).toEqual([]);
+    expect(settledCardUpdates(h).filter((text) => text.includes('已过期'))).toHaveLength(1);
+  });
+
+  it('lets only one of two concurrent confirm taps succeed', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    const token = confirmToken(confirmCard(h));
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const [first, second] = await Promise.all([
+      h.channel.handlers.cardAction?.(cardClick(USER, token, messageId)),
+      h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId)),
+    ]);
+    const toasts = [first, second];
+    expect(toasts.filter((toast) => (
+      toast
+      && typeof toast === 'object'
+      && 'toast' in toast
+      && JSON.stringify(toast) === JSON.stringify({ toast: { type: 'success', content: '已确认 #1' } })
+    ))).toHaveLength(1);
+    expect(toasts.filter((toast) => (
+      toast
+      && typeof toast === 'object'
+      && JSON.stringify(toast) === JSON.stringify({ toast: { type: 'error', content: AUTO_INVALID_HINT } })
+    ))).toHaveLength(1);
+    expect(h.store.list()).toHaveLength(1);
     expect(h.store.listDrafts()).toEqual([]);
   });
 
@@ -260,7 +320,7 @@ async function harness(opts: {
     botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
   });
   sdk.channel = channel;
-  const bridge = await startChannel({
+  const start = async () => startChannel({
     cfg,
     agent,
     sessions,
@@ -286,6 +346,7 @@ async function harness(opts: {
       processId: 'test-auto-new',
     },
   });
+  let bridge = await start();
   cleanups.push(async () => {
     await bridge.disconnect().catch(() => {});
     await store.flush().catch(() => {});
@@ -301,6 +362,10 @@ async function harness(opts: {
       nowMs = next;
     },
     now: () => nowMs,
+    async restart() {
+      await bridge.disconnect();
+      bridge = await start();
+    },
   };
 }
 
@@ -370,4 +435,24 @@ function lastMarkdown(channel: ReturnType<typeof createRecordingLarkChannel>): s
   });
   expect(send, 'expected a markdown reply').toBeDefined();
   return (send!.content as { markdown: string }).markdown;
+}
+
+function settledCardUpdates(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string[] {
+  return h.channel.updatedCards
+    .map((item) => JSON.stringify(item.card))
+    .filter((text) => text.includes('已确认 #') || text.includes('已取消') || text.includes('已过期'));
+}
+
+function latestSettledCard(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string {
+  const text = [...settledCardUpdates(h)].at(-1);
+  expect(text, 'expected a settled one-shot card update').toBeDefined();
+  return text!;
+}
+
+async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }

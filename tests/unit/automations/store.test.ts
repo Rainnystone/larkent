@@ -379,6 +379,26 @@ describe('AutomationsStore', () => {
     expect(restarted.findBoardByMessageId('om_other')).toBeUndefined();
   });
 
+  it('keeps expired drafts that still have a card until they are taken', async () => {
+    const now = { t: 1_760_000_000_000 };
+    const { path, logPath, statusPath, store } = await fixture(() => now.t);
+    await store.load();
+    const draft = await store.saveDraft(reminderInput({ name: 'posted' }));
+    expect(await store.bindDraftCard(draft.draftId, 'om_card', 'card_1')).toBe(true);
+    now.t += 24 * 60 * 60 * 1000 + 1;
+    expect(store.listDrafts().map((entry) => entry.draftId)).toEqual([draft.draftId]);
+    expect(store.listExpiredDrafts()).toEqual([
+      expect.objectContaining({ draftId: draft.draftId, cardMessageId: 'om_card', cardId: 'card_1' }),
+    ]);
+
+    const restarted = new AutomationsStore({ path, logPath, statusPath, now: () => now.t });
+    await restarted.load();
+    expect(restarted.findDraftByCardMessageId('om_card')?.cardId).toBe('card_1');
+    expect(await restarted.takeDraft(draft.draftId)).toMatchObject({ cardMessageId: 'om_card' });
+    expect(restarted.listDrafts()).toEqual([]);
+    expect(restarted.listExpiredDrafts()).toEqual([]);
+  });
+
   it('binds a card id onto a draft and takeDraft removes it', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     await store.load();

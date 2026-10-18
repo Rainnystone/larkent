@@ -20,6 +20,7 @@ import {
   type MissedNotify,
 } from '../../../src/automations/scheduler';
 import {
+  AUTOMATIONS_DRAFT_TTL_MS,
   AUTOMATIONS_MISSED_TTL_MS,
   AUTOMATIONS_STARTED_KEY_WINDOW_MS,
   AutomationsStore,
@@ -105,6 +106,7 @@ async function harness(nowMs: number, opts?: {
   agentTasks?: () => boolean;
   setTimeout?: (fn: () => void, delayMs: number) => unknown;
   onChanged?: () => void | Promise<void>;
+  onExpireDrafts?: () => void | Promise<void>;
   statusPush?: {
     endpoint?: string;
     secret?: string;
@@ -140,6 +142,7 @@ async function harness(nowMs: number, opts?: {
     ...(opts?.isLinkUp ? { isLinkUp: opts.isLinkUp } : {}),
     ...(opts?.agentTasks ? { agentTasks: opts.agentTasks } : {}),
     ...(opts?.onChanged ? { onChanged: opts.onChanged } : {}),
+    ...(opts?.onExpireDrafts ? { onExpireDrafts: opts.onExpireDrafts } : {}),
     ...(opts?.statusPush ? { statusPush: opts.statusPush } : {}),
   });
   schedulers.push(scheduler);
@@ -242,6 +245,50 @@ async function expectStatusMatchesStore(h: {
 }
 
 describe('automation scheduler', () => {
+  it('expires posted drafts at TTL', async () => {
+    const expired: string[] = [];
+    const h = await harness(t0, {
+      onExpireDrafts: async () => {
+        for (const draft of h.store.listExpiredDrafts()) {
+          expired.push(draft.draftId);
+          await h.store.takeDraft(draft.draftId);
+        }
+      },
+    });
+    const draft = await h.store.saveDraft(reminderInput({
+      nextFireAt: t0 + 10 * HOUR,
+      name: 'draft',
+    }));
+    await h.store.bindDraftCard(draft.draftId, 'om_card', 'card_1');
+    await h.scheduler.start();
+    expect(expired).toEqual([]);
+    h.clock.jump(AUTOMATIONS_DRAFT_TTL_MS + 1);
+    await h.clock.advanceTo(h.clock.now(), () => h.scheduler.idle());
+    expect(expired).toEqual([draft.draftId]);
+    expect(h.store.listDrafts()).toEqual([]);
+  });
+
+  it('expires posted drafts that aged out while the process was down', async () => {
+    const expired: string[] = [];
+    const h = await harness(t0, {
+      onExpireDrafts: async () => {
+        for (const draft of h.store.listExpiredDrafts()) {
+          expired.push(draft.draftId);
+          await h.store.takeDraft(draft.draftId);
+        }
+      },
+    });
+    const draft = await h.store.saveDraft(reminderInput({
+      nextFireAt: t0 + 10 * HOUR,
+      name: 'draft',
+    }));
+    await h.store.bindDraftCard(draft.draftId, 'om_card', 'card_1');
+    h.clock.jump(AUTOMATIONS_DRAFT_TTL_MS + 1);
+    await h.scheduler.start();
+    await h.scheduler.idle();
+    expect(expired).toEqual([draft.draftId]);
+  });
+
   it('deletes a recurring item with no remaining fires when the fake clock reaches endAt', async () => {
     const endAt = t0 + HOUR;
     const h = await harness(t0);

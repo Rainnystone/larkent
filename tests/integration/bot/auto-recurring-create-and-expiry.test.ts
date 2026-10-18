@@ -108,25 +108,25 @@ describe('A2 recurring creation and expiry', () => {
     const token = tokenFor(endCard, 'auto.end.custom');
     const messageId = h.store.listDrafts()[0]!.cardMessageId!;
 
-    await h.channel.handlers.cardAction?.(cardClick(
+    const empty = await h.channel.handlers.cardAction?.(cardClick(
       MATE,
       token,
       messageId,
       'auto.end.custom',
       { end_at: '' },
     ));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_END);
+    expect(empty).toEqual({ toast: { type: 'error', content: AUTO_INVALID_END } });
     expect(h.store.listDrafts()).toHaveLength(1);
     expect(JSON.stringify(h.channel.sent)).not.toContain('auto.confirm');
 
-    await h.channel.handlers.cardAction?.(cardClick(
+    const typo = await h.channel.handlers.cardAction?.(cardClick(
       MATE,
       token,
       messageId,
       'auto.end.custom',
       { end_at: '2026-02-31' },
     ));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_END);
+    expect(typo).toEqual({ toast: { type: 'error', content: AUTO_INVALID_END } });
 
     await h.channel.handlers.cardAction?.(cardClick(
       MATE,
@@ -153,28 +153,31 @@ describe('A2 recurring creation and expiry', () => {
       { end_at: endAt },
     ));
 
-    await Promise.all([
+    const [first, second] = await Promise.all([
       click(MATE, '2026-10-21'),
       click(USER, '2026-11-21'),
     ]);
+    const toasts = [first, second];
+    expect(toasts.filter((toast) => toastEqual(toast, 'success', '已指定结束时间'))).toHaveLength(1);
+    expect(toasts.filter((toast) => toastEqual(toast, 'error', AUTO_END_BUSY))).toHaveLength(1);
 
     const bodies = h.channel.sent.map((item) => JSON.stringify(item.content));
     expect(bodies.filter((body) => body.includes('auto.confirm'))).toHaveLength(1);
-    expect(bodies.some((body) => body.includes(AUTO_END_BUSY))).toBe(true);
+    expect(bodies.some((body) => body.includes(AUTO_END_BUSY))).toBe(false);
     expect(h.store.listDrafts()).toHaveLength(1);
     expect(h.store.listDrafts()[0]?.pendingRecurring).toBeUndefined();
     const confirm = confirmCard(h);
     const winners = [confirm.includes('2026-10-21'), confirm.includes('2026-11-21')].filter(Boolean);
     expect(winners).toHaveLength(1);
 
-    await h.channel.handlers.cardAction?.(cardClick(
+    const replay = await h.channel.handlers.cardAction?.(cardClick(
       MATE,
       token,
       messageId,
       'auto.end.custom',
       { end_at: '2026-12-21' },
     ));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    expect(replay).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
 
     const retry = await harness();
@@ -182,14 +185,14 @@ describe('A2 recurring creation and expiry', () => {
     const retryCard = cardContaining(retry, 'auto.end.');
     const retryToken = tokenFor(retryCard, 'auto.end.custom');
     const retryMessage = retry.store.listDrafts()[0]!.cardMessageId!;
-    await retry.channel.handlers.cardAction?.(cardClick(
+    const retryTypo = await retry.channel.handlers.cardAction?.(cardClick(
       MATE,
       retryToken,
       retryMessage,
       'auto.end.custom',
       { end_at: '2026-02-31' },
     ));
-    expect(lastMarkdown(retry.channel)).toBe(AUTO_INVALID_END);
+    expect(retryTypo).toEqual({ toast: { type: 'error', content: AUTO_INVALID_END } });
     await retry.channel.handlers.cardAction?.(cardClick(
       USER,
       retryToken,
@@ -208,13 +211,42 @@ describe('A2 recurring creation and expiry', () => {
     const token = tokenFor(endCard, 'auto.end.1m');
     const messageId = h.store.listDrafts()[0]!.cardMessageId!;
 
-    await h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId, 'auto.end.1m'));
+    const updatesBefore = h.channel.updatedCards.length;
+    const chosen = await h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId, 'auto.end.1m'));
+    expect(chosen).toEqual({ toast: { type: 'success', content: '已指定结束时间' } });
+    expect(h.channel.updatedCards).toHaveLength(updatesBefore);
     expect(confirmCard(h)).toContain('auto.confirm');
     expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+    await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已指定结束时间')));
+    const settled = latestSettledCard(h);
+    expect(settled).toContain('已指定结束时间');
+    expect(settled).not.toContain('auto.end.');
+    expect(settled).not.toContain('auto.reject');
+    expect(settled).not.toContain(MATE);
 
-    await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId, 'auto.end.1m'));
-    expect(lastMarkdown(h.channel)).toBe(AUTO_INVALID_HINT);
+    const second = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId, 'auto.end.1m'));
+    expect(second).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+  });
+
+  it('discards the end-card draft when 取消 is tapped', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
+    const endCard = cardContaining(h, 'auto.end.1m');
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const updatesBefore = h.channel.updatedCards.length;
+    const rejected = await h.channel.handlers.cardAction?.(
+      cardClick(MATE, tokenFor(endCard, 'auto.reject'), messageId, 'auto.reject'),
+    );
+    expect(rejected).toEqual({ toast: { type: 'success', content: '已取消' } });
+    expect(h.channel.updatedCards).toHaveLength(updatesBefore);
+    expect(h.store.list()).toEqual([]);
+    expect(h.store.listDrafts()).toEqual([]);
+    await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已取消')));
+    const settled = latestSettledCard(h);
+    expect(settled).toContain('已取消');
+    expect(settled).not.toContain('auto.end.');
+    expect(settled).not.toContain(MATE);
   });
 
   it('rejects a reminder interval under 10 minutes and an agent-task interval under 1 hour', async () => {
@@ -387,4 +419,33 @@ function lastMarkdown(channel: ReturnType<typeof createRecordingLarkChannel>): s
   });
   expect(send, 'expected a markdown reply').toBeDefined();
   return (send!.content as { markdown: string }).markdown;
+}
+
+function toastEqual(toast: unknown, type: 'success' | 'error', content: string): boolean {
+  return JSON.stringify(toast) === JSON.stringify({ toast: { type, content } });
+}
+
+function settledCardUpdates(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string[] {
+  return h.channel.updatedCards
+    .map((item) => JSON.stringify(item.card))
+    .filter((text) => (
+      text.includes('已确认 #')
+      || text.includes('已取消')
+      || text.includes('已过期')
+      || text.includes('已指定结束时间')
+    ));
+}
+
+function latestSettledCard(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string {
+  const text = [...settledCardUpdates(h)].at(-1);
+  expect(text, 'expected a settled one-shot card update').toBeDefined();
+  return text!;
+}
+
+async function waitFor(cond: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!cond()) {
+    if (Date.now() - start > timeoutMs) throw new Error('timed out waiting');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
 }

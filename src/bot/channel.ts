@@ -135,6 +135,7 @@ import {
 } from '../automations/agent-run';
 import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
 import { flushPendingDraftCards, submitAutomationProposal } from '../automations/command';
+import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
 import {
   AUTOMATION_PROPOSAL_INSTRUCTION,
@@ -914,6 +915,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         });
         return Promise.resolve();
       },
+      onExpireDrafts: () => expireDueDraftCards({ store: automations, channel }),
       wakeDir: deps.appPaths?.automationsWakeDir
         ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
       statusPush: {

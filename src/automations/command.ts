@@ -705,7 +705,7 @@ async function postEndCard(
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
-  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
+  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId, sent.cardId);
 }
 
 async function postConfirmCard(
@@ -756,7 +756,7 @@ async function postConfirmCard(
     await settleDraftCardFailure(ctx, draft, error, replyTo);
     return;
   }
-  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId);
+  await ctx.automations.bindDraftCard(draft.draftId, sent.messageId, sent.cardId);
 }
 
 async function settleDraftCardFailure(
