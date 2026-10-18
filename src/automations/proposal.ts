@@ -18,6 +18,7 @@ export const AUTOMATION_PROPOSAL_INSTRUCTION = [
   '一次性绝对时刻用 YYYY-MM-DD HH:MM 或 今天/明天/后天 HH:MM；周期任务从某天开始时用「从 <日期> [HH:MM] 起」前缀。',
   '相对时间由 bridge 换成绝对时刻。',
   '不要把该块当作给用户看的正文。群、scope、创建者由 bridge 从当前对话取；提案里即使写了 chatId/scope/createdBy 也会被忽略。',
+  '正文不要说已创建 / 已提交 / 已设置；任务要等群里有人在确认卡点「是」后才生效。',
   '仅在当前消息来自人类、且不是 auto: 或 meeting: 自动化 run 时产出提案。默认 taskType 为 reminder。',
 ].join('');
 
@@ -101,6 +102,16 @@ export function parseAutomationProposalJson(raw: string): AutomationProposalFiel
     scheduleText: schedule,
     name: nameRaw || taskText,
     taskText,
+  };
+}
+
+/** Append a bridge-owned line without rewriting the model text ahead of it. */
+export function appendReplyLine(state: RunState, line: string): RunState {
+  const text = line.trim();
+  if (!text) return state;
+  return {
+    ...state,
+    blocks: [...state.blocks, { kind: 'text', content: text, streaming: false }],
   };
 }
 

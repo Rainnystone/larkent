@@ -116,6 +116,11 @@ describe('automation proposal instruction', () => {
     expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('今天/明天/后天 HH:MM');
     expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('从 <日期> [HH:MM] 起');
   });
+
+  it('forbids claiming the task exists before someone taps 是', () => {
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('不要说已创建 / 已提交 / 已设置');
+    expect(AUTOMATION_PROPOSAL_INSTRUCTION).toContain('点「是」后才生效');
+  });
 });
 
 describe('shouldHonorAutomationProposal', () => {

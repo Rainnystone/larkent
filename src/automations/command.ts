@@ -86,6 +86,104 @@ export type ScheduleTextRejectReason =
 
 export type ProposalRejectSource = 'proposal' | 'command';
 
+export const AUTOMATION_CONFIRM_PENDING_LINE = '已生成确认卡，点「是」后生效。';
+
+export type AutomationProposalVerdict =
+  | { outcome: 'confirm'; schedule: Schedule }
+  | { outcome: 'needs-end'; pending: PendingRecurring; startAt?: number }
+  | { outcome: 'reject'; reason: ScheduleTextRejectReason; clock?: string }
+  | { outcome: 'refuse'; message: string };
+
+/** Schedule, floor, ceiling, and cwd checks shared with proposal delivery. */
+export function assessAutomationProposal(input: {
+  taskType: AutomationTaskType;
+  scheduleText: string;
+  now: number;
+  timezone: string;
+  hasCwd: boolean;
+}): AutomationProposalVerdict {
+  const parsed = parseScheduleText(input.scheduleText, {
+    taskType: input.taskType,
+    now: input.now,
+    timezone: input.timezone,
+  });
+  if (!parsed.ok) {
+    if (parsed.reason !== 'missing-end-at' || !parsed.pending) {
+      return {
+        outcome: 'reject',
+        reason: parsed.reason,
+        ...(parsed.clock !== undefined ? { clock: parsed.clock } : {}),
+      };
+    }
+    if (input.taskType === 'agent' && !input.hasCwd) {
+      return { outcome: 'refuse', message: AUTO_AGENT_NEEDS_CWD };
+    }
+    return {
+      outcome: 'needs-end',
+      pending: parsed.pending,
+      ...(parsed.startAt !== undefined ? { startAt: parsed.startAt } : {}),
+    };
+  }
+  if (input.taskType === 'agent' && !input.hasCwd) {
+    return { outcome: 'refuse', message: AUTO_AGENT_NEEDS_CWD };
+  }
+  return { outcome: 'confirm', schedule: parsed.schedule };
+}
+
+/** Gates that would otherwise become a second chat message after the model reply. */
+export function planAutomationProposalReply(input: {
+  taskType: AutomationTaskType;
+  scheduleText: string;
+  now: number;
+  timezone: string;
+  agentTasks: boolean;
+  hasCwd: boolean;
+  group: boolean;
+  canSave: boolean;
+}): AutomationProposalVerdict {
+  if (!input.group) return { outcome: 'refuse', message: AUTO_P2P_HINT };
+  if (input.taskType === 'agent' && !input.agentTasks) {
+    return { outcome: 'refuse', message: AUTO_AGENT_DISABLED };
+  }
+  if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
+  return assessAutomationProposal(input);
+}
+
+export function automationRejectReplyLine(reasonMessage: string, scheduleText: string): string {
+  const stem = reasonMessage.endsWith('。') ? reasonMessage.slice(0, -1) : reasonMessage;
+  return `⚠️ 没有创建任务：${stem}「${scheduleText}」。可写成「明天 09:00」「2026-10-18 15:50」「10 分钟后」。`;
+}
+
+export function automationProposalSuffix(
+  verdict: AutomationProposalVerdict,
+  scheduleText: string,
+): string | undefined {
+  switch (verdict.outcome) {
+    case 'confirm':
+      return AUTOMATION_CONFIRM_PENDING_LINE;
+    case 'needs-end':
+      return undefined;
+    case 'reject':
+      return automationRejectReplyLine(rejectMessage(verdict.reason, verdict), scheduleText);
+    case 'refuse':
+      return `⚠️ 没有创建任务：${verdict.message}`;
+    default: {
+      const _exhaustive: never = verdict;
+      return _exhaustive;
+    }
+  }
+}
+
+export function noteAutomationRejected(
+  reason: ScheduleTextRejectReason,
+  source: ProposalRejectSource,
+): void {
+  log.info('auto', 'rejected', {
+    reason: rejectLogReason(reason),
+    source,
+  });
+}
+
 export type ParseScheduleTextResult =
   | { ok: true; schedule: Schedule }
   | {
@@ -653,79 +751,82 @@ export async function submitAutomationProposal(
 
   const now = (ctx.now ?? Date.now)();
   const timezone = ctx.controls.profileConfig.automations.timezone;
-  const parsedSchedule = parseScheduleText(parsed.scheduleText, {
-    taskType: parsed.taskType,
-    now,
-    timezone,
-  });
-  if (!parsedSchedule.ok && !(parsedSchedule.reason === 'missing-end-at' && parsedSchedule.pending)) {
-    log.info('auto', 'rejected', {
-      reason: rejectLogReason(parsedSchedule.reason),
-      source,
-    });
-    await replyAuto(ctx, rejectMessage(parsedSchedule.reason, parsedSchedule));
-    return;
-  }
-
   const cwd = parsed.taskType === 'agent'
     ? ctx.workspaces.cwdFor(ctx.scope) ?? ctx.controls.profileConfig.workspaces.default
     : undefined;
-  if (parsed.taskType === 'agent' && !(typeof cwd === 'string' && cwd.trim())) {
-    await replyAuto(ctx, AUTO_AGENT_NEEDS_CWD);
-    return;
-  }
-
-  if (!parsedSchedule.ok) {
-    const draft = await ctx.automations.saveDraft({
-      taskType: parsed.taskType,
-      schedule: parsedSchedule.pending,
-      timezone,
-      startAt: parsedSchedule.startAt ?? now,
-      nextFireAt: 0,
-      chatId: ctx.msg.chatId,
-      createdBy: ctx.msg.senderId,
-      name: parsed.name,
-      taskText: parsed.taskText,
-      pendingRecurring: parsedSchedule.pending,
-      ...(cwd ? { cwd } : {}),
-    });
-    if (!ctx.isLinkDown?.()) await postEndCard(ctx, draft);
-    if (ctx.automations.getDraft(draft.draftId)) {
-      log.info('auto', 'draft', {
-        draftId: draft.draftId,
-        taskType: parsed.taskType,
-        chatId: ctx.msg.chatId,
-        waiting: 'end',
-      });
-    }
-    return;
-  }
-
-  const nextFireAt = nextFireAfter(parsedSchedule.schedule, now);
-  const startAt = scheduleStartAt(parsedSchedule.schedule, now);
-  const endAt = scheduleEndAt(parsedSchedule.schedule);
-  const draft = await ctx.automations.saveDraft({
+  const verdict = assessAutomationProposal({
     taskType: parsed.taskType,
-    schedule: parsedSchedule.schedule,
+    scheduleText: parsed.scheduleText,
+    now,
     timezone,
-    startAt,
-    ...(endAt !== undefined ? { endAt } : {}),
-    nextFireAt,
-    chatId: ctx.msg.chatId,
-    createdBy: ctx.msg.senderId,
-    name: parsed.name,
-    taskText: parsed.taskText,
-    ...(cwd ? { cwd } : {}),
+    hasCwd: typeof cwd === 'string' && cwd.trim().length > 0,
   });
-  if (!ctx.isLinkDown?.()) {
-    await postConfirmCard(ctx, draft, parsedSchedule.schedule, now, ctx.msg.messageId);
-  }
-  if (ctx.automations.getDraft(draft.draftId)) {
-    log.info('auto', 'draft', {
-      draftId: draft.draftId,
-      taskType: parsed.taskType,
-      chatId: ctx.msg.chatId,
-    });
+  switch (verdict.outcome) {
+    case 'refuse':
+      await replyAuto(ctx, verdict.message);
+      return;
+    case 'reject':
+      noteAutomationRejected(verdict.reason, source);
+      await replyAuto(ctx, rejectMessage(verdict.reason, verdict));
+      return;
+    case 'needs-end': {
+      const draft = await ctx.automations.saveDraft({
+        taskType: parsed.taskType,
+        schedule: verdict.pending,
+        timezone,
+        startAt: verdict.startAt ?? now,
+        nextFireAt: 0,
+        chatId: ctx.msg.chatId,
+        createdBy: ctx.msg.senderId,
+        name: parsed.name,
+        taskText: parsed.taskText,
+        pendingRecurring: verdict.pending,
+        ...(cwd ? { cwd } : {}),
+      });
+      if (!ctx.isLinkDown?.()) await postEndCard(ctx, draft);
+      if (ctx.automations.getDraft(draft.draftId)) {
+        log.info('auto', 'draft', {
+          draftId: draft.draftId,
+          taskType: parsed.taskType,
+          chatId: ctx.msg.chatId,
+          waiting: 'end',
+        });
+      }
+      return;
+    }
+    case 'confirm': {
+      const nextFireAt = nextFireAfter(verdict.schedule, now);
+      const startAt = scheduleStartAt(verdict.schedule, now);
+      const endAt = scheduleEndAt(verdict.schedule);
+      const draft = await ctx.automations.saveDraft({
+        taskType: parsed.taskType,
+        schedule: verdict.schedule,
+        timezone,
+        startAt,
+        ...(endAt !== undefined ? { endAt } : {}),
+        nextFireAt,
+        chatId: ctx.msg.chatId,
+        createdBy: ctx.msg.senderId,
+        name: parsed.name,
+        taskText: parsed.taskText,
+        ...(cwd ? { cwd } : {}),
+      });
+      if (!ctx.isLinkDown?.()) {
+        await postConfirmCard(ctx, draft, verdict.schedule, now, ctx.msg.messageId);
+      }
+      if (ctx.automations.getDraft(draft.draftId)) {
+        log.info('auto', 'draft', {
+          draftId: draft.draftId,
+          taskType: parsed.taskType,
+          chatId: ctx.msg.chatId,
+        });
+      }
+      return;
+    }
+    default: {
+      const _exhaustive: never = verdict;
+      return _exhaustive;
+    }
   }
 }
 

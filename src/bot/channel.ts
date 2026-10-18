@@ -134,11 +134,19 @@ import {
   automationScopeForReply,
 } from '../automations/agent-run';
 import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
-import { flushPendingDraftCards, submitAutomationProposal } from '../automations/command';
+import {
+  automationProposalSuffix,
+  flushPendingDraftCards,
+  noteAutomationRejected,
+  planAutomationProposalReply,
+  submitAutomationProposal,
+  type AutomationProposalVerdict,
+} from '../automations/command';
 import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
 import {
   AUTOMATION_PROPOSAL_INSTRUCTION,
+  appendReplyLine,
   extractAutomationProposal,
   proposalTextFromState,
   shouldHonorAutomationProposal,
@@ -1986,6 +1994,21 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           ...(triggerSenderType ? { senderType: triggerSenderType } : {}),
           ...(channel.botIdentity?.openId ? { botOpenId: channel.botIdentity.openId } : {}),
         }),
+        plan: (parsed: AutomationProposalFields): AutomationProposalVerdict => {
+          const cwd = parsed.taskType === 'agent'
+            ? workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default
+            : undefined;
+          return planAutomationProposalReply({
+            taskType: parsed.taskType,
+            scheduleText: parsed.scheduleText,
+            now: (now ?? Date.now)(),
+            timezone: controls.profileConfig.automations.timezone,
+            agentTasks: controls.profileConfig.automations.agentTasks,
+            hasCwd: parsed.taskType !== 'agent' || (typeof cwd === 'string' && cwd.trim().length > 0),
+            group: mode !== 'p2p' && lastMsg.chatType !== 'p2p',
+            canSave: Boolean(automations && autoAuth),
+          });
+        },
         apply: (parsed: AutomationProposalFields) => submitAutomationProposal({
           channel,
           msg: lastMsg,
@@ -2493,6 +2516,7 @@ async function deliverFinalReply(input: {
   onWait?: (delayMs?: number) => void;
   automation?: {
     honor: boolean;
+    plan: (parsed: AutomationProposalFields) => AutomationProposalVerdict;
     apply: (parsed: AutomationProposalFields) => Promise<void>;
   };
 }): Promise<void> {
@@ -2506,18 +2530,43 @@ async function deliverFinalReply(input: {
   const skipFrom = extracted?.tagged && input.skipFrom
     ? stripProposalFromState(input.skipFrom)
     : input.skipFrom;
+  const parsed = extracted?.parsed;
+  const honor = input.automation?.honor === true;
+  const completed = state.terminal === 'done' || input.handle.outcome?.kind === 'completed';
+  let proposalSuffix: string | undefined;
+  let deliverProposal = false;
+  if (parsed && input.automation && honor && completed) {
+    const verdict = input.automation.plan(parsed);
+    proposalSuffix = automationProposalSuffix(verdict, parsed.scheduleText);
+    switch (verdict.outcome) {
+      case 'confirm':
+      case 'needs-end':
+        deliverProposal = true;
+        break;
+      case 'reject':
+        noteAutomationRejected(verdict.reason, 'proposal');
+        break;
+      case 'refuse':
+        break;
+      default: {
+        const _exhaustive: never = verdict;
+        return _exhaustive;
+      }
+    }
+  }
+  const unaugmented = renderText(state);
+  const baseState = unaugmented.trim() ? state : (skipFrom ?? state);
+  const replyState = proposalSuffix ? appendReplyLine(baseState, proposalSuffix) : baseState;
   const applyAutomationProposal = async (): Promise<void> => {
-    const parsed = extracted?.parsed;
     if (!parsed || !input.automation) return;
-    if (!input.automation.honor) {
+    if (!honor) {
       log.info('auto', 'proposal-ignored', { scope: input.scope });
       return;
     }
-    if (state.terminal !== 'done' && input.handle.outcome?.kind !== 'completed') return;
+    if (!deliverProposal) return;
     await input.automation.apply(parsed);
   };
-  const body = renderText(state);
-  const visibleBody = body.trim() ? body : renderText(skipFrom ?? state);
+  const visibleBody = renderText(replyState);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
     && (input.skipFrom ?? input.state).terminal === 'done';
   const skipCli = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent;
@@ -2533,7 +2582,7 @@ async function deliverFinalReply(input: {
     ? input.journal?.get(input.turnId)?.reply?.deliveryId ?? replyDeliveryKey(input.turnId)
     : undefined;
   const stream = input.stream ?? { kind: 'none' as const };
-  const dedicatedFinal = input.dedicatedFinal === true && Boolean(body.trim());
+  const dedicatedFinal = input.dedicatedFinal === true && Boolean(unaugmented.trim());
   const streamMessageId = stream.kind === 'none' ? undefined : stream.messageId;
   if (dedicatedFinal && streamMessageId && input.journal && input.turnId) {
     input.journal.noteNonAnswerId(input.turnId, streamMessageId);
@@ -2579,6 +2628,17 @@ async function deliverFinalReply(input: {
     return;
   } else {
     try {
+      if (
+        proposalSuffix
+        && stream.kind === 'confirmed'
+        && stream.messageId
+        && !dedicatedFinal
+      ) {
+        await input.channel.updateCard(
+          stream.messageId,
+          settledReplyCard(input.replyMode, replyState, visibleBody, input.cardRenderOptions),
+        );
+      }
       const settled = await settleStreamDelivery({
         stream,
         channel: input.channel,
@@ -2586,7 +2646,7 @@ async function deliverFinalReply(input: {
         send: () => sendFinalReply({
           ...input,
           deliveryId,
-          state: body.trim() ? state : (skipFrom ?? state),
+          state: replyState,
         }),
         fallback: () => sendPlainTextReply({
           channel: input.channel,
@@ -2630,6 +2690,28 @@ async function deliverFinalReply(input: {
 }
 
 type OutboundSettle = { kind: 'done' } | { kind: 'wait'; error?: unknown };
+
+function settledReplyCard(
+  replyMode: ReturnType<typeof getMessageReplyMode>,
+  state: RunState,
+  markdown: string,
+  cardRenderOptions: { signCallback?: (action: string) => string },
+): object {
+  switch (replyMode) {
+    case 'card':
+      return renderCard(state, cardRenderOptions);
+    case 'markdown':
+    case 'text':
+      return {
+        schema: '2.0',
+        body: { elements: [{ tag: 'markdown', content: markdown }] },
+      };
+    default: {
+      const _exhaustive: never = replyMode;
+      return _exhaustive;
+    }
+  }
+}
 
 async function settleStreamDelivery(input: {
   stream: StreamDelivery;
