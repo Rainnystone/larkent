@@ -26,7 +26,7 @@ Re-derived 2026-10-17 from the Spec (ADR-013..015: catch-up ≤ 24 h by fire key
 | [A17](A17-oneshot-confirm-and-grok-eos.md) | One-shot confirm card omits monthly frequency; Grok control-token-only text counts as empty | — | ready-for-agent |
 | [A18](A18-card-button-access.md) | Automation card buttons are not gated by allowedUsers; denied card actions return a toast | — (after #49 merges) | ready-for-agent |
 | [A19](A19-status-push-bridge.md) | Board card drops the status block; bridge pushes a signed status digest to larkent-monitor (lands on #49, before merge) | — (endpoint contract in spec §7) | ready-for-agent |
-| [A20](A20-board-tap-refresh.md) | Board tap: check card.update response code, toast immediately, refresh after the callback returns | A19 | ready-for-agent |
+| [A20](A20-board-tap-refresh.md) | Board tap: check card.update response code, toast immediately, refresh after the callback returns; one-shot cards (confirm, 一个月 / 结束) disable their buttons after the first tap or on expiry | A19 | ready-for-agent |
 
 ## Start order on `feat/automations-v2` (PR #49)
 
