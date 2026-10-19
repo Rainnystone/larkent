@@ -34,6 +34,7 @@ import {
   type DraftCardRef,
   scheduleDraftCardSettle,
 } from '../automations/draft-card';
+import { mutateAutomationTask, taskMutationLabels } from '../automations/task-mutation';
 import type { AutomationScheduler } from '../automations/scheduler';
 import {
   AUTOMATIONS_DRAFT_TTL_MS,
@@ -545,34 +546,12 @@ async function dispatchBoardAction(
   ) {
     return actionToast('error', AUTO_INVALID_HINT);
   }
-  const item = deps.automations.get(verified.payload.itemId);
-  if (!item || item.chatId !== registered.chatId) {
-    return actionToast('error', AUTO_UNKNOWN_ID);
-  }
-  switch (cmd) {
-    case 'auto.pause': {
-      const ok = await deps.automationsScheduler.pause(item.id);
-      if (!ok) return actionToast('error', AUTO_UNKNOWN_ID);
-      log.info('auto', 'paused', { id: item.id });
-      return actionToast('success', `已暂停 #${item.id}`);
-    }
-    case 'auto.resume': {
-      const ok = await deps.automationsScheduler.resume(item.id);
-      if (!ok) return actionToast('error', AUTO_UNKNOWN_ID);
-      log.info('auto', 'resumed', { id: item.id });
-      return actionToast('success', `已恢复 #${item.id}`);
-    }
-    case 'auto.delete': {
-      const ok = await deps.automationsScheduler.delete(item.id);
-      if (!ok) return actionToast('error', AUTO_UNKNOWN_ID);
-      log.info('auto', 'deleted', { id: item.id });
-      return actionToast('success', `已删除 #${item.id}`);
-    }
-    default: {
-      const _exhaustive: never = cmd;
-      return _exhaustive;
-    }
-  }
+  const operation = cmd === 'auto.pause' ? 'pause' : cmd === 'auto.resume' ? 'resume' : 'delete';
+  const id = verified.payload.itemId;
+  const result = await mutateAutomationTask({ store: deps.automations, scheduler: deps.automationsScheduler, chatId: registered.chatId, now: deps.now }, operation, id);
+  if (!result.ok) return actionToast('error', AUTO_UNKNOWN_ID);
+  log.info('auto', { pause: 'paused', resume: 'resumed', delete: 'deleted' }[operation], { id });
+  return actionToast('success', `已${taskMutationLabels[operation]} #${id}`);
 }
 
 function actionToast(type: 'success' | 'error', content: string): CardActionResponse {

@@ -1,14 +1,12 @@
 import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
-import { flushDraftCardOnce, type DraftFlushContext } from './command';
+import { flushDraftCardOnce } from './command';
 import { AUTOMATION_OPERATION_TTL_MS, automationOperationScope, readAutomationOperationId } from './operation-id';
 import { nextFireAfter } from './schedule';
 import { normalizeAutomationSchedule } from './schedule-input';
 import type { AutomationOperation, AutomationsStore } from './store';
 import type { AutomationToolContext } from './tools';
 
-// The durable receipt is authoritative. This only serializes overlapping calls until it is written.
-const claims = new WeakMap<AutomationsStore, Map<string, Promise<ToolResult>>>();
 const writeTails = new WeakMap<AutomationsStore, Promise<unknown>>();
 export async function serializeAutomationWrite(store: AutomationsStore, submit: () => Promise<ToolResult>): Promise<ToolResult> {
   const previous = writeTails.get(store) ?? Promise.resolve();
@@ -16,36 +14,29 @@ export async function serializeAutomationWrite(store: AutomationsStore, submit: 
   writeTails.set(store, current);
   try { return await current; } finally { if (writeTails.get(store) === current) writeTails.delete(store); }
 }
-export interface ReminderOperationContext extends AutomationToolContext { drafts?: DraftFlushContext }
 
-export async function getReminderOperation(operationId: unknown, context: ReminderOperationContext): Promise<ToolResult> {
-  const invalid = checkId(operationId, context);
+export async function getAutomationOperation(operationId: unknown, context: AutomationToolContext): Promise<ToolResult> {
+  const invalid = validateAutomationOperationId(operationId, context);
   if (invalid) return invalid;
   try {
     const operation = context.store!.getOperation(operationId as string);
     if (!operation) return toolResult('execution-failed', 'operation-not-found', { operationId, state: 'not-applied', applied: false });
     if (operation.profile !== context.profile || operation.chatId !== context.chatId) return toolResult('unauthorized', 'operation-scope-mismatch');
     if (context.drafts) await flushDraftCardOnce(context.drafts, operation.draftId, (context.now ?? Date.now)());
-    return operationResult(operation, context);
+    return automationOperationResult(operation, context);
   } catch {
-    try { const operation = context.store!.getOperation(operationId as string); if (operation) return operationResult(operation, context); } catch {}
-    return unknown(operationId as string, 'persistence-or-delivery-unknown');
+    try { const operation = context.store!.getOperation(operationId as string); if (operation) return automationOperationResult(operation, context); } catch {}
+    return unknownAutomationOperation(operationId as string, 'persistence-or-delivery-unknown');
   }
 }
 
-export async function createReminderOperation(params: Record<string, unknown>, context: ReminderOperationContext): Promise<ToolResult> {
+export async function createReminderOperation(params: Record<string, unknown>, context: AutomationToolContext): Promise<ToolResult> {
   const operationId = params.operationId;
-  const invalid = checkId(operationId, context);
+  const invalid = validateAutomationOperationId(operationId, context);
   if (invalid) return invalid;
   if (Object.keys(params).some(key => !['operationId', 'taskType', 'schedule', 'timezone', 'name', 'taskText'].includes(key))) return toolResult('validation-failed', 'unknown-field');
   if (!context.drafts?.autoAuth) return toolResult('unavailable', 'automation-confirmation-unavailable');
-  let map = claims.get(context.store!);
-  if (!map) { map = new Map(); claims.set(context.store!, map); }
-  const prior = map.get(operationId as string);
-  if (prior) { await prior; return createReminderOperation(params, context); }
-  const promise = submit();
-  map.set(operationId as string, promise);
-  try { return await promise; } finally { if (map.get(operationId as string) === promise) map.delete(operationId as string); }
+  return submit();
 
   async function submit(): Promise<ToolResult> {
     try {
@@ -69,12 +60,12 @@ export async function createReminderOperation(params: Record<string, unknown>, c
         schedule: pending ? { ...pending, startAt, endAt: null } : schedule })).digest('hex');
       if (previous) {
         if (previous.fingerprint !== fingerprint) return toolResult('validation-failed', 'operation-conflict', { operationId });
-        return getReminderOperation(operationId, context);
+        return getAutomationOperation(operationId, context);
       }
       const pendingOperation = context.store!.findReusableOperation(context.profile, context.chatId, fingerprint);
       if (pendingOperation) {
         await context.store!.aliasOperation(pendingOperation.operationId, operationId as string);
-        const result = await getReminderOperation(pendingOperation.operationId, context);
+        const result = await getAutomationOperation(pendingOperation.operationId, context);
         return result.category === 'unknown' ? { ...result, code: 'prior-operation-unknown' } : result;
       }
       const nextFireAt = schedule ? nextFireAfter(schedule, at) : 0;
@@ -86,18 +77,18 @@ export async function createReminderOperation(params: Record<string, unknown>, c
         nextFireAt, name: params.name.trim(), taskText: params.taskText.trim(), chatId: context.chatId, createdBy: context.actorId,
       }, { operationId: operationId as string, profile: context.profile, chatId: context.chatId, fingerprint });
       await flushDraftCardOnce(context.drafts!, draft.draftId, at);
-      return operationResult(context.store!.getOperation(operationId as string)!, context);
+      return automationOperationResult(context.store!.getOperation(operationId as string)!, context);
     } catch {
       try {
         const operation = context.store!.getOperation(operationId as string);
-        if (operation) return operationResult(operation, context);
+        if (operation) return automationOperationResult(operation, context);
       } catch {}
-      return unknown(operationId as string, 'persistence-or-delivery-unknown');
+      return unknownAutomationOperation(operationId as string, 'persistence-or-delivery-unknown');
     }
   }
 }
 
-function operationResult(operation: AutomationOperation, context: ReminderOperationContext): ToolResult {
+function automationOperationResult(operation: AutomationOperation, context: AutomationToolContext): ToolResult {
   const current = context.store!.getOperation(operation.operationId)!;
   const executions = context.journal?.list().filter(entry => current.taskId && entry.turnId.startsWith(`af:${current.taskId}@`)) ?? [];
   const delivered = executions.filter(entry => entry.reply?.state === 'sent');
@@ -112,7 +103,7 @@ function operationResult(operation: AutomationOperation, context: ReminderOperat
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });
   const draft = context.store!.getOperationDraft(current.draftId);
-  if (draft?.delivery?.state === 'sending') return unknown(current.operationId, 'card-delivery-unknown', base);
+  if (draft?.delivery?.state === 'sending') return unknownAutomationOperation(current.operationId, 'card-delivery-unknown', base);
   if (!draft || draft.createdAt + AUTOMATION_OPERATION_TTL_MS <= (context.now ?? Date.now)()) return toolResult('execution-failed', 'draft-expired', { ...base, state: 'not-applied', applied: false });
   const needsEnd = draft.op !== 'delete' && Boolean(draft.pendingRecurring);
   if (draft.cardMessageId) return toolResult(needsEnd ? 'needs-input' : 'waiting-confirmation', needsEnd ? 'missing-end-at' : 'waiting-confirmation', {
@@ -121,12 +112,12 @@ function operationResult(operation: AutomationOperation, context: ReminderOperat
   });
   return toolResult('execution-failed', draft.delivery?.state === 'rejected' ? 'card-send-failed' : 'card-not-sent', { ...base, state: 'not-applied', applied: false });
 }
-export function checkId(value: unknown, context: AutomationToolContext): ToolResult | undefined {
+export function validateAutomationOperationId(value: unknown, context: AutomationToolContext): ToolResult | undefined {
   const id = readAutomationOperationId(value);
   if (!id || id.issuedAt > (context.now ?? Date.now)() + 5 * 60_000) return toolResult('validation-failed', 'invalid-operation-id');
   if (id.scope !== automationOperationScope(context.profile, context.chatId)) return toolResult('unauthorized', 'operation-scope-mismatch');
   return undefined;
 }
-export function unknown(operationId: string, code: string, data = {}): ToolResult {
+export function unknownAutomationOperation(operationId: string, code: string, data = {}): ToolResult {
   return toolResult('unknown', code, { ...data, operationId, state: 'unknown', applied: null });
 }

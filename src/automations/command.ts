@@ -40,6 +40,7 @@ import {
   draftTargetGoneStatus,
   DRAFT_SETTLED_CANCELLED,
 } from './draft-card';
+import { mutateAutomationTask, taskMutationLabels } from './task-mutation';
 import { taskMutationError } from './store';
 import type {
   AutomationDraft,
@@ -1448,7 +1449,9 @@ async function confirmDeleteDraft(
   }
   const ok = await ctx.automationsScheduler.delete(draft.targetId, { chatId: draft.chatId, revision: draft.target.revision, operationId: draft.operationId });
   if (!ok) {
-    const status = draftTargetGoneStatus(draft.targetId);
+    const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision }) ?? 'target-not-found';
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code);
+    const status = code === 'target-state-conflict' ? `#${draft.targetId} 状态已变化，请重新查询。` : draftTargetGoneStatus(draft.targetId);
     return { ok: false, status, toast: status };
   }
   log.info('auto', 'deleted', { id: draft.targetId, source: 'proposal' });
@@ -1466,6 +1469,7 @@ async function confirmReplaceDraft(
   const now = (ctx.now ?? Date.now)();
   const blocked = replaceConfirmBlock(draft, now);
   if (blocked.outcome !== 'confirm') {
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, blocked.outcome === 'reject' ? blocked.reason : 'confirmation-invalid');
     if (blocked.outcome === 'reject') noteAutomationRejected(blocked.reason, 'proposal');
     const message = blocked.outcome === 'reject'
       ? rejectMessage(blocked.reason, blocked)
@@ -1517,15 +1521,15 @@ function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): Automa
     return { outcome: 'refuse', message: AUTO_AGENT_NEEDS_CWD };
   }
   if (draft.scheduleText) {
-  const textVerdict = assessAutomationProposal({
-    taskType: draft.taskType,
-    scheduleText: draft.scheduleText,
-    now,
-    timezone: draft.timezone,
-    hasCwd: true,
-  });
-  if (textVerdict.outcome === 'reject' && textVerdict.reason === 'past-time') return textVerdict;
-  if (textVerdict.outcome === 'refuse') return textVerdict;
+    const textVerdict = assessAutomationProposal({
+      taskType: draft.taskType,
+      scheduleText: draft.scheduleText,
+      now,
+      timezone: draft.timezone,
+      hasCwd: true,
+    });
+    if (textVerdict.outcome === 'reject' && textVerdict.reason === 'past-time') return textVerdict;
+    if (textVerdict.outcome === 'refuse') return textVerdict;
   }
   const stored = readSchedule(draft.schedule);
   if (!stored) return { outcome: 'reject', reason: 'invalid-schedule' };
@@ -1569,33 +1573,9 @@ async function mutateAuto(
     await replyAuto(ctx, AUTO_UNKNOWN_ID);
     return;
   }
-  const item = ctx.automations.get(id);
-  if (!item || item.chatId !== ctx.msg.chatId) {
-    await replyAuto(ctx, AUTO_UNKNOWN_ID);
-    return;
-  }
-  let ok = false;
-  switch (op) {
-    case 'pause':
-      ok = await ctx.automationsScheduler.pause(id);
-      if (ok) log.info('auto', 'paused', { id });
-      await replyAuto(ctx, ok ? `已暂停 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
-      return;
-    case 'resume':
-      ok = await ctx.automationsScheduler.resume(id);
-      if (ok) log.info('auto', 'resumed', { id });
-      await replyAuto(ctx, ok ? `已恢复 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
-      return;
-    case 'delete':
-      ok = await ctx.automationsScheduler.delete(id);
-      if (ok) log.info('auto', 'deleted', { id });
-      await replyAuto(ctx, ok ? `已删除 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
-      return;
-    default: {
-      const _exhaustive: never = op;
-      return _exhaustive;
-    }
-  }
+  const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: ctx.msg.chatId, now: ctx.now }, op, id);
+  if (result.ok) log.info('auto', { pause: 'paused', resume: 'resumed', delete: 'deleted' }[op], { id });
+  await replyAuto(ctx, result.ok ? `已${taskMutationLabels[op]} #${id} ${result.item.name}` : AUTO_UNKNOWN_ID);
 }
 
 async function postEndCard(

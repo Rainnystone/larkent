@@ -215,9 +215,9 @@ ANTIGRAVITY_REAL_SMOKE=1 pnpm exec vitest run tests/process/antigravity-real.smo
 测试文件路径相对 repo 根。真实 smoke 会调用已登录的 CLI；它验证适配器，不替代飞书主流程验收。Antigravity 的真实 smoke 使用 `claude-sonnet-4-6`，避免部分网络下 Gemini 返回 `User location is not supported`；profile 默认仍跟随 `agy` 的 settings，不强制该模型。
 
 
-### Reminder operation recovery
+### Automation operation recovery
 
-The bridge tool creates reminders through the existing draft, end-completion and human confirmation cards. `automation.schema` reports the available operations; agent-task creation and task management remain unavailable until their own delivery slices. A model cannot confirm a task.
+The bridge tool creates reminders through the existing draft, end-completion and human confirmation cards. `automation.schema` reports the available operations; agent-task creation remains unavailable until its own delivery slice. Existing reminders and agent tasks support pause/resume immediately and replace/delete through human confirmation. Query the current target with `automation.list` and submit its `revision` with the target `id`; stale confirmations cannot mutate a changed or deleted target. Manual `/auto` commands and dashboard buttons keep their existing immediate semantics. Task mutations and their receipts commit atomically; task queries expose committed state. A model cannot confirm a task.
 
 Retain the `operationId` returned by the client, including after timeouts or transport failures. Query `automation.operation.get` in a later legitimate run in the same profile/chat before retrying. IDs can be submitted for 24 hours; expired IDs are never fresh writes. Same-ID content changes conflict. Semantic retries durably bind each submitted ID to the original operation, which remains queryable after confirmation. Durable receipts remain in `automations.json` v2, with atomic reading/upgrading of v1 tasks, drafts and original confirmation cards. Follow the existing matching-data-backup rule for code rollback.
 

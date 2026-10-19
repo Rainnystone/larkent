@@ -287,6 +287,7 @@ export class AutomationsStore {
   private boards: AutomationBoardBinding[] = [];
   private operations: AutomationOperation[] = [];
   private durableOperations: AutomationOperation[] = [];
+  private durableItems: AutomationItem[] = [];
   private durableDrafts: AutomationDraft[] = [];
   private logEntries: AutomationsLogEntry[] = [];
   private queue = new PersistenceQueue();
@@ -330,6 +331,11 @@ export class AutomationsStore {
     await this.queue.flush();
     await this.statusQueue.flush();
     await this.logQueue.flush();
+  }
+
+  listCommitted(): AutomationItem[] {
+    this.assertMutable();
+    return this.durableItems.map(item => this.viewItem(item));
   }
 
   list(): AutomationItem[] {
@@ -909,6 +915,7 @@ export class AutomationsStore {
   }
 
   private publish(document: AutomationsDocument, persistenceDisabled: boolean, hasDocument: boolean): void {
+    this.durableItems = document.items.map(cloneItem);
     this.durableOperations = document.operations.map(cloneOperation);
     this.durableDrafts = document.drafts.map(cloneDraft);
     this.operations = document.operations.map(cloneOperation);
@@ -999,6 +1006,7 @@ export class AutomationsStore {
           const document = this.serialize();
           const snapshot = `${JSON.stringify(document, null, 2)}\n`;
           await writeFileAtomic(this.path, snapshot, { mode: 0o600 });
+          this.durableItems = document.items;
           this.durableOperations = document.operations;
           this.durableDrafts = document.drafts;
         }

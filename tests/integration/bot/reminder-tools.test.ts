@@ -264,8 +264,9 @@ it('does not send on an initial persistence failure and proves not-applied after
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
 }, 30000);
 
-it('revokes a cancelled run credential while allowing its accepted operation to finish and be queried by a later run', async () => {
+it.each(['create', 'delete', 'replace'] as const)('revokes a cancelled run credential while allowing its accepted %s operation to finish and be queried by a later run', async operation => {
   const h = await harness(); let env: NodeJS.ProcessEnv = {}; let operationId = '';
+  if (operation !== 'create') await h.store.create({ ...reminder, taskType: 'reminder', timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
   let entered!: () => void; const sending = new Promise<void>(resolve => { entered = resolve; });
   let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
   cleanups.push(async () => { release(); });
@@ -276,7 +277,7 @@ it('revokes a cancelled run credential while allowing its accepted operation to 
   };
   const turn = h.turn(async (call, opts) => {
     env = opts.toolEnv!;
-    const result = await call('automation.create', reminder); operationId = result.data.operationId;
+    const result = await call(`automation.${operation}`, operation === 'create' ? reminder : { ...(operation === 'replace' ? reminder : {}), id: 1 }); operationId = result.data.operationId;
     expect(result).toMatchObject({ category: 'unknown', data: { applied: null } });
   }, 'oc_synthetic', false);
   await sending;
@@ -286,7 +287,7 @@ it('revokes a cancelled run credential while allowing its accepted operation to 
   release();
   await vi.waitFor(() => expect(h.store.listDrafts()[0]?.cardMessageId).toEqual(expect.any(String)), { timeout: 12000 });
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation', data: { applied: false } }); });
-  expect(h.store.listDrafts()).toHaveLength(1); expect(h.store.list()).toHaveLength(0);
+  expect(h.store.listDrafts()).toHaveLength(1); expect(h.store.list()).toHaveLength(operation === 'create' ? 0 : 1);
 }, 30000);
 
 it.each(['corrupted', 'timed-out'] as const)('keeps the pre-write operation ID after a %s response and recovers the sent card by querying it', async mode => {
@@ -799,4 +800,49 @@ it.each(['delete', 'replace'] as const)('keeps uncertain %s card sends unknown t
   });
   expect(h.store.listDrafts()).toHaveLength(1);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+}, 30000);
+
+it('does not expose a replacement as applied or list it before the real atomic rename commits', async () => {
+  const h = await harness();
+  await h.store.create({ ...reminder, taskType: 'reminder', timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
+  let operationId = '';
+  await h.turn(async call => { const result = await call('automation.replace', { ...reminder, name: 'Replacement', id: 1 }); operationId = result.data.operationId; });
+  const draft = h.store.listDrafts()[0]!;
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  let entered!: () => void; const writing = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  cleanups.push(async () => { release(); });
+  let armed = true;
+  fsFault.beforeRename = async destination => { if (armed && destination === h.store.getFilePath()) { armed = false; entered(); await gate; } };
+  const confirming = Promise.resolve(h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm'))));
+  void confirming.catch(() => {}); await writing;
+  try {
+    await h.turn(async call => {
+      expect(await call('automation.operation.get', { operationId })).not.toMatchObject({ category: 'applied' });
+      expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, name: reminder.name }]);
+    });
+  } finally { release(); }
+  await confirming;
+  await h.turn(async call => {
+    expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: 2 } });
+    expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 2, name: 'Replacement' }]);
+  });
+}, 30000);
+
+it('closes a replacement whose scheduled instant has passed before confirmation and preserves the old task', async () => {
+  const h = await harness();
+  await h.store.create({ ...reminder, taskType: 'reminder', timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
+  let operationId = '';
+  await h.turn(async call => {
+    const result = await call('automation.replace', { ...reminder, id: 1, schedule: { kind: 'one-shot', fireAt: NOW + 900000 } });
+    expect(result.category).toBe('waiting-confirmation'); operationId = result.data.operationId;
+  });
+  const draft = h.store.listDrafts()[0]!;
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  h.setNow(NOW + 900001);
+  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'error' } });
+  await h.turn(async call => {
+    expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'execution-failed', code: 'past-time', data: { applied: false } });
+    expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, name: reminder.name }]);
+  });
 }, 30000);
