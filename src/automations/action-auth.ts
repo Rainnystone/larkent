@@ -5,6 +5,8 @@ import { AUTOMATIONS_DRAFT_TTL_MS } from './store';
 export const AUTO_CARD_ACTIONS = [
   'auto.confirm',
   'auto.reject',
+  'auto.end.1w',
+  'auto.end.2w',
   'auto.end.1m',
   'auto.end.3m',
   'auto.end.eoy',
@@ -22,6 +24,8 @@ export type AutoEndAction = Extract<AutoCardAction, `auto.end.${string}`>;
 
 export function isAutoEndAction(action: AutoCardAction): action is AutoEndAction {
   switch (action) {
+    case 'auto.end.1w':
+    case 'auto.end.2w':
     case 'auto.end.1m':
     case 'auto.end.3m':
     case 'auto.end.eoy':

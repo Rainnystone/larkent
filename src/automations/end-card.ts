@@ -2,17 +2,19 @@ import { buttonRow, callbackButton, card2, form, hr, md } from '../card/v2';
 import type { AutoCardAction } from './action-auth';
 
 export const END_CARD_PRESETS = [
+  { cmd: 'auto.end.1w', text: '一周' },
+  { cmd: 'auto.end.2w', text: '两周' },
   { cmd: 'auto.end.1m', text: '一个月' },
   { cmd: 'auto.end.3m', text: '三个月' },
   { cmd: 'auto.end.eoy', text: '今年年底' },
   { cmd: 'auto.end.1y', text: '一年' },
 ] as const satisfies ReadonlyArray<{ cmd: AutoCardAction; text: string }>;
 
+export type EndPresetAction = (typeof END_CARD_PRESETS)[number]['cmd'];
+
 export type EndCardTokens = {
-  'auto.end.1m': string;
-  'auto.end.3m': string;
-  'auto.end.eoy': string;
-  'auto.end.1y': string;
+  [K in EndPresetAction]: string;
+} & {
   'auto.end.custom': string;
   'auto.reject': string;
 };

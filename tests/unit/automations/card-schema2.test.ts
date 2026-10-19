@@ -12,6 +12,8 @@ const NOW = Date.UTC(2026, 9, 17, 3, 0, 0);
 const END = NOW + 30 * 24 * 60 * 60 * 1000;
 
 const TOKENS: EndCardTokens = {
+  'auto.end.1w': 'auto_cb.v1.1w',
+  'auto.end.2w': 'auto_cb.v1.2w',
   'auto.end.1m': 'auto_cb.v1.1m',
   'auto.end.3m': 'auto_cb.v1.3m',
   'auto.end.eoy': 'auto_cb.v1.eoy',
@@ -53,6 +55,8 @@ describe('automation cards are CardKit schema 2.0', () => {
     expect(formJson).toContain('auto.end.custom');
     expect(formJson).toContain('"form_action_type":"submit"');
     const outside = JSON.stringify(end).replace(formJson, '');
+    expect(outside).toContain('auto.end.1w');
+    expect(outside).toContain('auto.end.2w');
     expect(outside).toContain('auto.end.1m');
     expect(outside).toContain('auto.end.3m');
     expect(outside).toContain('auto.end.eoy');

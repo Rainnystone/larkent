@@ -13,7 +13,7 @@ import {
   automationDeleteCard,
   automationReplaceCard,
 } from './confirm-card';
-import { automationEndCard, type EndCardTokens } from './end-card';
+import { automationEndCard, type EndCardTokens, type EndPresetAction } from './end-card';
 import {
   ONE_YEAR_MS,
   nextFireAfter,
@@ -27,7 +27,7 @@ import {
   type ScheduleRejectReason,
   type TaskType,
 } from './schedule';
-import { addLocalDays, addLocalMonths, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
+import { addLocalCalendarDays, addLocalDays, addLocalMonths, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
 import { formatAutomationListLine } from './board-card';
 import {
   draftConfirmedStatus,
@@ -240,13 +240,17 @@ export function parseEndAtText(text: string, timezone: string): number | undefin
 }
 
 export function presetEndAt(
-  action: Extract<AutoCardAction, 'auto.end.1m' | 'auto.end.3m' | 'auto.end.eoy' | 'auto.end.1y'>,
+  action: EndPresetAction,
   timezone: string,
   now: number,
   startAt = now,
 ): number {
   const parts = zonedParts(timezone, startAt);
   switch (action) {
+    case 'auto.end.1w':
+      return addLocalCalendarDays(timezone, parts, 7);
+    case 'auto.end.2w':
+      return addLocalCalendarDays(timezone, parts, 14);
     case 'auto.end.1m':
       return addLocalMonths(timezone, parts, 1);
     case 'auto.end.3m':
@@ -958,6 +962,8 @@ export function resolveEndAt(
   input: { timezone: string; now: number; startAt?: number; customText?: string },
 ): number | undefined {
   switch (action) {
+    case 'auto.end.1w':
+    case 'auto.end.2w':
     case 'auto.end.1m':
     case 'auto.end.3m':
     case 'auto.end.eoy':
@@ -1437,6 +1443,8 @@ function signEndTokens(auth: AutoActionAuth, draft: AutomationDraft): EndCardTok
     ttlMs: AUTO_CARD_TTL_MS,
   });
   return {
+    'auto.end.1w': sign('auto.end.1w'),
+    'auto.end.2w': sign('auto.end.2w'),
     'auto.end.1m': sign('auto.end.1m'),
     'auto.end.3m': sign('auto.end.3m'),
     'auto.end.eoy': sign('auto.end.eoy'),

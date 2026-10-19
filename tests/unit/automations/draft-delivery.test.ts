@@ -46,7 +46,7 @@ describe('sendAutomationDraftCard readback marker', () => {
     expect(stored.delivery?.deliveryId).toBe(deliveryId);
     expect(marker).toMatch(MARKER_RE);
     expect(collectElementIds(stored.delivery?.card).filter((id) => id === marker)).toEqual([marker]);
-    expect(buttonByLabel(stored.delivery?.card, '一个月')?.element_id).toBe(marker);
+    expect(buttonByLabel(stored.delivery?.card, '一周')?.element_id).toBe(marker);
   });
 
   it('keeps sending when Feishu reports the card entity is already bound', async () => {
@@ -302,6 +302,8 @@ function confirmCard(): object {
 
 function endCard(): object {
   return automationEndCard({
+    'auto.end.1w': 'auto_cb.v1.1w',
+    'auto.end.2w': 'auto_cb.v1.2w',
     'auto.end.1m': 'auto_cb.v1.1m',
     'auto.end.3m': 'auto_cb.v1.3m',
     'auto.end.eoy': 'auto_cb.v1.eoy',

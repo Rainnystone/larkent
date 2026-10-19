@@ -181,3 +181,12 @@ export function addLocalMonths(
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
   return zonedLocalToUtc(timezone, year, month, Math.min(parts.day, lastDay), parts.hour, parts.minute);
 }
+
+export function addLocalCalendarDays(
+  timezone: string,
+  parts: { year: number; month: number; day: number; hour: number; minute: number },
+  days: number,
+): number {
+  const next = addLocalDays(parts.year, parts.month, parts.day, days);
+  return zonedLocalToUtc(timezone, next.year, next.month, next.day, parts.hour, parts.minute);
+}
