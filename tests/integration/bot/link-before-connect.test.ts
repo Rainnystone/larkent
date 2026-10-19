@@ -1,6 +1,5 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { setImmediate as yieldIO } from 'node:timers/promises';
 import type { AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -30,7 +29,6 @@ const OWNER = 'ou_owner';
 const CHAT = 'oc_group';
 const NOW = 1_760_000_000_000;
 const REST_DEADLINE_MS = 80;
-const DEBOUNCE_MS = 600;
 const UNKNOWN_STDERR = [
   'failed to read /Users/someone/.cursor/projects/secret-repo/config.json',
   'account: user@example.com',
@@ -91,12 +89,12 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
         replyMode: 'markdown',
         streaming: true,
       });
+      const runStarted = waitUntilRun(h.agent as StreamingFakeAgent);
+      const late = whenStreamIncludes(h.channel, 'late answer');
       await h.channel.handlers.message?.(mention('om_startup', 'please answer now'));
-      await waitForDebounce();
-      await waitFor(() => (h.agent as StreamingFakeAgent).manual.length === 1);
-      const run = (h.agent as StreamingFakeAgent).manual[0]!;
+      const run = await runStarted;
       run.push({ type: 'text', delta: 'late answer' });
-      await waitFor(() => h.channel.streams.length === 1);
+      await late;
       const stream = h.channel.streams[0]!;
       expect(stream.messageId).toMatch(/^om_/);
 
@@ -104,7 +102,7 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
       run.push({ type: 'done', terminationReason: 'normal' });
       run.close();
       run.releaseCleanup();
-      await waitFor(() => stream.markdownContents.some((text) => text.includes('late answer')));
+      await whenStreamIncludes(h.channel, 'late answer');
 
       expect(h.channel.streams).toHaveLength(1);
       expect(stream.markdownContents.some((text) => text.includes('late answer'))).toBe(true);
@@ -125,12 +123,12 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
         replyMode: 'card',
         streaming: true,
       });
+      const runStarted = waitUntilRun(h.agent as StreamingFakeAgent);
+      const working = whenStreamIncludes(h.channel, 'WORKING');
       await h.channel.handlers.message?.(mention('om_overlap', 'please run'));
-      await waitForDebounce();
-      await waitFor(() => (h.agent as StreamingFakeAgent).manual.length === 1);
-      const run = (h.agent as StreamingFakeAgent).manual[0]!;
+      const run = await runStarted;
       run.push({ type: 'text', delta: 'WORKING' });
-      await waitFor(() => JSON.stringify(h.channel.streams).includes('WORKING'));
+      await working;
 
       owner.resolve();
       await h.started;
@@ -159,17 +157,15 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
   });
 
   it('recovers exactly once on startup and exactly once on supervisor swap', async () => {
-    const recovered: Array<{ since: number; until: number }> = [];
+    const recovered = recoveredWait();
     const first = await startHarness({
       probe: async () => true,
       lastLiveAt: NOW,
       history: { [CHAT]: [] },
-      onRecovered: (outage) => {
-        recovered.push(outage);
-      },
+      onRecovered: (outage) => recovered.push(outage),
     });
-    await waitFor(() => recovered.length === 1);
-    expect(recovered).toHaveLength(1);
+    await recovered.when(1);
+    expect(recovered.events).toHaveLength(1);
     await first.bridge.disconnect();
 
     sdk.channel = first.channel;
@@ -180,16 +176,14 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
       workspaces: first.workspaces,
       ledger: first.ledger,
       probe: async () => true,
-      onRecovered: (outage) => {
-        recovered.push(outage);
-      },
+      onRecovered: (outage) => recovered.push(outage),
       controls: first.controls,
     });
     cleanups.push(async () => {
       await second.disconnect().catch(() => {});
     });
-    await waitFor(() => recovered.length === 2);
-    expect(recovered).toHaveLength(2);
+    await recovered.when(2);
+    expect(recovered.events).toHaveLength(2);
   });
 });
 
@@ -309,6 +303,7 @@ async function startHarness(opts: {
     configPath: `${tmp.root}/config.json`,
     processId: 'test-link-before-connect',
   };
+  const messageReady = whenMessageHandler(channel);
   const started = startChannel({
     cfg,
     agent,
@@ -332,7 +327,7 @@ async function startHarness(opts: {
     await bridge?.disconnect().catch(() => {});
     await tmp.cleanup();
   });
-  await waitFor(() => Boolean(channel.handlers.message));
+  await messageReady;
   const bridge = opts.holdAppInfo
     ? {
       channel,
@@ -406,6 +401,7 @@ function noticeCards(channel: ReturnType<typeof createRecordingLarkChannel>) {
 
 class StreamingFakeAgent extends FakeAgentAdapter {
   readonly manual: ReturnType<typeof manualRun>[] = [];
+  notifyRun?: () => void;
   constructor(id: string) {
     super({ id });
   }
@@ -414,6 +410,7 @@ class StreamingFakeAgent extends FakeAgentAdapter {
     const recorded = super.run(opts);
     const manual = manualRun(recorded);
     this.manual.push(manual);
+    this.notifyRun?.();
     return manual.run;
   }
 }
@@ -501,18 +498,84 @@ function waitUntilAnswered(channel: ReturnType<typeof createRecordingLarkChannel
   });
 }
 
-async function waitForDebounce() {
-  await sleep(DEBOUNCE_MS + 50);
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitFor(predicate: () => boolean) {
-  for (let n = 0; n < 10_000; n++) {
-    if (predicate()) return;
-    await yieldIO();
-  }
-  throw new Error('expected T14 transition was not observed');
+function whenMessageHandler(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+): Promise<void> {
+  if (channel.handlers.message) return Promise.resolve();
+  return new Promise((resolve) => {
+    const previous = channel.on.bind(channel);
+    channel.on = (next) => {
+      previous(next);
+      if (channel.handlers.message) resolve();
+    };
+  });
+}
+
+function waitUntilRun(agent: StreamingFakeAgent): Promise<ReturnType<typeof manualRun>> {
+  if (agent.manual[0]) return Promise.resolve(agent.manual[0]);
+  return new Promise((resolve) => {
+    agent.notifyRun = () => {
+      const run = agent.manual[0];
+      if (run) resolve(run);
+    };
+  });
+}
+
+function recoveredWait() {
+  const events: Array<{ since: number; until: number }> = [];
+  let waiters: Array<{ n: number; resolve: () => void }> = [];
+  return {
+    events,
+    push(outage: { since: number; until: number }) {
+      events.push(outage);
+      const ready = waiters.filter((waiter) => events.length >= waiter.n);
+      waiters = waiters.filter((waiter) => events.length < waiter.n);
+      for (const waiter of ready) waiter.resolve();
+    },
+    when(n: number) {
+      if (events.length >= n) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        waiters.push({ n, resolve });
+      });
+    },
+  };
+}
+
+function whenStreamIncludes(
+  channel: ReturnType<typeof createRecordingLarkChannel>,
+  needle: string,
+): Promise<void> {
+  const has = (): boolean => JSON.stringify(channel.streams).includes(needle);
+  if (has()) return Promise.resolve();
+  return new Promise((resolve) => {
+    const finish = (): void => {
+      if (has()) resolve();
+    };
+    const watch = (record: { cardUpdates: unknown[]; markdownContents: string[] }) => {
+      wrapPush(record.cardUpdates, finish);
+      wrapPush(record.markdownContents, finish);
+    };
+    for (const record of channel.streams) watch(record);
+    const previous = channel.stream.bind(channel);
+    channel.stream = ((...args: Parameters<typeof channel.stream>) => {
+      const pending = previous(...args);
+      const record = channel.streams.at(-1);
+      if (record) watch(record);
+      finish();
+      return pending;
+    }) as typeof channel.stream;
+  });
+}
+
+function wrapPush<T>(items: T[], onPush: () => void) {
+  const previous = items.push.bind(items);
+  items.push = ((...next: T[]) => {
+    const n = previous(...next);
+    onPush();
+    return n;
+  }) as typeof items.push;
 }
