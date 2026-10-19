@@ -133,6 +133,15 @@ describe('README runtime contract', () => {
     expect(operations).toContain('enable on one profile, watch one recovery cycle, then the others');
   });
 
+  it('documents plugin catalog missing-root, invalid-root and invalid-package diagnostics', async () => {
+    const operations = await readFile(new URL('../../../docs/operations.md', import.meta.url), 'utf8');
+    const listed = operations.split('\n').find(line => line.includes('identify distinct problems'));
+    expect(listed).toBeDefined();
+    for (const code of ['missing-root', 'invalid-root', 'invalid-package']) {
+      expect(listed).toContain(`\`${code}\``);
+    }
+  });
+
   it('describes the outbox as staged per-item delivery without remainder or ECONNABORTED special cases', async () => {
     const context = await readFile(new URL('../../../CONTEXT.md', import.meta.url), 'utf8');
     const outbox = context.split('\n').find((line) => line.startsWith('- **outbox**:'));

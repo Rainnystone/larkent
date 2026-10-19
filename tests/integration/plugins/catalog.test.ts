@@ -6,15 +6,24 @@ import { PluginCatalog } from '../../../src/plugins/catalog';
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const fn of cleanups.splice(0).reverse()) await fn(); });
-async function packageFixture(name = 'synthetic', version = '1.0.0') {
+async function tempRoot() {
   const root = await mkdtemp(join(tmpdir(), 'plugin-catalog-'));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
+  return root;
+}
+async function packageFixture(name = 'synthetic', version = '1.0.0') {
+  const root = await tempRoot();
   await mkdir(join(root, '.codex-plugin'));
   await mkdir(join(root, 'skills', 'sample'), { recursive: true });
   await writeFile(join(root, '.codex-plugin', 'plugin.json'), JSON.stringify({ name, version, description: 'A short synthetic summary', skills: './skills' }));
   const skill = join(root, 'skills', 'sample', 'SKILL.md');
   await writeFile(skill, 'Synthetic full skill body');
   return { root, skill };
+}
+async function fileRoot() {
+  const file = join(await tempRoot(), 'not-a-directory');
+  await writeFile(file, 'not a package');
+  return file;
 }
 
 it('loads a Matt-like explicit list of nested skill directories through the catalog interface', async () => {
@@ -274,8 +283,31 @@ it('isolates broken packages and rejects duplicate IDs without scan-order overri
   const second = await packageFixture('duplicate', '2.0.0');
   const catalog = await PluginCatalog.load([first.root, '/synthetic-does-not-exist', good.root, second.root]);
   expect((await catalog.list()).map(p => p.id)).toEqual(['good']);
-  expect(catalog.diagnostics).toEqual([{ code: 'invalid-package', root: '/synthetic-does-not-exist' }, { code: 'plugin-conflict', plugin: 'duplicate' }]);
+  expect(catalog.diagnostics).toEqual([{ code: 'missing-root', root: '/synthetic-does-not-exist' }, { code: 'plugin-conflict', plugin: 'duplicate' }]);
   expect(await catalog.resolveRead('duplicate:sample')).toMatchObject({ code: 'skill-ambiguous' });
+});
+
+it('diagnoses a package path whose parent is not a directory as missing-root', async () => {
+  const nested = join(await fileRoot(), 'package');
+  const catalog = await PluginCatalog.load([nested]);
+  expect(await catalog.list()).toEqual([]);
+  expect(catalog.diagnostics).toEqual([{ code: 'missing-root', root: nested }]);
+});
+
+it('diagnoses a package root that exists but is not a directory as invalid-root', async () => {
+  const file = await fileRoot();
+  const catalog = await PluginCatalog.load([file]);
+  expect(await catalog.list()).toEqual([]);
+  expect(catalog.diagnostics).toEqual([{ code: 'invalid-root', root: file }]);
+});
+
+it('keeps invalid-package as the fallback for an unclassified package load failure', async () => {
+  const p = await packageFixture('unknown');
+  await rm(join(p.root, '.codex-plugin', 'plugin.json'));
+  await mkdir(join(p.root, '.codex-plugin', 'plugin.json'));
+  const catalog = await PluginCatalog.load([p.root]);
+  expect(await catalog.list()).toEqual([]);
+  expect(catalog.diagnostics).toEqual([{ code: 'invalid-package', root: p.root }]);
 });
 
 it('rejects a symlink escape and path traversal without reading the target into the catalog', async () => {

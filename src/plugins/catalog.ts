@@ -35,7 +35,15 @@ export class PluginCatalog {
     const diagnostics: PluginDiagnostic[] = [];
     for (const root of roots) {
       try {
-        const base = await realpath(root);
+        let base: string;
+        try {
+          base = await realpath(root);
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (code === 'ENOENT' || code === 'ENOTDIR') throw new Error('missing-root');
+          throw error;
+        }
+        if (!(await stat(base)).isDirectory()) throw new Error('invalid-root');
         let manifestText: string;
         try { manifestText = await readFile(await inside(base, '.codex-plugin/plugin.json'), 'utf8'); }
         catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') throw new Error('missing-manifest'); throw error; }
@@ -89,7 +97,7 @@ export class PluginCatalog {
         }
         plugins.push({ id: manifest.name, aliases: metadata.aliases, version, description: manifest.description, diagnostics: unsupported, skills, files, reference: hash.digest('hex'), base, manifest: manifestText, contentRoots, scopes, directories: [...directoryNames].sort() });
       } catch (err) {
-        const code = err instanceof Error && ['missing-manifest', 'invalid-manifest', 'invalid-metadata', 'invalid-skill-name', 'missing-skills', 'missing-skill-content', 'invalid-path'].includes(err.message)
+        const code = err instanceof Error && ['missing-root', 'invalid-root', 'missing-manifest', 'invalid-manifest', 'invalid-metadata', 'invalid-skill-name', 'missing-skills', 'missing-skill-content', 'invalid-path'].includes(err.message)
           ? err.message : 'invalid-package';
         diagnostics.push({ code, root });
       }
