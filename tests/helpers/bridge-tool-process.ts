@@ -15,8 +15,9 @@ export async function buildToolProcess() {
   const hostEntry = join(directory, 'host.ts');
   await writeFile(hostEntry, `
     import { openToolRun } from ${JSON.stringify(resolve('src/bridge-tools/server.ts'))};
-    import { builtinPluginCatalog } from ${JSON.stringify(resolve('src/plugins/catalog.ts'))};
-    const run = await openToolRun({ catalog: await builtinPluginCatalog(), profile:'synthetic', chatId:'oc_synthetic', actorId:'ou_synthetic', runType:'im', availability:()=>undefined, timezone:'UTC', agentTasks:false });
+    import { builtinPluginCatalog, deploymentPluginCatalog } from ${JSON.stringify(resolve('src/plugins/catalog.ts'))};
+    const catalog = process.argv[2] ? await deploymentPluginCatalog(process.argv[2]) : await builtinPluginCatalog();
+    const run = await openToolRun({ catalog, profile:'synthetic', chatId:'oc_synthetic', actorId:'ou_synthetic', runType:'im', availability:()=>undefined, timezone:'UTC', agentTasks:false });
     process.send(run.env);
     process.on('message', async () => { await run.close(); process.disconnect(); });
   `);
@@ -33,9 +34,9 @@ export async function buildToolProcess() {
       try { return await call; }
       finally { calls.delete(call); }
     },
-    async startHost() {
+    async startHost(rootDir?: string) {
       // Credential exchange stays on private IPC, separate from stdout/stderr and fixture files.
-      const child = fork(join(directory, 'dist/host.js'), [], { execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'], cwd: tmpdir() });
+      const child = fork(join(directory, 'dist/host.js'), rootDir ? [rootDir] : [], { execArgv: [], stdio: ['ignore', 'ignore', 'ignore', 'ipc'], cwd: tmpdir() });
       const env = await new Promise<NodeJS.ProcessEnv>((resolve, reject) => {
         child.once('message', env => resolve(env as NodeJS.ProcessEnv));
         child.once('error', reject);

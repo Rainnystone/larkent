@@ -18,3 +18,14 @@ export async function writeExternalPlugin(root: string, version = '1.0.0', value
   ].join('\n'));
   return root;
 }
+
+export async function writePureSkillPlugin(root: string) {
+  await mkdir(join(root, '.codex-plugin'), { recursive: true });
+  await mkdir(join(root, 'skills/engineering/tdd'), { recursive: true });
+  await writeFile(join(root, '.codex-plugin/plugin.json'), JSON.stringify({
+    name: 'engineering-bundle', version: '1.3.1', description: 'Synthetic engineering workflows',
+    skills: ['./skills/engineering/tdd'], larkent: { aliases: ['fixture'] },
+  }));
+  await writeFile(join(root, 'skills/engineering/tdd/SKILL.md'), 'Synthetic engineering workflow: observe RED, then GREEN.');
+  return root;
+}

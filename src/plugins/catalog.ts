@@ -104,6 +104,11 @@ export class PluginCatalog {
       skills: plugin.skills.map(({ id, name, aliases, resource, available, diagnostics }) => ({ id, name, aliases, resource, available, diagnostics })) } : undefined;
   }
   private conflicted(id: string): boolean { return this.plugins.filter(p => p.id === id).length > 1; }
+  /** Business bindings use canonical IDs; discovery aliases cannot shadow them. */
+  async isAvailable(id: string): Promise<boolean> {
+    const matches = this.plugins.filter(p => p.id === id);
+    return matches.length === 1 && matches[0]!.skills.some(s => s.available) && await unchanged(matches[0]!);
+  }
   resolveInspect(id: string): CatalogResult {
     const matches = this.plugins.filter(p => p.id === id || p.aliases.includes(id));
     if (matches.length > 1) return { code: 'plugin-ambiguous', data: { candidates: matches.map(p => ({ id: p.id, version: p.version, reference: p.reference })) } };
@@ -247,11 +252,7 @@ export function builtinPluginCatalog(): Promise<PluginCatalog> {
   return builtin;
 }
 
-const deployments = new Map<string, Promise<PluginCatalog>>();
-/** Host-owned installation configuration is frozen until the bridge process restarts. */
+/** Called once at profile startup; the returned deployment snapshot has no hot reload. */
 export function deploymentPluginCatalog(rootDir: string): Promise<PluginCatalog> {
-  const key = resolve(rootDir);
-  let catalog = deployments.get(key);
-  if (!catalog) { catalog = PluginCatalog.deployment(key); deployments.set(key, catalog); }
-  return catalog;
+  return PluginCatalog.deployment(resolve(rootDir));
 }

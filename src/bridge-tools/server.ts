@@ -93,7 +93,7 @@ async function dispatch(value: unknown, context: ToolRunContext): Promise<ToolRe
       return toolResult(['content', 'plugin'].includes(result.code) ? 'ok' : 'unavailable', result.code, result.data);
     }
     default:
-      if (!context.catalog.inspect('automation')) return toolResult('unavailable', 'automation-plugin-unavailable');
+      if (!await context.catalog.isAvailable('automation')) return toolResult('unavailable', 'automation-plugin-unavailable');
       return callAutomationTool(request.operation, params, context);
   }
 }

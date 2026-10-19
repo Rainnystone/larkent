@@ -1841,6 +1841,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const taken = await continuations.take(scope, batch);
   applyTakenInstruction(taken, extraInstructions);
   const catalog = deps.pluginCatalog;
+  const automationPluginAvailable = await catalog.isAvailable('automation');
   const toolContext: ToolRunContext = {
     catalog, profile: controls.profile, chatId, actorId: lastMsg.senderId,
     runType: scope.startsWith('auto:') ? 'automation' : 'im', store: automations,
@@ -1848,7 +1849,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     cardReply: { replyTo: lastMsg.messageId, ...(mode === 'topic' && threadId ? { replyInThread: true, threadId } : {}) },
     cwd: workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default,
     now, journal, drafts: { channel, automations, autoAuth, automationsScheduler, now, isLinkDown: () => Boolean(link?.isDown()), botAppId: controls.profileConfig.accounts.app.id },
-    availability: () => !catalog.inspect('automation') ? 'automation-plugin-unavailable'
+    availability: () => !automationPluginAvailable ? 'automation-plugin-unavailable'
       : !controls.profileConfig.automations.enabled ? 'automations-disabled'
       : firstMsg.chatType === 'p2p' || mode === 'p2p' || scope.startsWith('meeting:') ? 'automation-requires-group'
       : senderTypeFromRaw((lastMsg as { raw?: unknown }).raw) !== 'user' ? 'automation-requires-human' : undefined,

@@ -21,8 +21,24 @@ export const TOOL_OPERATIONS = [
 ] as const;
 
 export const TOOL_REQUEST_SCHEMA = {
+  $defs: {
+    pluginReadParams: {
+      type: 'object', additionalProperties: false, required: ['skill'], properties: {
+        skill: { type: 'string', minLength: 1, description: 'Qualified plugin:skill ID, unique name/alias, or plugin name for its directory' },
+        resource: { type: 'string', description: 'Declared package-relative resource from the content result' },
+        reference: { type: 'string', description: 'Version reference from discovery/read; stale references are rejected' },
+      },
+    },
+    pluginInspectParams: {
+      type: 'object', additionalProperties: false, required: ['plugin'], properties: { plugin: { type: 'string', minLength: 1 } },
+    },
+  },
   type: 'object', additionalProperties: false, required: ['version', 'operation'],
   properties: {
     version: { const: TOOL_VERSION }, operation: { enum: TOOL_OPERATIONS }, params: { type: 'object' },
   },
+  allOf: [
+    { if: { properties: { operation: { const: 'plugins.read' } } }, then: { required: ['params'], properties: { params: { $ref: '#/$defs/pluginReadParams' } } } },
+    { if: { properties: { operation: { const: 'plugins.inspect' } } }, then: { required: ['params'], properties: { params: { $ref: '#/$defs/pluginInspectParams' } } } },
+  ],
 };

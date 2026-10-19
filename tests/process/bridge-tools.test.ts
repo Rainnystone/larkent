@@ -202,7 +202,7 @@ it('gives deterministic errors for malformed, oversize and unsupported input and
 
 it('reports missing built-in content and absent or forged connections without granting other authority', async () => {
   const h = await harness({ catalog: await PluginCatalog.load(['/synthetic-missing-plugin']) });
-  expect((await h.call('plugins.list')).data.diagnostics).toEqual([{ code: 'invalid-package' }]);
+  expect((await h.call('plugins.list')).data.diagnostics).toEqual([{ code: 'invalid-package', root: '/synthetic-missing-plugin' }]);
   expect(await h.call('automation.list')).toMatchObject({ category: 'unavailable', code: 'automation-plugin-unavailable' });
   expect(await h.call('plugins.install', { source: 'synthetic' })).toMatchObject({ category: 'unavailable', code: 'unknown-operation' });
   const absent = await client.call({ version: 1, operation: 'plugins.list' });
