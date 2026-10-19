@@ -38,6 +38,22 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09k](P09k-missing-root-diagnostic.md) | Bug P3：插件目录不存在时返回未文档化的 `invalid-package` | P09 发现 |
 | [P09l](P09l-grok-tool-output-bytes.md) | Bug P3：Grok 工具进度卡把 Bash 输出显示为十进制字节数组 | P09 发现 |
 | [P09m](P09m-policy-guard-help-false-positive.md) | Bug P3：只读 `auth logout --help` 被误判 `auth-config` 并暂停任务；`auth-config` 不在工具结果中 | P09 发现 |
+
+### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
+
+同组内文件重叠，须按序串行（后者 rebase 在前者之上）；各组之间无文件重叠，可并行。
+
+| 组 | 顺序 | 重叠文件 |
+| --- | --- | --- |
+| G1 | P09b → P09d → P09e → P09f | `src/bot/channel.ts`（b/d/e）；automation `SKILL.md`（d/f） |
+| G2 | P09a → P09g | `src/automations/confirm-card.ts` |
+| G3 | P09k → P09j | `src/plugins/catalog.ts`、`docs/operations.md` |
+| G4 | P09h → P09m | `src/automations/store.ts`（h 改 lastStatus 初值；m 的 policy-guard 结果经 store/agent-run 落地） |
+| G5 | P09c | `src/automations/draft-delivery.ts`、`src/bot/feishu-delivery.ts` |
+| G6 | P09i | `src/automations/end-card.ts` |
+| G7 | P09l | `src/agent/grok/jsonl.ts` |
+
+P09d（`src/card/tool-render.ts`）与 P09l（`src/agent/grok/jsonl.ts`）都影响工具进度卡但不共享文件，可并行；合并后需一并确认 Grok 工具卡既解码字节又折叠 bridge tool 标签。
 | [P10](P10-uat-real-usage.md) | 生产 Grok bridge 真实使用 UAT：14 条自然语言句子覆盖提醒、文档、新闻摘要与五类排期及管理操作，核对 larkent-monitor | P09、#52 合并并部署 |
 
 P09 E2E 发现的 won't-fix（不建票）：
