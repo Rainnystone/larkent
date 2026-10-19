@@ -163,7 +163,7 @@ import {
   type AutomationScheduler,
 } from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
-import { builtinPluginCatalog } from '../plugins/catalog';
+import { deploymentPluginCatalog, type PluginCatalog } from '../plugins/catalog';
 import type { ToolRunContext } from '../bridge-tools/server';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { createIdleWatchdog } from './idle-watchdog';
@@ -352,7 +352,7 @@ export interface StartChannelDeps {
   onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
   controls: Controls;
   appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>
-    & Partial<Pick<AppPaths, 'logsDir' | 'automationsWakeDir'>>;
+    & Partial<Pick<AppPaths, 'logsDir' | 'automationsWakeDir' | 'rootDir'>>;
   now?: () => number;
   probe?: (signal?: AbortSignal) => Promise<boolean>;
   /** Tests with a fake clock stub this so a watermark jump is not OS sleep. */
@@ -364,6 +364,7 @@ export interface StartChannelDeps {
 
 export async function startChannel(deps: StartChannelDeps): Promise<BridgeChannel> {
   const { cfg, agent, sessions, sessionCatalog, workspaces, ledger, journal, controls } = deps;
+  const pluginCatalog = await deploymentPluginCatalog(deps.appPaths?.rootDir ?? dirname(controls.configPath));
   const outboundTimeoutMs = deps.outboundTimeoutMs ?? OUTBOUND_REQUEST_TIMEOUT_MS;
   let channelForCards: LarkChannel | undefined;
   const continuations = createContinuations({
@@ -612,6 +613,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           onDeliveryWait: (delayMs) => outboxSweep.schedule(delayMs),
           outboundTimeoutMs,
           automations: deps.automations,
+          pluginCatalog,
           autoAuth,
           automationsScheduler: automationsCtl.scheduler,
           ...(deps.now ? { now: deps.now } : {}),
@@ -1657,6 +1659,7 @@ function markClosingArrival(
 }
 
 interface RunBatchDeps {
+  pluginCatalog: PluginCatalog;
   channel: LarkChannel;
   executor: RunExecutor;
   sessions: SessionStore;
@@ -1837,7 +1840,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const extraInstructions: string[] = [];
   const taken = await continuations.take(scope, batch);
   applyTakenInstruction(taken, extraInstructions);
-  const catalog = await builtinPluginCatalog();
+  const catalog = deps.pluginCatalog;
   const toolContext: ToolRunContext = {
     catalog, profile: controls.profile, chatId, actorId: lastMsg.senderId,
     runType: scope.startsWith('auto:') ? 'automation' : 'im', store: automations,
@@ -1853,7 +1856,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   extraInstructions.push(
     'Bridge plugins：共用入口为 lark-channel-bridge tool；客户端 JS 绝对路径在环境 LARK_BRIDGE_TOOL_CLIENT，用 node <该路径> tool 调用，按当前 shell 安全引用路径。' +
     '从 stdin 发送版本化 JSON（version:1, operation, params），stdout 是本轮实际工具结果。' +
-    '先 plugins.list，再 plugins.inspect（params.plugin），再 plugins.read（params.skill）；唯一的 skill 名可直读。' +
+    '按需 plugins.list、plugins.inspect（params.plugin）、plugins.read（params.skill）；唯一的插件/skill 名或别名可直达，歧义按候选选择。' +
+    '资源读取使用 plugins.read 的 params.resource（包内路径）和 params.reference（读取结果的版本引用）；脚本按返回路径用 runtime 现有工具执行，遵守当前访问模式。旧引用失效需重新发现。' +
     '根据结果在本轮补字段或修正；最终回复由你负责。连接由环境提供，不得展示或保存运行凭据。创建提醒须以实际工具回执为准，人工确认后生效；其他变更按 schema 可用性处理。',
     `<bridge_plugins>${JSON.stringify({ plugins: catalog.list(), diagnostics: catalog.diagnostics })}</bridge_plugins>`,
     `<bridge_run>${JSON.stringify({ profile: controls.profile, runType: toolContext.runType, now: (now ?? Date.now)(), timezone: toolContext.timezone, automationUnavailable: toolContext.availability() ?? (!automations ? 'automation-store-unavailable' : null) })}</bridge_run>`,

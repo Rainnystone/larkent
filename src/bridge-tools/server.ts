@@ -79,13 +79,18 @@ async function dispatch(value: unknown, context: ToolRunContext): Promise<ToolRe
       return toolResult('ok', 'plugins', { plugins: context.catalog.list(), diagnostics: context.catalog.diagnostics });
     case 'plugins.inspect': {
       if (Object.keys(params).some(key => key !== 'plugin')) return toolResult('validation-failed', 'unknown-field');
-      const plugin = typeof params.plugin === 'string' ? context.catalog.inspect(params.plugin) : undefined;
-      return plugin ? toolResult('ok', 'plugin', { ...plugin, ...(plugin.id === 'automation' ? { capabilities: automationSchema(context).operations } : {}) }) : toolResult('unavailable', 'plugin-not-found');
+      if (typeof params.plugin !== 'string' || !params.plugin) return toolResult('validation-failed', 'invalid-params');
+      const result = context.catalog.resolveInspect(params.plugin);
+      const plugin = record(result.data);
+      return result.code === 'plugin' && plugin
+        ? toolResult('ok', 'plugin', { ...plugin, ...(plugin.id === 'automation' ? { capabilities: automationSchema(context).operations } : {}) })
+        : toolResult('unavailable', result.code, result.data);
     }
     case 'plugins.read': {
-      if (Object.keys(params).some(key => key !== 'skill')) return toolResult('validation-failed', 'unknown-field');
-      const content = typeof params.skill === 'string' ? context.catalog.read(params.skill) : undefined;
-      return content ? toolResult('ok', 'content', content) : toolResult('unavailable', 'skill-not-found-or-ambiguous');
+      if (Object.keys(params).some(key => !['skill', 'resource', 'reference'].includes(key))) return toolResult('validation-failed', 'unknown-field');
+      if (typeof params.skill !== 'string' || !params.skill || ['resource', 'reference'].some(key => params[key] !== undefined && typeof params[key] !== 'string')) return toolResult('validation-failed', 'invalid-params');
+      const result = await context.catalog.resolveRead(params.skill, { resource: params.resource as string | undefined, reference: params.reference as string | undefined });
+      return toolResult(['content', 'plugin'].includes(result.code) ? 'ok' : 'unavailable', result.code, result.data);
     }
     default:
       if (!context.catalog.inspect('automation')) return toolResult('unavailable', 'automation-plugin-unavailable');
