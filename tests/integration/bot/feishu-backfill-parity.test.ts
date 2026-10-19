@@ -185,11 +185,25 @@ async function runOnce(opts: {
 
   const reply = replyTarget(channel);
   return {
-    prompt: agent.runOptions[0]!.prompt,
+    prompt: normalizeWorkspaceFact(agent.runOptions[0]!.prompt, tmp.workspace),
     outbound: outboundSequence(channel),
     replyTo: reply.replyTo,
     replyInThread: reply.replyInThread,
   };
+}
+
+/** Independent runs use different temporary workspaces; verify that fact before comparing conversation content. */
+function normalizeWorkspaceFact(prompt: string, workspace: string): string {
+  return prompt.replace(/<bridge_instructions>\n(.*?)\n<\/bridge_instructions>/s, (_section, json: string) => {
+    const instructions: string[] = JSON.parse(json);
+    const normalized = instructions.map(instruction => {
+      if (!instruction.startsWith('<bridge_run>')) return instruction;
+      const fact = JSON.parse(instruction.slice('<bridge_run>'.length, -'</bridge_run>'.length));
+      expect(fact.cwd).toBe(workspace);
+      return `<bridge_run>${JSON.stringify({ ...fact, cwd: '<workspace>' })}</bridge_run>`;
+    });
+    return `<bridge_instructions>\n${JSON.stringify(normalized)}\n</bridge_instructions>`;
+  });
 }
 
 function mentionItem(

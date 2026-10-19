@@ -43,8 +43,8 @@ it('runs an existing automatic task with the profile user authorization and pres
   await h.configUnchanged();
 });
 
-it.each(['bot', 'user', 'denied', 'missing-cli'] as const)('creates with an actual runtime client, then reads plugins and executes with profile identity in the scheduled subprocess (%s)', async identity => {
-  const args = ['docs', '+fetch', '--as', identity === 'bot' ? 'bot' : 'user'];
+it.each(['bot', 'user', 'denied', 'missing-cli', 'direct-send'] as const)('creates with an actual runtime client, then reads plugins and executes with profile identity in the scheduled subprocess (%s)', async identity => {
+  const args = identity === 'direct-send' ? ['im', '+messages-send', '--chat-id', CHAT, '--text', 'Synthetic direct result'] : ['docs', '+fetch', '--as', identity === 'bot' ? 'bot' : 'user'];
   const h = await harness({ args, bridgeRequests: [{ operation: 'plugins.read', params: { skill: 'automations' } }] }, { seed: false, ...(identity === 'denied' ? { failure: 'synthetic platform authorization denied' } : {}) });
   await h.cli.plan('creator', { args: ['auth', 'status'], bridgeRequests: [{ operation: 'automation.create', params: {
     taskType: 'agent', name: 'Synthetic subprocess task', taskText: 'identity-case:automatic', schedule: { kind: 'interval', timezone: 'UTC', every: { unit: 'hours', n: 1 }, startAt: NOW, endAt: NOW + 3 * HOUR },
@@ -67,6 +67,16 @@ it.each(['bot', 'user', 'denied', 'missing-cli'] as const)('creates with an actu
     expect(h.journal.get(`af:1@${NOW + HOUR}`)?.outcome?.kind).toBe('failed');
     expect(h.bodies()).toContain('运行启动失败');
     expect(h.store.list()).toMatchObject([{ id: 1, taskType: 'agent', lastStatus: 'failed' }]);
+    await h.configUnchanged();
+    return;
+  }
+  if (identity === 'direct-send') {
+    expect(h.journal.get(`af:1@${NOW + HOUR}`)).toMatchObject({ cliAlreadySent: true, outcome: { kind: 'completed' } });
+    await h.cli.plan('query', { args: ['auth', 'status'], bridgeRequests: [{ operation: 'automation.operation.get', params: { operationId: draft.operationId } }] });
+    await h.message('query');
+    await vi.waitFor(() => expect(h.bodies()).toContain('lastDelivery'), { timeout: 10000 });
+    expect(h.bodies()).toContain('"deliveredCount":1');
+    expect(h.bodies()).toContain('"lastDelivery":"sent"');
     await h.configUnchanged();
     return;
   }

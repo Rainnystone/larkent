@@ -1,3 +1,4 @@
+import { replyState } from '../bot/turn-journal';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
@@ -99,10 +100,20 @@ export async function createAutomationOperation(params: Record<string, unknown>,
 function automationOperationResult(operation: AutomationOperation, context: AutomationToolContext): ToolResult {
   const current = context.store!.getOperation(operation.operationId)!;
   const executions = context.journal?.list().filter(entry => current.taskId && entry.turnId.startsWith(`af:${current.taskId}@`)) ?? [];
-  const delivered = executions.filter(entry => entry.reply?.state === 'sent');
-  const executionResult = (entry: (typeof executions)[number]): 'ok' | 'failed' | 'pending' => entry.outcome
-    ? entry.outcome.kind === 'completed' || entry.outcome.kind === 'partial' ? 'ok' : 'failed'
-    : entry.runId ? 'pending' : entry.reply?.state === 'sent' ? 'ok' : entry.reply?.state === 'rejected' ? 'failed' : 'pending';
+  const deliveryState = (entry: (typeof executions)[number]) => entry.cliAlreadySent ? 'sent' : replyState(entry) ?? 'pending';
+  const delivered = executions.filter(entry => deliveryState(entry) === 'sent');
+  const executionResult = (entry: (typeof executions)[number]): 'ok' | 'failed' | 'pending' => {
+    if (entry.outcome) return entry.outcome.kind === 'completed' || entry.outcome.kind === 'partial' ? 'ok' : 'failed';
+    if (entry.runId) return 'pending';
+    const delivery = deliveryState(entry);
+    return delivery === 'sent' ? 'ok' : delivery === 'rejected' ? 'failed' : 'pending';
+  };
+  const executionState = (entry: (typeof executions)[number]) => {
+    if (entry.outcome) return entry.outcome.kind;
+    if (entry.runId) return 'running';
+    const result = executionResult(entry);
+    return result === 'ok' ? 'completed' : result === 'failed' ? 'failed' : 'queued';
+  };
   const last = executions.at(-1);
   const base = {
     operationId: current.operationId, draftId: current.draftId, received: true,
@@ -111,7 +122,7 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
     ...(current.dispatchedCountKnown === false ? { dispatchedCountLowerBound: current.dispatchedCount } : {}), executedCount: executions.filter(entry => executionResult(entry) === 'ok').length,
     failedCount: executions.filter(entry => executionResult(entry) === 'failed').length, deliveredCount: delivered.length,
     executionHistoryComplete: current.dispatchedCountKnown !== false && executions.length === current.dispatchedCount,
-    ...(last ? { lastExecution: executionResult(last), executionState: last.outcome?.kind ?? (last.runId ? 'running' : 'queued'), lastDelivery: last.reply?.state ?? 'pending' } : {}),
+    ...(last ? { lastExecution: executionResult(last), executionState: executionState(last), lastDelivery: deliveryState(last) } : {}),
   };
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });

@@ -110,6 +110,7 @@ if (identity === 'user' && config.strictMode === 'bot') {
 }
 if (args[0] === 'auth') { console.log('authorized-profile-status'); process.exit(0); }
 if (args[0] === 'config') { console.log('profile-config-status'); process.exit(0); }
+if (args[0] === 'im' && args[1] === '+messages-send') { console.log(JSON.stringify({ code: 0, data: { message_id: 'om_synthetic_direct' } })); process.exit(0); }
 if (identity === 'user') {
   const marker = join(configDir, 'credential-substitute.json');
   if (!existsSync(marker)) { console.error('profile authorization missing'); process.exit(4); }
