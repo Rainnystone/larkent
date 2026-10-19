@@ -6,8 +6,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { build } from 'tsup';
 
 /** Build the actual CLI entry, including its normal packaged resources, without a source cwd dependency. */
-export async function buildToolProcess() {
-  const directory = await mkdtemp(join(tmpdir(), 'bridge-tool-cli-'));
+export async function buildToolProcess(options: { channel?: boolean } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), options.channel ? 'bridge tool & cli-' : 'bridge-tool-cli-'));
   await writeFile(join(directory, 'package.json'), JSON.stringify({ name: 'lark-channel-bridge', type: 'module' }));
   await cp(resolve('plugins'), join(directory, 'plugins'), { recursive: true });
   await cp(resolve('bin'), join(directory, 'bin'), { recursive: true });
@@ -21,7 +21,9 @@ export async function buildToolProcess() {
     process.send(run.env);
     process.on('message', async () => { await run.close(); process.disconnect(); });
   `);
-  await build({ entry: { cli: resolve('src/cli/index.ts'), host: hostEntry }, outDir: join(directory, 'dist'), format: ['esm'], platform: 'node', target: 'node20',
+  const channelEntry = join(directory, 'channel.ts');
+  if (options.channel) await writeFile(channelEntry, `export { startChannel } from ${JSON.stringify(resolve('src/bot/channel.ts'))};`);
+  await build({ entry: { cli: resolve('src/cli/index.ts'), host: hostEntry, ...(options.channel ? { channel: channelEntry } : {}) }, outDir: join(directory, 'dist'), format: ['esm'], platform: 'node', target: 'node20',
     bundle: true, splitting: false, dts: false, clean: false, silent: true, loader: { '.html': 'text' } });
   const calls = new Set<ReturnType<typeof runToolProcess>>();
   let closing = false;

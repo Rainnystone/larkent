@@ -15,19 +15,31 @@ import { installBridgeContractCli } from '../helpers/bridge-contract-cli';
 import { buildToolProcess } from '../helpers/bridge-tool-process';
 import { writeExternalPlugin } from '../helpers/external-plugin';
 import { createRecordingLarkChannel } from '../helpers/recording-lark-channel';
-import { PIN_AGENT_KINDS } from '../helpers/scripted-jsonl-cli';
+import { PIN_AGENT_KINDS, type PinAgentKind } from '../helpers/scripted-jsonl-cli';
 import { createTmpProfile } from '../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({ channel: undefined as ReturnType<typeof createRecordingLarkChannel> | undefined }));
 vi.mock('@larksuite/channel', async original => ({ ...await original<typeof import('@larksuite/channel')>(), createLarkChannel: () => sdk.channel }));
-import { startChannel } from '../../src/bot/channel';
+import type { startChannel as sourceStartChannel } from '../../src/bot/channel';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z');
 const cleanup: Array<() => Promise<unknown>> = [];
 let client: Awaited<ReturnType<typeof buildToolProcess>>;
-beforeAll(async () => { client = await buildToolProcess(); }, 30000);
+let startChannel: typeof sourceStartChannel;
+beforeAll(async () => {
+  client = await buildToolProcess({ channel: true });
+  ({ startChannel } = await import(join(client.directory, 'dist/channel.js').replaceAll('\\', '/')));
+}, 30000);
 afterAll(async () => { await client?.cleanup(); });
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); sdk.channel = undefined; vi.restoreAllMocks(); });
+
+function expectResumeArgv(kind: PinAgentKind, argv: string[], handle?: string) {
+  const flag = { claude: '--resume', codex: 'resume', kimi: '-S', grok: '-r', cursor: '--resume', antigravity: '--conversation' }[kind];
+  if (!handle) { expect(argv).not.toContain(flag); return; }
+  expect(argv).toContain(flag);
+  if (kind === 'codex') expect(argv.slice(-2)).toEqual([handle, '-']);
+  else expect(argv[argv.indexOf(flag) + 1]).toBe(handle);
+}
 
 // This suite is unconditional on every CI OS. It proves adapter/control-process behavior,
 // not native CLI/model tool selection. The paid/live acceptance belongs to P09.
@@ -78,6 +90,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
     expect(report.script).toEqual({ result: value, doubled: value * 2 });
     expect(report.env).toMatchObject({ LARK_CHANNEL: '1', LARK_CHANNEL_PROFILE: 'synthetic', LARK_CHANNEL_HOME: tmp.root, LARK_CHANNEL_CONFIG: config, LARKSUITE_CLI_CONFIG_DIR: larkCliConfigDir,
       LARK_BRIDGE_TOOL_SCOPE: expect.any(String), LARK_BRIDGE_TOOL_ISSUED_AT: String(now) });
+    expect(await realpath(report.env.LARK_BRIDGE_TOOL_CLIENT)).toBe(await realpath(join(client.directory, 'bin/lark-channel-bridge.mjs')));
     expect(await realpath(report.cwd)).toBe(await realpath(tmp.workspace));
     const instructions = JSON.parse(/<bridge_instructions>\n(.*?)\n<\/bridge_instructions>/s.exec(report.prompt)![1]!) as string[];
     report.instructions = instructions.join('\n');
@@ -99,6 +112,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
 
   await runtime.plan({ mode: 'create', now }); await send();
   const created = await finish();
+  expectResumeArgv(kind, created.argv);
   expect(runs[0]!.resumeHandle).toBeUndefined();
   expect(calls(created, 'automation.create')).toMatchObject([{ category: 'validation-failed', code: 'invalid-params' }, { category: 'waiting-confirmation' }, { category: 'waiting-confirmation' }]);
   expect(calls(created, 'automation.preview')).toMatchObject([{ category: 'needs-input', code: 'missing-end-at' }, { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } }]);
@@ -109,10 +123,12 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
 
   await runtime.plan({ mode: 'manage', now, operationId }); await send();
   const managed = await finish();
+  expectResumeArgv(kind, managed.argv, created.session);
   expect(runs[1]!.resumeHandle).toBe(created.session);
   expect(calls(managed, 'automation.operation.get')).toMatchObject([{ category: 'applied', data: { executedCount: 0 } }, { category: 'applied' }]);
   expect(calls(managed, 'automation.pause')[0].category).toBe('applied');
   expect(calls(managed, 'automation.resume')[0].category).toBe('applied');
+  expect(calls(managed, 'automation.preview')).toMatchObject([{ category: 'needs-input', code: 'missing-end-at' }, { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } }]);
   expect(calls(managed, 'automation.replace')[0].category).toBe('waiting-confirmation');
   const replacementId = calls(managed, 'automation.replace')[0].data.operationId;
   await confirm('auto.confirm');
@@ -124,6 +140,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
     const fireKey = `${store.list()[0]!.id}@${fireAt}`;
     await bridge.wakeAutomation(fireKey);
     const automatic = await finish();
+    expectResumeArgv(kind, automatic.argv);
     expect(runs.at(-1)!.promptVariant).toBe('automation');
     // Scheduled fires intentionally start fresh; they must never reuse an IM or prior-fire handle.
     expect(runs.at(-1)!.resumeHandle).toBeUndefined();
@@ -137,6 +154,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
   expect(new Set(runs.map(run => run.toolEnv!.LARK_BRIDGE_TOOL_TOKEN)).size).toBe(4);
   await runtime.plan({ mode: 'delete', now, operationId: replacementId }); await send('Inspect results and delete', automaticReply);
   const deleted = await finish();
+  expectResumeArgv(kind, deleted.argv, automaticSession);
   expect(runs.at(-1)!.resumeHandle).toBe(automaticSession);
   expect(calls(deleted, 'automation.operation.get')[0]).toMatchObject({ category: 'applied', data: { executedCount: 2, deliveredCount: 2, lastExecution: 'ok', lastDelivery: 'sent' } });
   expect(calls(deleted, 'automation.delete')[0]).toMatchObject({ category: 'waiting-confirmation' });
@@ -148,6 +166,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
   await bridge.disconnect(); bridge = await start();
   await runtime.plan({ mode: 'read', now, reference }); await send('Read the current plugin version');
   const updated = await finish(7);
+  expectResumeArgv(kind, updated.argv, managed.session);
   expect(runs.at(-1)!.resumeHandle).toBe(managed.session);
   expect(updated.instructions).toContain('"version":"2.0.0"');
   expect(calls(updated, 'plugins.read').at(-1)).toMatchObject({ category: 'unavailable', code: 'stale-plugin-reference' });

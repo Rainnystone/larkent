@@ -66,20 +66,25 @@ call('automation.schema');
 const listed = call('automation.list');
 call('plugins.list', { profile: 'forged', chatId: 'oc_other', actorId: 'ou_other', runType: 'im' });
 if (plan.reference) call('plugins.read', { skill: 'compute', reference: plan.reference });
-if (plan.mode === 'create') {
-  call('automation.create', null);
+const correctedPreview = () => {
   const schedule = { kind: 'daily', timezone: 'Asia/Shanghai', times: [{ hour: 9, minute: 0 }], startAt: plan.now };
   const invalid = call('automation.preview', { taskType: 'agent', schedule });
   if (invalid.code !== 'missing-end-at') throw new Error('missing actionable correction feedback');
   // The next request is built from actual feedback, preserving 09:00 and adding only the missing boundary.
   schedule.endAt = plan.now + 3 * 86400000 - 8 * 3600000;
   call('automation.preview', { taskType: 'agent', schedule });
+  return schedule;
+};
+if (plan.mode === 'create') {
+  call('automation.create', null);
+  const schedule = correctedPreview();
   const task = { taskType: 'agent', name: 'Synthetic & quoted task', taskText: 'literal "\'\n$(synthetic) ; & | <tag> 中🙂', schedule };
   const created = call('automation.create', task);
   if (created.category !== 'waiting-confirmation') throw new Error('creation did not reach confirmation');
   call('automation.create', { ...task, operationId: created.data.operationId });
   call('automation.operation.get', { operationId: created.data.operationId });
 } else if (plan.mode === 'manage') {
+  correctedPreview();
   call('automation.operation.get', { operationId: plan.operationId });
   const task = listed.data.tasks[0];
   const paused = call('automation.pause', { id: task.id, revision: task.revision });
