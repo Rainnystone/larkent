@@ -85,7 +85,7 @@ appendFileSync(join(directory, 'calls.jsonl'), JSON.stringify({ args, env }) + '
 const configDir = process.env.LARKSUITE_CLI_CONFIG_DIR;
 const config = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
 const identity = args.includes('user') || args.includes('--as=user') || args.includes('user-default') || args.includes('--identity=user-default') ? 'user' : 'bot';
-if ((args[0] === 'config' && !['show', 'strict-mode', 'default-as'].includes(args[1])) || (args[0] === 'config' && args.length > 2) || (args[0] === 'auth' && ['login', 'logout'].includes(args[1]))) {
+if ((args[0] === 'config' && !['show', 'strict-mode', 'default-as', 'risk-control'].includes(args[1])) || (args[0] === 'config' && args.length > 2) || (args[0] === 'auth' && ['login', 'logout'].includes(args[1]))) {
   console.error('controlled configuration mutation attempted'); process.exit(7);
 }
 if (config.failure) { console.error(config.failure); process.exit(4); }

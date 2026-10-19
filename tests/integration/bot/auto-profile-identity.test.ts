@@ -49,6 +49,8 @@ it.each([
   ['config', 'default-as', 'user'], ['config', 'default-as', 'bot'],
   ['config', 'set', 'default-as', 'bot'], ['config', 'set', 'strict-mode', 'off'],
   ['config', 'bind', '--identity', 'user-default'], ['config', 'remove'], ['config', 'init'],
+  ['config', 'tenant-access-token', 'set'], ['config', 'tenant-access-token', 'remove'],
+  ['config', 'keychain-downgrade'], ['config', 'risk-control', 'off'], ['config', 'risk-control', 'default'],
 ])('interrupts unattended configuration change %j, pauses and audits without running it', async (...args) => {
   const h = await harness({ args, hold: true });
   await h.fire();
@@ -154,6 +156,7 @@ it.each([
 
 it.each([
   ['auth', 'status', '--json', '--verify'], ['config', 'show'], ['config', 'strict-mode'], ['config', 'default-as'],
+  ['config', 'risk-control'],
   ['im', '+chat-messages-list', '--as', 'bot'], ['docs', '+fetch', '--identity=user-default'],
 ])('allows status queries and existing identity selection: %j', async (...args) => {
   const h = await harness({ args });
@@ -170,11 +173,47 @@ it.each([
   { toolInput: { cmd: 'env SYNTHETIC=1 lark-cli config strict-mode --reset' } },
   { toolInput: { command: 'bash -c "lark-cli config default-as bot"' } },
   { toolInput: { rawInput: { command: ['lark-cli', 'auth', 'logout'] } } },
+  { toolInput: { command: 'lark-cli auth status && lark-cli auth login --no-wait' } },
+  { toolInput: { command: 'lark-cli config show;lark-cli config strict-mode off' } },
+  { toolInput: { command: 'lark-cli config show || lark-cli config default-as bot' } },
+  { toolInput: { command: 'lark-cli --profile synthetic config --as bot strict-mode off' } },
+  { toolInput: { command: 'bash -c "lark-cli auth status && lark-cli auth logout"' } },
 ])('observes configuration changes in supported tool-event shapes: %j', async shape => {
   const h = await harness({ args: ['auth', 'logout'], hold: true, ...shape });
   await h.fire();
   await h.settled();
   expect(h.store.get(1)).toMatchObject({ paused: true, lastStatus: 'failed' });
+  expect(await h.calls()).toEqual([]);
+  await h.configUnchanged();
+});
+
+it('interrupts a later authentication mutation after a read in the same shell command', async () => {
+  const h = await harness({ args: ['auth', 'logout'], hold: true, toolInput: { command: 'lark-cli auth status && lark-cli auth logout' } });
+  await h.fire();
+  await vi.waitFor(() => expect(h.store.get(1)?.paused).toBe(true), { timeout: 10000 });
+  await h.settled();
+  expect(await h.calls()).toEqual([]);
+  await h.configUnchanged();
+});
+
+it.each([
+  ['im', '+chat-create', '--name', 'config', '--description', 'set'],
+  ['im', '+chat-create', '--name', 'lark-cli', '--description', 'auth', 'login'],
+  ['im', '+chat-create', '--description', 'lark-cli auth logout'],
+])('does not treat business option values as authentication/configuration subcommands: %j', async (...args) => {
+  const h = await harness({ args });
+  await h.fire();
+  await h.settled();
+  expect(h.store.get(1)).toMatchObject({ paused: false, lastStatus: 'ok' });
+  expect(h.bodies()).toContain('identity-result:{"identity":"bot"}');
+  expect(await h.store.readLog()).toEqual([]);
+});
+
+it('interrupts native credential-store mutation before the controlled CLI can write', async () => {
+  const h = await harness({ args: ['config', 'tenant-access-token', 'set'], hold: true });
+  await h.fire();
+  await vi.waitFor(() => expect(h.store.get(1)?.paused).toBe(true), { timeout: 10000 });
+  await h.settled();
   expect(await h.calls()).toEqual([]);
   await h.configUnchanged();
 });

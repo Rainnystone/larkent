@@ -49,6 +49,7 @@ export function policyGuardReasonLabel(reason: PolicyGuardReason): string {
 const LARK_CLI_NAME = /^(?:.*[/\\])?lark-cli(?:\.(?:cmd|exe))?$/i;
 const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const WRAPPERS = new Set(['env', 'npx', 'command', 'sudo', 'nice', 'time']);
+const IDENTITY_FLAG_VALUES = new Set(['--profile', '--as', '--identity']);
 
 export function inspectAutomationToolUse(event: {
   name: string;
@@ -60,41 +61,58 @@ export function inspectAutomationToolUse(event: {
 
 function inspectToolName(name: string): PolicyGuardHit | undefined {
   const normalized = name.toLowerCase().replace(/_/g, '.');
-  return inspectLarkArgs([normalized])
-    ?? inspectLarkArgs(normalized.split(/[^a-z0-9+-]+/i).filter(Boolean));
+  const words = normalized.split(/[^a-z0-9+-]+/i).filter(Boolean);
+  if (words[0] === 'lark') words.shift();
+  if (words[0] === 'cli') words.shift();
+  return inspectLarkArgs(words);
 }
 
 function inspectArgv(raw: readonly string[]): PolicyGuardHit | undefined {
-  const argv = stripWrappers(raw);
-  if (argv.length === 0) return undefined;
-  const larkIndex = argv.findIndex((token) => LARK_CLI_NAME.test(token));
-  if (larkIndex >= 0) return inspectLarkArgs(argv.slice(larkIndex + 1));
-  for (const token of argv) {
-    const nested = tokenize(token);
-    if (nested.length <= 1) continue;
-    const hit = inspectArgv(nested);
-    if (hit) return hit;
+  const commands: string[][] = [[]];
+  for (const token of raw) {
+    if (/^(?:&&|\|\||[;|&])$/.test(token)) commands.push([]);
+    else commands[commands.length - 1]!.push(token);
+  }
+  for (const command of commands) {
+    const argv = stripWrappers(command);
+    const larkIndex = argv.findIndex(token => LARK_CLI_NAME.test(token));
+    if (larkIndex >= 0) {
+      const hit = inspectLarkArgs(argv.slice(larkIndex + 1));
+      if (hit) return hit;
+      // A known CLI's quoted arguments are data, not nested shell programs.
+      continue;
+    }
+    for (const token of argv) {
+      const nested = tokenize(token);
+      if (nested.length <= 1) continue;
+      const hit = inspectArgv(nested);
+      if (hit) return hit;
+    }
   }
   return undefined;
 }
 
 function inspectLarkArgs(args: readonly string[]): PolicyGuardHit | undefined {
-  const positional = args.filter((token) => !token.startsWith('-')).map((token) => token.toLowerCase());
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index++) {
+    const token = args[index]!;
+    if (IDENTITY_FLAG_VALUES.has(token)) { index++; continue; }
+    if (!token.startsWith('-')) positional.push(token.toLowerCase());
+  }
   if (mutatesIdentityConfiguration(args, positional)) return { reason: 'auth-config' };
   return undefined;
 }
 
 function mutatesIdentityConfiguration(args: readonly string[], positional: readonly string[]): boolean {
-  const auth = positional.indexOf('auth');
-  if (auth >= 0 && ['login', 'logout'].includes(positional[auth + 1] ?? '')) return true;
-  const config = positional.indexOf('config');
-  if (config < 0) return false;
-  const operation = positional[config + 1];
-  if (operation === 'strict-mode' || operation === 'default-as') {
+  if (positional[0] === 'auth') return ['login', 'logout'].includes(positional[1] ?? '');
+  if (positional[0] !== 'config') return false;
+  const operation = positional[1];
+  if (operation === 'strict-mode' || operation === 'default-as' || operation === 'risk-control') {
     // With no value these commands only display the current policy.
-    return positional[config + 2] !== undefined || args.some(arg => /^--reset(?:=true)?$/i.test(arg));
+    return positional[2] !== undefined || args.some(arg => /^--reset(?:=true)?$/i.test(arg));
   }
-  return operation !== undefined && ['set', 'bind', 'unbind', 'init', 'remove'].includes(operation);
+  if (operation === 'tenant-access-token') return ['set', 'remove'].includes(positional[2] ?? '');
+  return operation !== undefined && ['set', 'bind', 'unbind', 'init', 'remove', 'keychain-downgrade'].includes(operation);
 }
 
 function stripWrappers(argv: readonly string[]): string[] {
@@ -122,7 +140,7 @@ function commandArgv(input: unknown): string[] | undefined {
 
 function tokenize(command: string): string[] {
   const tokens: string[] = [];
-  const token = /(?:'([^']*)'|"([^"]*)"|(\S+))/g;
+  const token = /(?:'([^']*)'|"([^"]*)"|(&&|\|\||[;|&]|[^\s;&|]+))/g;
   for (const match of command.matchAll(token)) {
     tokens.push(match[1] ?? match[2] ?? match[3] ?? '');
   }
