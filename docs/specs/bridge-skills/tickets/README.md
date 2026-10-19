@@ -24,7 +24,7 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P06](P06-external-plugins.md) | 外部兼容插件、脚本、依赖与版本生命周期 | P01 |
 | [P07](P07-six-cli-contract.md) | 六种 CLI 的完整共同调用契约 | P04、P05、P06 |
 | [P08](P08-cutover-and-upgrade.md) | 唯一入口切换、旧协议退出与存储升级 | P07 |
-| [P09](P09-real-feishu-acceptance.md) | 真实飞书 E2E 验收（无 UAT）：Grok Build、Antigravity、Cursor CLI 待验收，其余 CLI 标记未验证 | P08 |
+| [P09](P09-real-feishu-acceptance.md) | 真实飞书 E2E 验收（无 UAT）：Grok Build、Antigravity、Cursor CLI、Kimi 待验收，其余 CLI 标记未验证 | P08 |
 
 P03 可通过现有已存 agent 任务验收，不依赖新创建入口。P05 能管理现有任务，不依赖 P04。P06 以内容读取和脚本使用验收，不依赖 automation 写操作。P07 需要完整能力作为共同测试对象，P08 等完整替代路径就绪后才移除旧协议。
 
