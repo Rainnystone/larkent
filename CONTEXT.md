@@ -79,6 +79,13 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **coalesce**: a second recovery signal while a scan is in-flight returns the same promise and logs `backfill.coalesced`.
 - **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`). An agent-task fire's result post is the same kind of authoritative post for that fire.
 
+## Bridge plugins
+
+- **bridge plugin**: a host-prepared package of skills, resources, scripts and existing-command requirements, consumed through the shared catalog. It is separate from the native plugins managed by each CLI.
+- **plugin catalog snapshot**: the selected package versions and declared contents loaded at profile startup. Active runs use that deployment snapshot; a new version directory becomes current after restart, including for resumed sessions. In-place changes make the affected package unavailable.
+- **plugin content reference** (`source.reference`): an opaque identifier for one package location, manifest and declared content snapshot. Retain it while following resource links; another deployment returns `stale-plugin-reference`. It is neither a run credential nor the session's **policy fingerprint**.
+- **declared content scope**: the literal package-relative skill/resource files and directories selected by the manifest. Lookup checks path containment and symlink real targets against these scopes. It does not isolate the runtime's shell or change its permissions.
+
 ## Automations
 
 - **automation**: a persistent task bound to one group chat and one bot profile. `taskType` is `reminder` or `agent` (agent 任务). The field is not `kind`: **agent kind** already means the CLI adapter (`AgentKind`).

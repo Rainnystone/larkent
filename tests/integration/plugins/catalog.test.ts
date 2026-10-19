@@ -26,10 +26,10 @@ it('loads a Matt-like explicit list of nested skill directories through the cata
     skills: ['./skills/engineering/tdd'],
   }));
   const catalog = await PluginCatalog.load([p.root]);
-  expect(catalog.inspect('engineering-bundle')?.skills).toEqual([
+  expect((await catalog.inspect('engineering-bundle'))?.skills).toEqual([
     expect.objectContaining({ id: 'engineering-bundle:tdd', name: 'tdd', resource: 'skills/engineering/tdd/SKILL.md' }),
   ]);
-  expect(catalog.read('tdd')?.content).toBe('Use one observed RED before GREEN.');
+  expect(await catalog.resolveRead('tdd')).toMatchObject({ code: 'content', data: { content: 'Use one observed RED before GREEN.' } });
 });
 
 it('reads and locates declared resources with one version reference, and rejects stale references after a new-directory deployment', async () => {
@@ -66,7 +66,7 @@ it('diagnoses missing commands and unsupported required content while retaining 
     } },
   }));
   const catalog = await PluginCatalog.load([p.root]);
-  expect(catalog.inspect('command-bundle')).toMatchObject({ availability: 'partial', skills: [
+  expect((await catalog.inspect('command-bundle'))).toMatchObject({ availability: 'partial', skills: [
     { name: 'dependent', available: false, diagnostics: [{ code: 'missing-command', detail: 'synthetic-command-that-does-not-exist' }] },
     { name: 'hooked', available: false, diagnostics: [{ code: 'unsupported-required-content', detail: 'hooks' }] },
     { name: 'sample', available: true },
@@ -87,7 +87,7 @@ it('returns every named plugin/skill alias candidate without scan-order preceden
     }));
   }
   const catalog = await PluginCatalog.load([second.root, first.root]);
-  expect(catalog.resolveInspect('engineering')).toMatchObject({ code: 'plugin', data: { id: 'first' } });
+  expect(await catalog.resolveInspect('engineering')).toMatchObject({ code: 'plugin', data: { id: 'first' } });
   expect(await catalog.resolveRead('first:test-first')).toMatchObject({ code: 'content', data: { source: { plugin: 'first' } } });
   expect(await catalog.resolveRead('test-first')).toMatchObject({ code: 'skill-ambiguous', data: { candidates: [
     { id: 'first:sample' }, { id: 'second:sample' },
@@ -126,7 +126,7 @@ it.each([
   const path = join(p.root, '.codex-plugin/plugin.json');
   if (manifest === undefined) await rm(path); else await writeFile(path, manifest);
   const catalog = await PluginCatalog.load([p.root, good.root]);
-  expect(catalog.list().map(p => p.id)).toEqual(['good']);
+  expect((await catalog.list()).map(p => p.id)).toEqual(['good']);
   expect(catalog.diagnostics).toContainEqual(expect.objectContaining({ code, root: p.root }));
 });
 
@@ -148,7 +148,7 @@ it('loads explicitly declared package resources and identifies a fixed source re
     larkent: { revision: '1234567890abcdef1234567890abcdef12345678', resources: ['./references'] },
   }));
   const catalog = await PluginCatalog.load([p.root]);
-  expect(catalog.list()).toContainEqual(expect.objectContaining({ id: 'pinned', version: '1234567890abcdef1234567890abcdef12345678' }));
+  expect(await catalog.list()).toContainEqual(expect.objectContaining({ id: 'pinned', version: '1234567890abcdef1234567890abcdef12345678' }));
   expect(await catalog.resolveRead('pinned:sample', { resource: 'references/shared.md' })).toMatchObject({ code: 'content', data: { content: 'Pinned shared reference' } });
 });
 
@@ -164,7 +164,7 @@ it('diagnoses duplicate skill identifiers and keeps an independent capability re
   }));
   const catalog = await PluginCatalog.load([p.root]);
   expect(catalog.diagnostics).toContainEqual(expect.objectContaining({ code: 'skill-conflict', plugin: 'duplicates', skill: 'shared' }));
-  expect(catalog.inspect('duplicates')?.availability).toBe('partial');
+  expect((await catalog.inspect('duplicates'))?.availability).toBe('partial');
   expect(await catalog.resolveRead('duplicates:shared')).toMatchObject({ code: 'skill-ambiguous', data: { candidates: [
     { resource: 'skills/a/shared/SKILL.md' }, { resource: 'skills/b/shared/SKILL.md' },
   ] } });
@@ -178,16 +178,72 @@ it('rejects newly added declared files rather than mixing an old script with new
   expect(await catalog.resolveRead('immutable:sample')).toMatchObject({ code: 'package-changed' });
 });
 
+it('does not expand the declared skills root through a directory symlink', async () => {
+  const p = await packageFixture('symlink-root');
+  await mkdir(join(p.root, 'private/scripts'), { recursive: true });
+  await writeFile(join(p.root, 'private/SKILL.md'), 'Undeclared private skill');
+  await writeFile(join(p.root, 'private/scripts/value.mjs'), 'console.log(99);');
+  await symlink(join(p.root, 'private'), join(p.root, 'skills/exposed'), process.platform === 'win32' ? 'junction' : 'dir');
+  const catalog = await PluginCatalog.load([p.root]);
+  expect(catalog.diagnostics).toContainEqual(expect.objectContaining({ code: 'invalid-path' }));
+  expect(await catalog.resolveRead('symlink-root:exposed')).not.toMatchObject({ code: 'content' });
+});
+
+it('treats a new sibling skill below the declared skills root as a package change', async () => {
+  const p = await packageFixture('sibling');
+  const catalog = await PluginCatalog.load([p.root]);
+  await mkdir(join(p.root, 'skills/late'));
+  await writeFile(join(p.root, 'skills/late/SKILL.md'), 'New skill');
+  await writeFile(join(p.root, 'skills/late/value.mjs'), 'export default 99;');
+  expect(await catalog.isAvailable('sibling')).toBe(false);
+  expect(await catalog.resolveRead('sibling:sample')).toMatchObject({ code: 'package-changed' });
+});
+
+it('reports the same changed-package availability in discovery, inspection and reads', async () => {
+  const p = await packageFixture('availability');
+  const catalog = await PluginCatalog.load([p.root]);
+  await writeFile(p.skill, 'In-place changed content');
+  expect(await catalog.list()).toContainEqual(expect.objectContaining({ id: 'availability', availability: 'unavailable' }));
+  expect(await catalog.resolveInspect('availability')).toMatchObject({ code: 'plugin', data: {
+    availability: 'unavailable', diagnostics: [{ code: 'package-changed' }], skills: [
+      { available: false, diagnostics: [{ code: 'package-changed' }] },
+    ],
+  } });
+  expect(await catalog.resolveRead('availability:sample')).toMatchObject({ code: 'package-changed' });
+});
+
+it('does not silently discard dependency metadata for an undeclared skill', async () => {
+  const p = await packageFixture('metadata');
+  await writeFile(join(p.root, '.codex-plugin/plugin.json'), JSON.stringify({
+    name: 'metadata', version: '1.0.0', description: 'Metadata fixture', skills: './skills',
+    larkent: { skills: { typo: { requires: { commands: ['synthetic-missing-command'] } } } },
+  }));
+  const catalog = await PluginCatalog.load([p.root]);
+  expect(await catalog.list()).toEqual([]);
+  expect(catalog.diagnostics).toContainEqual(expect.objectContaining({ code: 'invalid-metadata', root: p.root }));
+});
+
+it('advertises only partial package readiness when unsupported native content is omitted, retaining an independent skill', async () => {
+  const p = await packageFixture('native-content');
+  await writeFile(join(p.root, '.codex-plugin/plugin.json'), JSON.stringify({
+    name: 'native-content', version: '1.0.0', description: 'Native content fixture', skills: './skills', hooks: './hooks/hooks.json',
+  }));
+  const catalog = await PluginCatalog.load([p.root]);
+  expect(await catalog.list()).toContainEqual(expect.objectContaining({ id: 'native-content', availability: 'partial' }));
+  expect(await catalog.resolveInspect('native-content')).toMatchObject({ data: { availability: 'partial', skills: [{ available: true }] } });
+  expect(await catalog.resolveRead('native-content:sample')).toMatchObject({ code: 'content' });
+});
+
 it('discovers summaries, resolves qualified and unique skill names, and snapshots a consistent package version', async () => {
   const p = await packageFixture();
   const catalog = await PluginCatalog.load([p.root]);
-  expect(catalog.list()).toEqual([{ id: 'synthetic', version: '1.0.0', description: 'A short synthetic summary' }]);
-  expect(JSON.stringify(catalog.list())).not.toContain('sample');
-  expect(catalog.inspect('synthetic')?.skills).toEqual([expect.objectContaining({ id: 'synthetic:sample', name: 'sample', resource: 'skills/sample/SKILL.md', available: true })]);
-  expect(catalog.read('sample')).toMatchObject({ content: 'Synthetic full skill body', source: { plugin: 'synthetic', version: '1.0.0' } });
+  expect(await catalog.list()).toEqual([{ id: 'synthetic', version: '1.0.0', description: 'A short synthetic summary' }]);
+  expect(JSON.stringify(await catalog.list())).not.toContain('sample');
+  expect((await catalog.inspect('synthetic'))?.skills).toEqual([expect.objectContaining({ id: 'synthetic:sample', name: 'sample', resource: 'skills/sample/SKILL.md', available: true })]);
+  expect(await catalog.resolveRead('sample')).toMatchObject({ data: { content: 'Synthetic full skill body', source: { plugin: 'synthetic', version: '1.0.0' } } });
   await writeFile(p.skill, 'Updated skill body');
-  expect(catalog.read('synthetic:sample')?.content).toBe('Synthetic full skill body');
-  expect((await PluginCatalog.load([p.root])).read('sample')?.content).toBe('Updated skill body');
+  expect(await catalog.resolveRead('synthetic:sample')).toMatchObject({ code: 'package-changed' });
+  expect(await (await PluginCatalog.load([p.root])).resolveRead('sample')).toMatchObject({ data: { content: 'Updated skill body' } });
 });
 
 it('isolates broken packages and rejects duplicate IDs without scan-order overrides', async () => {
@@ -195,9 +251,9 @@ it('isolates broken packages and rejects duplicate IDs without scan-order overri
   const first = await packageFixture('duplicate');
   const second = await packageFixture('duplicate', '2.0.0');
   const catalog = await PluginCatalog.load([first.root, '/synthetic-does-not-exist', good.root, second.root]);
-  expect(catalog.list().map(p => p.id)).toEqual(['good']);
+  expect((await catalog.list()).map(p => p.id)).toEqual(['good']);
   expect(catalog.diagnostics).toEqual([{ code: 'invalid-package', root: '/synthetic-does-not-exist' }, { code: 'plugin-conflict', plugin: 'duplicate' }]);
-  expect(catalog.read('duplicate:sample')).toBeUndefined();
+  expect(await catalog.resolveRead('duplicate:sample')).toMatchObject({ code: 'skill-ambiguous' });
 });
 
 it('rejects a symlink escape and path traversal without reading the target into the catalog', async () => {
@@ -206,7 +262,7 @@ it('rejects a symlink escape and path traversal without reading the target into 
   await rm(escaped.skill);
   await symlink(outside.skill, escaped.skill, 'file');
   const catalog = await PluginCatalog.load([escaped.root]);
-  expect(catalog.list()).toEqual([]);
+  expect(await catalog.list()).toEqual([]);
   expect(catalog.diagnostics).toEqual([{ code: 'invalid-path', root: escaped.root }]);
-  expect(catalog.read('../outside')).toBeUndefined();
+  expect(await catalog.resolveRead('../outside')).toMatchObject({ code: 'skill-not-found-or-ambiguous' });
 });

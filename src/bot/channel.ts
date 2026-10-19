@@ -1860,7 +1860,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     '按需 plugins.list、plugins.inspect（params.plugin）、plugins.read（params.skill）；唯一的插件/skill 名或别名可直达，歧义按候选选择。' +
     '资源读取使用 plugins.read 的 params.resource（包内路径）和 params.reference（读取结果的版本引用）；脚本按返回路径用 runtime 现有工具执行，遵守当前访问模式。旧引用失效需重新发现。' +
     '根据结果在本轮补字段或修正；最终回复由你负责。连接由环境提供，不得展示或保存运行凭据。创建提醒须以实际工具回执为准，人工确认后生效；其他变更按 schema 可用性处理。',
-    `<bridge_plugins>${JSON.stringify({ plugins: catalog.list(), diagnostics: catalog.diagnostics })}</bridge_plugins>`,
+    `<bridge_plugins>${JSON.stringify({ plugins: await catalog.list(), diagnostics: catalog.diagnostics })}</bridge_plugins>`,
     `<bridge_run>${JSON.stringify({ profile: controls.profile, runType: toolContext.runType, now: (now ?? Date.now)(), timezone: toolContext.timezone, automationUnavailable: toolContext.availability() ?? (!automations ? 'automation-store-unavailable' : null) })}</bridge_run>`,
   );
   if (modelSwitched) {

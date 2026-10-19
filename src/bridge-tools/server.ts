@@ -76,14 +76,16 @@ async function dispatch(value: unknown, context: ToolRunContext): Promise<ToolRe
   switch (request.operation) {
     case 'plugins.list':
       if (Object.keys(params).length) return toolResult('validation-failed', 'unknown-field');
-      return toolResult('ok', 'plugins', { plugins: context.catalog.list(), diagnostics: context.catalog.diagnostics });
+      return toolResult('ok', 'plugins', { plugins: await context.catalog.list(), diagnostics: context.catalog.diagnostics });
     case 'plugins.inspect': {
       if (Object.keys(params).some(key => key !== 'plugin')) return toolResult('validation-failed', 'unknown-field');
       if (typeof params.plugin !== 'string' || !params.plugin) return toolResult('validation-failed', 'invalid-params');
-      const result = context.catalog.resolveInspect(params.plugin);
+      const result = await context.catalog.resolveInspect(params.plugin);
       const plugin = record(result.data);
+      const automationContext = plugin?.id === 'automation' && !await context.catalog.isAvailable('automation')
+        ? { ...context, availability: () => 'automation-plugin-unavailable' } : context;
       return result.code === 'plugin' && plugin
-        ? toolResult('ok', 'plugin', { ...plugin, ...(plugin.id === 'automation' ? { capabilities: automationSchema(context).operations } : {}) })
+        ? toolResult('ok', 'plugin', { ...plugin, ...(plugin.id === 'automation' ? { capabilities: automationSchema(automationContext).operations } : {}) })
         : toolResult('unavailable', result.code, result.data);
     }
     case 'plugins.read': {
