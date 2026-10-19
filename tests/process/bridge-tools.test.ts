@@ -1,9 +1,10 @@
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { openToolRun, type ToolRunContext } from '../../src/bridge-tools/server';
 import { AutomationsStore } from '../../src/automations/store';
 import { builtinPluginCatalog, PluginCatalog } from '../../src/plugins/catalog';
-import { buildToolProcess } from '../helpers/bridge-tool-process';
+import { buildToolProcess, runToolProcess } from '../helpers/bridge-tool-process';
 import { createTmpProfile } from '../helpers/tmp-profile';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z');
@@ -34,6 +35,33 @@ it('rejects context supplied by the caller even on schema discovery', async () =
   expect(await h.call('automation.schema', { profile: 'other', chatId: 'oc_other', actorId: 'ou_other', runType: 'im' }))
     .toMatchObject({ category: 'validation-failed', code: 'unknown-field' });
 });
+
+it('provides an absolute common client launcher that works from an unrelated workspace', async () => {
+  const h = await harness();
+  const launcher = h.run.env.LARK_BRIDGE_TOOL_CLIENT;
+  expect(launcher, 'a source checkout must not require a globally installed bridge command').toEqual(expect.any(String));
+  const result = await runToolProcess(launcher!, JSON.stringify({ version: 1, operation: 'plugins.read', params: { skill: 'automation:automations' } }), h.run.env, [], client.directory);
+  expect(result.code).toBe(0); expect(result.stderr).toBe('');
+  expect(JSON.parse(result.stdout)).toMatchObject({ category: 'ok', data: { source: { plugin: 'automation' } } });
+});
+
+it('resolves the packaged host launcher and built-in content from the installed layout without a checkout cwd', async () => {
+  const host = await client.startHost(); cleanup.push(host.close);
+  expect(host.env.LARK_BRIDGE_TOOL_CLIENT).toBe(join(client.directory, 'bin/lark-channel-bridge.mjs'));
+  const result = await runToolProcess(host.env.LARK_BRIDGE_TOOL_CLIENT!, JSON.stringify({ version: 1, operation: 'plugins.read', params: { skill: 'automation:automations' } }), host.env, [], tmpdir());
+  expect(result.code).toBe(0); expect(result.stderr).toBe('');
+  expect(JSON.parse(result.stdout)).toMatchObject({ category: 'ok', data: { content: expect.stringContaining('automation.preview'), source: { plugin: 'automation', version: '1.0.0' } } });
+});
+
+it('returns a valid full task query when stored bodies exceed the input request-size limit', async () => {
+  const h = await harness();
+  const text = 'synthetic task content '.repeat(150);
+  for (let i = 0; i < 100; i++) await h.store.create({ taskType: 'reminder', schedule: { kind: 'one-shot', fireAt: NOW + 3600000 }, timezone: 'UTC',
+    startAt: NOW, nextFireAt: NOW + 3600000, createdBy: 'ou_synthetic', name: `Synthetic ${i}`, taskText: text, chatId: 'oc_synthetic' });
+  const result = await h.call('automation.list');
+  expect(result.category).toBe('ok'); expect(result.data.tasks).toHaveLength(100);
+  expect(result.data.tasks[99].taskText).toBe(text);
+}, 12000);
 
 it('advertises the same accepted schedule fields that preview validation enforces', async () => {
   const h = await harness();

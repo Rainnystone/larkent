@@ -1,6 +1,6 @@
 import { readFile, readdir, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { bridgePackageRoot } from '../platform/package-root';
 
 interface SkillContent { id: string; name: string; content: string; resource: string }
 interface Plugin { id: string; version: string; description: string; skills: SkillContent[] }
@@ -65,17 +65,6 @@ async function inside(base: string, path: string): Promise<string> {
 
 let builtin: Promise<PluginCatalog> | undefined;
 export function builtinPluginCatalog(): Promise<PluginCatalog> {
-  builtin ??= (async () => {
-    // Both source execution and the single-file published bundles resolve from their own package.
-    let directory = dirname(fileURLToPath(import.meta.url));
-    for (let i = 0; i < 3; i++) {
-      try {
-        const pkg = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
-        if (pkg.name === 'lark-channel-bridge') return PluginCatalog.load([join(directory, 'plugins/automation')]);
-      } catch { /* keep looking up within the package */ }
-      directory = dirname(directory);
-    }
-    return PluginCatalog.load([]);
-  })();
+  builtin ??= bridgePackageRoot().then(root => PluginCatalog.load([join(root, 'plugins/automation')]));
   return builtin;
 }

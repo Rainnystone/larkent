@@ -11,7 +11,8 @@ export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv =
     }
     const response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(10_000) });
     const text = await response.text();
-    if (!response.ok || Buffer.byteLength(text) > TOOL_MAX_BYTES) return toolResult('execution-failed', 'invalid-tool-response');
+    // The request bound protects untrusted input; legitimate stored task lists can be larger.
+    if (!response.ok) return toolResult('execution-failed', 'invalid-tool-response');
     const result = record(JSON.parse(text));
     return result?.version === 1 && typeof result.category === 'string' && typeof result.code === 'string'
       ? result as unknown as ToolResult : toolResult('execution-failed', 'invalid-tool-response');

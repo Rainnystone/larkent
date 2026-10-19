@@ -14,6 +14,7 @@ export function buildLarkChannelEnv(context?: LarkChannelEnvContext, toolEnv?: N
     // Remove any inherited connection when this run has none.
     LARK_BRIDGE_TOOL_ENDPOINT: toolEnv?.LARK_BRIDGE_TOOL_ENDPOINT,
     LARK_BRIDGE_TOOL_TOKEN: toolEnv?.LARK_BRIDGE_TOOL_TOKEN,
+    LARK_BRIDGE_TOOL_CLIENT: toolEnv?.LARK_BRIDGE_TOOL_CLIENT,
   };
   const profile = nonEmpty(context?.profile);
   if (profile) env.LARK_CHANNEL_PROFILE = profile;

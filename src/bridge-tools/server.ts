@@ -1,8 +1,10 @@
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { join } from 'node:path';
 import { callAutomationTool, automationSchema, type AutomationToolContext } from '../automations/tools';
 import type { PluginCatalog } from '../plugins/catalog';
+import { bridgePackageRoot } from '../platform/package-root';
 import { record, TOOL_MAX_BYTES, TOOL_OPERATIONS, toolResult, type ToolResult } from './protocol';
 
 export interface ToolRunContext extends AutomationToolContext { catalog: PluginCatalog }
@@ -14,6 +16,7 @@ export interface ToolRun {
 
 /** One opaque credential authorizes one bound run. Never shares supervisor authority. */
 export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
+  const client = join(await bridgePackageRoot(), 'bin/lark-channel-bridge.mjs');
   const credential = randomBytes(32).toString('base64url');
   let active = true;
   let used = false;
@@ -49,7 +52,7 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
   server.unref();
   const port = (server.address() as AddressInfo).port;
   return {
-    env: { LARK_BRIDGE_TOOL_ENDPOINT: `http://127.0.0.1:${port}/tool`, LARK_BRIDGE_TOOL_TOKEN: credential },
+    env: { LARK_BRIDGE_TOOL_ENDPOINT: `http://127.0.0.1:${port}/tool`, LARK_BRIDGE_TOOL_TOKEN: credential, LARK_BRIDGE_TOOL_CLIENT: client },
     used: () => used,
     close() {
       active = false;

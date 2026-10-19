@@ -3,7 +3,7 @@ name: automations
 description: 查看自动化任务和预览结构化排期。
 ---
 
-使用共用客户端 `lark-channel-bridge tool`，一份 JSON 请求从 stdin 输入，一份 JSON 结果从 stdout 读取。不要把用户文本拼接为 shell 命令；用工具的 stdin 或安全的 JSON 文件。环境中的连接信息属于本轮，不能复制到回复、日志、任务或下轮运行。
+使用共用客户端 `lark-channel-bridge tool`，一份 JSON 请求从 stdin 输入，一份 JSON 结果从 stdout 读取。bridge 通过 `LARK_BRIDGE_TOOL_CLIENT` 提供客户端 JS 绝对路径，无需全局安装或依赖工作目录。POSIX shell 用 `node "$LARK_BRIDGE_TOOL_CLIENT" tool`；PowerShell 用 `node "$env:LARK_BRIDGE_TOOL_CLIENT" tool`。不要把用户文本拼接为 shell 命令；用工具的 stdin 或安全的 JSON 文件。环境中的连接信息属于本轮，不能复制到回复、日志、任务或下轮运行。
 
 先调用 `automation.schema` 取得当前可用操作、字段、枚举、限制及结果契约。`automation.list` 查询本群的真实任务。`automation.preview` 接收 `taskType` 和结构化 `schedule`，直接校验并返回预览，不创建任务、不发送确认卡。所有请求的 `version` 为 1，操作名放在 `operation`，参数放在 `params`。
 

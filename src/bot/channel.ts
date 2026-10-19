@@ -1848,7 +1848,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       : senderTypeFromRaw((lastMsg as { raw?: unknown }).raw) !== 'user' ? 'automation-requires-human' : undefined,
   };
   extraInstructions.push(
-    'Bridge plugins：用 lark-channel-bridge tool 从 stdin 发送版本化 JSON（version:1, operation, params），stdout 是本轮实际工具结果。' +
+    'Bridge plugins：共用入口为 lark-channel-bridge tool；客户端 JS 绝对路径在环境 LARK_BRIDGE_TOOL_CLIENT，用 node <该路径> tool 调用，按当前 shell 安全引用路径。' +
+    '从 stdin 发送版本化 JSON（version:1, operation, params），stdout 是本轮实际工具结果。' +
     '先 plugins.list，再 plugins.inspect（params.plugin），再 plugins.read（params.skill）；唯一的 skill 名可直读。' +
     '根据结果在本轮补字段或修正；最终回复由你负责。连接由环境提供，不得展示或保存运行凭据。创建及变更当前不可用。',
     `<bridge_plugins>${JSON.stringify({ plugins: catalog.list(), diagnostics: catalog.diagnostics })}</bridge_plugins>`,
