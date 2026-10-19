@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -232,6 +232,28 @@ it('advertises only partial package readiness when unsupported native content is
   expect(await catalog.list()).toContainEqual(expect.objectContaining({ id: 'native-content', availability: 'partial' }));
   expect(await catalog.resolveInspect('native-content')).toMatchObject({ data: { availability: 'partial', skills: [{ available: true }] } });
   expect(await catalog.resolveRead('native-content:sample')).toMatchObject({ code: 'content' });
+});
+
+it('does not bypass a plugin identifier conflict by naming a skill unique to only one conflicting package', async () => {
+  const first = await packageFixture('duplicate');
+  const second = await packageFixture('duplicate', '2.0.0');
+  await rename(join(first.root, 'skills/sample'), join(first.root, 'skills/first'));
+  await rename(join(second.root, 'skills/sample'), join(second.root, 'skills/second'));
+  const catalog = await PluginCatalog.load([first.root, second.root]);
+  expect(await catalog.list()).toEqual([]);
+  expect(await catalog.resolveRead('duplicate:first')).toMatchObject({ code: 'plugin-ambiguous', data: { candidates: [
+    { id: 'duplicate', version: '1.0.0' }, { id: 'duplicate', version: '2.0.0' },
+  ] } });
+  expect(await catalog.resolveRead('second')).toMatchObject({ code: 'plugin-ambiguous' });
+});
+
+it('reports a stale reference even when its old skill was removed in the new version', async () => {
+  const first = await packageFixture('renamed');
+  const previous = await (await PluginCatalog.load([first.root])).resolveRead('renamed:sample');
+  const next = await packageFixture('renamed', '2.0.0');
+  await rename(join(next.root, 'skills/sample'), join(next.root, 'skills/current'));
+  const restarted = await PluginCatalog.load([next.root]);
+  expect(await restarted.resolveRead('renamed:sample', { reference: (previous.data as any).source.reference })).toMatchObject({ code: 'stale-plugin-reference' });
 });
 
 it('discovers summaries, resolves qualified and unique skill names, and snapshots a consistent package version', async () => {

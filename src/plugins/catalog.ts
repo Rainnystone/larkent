@@ -142,8 +142,10 @@ export class PluginCatalog {
     ]);
     if (matches.length > 1) return { code: 'skill-ambiguous', data: { candidates: matches.map(({ plugin, skill }) => ({ id: skill?.id ?? plugin.id, version: plugin.version, reference: plugin.reference, ...(skill ? { resource: skill.resource } : {}) }))
       .sort((a, b) => a.id.localeCompare(b.id) || a.version.localeCompare(b.version)) } };
-    if (!matches.length) return { code: 'skill-not-found-or-ambiguous' };
+    if (!matches.length) return { code: options.reference !== undefined && !this.plugins.some(plugin => plugin.reference === options.reference)
+      ? 'stale-plugin-reference' : 'skill-not-found-or-ambiguous' };
     const { plugin, skill } = matches[0]!;
+    if (this.conflicted(plugin.id)) return this.resolveInspect(plugin.id);
     if (options.reference !== undefined && options.reference !== plugin.reference) return { code: 'stale-plugin-reference' };
     if (!skill) return this.resolveInspect(id);
     if (!skill.available) return { code: 'skill-unavailable', data: { diagnostics: skill.diagnostics } };
