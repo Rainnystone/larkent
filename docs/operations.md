@@ -100,6 +100,76 @@ P03 代码阶段（2026-10-19）的证据：
 
 `LARK_CHANNEL_CLAUDE_BIN`、`LARK_CHANNEL_CODEX_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_CURSOR_BIN`、`LARK_CHANNEL_ANTIGRAVITY_BIN` 用于创建 profile 时解析并保存程序路径。已有 profile 使用保存的 `agent.binaryPath`；更换程序前先停止 profile，再更新路径。数据根与 coding CLI 的登录目录是两回事。Antigravity 的程序名是 `agy`。
 
+## External bridge plugins
+
+Bridge plugins are host-prepared content, separate from each CLI's native plugins. The bridge provides discovery and content/resource lookup; scripts run with the runtime's existing tools and access mode. It does not download, clone, install dependencies, host MCP/hooks/daemons, change CLI trust, or offer agent-facing install/update/uninstall/start/stop operations.
+
+Create `<data-root>/plugins.json` beside the deployment's bridge configuration (`LARK_CHANNEL_HOME`, default `~/.lark-channel`). It is shared by all profiles using that root:
+
+```json
+{
+  "schemaVersion": 1,
+  "packages": [
+    "/srv/larkent-plugins/engineering-v1",
+    "/srv/larkent-plugins/command-tools-v1"
+  ]
+}
+```
+
+Each entry is an explicit absolute **package root**, not a parent directory to scan. Windows uses absolute Windows paths with JSON escaping. Prepare a local directory or a Git checkout at a fixed revision outside the product; only the selected directories are read. No configuration file means built-in automation only. Invalid installation configuration is reported as `invalid-installation-config`; the built-in package remains discoverable. Ordinary invalid packages are diagnosed separately without taking down chat or other packages.
+
+### Supported manifest subset
+
+Each package must have `.codex-plugin/plugin.json`. The tested compatibility subset is `name`, `version`, `description`, and `skills`; this does not promise compatibility with every Codex or native plugin feature. A Matt-like pure skill bundle can use an explicit array of nested skill directories. A command-dependent bundle declares its host requirements using the bridge-specific `larkent` metadata below. A raw `.claude-plugin` package needs a maintainer-prepared compatible manifest; native installation is independent. The reference shapes are the [Codex compatibility manifest](https://developers.openai.com/plugins/build/plugins) and [Matt's pinned skill directory list](https://github.com/mattpocock/skills/blob/49dd158d1076134a641b33efb035946536778336/.claude-plugin/plugin.json); automated fixtures contain synthetic content only.
+
+```json
+{
+  "name": "command-tools",
+  "version": "1.0.0",
+  "description": "Read synthetic command reports",
+  "skills": ["./skills/report", "./skills/guide"],
+  "larkent": {
+    "aliases": ["reports"],
+    "resources": ["./references", "./scripts"],
+    "skills": {
+      "report": {"aliases": ["summarize-report"], "requires": {"commands": ["node"]}}
+    }
+  }
+}
+```
+
+- Names and aliases are lowercase identifiers beginning with a letter, followed by letters, digits or hyphens. A skill's name is its directory basename; each directory contains `SKILL.md`. Skill frontmatter remains content, not business logic.
+- `skills` is either a directory whose immediate child directories are skills, or a nonempty array of exact skill directories (including nested layouts). Each selected skill directory also declares its contained references, scripts and other resources. `larkent.resources` explicitly declares additional package-relative files/directories. Undeclared package files cannot be read through the catalog.
+- Supply a nonempty, whitespace-free version identifier, or omit `version` and supply `larkent.revision` as a fixed 40-character lowercase Git SHA. The operator is responsible for preparing that exact checkout. Read results include the effective version and a content reference derived from the selected location, manifest and declared contents.
+- `larkent.requires` applies to all skills; `larkent.skills.<directory-name>.requires` applies only to that skill. `commands` lists executable names on the bridge host's PATH, never command lines. This verifies presence/executable access, not credentials, permissions, command versions or network readiness. Record those separately on the deployment host. The bridge never runs a dependency probe or installer on a package's behalf.
+- `requires.content` lists required content types. The supported types are `skill`, `resource`, `script` and `command`. Required unsupported types (for example `hooks` or `mcp`) make affected skills unavailable. Declared native `mcpServers`, `hooks`, `apps` and `agents` produce `unsupported-content` diagnostics and are not hosted; independent skills can remain available. A package with missing dependencies is partial/unavailable, not wholly ready merely because a skill file exists.
+
+### Discovery, resources and diagnostics
+
+Every IM run, including a resumed conversation, receives short current package summaries and the common contract. Skill bodies and the full skill index are read on demand. Use the existing run-bound client (`node <LARK_BRIDGE_TOOL_CLIENT> tool`) with structured JSON on stdin; shell-quote paths for the current runtime. Connection values stay in the child environment, never in prompts, task records or ordinary logs. `tool --schema` works without a run connection and describes the plugin request fields.
+
+```json
+{"version":1,"operation":"plugins.inspect","params":{"plugin":"command-tools"}}
+{"version":1,"operation":"plugins.read","params":{"skill":"command-tools:report"}}
+{"version":1,"operation":"plugins.read","params":{"skill":"command-tools:report","resource":"scripts/report.mjs","reference":"<reference returned by read>"}}
+```
+
+`plugins.list` returns summaries and load diagnostics. `plugins.inspect` returns the skill directory and each skill's availability/diagnostics. `plugins.read` accepts a qualified `plugin:skill` identifier or a unique name/alias. Naming a unique plugin directly returns its directory. Ambiguous plugin/skill names return `plugin-ambiguous` / `skill-ambiguous` with candidates; duplicate IDs are never overwritten in scan order. Use the canonical package/skill combination to choose a candidate. Canonical automation business bindings are independent of external discovery aliases.
+
+Content results include `content`, `source` (plugin, effective version, content reference, package-relative resource, checked absolute path and content type), and declared resource paths. Use the returned relative resource path for another read. Files under `scripts/` are identified as scripts; the bridge returns their location/content but does not execute them. The runtime's ordinary tool must execute a benign script and check its actual exit/output; a successful lookup is not execution success. Failure of that process remains a runtime tool failure.
+
+`missing-manifest`, `invalid-manifest`, `invalid-metadata`, `invalid-path`, `missing-skills`, `plugin-conflict`, `skill-conflict`, `missing-command`, `unsupported-content` and `unsupported-required-content` identify distinct problems. Installation diagnostics include the offending root, and capability diagnostics identify the missing command/type. Fix the selected package/configuration externally and restart. If built-in automation is unavailable, machine operations return `automation-plugin-unavailable` instead of pretending to execute them.
+
+Paths must stay within the package and its declared content scopes. Absolute paths, traversal and symlink escapes are rejected; symlink real targets are checked during loading and again before returning content/script locations. These are deterministic content-addressing checks, not a sandbox. A process with the host account's shell still has that account's permissions. The bridge neither raises CLI trust nor isolates arbitrary shell execution.
+
+### Version updates and resumed sessions
+
+Prepare a **new version directory**; retain the previous directory while old runs may use it. Change the selected absolute directory in `plugins.json`, drain active runs and restart the affected profiles/deployment through the usual operations workflow. A profile loads its configuration/catalog once at startup; editing configuration has no effect on its active catalog. New and resumed runs after restart receive the new summary/version and contract. There is no file watcher or in-place hot replacement.
+
+Retain `source.reference` when following a resource link. `stale-plugin-reference` means it belongs to another deployed snapshot: rediscover/read the current skill, then follow its current resources. `package-changed` means a loaded manifest/content path or bytes changed/disappeared in place; lookup fails explicitly instead of combining the cached body with a new script. Restore the old directory or deploy a new directory and restart. Never overwrite a live package directory. As with ordinary shell tools, lookup cannot prevent a host writer from changing a file after lookup; immutable version directories and draining are operator requirements.
+
+The automated catalog, real-client IM and subprocess checks cover synthetic pure skills and command/script bundles, shared profiles, restart/resume, dependencies, ambiguity and containment. Real model selection, the deployment's native CLI versions/access modes, paid model calls, and real Feishu bot/user permissions remain operator acceptance work; skipped opt-in smoke tests are not evidence of those checks.
+
 ## Self-heal
 
 Sleep, a process restart, or a short WebSocket blip can drop live messages. The bridge catches them up on its own: it pulls recent group history plus session-known DMs with bot identity, runs each survivor through the normal intake path once, and adds one lateness hint to the prompt. Groups still need an @mention. Ordinary human DMs do not. A first-contact DM with no prior session is out of scope (the user can resend). `maxMentionsPerChat` caps newest-first enqueue per chat for both. Personal-mode DM allowlisting stays on the live intake path. There is no `/config` toggle for backfill. No external poller or host routine.

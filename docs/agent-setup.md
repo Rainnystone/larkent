@@ -12,6 +12,12 @@
 
 **完成条件：**依赖与构建成功，目标 CLI 已登录且能执行；记录实际 CLI 版本、源码 branch/SHA 和代码目录。
 
+### 可选：主机级 bridge 插件
+
+维护者可在主机准备本地包或固定 Git 检出，在数据根的 `plugins.json` 列出包的绝对路径；同一部署的 profile 默认共用这份安装配置，无需逐个启用。完整 manifest 子集、依赖声明、读取方法和更新步骤见 [运维说明](operations.md#external-bridge-plugins)。这与 CLI 自己的原生插件分开，不扫描或继承其全局安装；不要为读取 bridge 插件提高 CLI 的访问模式。
+
+首次验收需分别记录 catalog 的实际可用范围、skill/reference 读取结果，以及 runtime 现有工具执行包内良性脚本的实际输出。仅发现文件不能证明命令依赖、平台授权或真实模型工具选择可用。新增插件不需要重新配置 profile 凭据；缺少命令或授权时交给维护者处理，不由聊天 agent 安装或登录。
+
 ## 2. 注册并启动目标 profile
 
 按 [快速开始](../README.zh.md#快速开始)（[English](../README.md#quick-start)）完成扫码或已有应用配置。自定义 profile 使用 `profile create <name> --agent <kind> --workspace <path>`；参数先查本地 `profile create --help`。明确记录本次实际使用的数据根和 profile 名，profile 名可能与 agent kind 不同。
