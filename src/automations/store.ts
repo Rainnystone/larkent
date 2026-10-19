@@ -78,6 +78,8 @@ export interface AutomationOperation {
   code?: string;
   taskId?: number;
   dispatchedCount: number;
+  /** false means the retained count is a lower bound for an existing task. */
+  dispatchedCountKnown?: boolean;
 }
 export type RegisterAutomationOperationInput = Pick<AutomationOperation, 'operationId' | 'profile' | 'chatId' | 'fingerprint'>;
 
@@ -788,23 +790,27 @@ export class AutomationsStore {
     return changed;
   }
 
-  private settleAppliedOperation(operationId: string, taskId: number, dispatchedCount: number): void {
+  private settleAppliedOperation(operationId: string, taskId: number, dispatchedCount: number, dispatchedCountKnown = true): void {
     const operation = this.operations.find(entry => entry.operationId === operationId);
     if (!operation || operation.state !== 'received') throw new Error('operation is not awaiting confirmation');
     operation.state = 'applied'; operation.taskId = taskId; operation.dispatchedCount = dispatchedCount;
+    if (!dispatchedCountKnown) operation.dispatchedCountKnown = false;
+    else delete operation.dispatchedCountKnown;
     this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
   }
 
   private applyMutationOperation(id: number, guard?: TaskMutationGuard): void {
     // Receipt execution facts describe the linked task's lifetime, including fires before this mutation.
-    const dispatchedCount = this.operations.reduce((count, entry) => entry.state === 'applied' && entry.taskId === id ? Math.max(count, entry.dispatchedCount) : count,
+    const linked = this.operations.filter(entry => entry.state === 'applied' && entry.taskId === id);
+    const dispatchedCountKnown = linked.some(entry => entry.dispatchedCountKnown !== false);
+    const dispatchedCount = linked.reduce((count, entry) => Math.max(count, entry.dispatchedCount),
       this.items.find(item => item.id === id)?.fireHistory.length ?? 0);
     if (guard?.operation) {
       const operation = guard.operation;
       if (this.operations.some(entry => entry.operationId === operation.operationId || entry.aliases?.includes(operation.operationId))) throw new Error('operation already exists');
-      this.operations.push({ ...operation, draftId: `operation:${operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount });
+      this.operations.push({ ...operation, draftId: `operation:${operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount, ...(dispatchedCountKnown ? {} : { dispatchedCountKnown: false }) });
     }
-    if (guard?.operationId) this.settleAppliedOperation(guard.operationId, id, dispatchedCount);
+    if (guard?.operationId) this.settleAppliedOperation(guard.operationId, id, dispatchedCount, dispatchedCountKnown);
   }
 
   async recordOperationFailure(operation: RegisterAutomationOperationInput, code: string): Promise<void> {
@@ -1131,6 +1137,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     || typeof raw.chatId !== 'string' || !raw.chatId || typeof raw.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(raw.fingerprint)
     || typeof raw.draftId !== 'string' || !raw.draftId || !isFiniteNumber(raw.createdAt)
     || !Number.isSafeInteger(raw.dispatchedCount) || (raw.dispatchedCount as number) < 0
+    || (raw.dispatchedCountKnown !== undefined && typeof raw.dispatchedCountKnown !== 'boolean')
     || typeof raw.state !== 'string' || !['received', 'applied', 'not-applied'].includes(raw.state)
     || (raw.state === 'applied' && !isPositiveInt(raw.taskId))
     || (raw.taskId !== undefined && !isPositiveInt(raw.taskId))
@@ -1144,6 +1151,7 @@ function parseOperation(raw: unknown): AutomationOperation {
   return {
     operationId: raw.operationId, profile: raw.profile, chatId: raw.chatId, fingerprint: raw.fingerprint, draftId: raw.draftId,
     createdAt: raw.createdAt, state: raw.state as AutomationOperation['state'], dispatchedCount: raw.dispatchedCount as number,
+    ...(raw.dispatchedCountKnown === false ? { dispatchedCountKnown: false } : {}),
     ...(aliases ? { aliases: aliases as string[] } : {}), ...(raw.taskId ? { taskId: raw.taskId as number } : {}), ...(raw.code ? { code: raw.code as string } : {}),
   };
 }

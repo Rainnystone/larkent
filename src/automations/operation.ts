@@ -96,8 +96,9 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   const base = {
     operationId: current.operationId, draftId: current.draftId, received: true,
     ...(current.taskId ? { taskId: current.taskId } : {}),
-    executionScope: 'task', dispatchedCount: current.dispatchedCount, executedCount: delivered.length,
-    executionHistoryComplete: executions.length === current.dispatchedCount,
+    executionScope: 'task', dispatchedCount: current.dispatchedCountKnown === false ? null : current.dispatchedCount,
+    ...(current.dispatchedCountKnown === false ? { dispatchedCountLowerBound: current.dispatchedCount } : {}), executedCount: delivered.length,
+    executionHistoryComplete: current.dispatchedCountKnown !== false && executions.length === current.dispatchedCount,
     ...(last ? { lastExecution: last.reply?.state === 'sent' ? 'ok' : last.reply?.state === 'rejected' ? 'failed' : 'pending' } : {}),
   };
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });

@@ -36,7 +36,7 @@ const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { fsFault.beforeRename = undefined; for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); sdk.channel = undefined; });
 
 type Call = (operation: string, params?: object) => Promise<any>;
-async function harness(chatMode: 'group' | 'topic' = 'group', agentTasks = false) {
+async function harness(chatMode: 'group' | 'topic' = 'group', agentTasks = false, journalMaxEntries?: number) {
   const tmp = await createTmpProfile('reminder-tools-'); cleanups.push(tmp.cleanup);
   let now = NOW;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now); cleanups.push(async () => { clock.mockRestore(); });
@@ -46,7 +46,7 @@ async function harness(chatMode: 'group' | 'topic' = 'group', agentTasks = false
   cfg.automations = { enabled: true, agentTasks, timezone: 'Asia/Shanghai' }; cfg.workspaces.default = tmp.workspace;
   const makeStore = () => new AutomationsStore({ path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now });
   let store = makeStore(); await store.load();
-  const journal = new TurnJournal(join(tmp.profile, 'journal.json'), { now: () => now }); await journal.load();
+  const journal = new TurnJournal(join(tmp.profile, 'journal.json'), { now: () => now, maxEntries: journalMaxEntries }); await journal.load();
   const makeChannel = (messages: unknown[] = []) => createRecordingLarkChannel({ chats: [{ id: 'oc_synthetic', name: 'Synthetic' }], chatMode, messagesByChat: messages.length ? { oc_synthetic: messages } : {} });
   let channel = makeChannel(); sdk.channel = channel;
   let script: (call: Call, opts: AgentRunOptions) => Promise<void> = async () => {};
@@ -879,4 +879,20 @@ it('rejects a malformed persisted target revision without silently dropping its 
   const corrupted = JSON.stringify(document); await writeFile(h.store.getFilePath(), corrupted);
   await expect(h.restart()).rejects.toThrow(/Invalid automation/);
   expect(await readFile(h.store.getFilePath(), 'utf8')).toBe(corrupted);
+}, 30000);
+
+it.each([undefined, 21])('reports a lower bound instead of a complete lifetime count for a legacy task after twenty-one real fires with journal limit %s', async maxEntries => {
+  const h = await harness('group', false, maxEntries);
+  const first = NOW + 3600000; const interval = { kind: 'interval', timezone: 'Asia/Shanghai', everyMs: 1800000, startAt: first, endAt: NOW + 172800000 };
+  await h.store.create({ ...reminder, taskType: 'reminder', schedule: interval, timezone: 'Asia/Shanghai', startAt: first, endAt: interval.endAt, nextFireAt: first, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
+  for (let i = 0; i < 21; i++) { const at = first + i * 1800000; h.setNow(at); await h.bridge.wakeAutomation(`1@${at}`); }
+  expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('⏰ Synthetic reminder'))).toHaveLength(21);
+  expect(h.store.get(1)?.fireHistory).toHaveLength(20);
+  let operationId = '';
+  await h.turn(async call => {
+    const result = await call('automation.pause', { id: 1 }); operationId = result.data.operationId;
+    expect(result).toMatchObject({ category: 'applied', data: { executionScope: 'task', dispatchedCount: null, dispatchedCountLowerBound: 20, executedCount: maxEntries ? 20 : 21, executionHistoryComplete: false } });
+  });
+  await h.restart();
+  await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { dispatchedCount: null, dispatchedCountLowerBound: 20, executionHistoryComplete: false } }); });
 }, 30000);

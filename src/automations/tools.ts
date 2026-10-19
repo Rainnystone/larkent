@@ -59,6 +59,7 @@ export function automationSchema(context: AutomationToolContext) {
     boundary: 'start-inclusive-end-exclusive', timestampUnit: 'UTC epoch milliseconds',
     confirmation: { create: 'human-card-only', replace: 'human-card-only', delete: 'human-card-only', pause: 'immediate', resume: 'immediate' },
     operationIds: { submissionTtlMs: AUTOMATION_OPERATION_TTL_MS, scope: 'profile-chat', retention: 'durable', recovery: 'query-original-id-before-retry' },
+    execution: { scope: 'task', dispatchedCount: 'integer-or-null', unknownCount: 'dispatchedCountLowerBound', history: 'retained-journal-evidence' },
     categories: ['ok', 'validation-failed', 'needs-input', 'unavailable', 'unauthorized', 'execution-failed', 'waiting-confirmation', 'applied', 'unknown'],
   };
 }
