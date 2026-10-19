@@ -145,7 +145,7 @@ export interface AutomationDraftBase {
   cardBody?: DraftCardBody;
 }
 
-/** Frozen at proposal time so a later delete still leaves the card body intact. */
+/** Frozen when confirmation is requested so a later delete still leaves the card body intact. */
 export interface AutomationTargetSnapshot {
   revision?: string;
   id: number;

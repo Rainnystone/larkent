@@ -15,7 +15,7 @@ import type { buildToolProcess } from './bridge-tool-process';
 type Call = (operation: string, params?: object) => Promise<any>;
 
 /** Public startChannel chain, with a controlled external runtime that consumes actual client responses. */
-export async function createAutomationToolHarness({ client, cleanup, setChannel, initialNow, chatMode = 'group', agentTasks = false, journalMaxEntries, setup }: {
+export async function createAutomationToolHarness({ client, cleanup, setChannel, initialNow, chatMode = 'group', agentTasks = false, journalMaxEntries, setup, agentKind = 'codex', initialMessages = [] }: {
   client: Awaited<ReturnType<typeof buildToolProcess>>;
   cleanup: Array<() => Promise<unknown>>;
   setChannel(channel: RecordingLarkChannel): void;
@@ -23,13 +23,15 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
   chatMode?: 'group' | 'topic';
   agentTasks?: boolean;
   journalMaxEntries?: number;
+  agentKind?: 'codex' | 'claude';
+  initialMessages?: unknown[];
   setup?: (tmp: Awaited<ReturnType<typeof createTmpProfile>>) => Promise<void>;
 }) {
   const tmp = await createTmpProfile('automation-tools-'); cleanup.push(tmp.cleanup);
   await setup?.(tmp);
   let now = initialNow;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now); cleanup.push(async () => { clock.mockRestore(); });
-  const cfg = createDefaultProfileConfig({ agentKind: 'codex', codex: { binaryPath: '/synthetic/codex', inheritCodexHome: false }, accounts: { app: { id: 'cli_bot', secret: 'synthetic', tenant: 'feishu' } },
+  const cfg = createDefaultProfileConfig({ agentKind, codex: { binaryPath: '/synthetic/codex', inheritCodexHome: false }, accounts: { app: { id: 'cli_bot', secret: 'synthetic', tenant: 'feishu' } },
     access: { allowedUsers: ['ou_synthetic', 'ou_mate'], allowedChats: ['oc_synthetic', 'oc_other'] },
     preferences: { requireMentionInGroup: true, messageReply: 'text', messageReplyMigrated: true, cotMessages: 'off' } });
   cfg.automations = { enabled: true, agentTasks, timezone: 'Asia/Shanghai' }; cfg.workspaces.default = tmp.workspace;
@@ -37,10 +39,10 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
   let store = makeStore(); await store.load();
   const journal = new TurnJournal(join(tmp.profile, 'journal.json'), { now: () => now, maxEntries: journalMaxEntries }); await journal.load();
   const makeChannel = (messages: unknown[] = []) => createRecordingLarkChannel({ chats: [{ id: 'oc_synthetic', name: 'Synthetic' }], chatMode, messagesByChat: messages.length ? { oc_synthetic: messages } : {} });
-  let channel = makeChannel(); setChannel(channel);
+  let channel = makeChannel(initialMessages); setChannel(channel);
   let script: (call: Call, opts: AgentRunOptions, stopped: Promise<void>) => Promise<void | string | AgentEvent[]> = async () => {};
   let failure: unknown; let runCount = 0;
-  const agent: AgentAdapter = { id: 'codex', displayName: 'Controlled runtime', isAvailable: async () => true, run(opts) {
+  const agent: AgentAdapter = { id: agentKind, displayName: 'Controlled runtime', isAvailable: async () => true, run(opts) {
     let stop!: () => void; const stopped = new Promise<void>(resolve => { stop = resolve; });
     return { runId: opts.runId, stop: async () => { stop(); }, waitForExit: async () => true, events: (async function* (): AsyncIterable<AgentEvent> {
       let answer: void | string | AgentEvent[];
@@ -50,11 +52,14 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
       }, opts, stopped); } catch (error) { failure = error; }
       runCount++;
       if (Array.isArray(answer!)) { yield* answer!; return; }
-      yield { type: 'final_text', content: answer! ?? `Synthetic turn ${runCount} completed` }; yield { type: 'done', terminationReason: 'normal' };
+      const content = answer! ?? `Synthetic turn ${runCount} completed`;
+      yield agentKind === 'claude' ? { type: 'text', delta: content } : { type: 'final_text', content };
+      yield { type: 'done', terminationReason: 'normal' };
     })() };
   } };
+  const sessions = new SessionStore(join(tmp.profile, 'sessions.json')); await sessions.load();
   let profile = 'synthetic';
-  const start = () => startChannel({ cfg, agent, sessions: new SessionStore(join(tmp.profile, 'sessions.json')), workspaces: new WorkspaceStore(join(tmp.profile, 'workspaces.json')), automations: store, journal, now: () => now, probe: async () => true,
+  const start = () => startChannel({ cfg, agent, sessions, workspaces: new WorkspaceStore(join(tmp.profile, 'workspaces.json')), automations: store, journal, now: () => now, probe: async () => true,
     appPaths: { mediaDir: join(tmp.profile, 'media'), secretsFile: join(tmp.profile, 'secrets.enc'), keystoreSaltFile: join(tmp.profile, 'salt') },
     controls: { profile, profileConfig: cfg, cfg, botOwnerId: 'ou_synthetic', ownerRefreshState: 'ok', async refreshOwner() {}, async restart() {}, async exit() {}, configPath: join(tmp.root, 'config.json'), processId: 'synthetic-reminders' } });
   let bridge = await start();
@@ -66,7 +71,7 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
       let stopError: unknown;
       try { await bridge.disconnect(); } catch (error) { stopError = error; }
       if (options.profile) profile = options.profile;
-      store = makeStore(); await store.load(); await journal.load();
+      store = makeStore(); await store.load(); await journal.load(); await sessions.load();
       channel = makeChannel(options.messages ?? listed.data.items); setChannel(channel);
       bridge = await start(); return stopError;
     },
@@ -85,6 +90,7 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
       script = next; const count = runCount; failure = undefined;
       await channel.handlers.message?.({ messageId: `om_synthetic_${++message}`, content: '今天、明天、后天每天 09:00 提醒', chatId, chatType, ...(chatMode === 'topic' ? { threadId: 'omt_synthetic' } : {}), ...(replyTo ? { threadId: replyTo, rootId: replyTo, replyToMessageId: replyTo } : {}), senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
       await vi.waitFor(() => expect(runCount).toBeGreaterThan(count), { timeout: 25000 });
+      if (failure) throw failure;
       if (waitReply) await vi.waitFor(() => expect(channel.sent.some(item => JSON.stringify(item.content).includes(`Synthetic turn ${runCount} completed`))).toBe(true), { timeout: 12000 });
       if (failure) throw failure;
     },

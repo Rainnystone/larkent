@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "entries": [
+    {
+      "turnId": "old-synthetic-correction",
+      "scope": "oc_group",
+      "chatId": "oc_group",
+      "messageIds": [
+        "om_old_request"
+      ],
+      "senderId": "ou_user",
+      "initiatorId": "ou_user",
+      "status": "completed-undelivered",
+      "outcome": {
+        "kind": "completed"
+      },
+      "createdAt": 1792368000000,
+      "updatedAt": 1792368000000,
+      "reply": {
+        "markdown": "⚠️ 没有删除任务：本群没有 #1。",
+        "replyTo": "om_old_request",
+        "replyMode": "text",
+        "deliveryId": "old-synthetic-correction:promise-correction",
+        "messageId": "om_old_correction",
+        "supersedes": "om_old_promise",
+        "state": "staged"
+      }
+    }
+  ]
+}

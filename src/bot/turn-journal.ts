@@ -275,20 +275,6 @@ export class TurnJournal {
     });
   }
 
-  reviseDeliveredReply(turnId: string, markdown: string, messageId?: string): void {
-    const current = this.entries.find((item) => item.turnId === turnId);
-    if (!current?.reply) return;
-    const nextId = messageId?.trim();
-    this.patch(turnId, {
-      reply: {
-        ...current.reply,
-        markdown,
-        ...(nextId ? { messageId: nextId } : {}),
-        state: 'sent',
-      },
-    });
-  }
-
   replyDelivered(turnId: string, messageId?: string): void {
     if (messageId?.trim()) this.noteReplyReceipt(turnId, messageId);
     const current = this.entries.find((item) => item.turnId === turnId);
@@ -331,13 +317,6 @@ export class TurnJournal {
 
   noteCliAlreadySent(turnId: string): void {
     this.patch(turnId, { cliAlreadySent: true });
-  }
-
-  /** The CLI posted the previous text. A replacement still has to be sent. */
-  clearCliAlreadySent(turnId: string): void {
-    const current = this.entries.find((item) => item.turnId === turnId);
-    if (!current?.cliAlreadySent) return;
-    this.patch(turnId, { cliAlreadySent: false });
   }
 
   noteNonAnswerId(turnId: string, messageId: string): void {
@@ -1104,10 +1083,6 @@ export const FEISHU_DELIVERY_ID_MAX_CHARS = 50;
 
 export function replyDeliveryKey(turnId: string): string {
   return clipDeliveryId(`reply:${turnId}`);
-}
-
-export function promiseCorrectionDeliveryKey(turnId: string): string {
-  return clipDeliveryId(`correct:${turnId}`);
 }
 
 export function noticeDeliveryKey(turnId: string): string {

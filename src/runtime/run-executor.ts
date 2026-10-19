@@ -62,7 +62,6 @@ export interface SubmitRunInput {
 }
 
 export interface RunExecution {
-  usedBridgeTools(): boolean;
   runId: string;
   scopeId: string;
   run: AgentRun;
@@ -308,7 +307,6 @@ export class RunExecutor {
     });
 
     return {
-      usedBridgeTools: () => tools?.used() ?? false,
       runId,
       scopeId: input.scopeId,
       run: ownedRun,

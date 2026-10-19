@@ -11,7 +11,6 @@ import { record, TOOL_MAX_BYTES, TOOL_OPERATIONS, toolResult, type ToolResult } 
 export interface ToolRunContext extends AutomationToolContext { catalog: PluginCatalog }
 export interface ToolRun {
   env: NodeJS.ProcessEnv;
-  used(): boolean;
   close(): Promise<void>;
 }
 
@@ -20,7 +19,6 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
   const client = join(await bridgePackageRoot(), 'bin/lark-channel-bridge.mjs');
   const credential = randomBytes(32).toString('base64url');
   let active = true;
-  let used = false;
   let closing: Promise<void> | undefined;
   const server = createServer(async (request, response) => {
     response.setHeader('content-type', 'application/json');
@@ -31,7 +29,6 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
       reply(toolResult('unauthorized', 'invalid-run-credential')); return;
     }
     if (request.method !== 'POST' || request.url !== '/tool') { reply(toolResult('validation-failed', 'invalid-endpoint')); return; }
-    used = true;
     try {
       let bytes = 0;
       const chunks: Buffer[] = [];
@@ -54,7 +51,6 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
   const port = (server.address() as AddressInfo).port;
   return {
     env: { LARK_BRIDGE_TOOL_ENDPOINT: `http://127.0.0.1:${port}/tool`, LARK_BRIDGE_TOOL_TOKEN: credential, LARK_BRIDGE_TOOL_ISSUED_AT: String((context.now ?? Date.now)()), LARK_BRIDGE_TOOL_SCOPE: automationOperationScope(context.profile, context.chatId), LARK_BRIDGE_TOOL_CLIENT: client },
-    used: () => used,
     close() {
       active = false;
       closing ??= new Promise<void>((resolve, reject) => {

@@ -118,7 +118,6 @@ import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
   noticeState,
-  promiseCorrectionDeliveryKey,
   replyDeliveryKey,
   replyState,
   streamDeliveryKey,
@@ -137,28 +136,11 @@ import {
 } from '../automations/agent-run';
 import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
 import {
-  automationProposalSuffix,
   flushPendingDraftCards,
-  noteAutomationRejected,
-  planAutomationProposalReply,
-  replaceProposalLineAfterApply,
-  submitAutomationDeleteProposal,
-  submitAutomationProposal,
-  submitAutomationReplaceProposal,
-  type AutomationProposalVerdict,
-  type RejectionExampleClock,
-  type ReplaceProposalApplyResult,
 } from '../automations/command';
 import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
-import {
-  appendReplyLine,
-  extractAutomationProposal,
-  proposalTextFromState,
-  shouldHonorAutomationProposal,
-  stripProposalFromState,
-  type AutomationProposalFields,
-} from '../automations/proposal';
+import { stripLegacyAutomationTagsFromState } from '../card/legacy-automation-tags';
 import {
   createAutomationScheduler,
   type AutomationScheduler,
@@ -2062,81 +2044,13 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   log.info('flush', 'reply-mode', { mode: replyMode });
   const cotMessages = getCotMessages(controls.cfg);
   const cotEnabled = cotMessages !== 'off';
-  const triggerSenderType = senderTypeFromRaw((lastMsg as { raw?: unknown }).raw);
-  const automationReply = controls.profileConfig.automations.enabled
-    ? {
-        honor: () => !execution.usedBridgeTools() && shouldHonorAutomationProposal({
-          enabled: true,
-          scope,
-          senderId: lastMsg.senderId,
-          ...(triggerSenderType ? { senderType: triggerSenderType } : {}),
-          ...(channel.botIdentity?.openId ? { botOpenId: channel.botIdentity.openId } : {}),
-        }),
-        plan: (parsed: AutomationProposalFields): AutomationProposalVerdict => {
-          const taskType = parsed.op === 'delete' ? 'reminder' : parsed.taskType;
-          const cwd = parsed.op !== 'delete' && taskType === 'agent'
-            ? workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default
-            : undefined;
-          const target = parsed.op === 'create' ? undefined : automations?.get(parsed.id);
-          return planAutomationProposalReply({
-            proposal: parsed,
-            now: (now ?? Date.now)(),
-            timezone: controls.profileConfig.automations.timezone,
-            agentTasks: controls.profileConfig.automations.agentTasks,
-            hasCwd: parsed.op === 'delete' || taskType !== 'agent' || (typeof cwd === 'string' && cwd.trim().length > 0),
-            group: mode !== 'p2p' && lastMsg.chatType !== 'p2p',
-            canSave: parsed.op === 'create'
-              ? Boolean(automations && autoAuth)
-              : Boolean(automations && autoAuth && automationsScheduler),
-            targetInChat: Boolean(target && target.chatId === lastMsg.chatId),
-          });
-        },
-        clock: (): RejectionExampleClock => ({
-          now: (now ?? Date.now)(),
-          timezone: controls.profileConfig.automations.timezone,
-        }),
-        apply: (parsed: AutomationProposalFields): Promise<ReplaceProposalApplyResult | void> => {
-          const proposalCtx = {
-            channel,
-            msg: lastMsg,
-            scope,
-            chatMode: mode,
-            workspaces,
-            automations,
-            autoAuth,
-            automationsScheduler,
-            ...(now ? { now } : {}),
-            isLinkDown: () => Boolean(link?.isDown()),
-            controls,
-          };
-          switch (parsed.op) {
-            case 'delete':
-              return submitAutomationDeleteProposal(proposalCtx, parsed);
-            case 'replace':
-              return submitAutomationReplaceProposal(proposalCtx, parsed);
-            case 'create':
-              return submitAutomationProposal(proposalCtx, {
-                taskType: parsed.taskType,
-                scheduleText: parsed.scheduleText,
-                name: parsed.name,
-                taskText: parsed.taskText,
-              }, 'proposal');
-            default: {
-              const _exhaustive: never = parsed;
-              return _exhaustive;
-            }
-          }
-        },
-      }
-    : undefined;
-
   // Re-read prefs on every flush so toggling /config mid-stream takes
   // effect immediately. Cheap object lookups, no allocation when on.
   const filterForPrefs = (state: RunState): RunState => {
     const withoutTools = getShowToolCalls(controls.cfg)
       ? state
       : { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
-    return automationReply ? stripProposalFromState(withoutTools) : withoutTools;
+    return stripLegacyAutomationTagsFromState(withoutTools);
   };
   const cardRenderOptions = callbackAuth
     ? {
@@ -2222,7 +2136,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           link,
           onWait: onDeliveryWait,
           onNotInChat,
-          ...(automationReply ? { automation: automationReply } : {}),
+
         });
         return;
       }
@@ -2310,7 +2224,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         link,
         onWait: onDeliveryWait,
         onNotInChat,
-        ...(automationReply ? { automation: automationReply } : {}),
+
       });
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
@@ -2388,7 +2302,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         link,
         onWait: onDeliveryWait,
         onNotInChat,
-        ...(automationReply ? { automation: automationReply } : {}),
+
       });
     } else {
       // text mode: drain the agent stream without sending anything during
@@ -2424,7 +2338,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         link,
         onWait: onDeliveryWait,
         onNotInChat,
-        ...(automationReply ? { automation: automationReply } : {}),
+
       });
     }
   } catch (err) {
@@ -2627,82 +2541,14 @@ async function deliverFinalReply(input: {
   link?: { isDown(): boolean };
   onWait?: (delayMs?: number) => void;
   onNotInChat?: (chatId: string) => void | Promise<unknown>;
-  automation?: {
-    honor: boolean | (() => boolean);
-    plan: (parsed: AutomationProposalFields) => AutomationProposalVerdict;
-    clock: () => RejectionExampleClock;
-    apply: (parsed: AutomationProposalFields) => Promise<ReplaceProposalApplyResult | void>;
-  };
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
-  const extracted = input.automation
-    ? extractAutomationProposal(proposalTextFromState(input.skipFrom ?? input.state))
-    : undefined;
-  const state = extracted?.tagged ? stripProposalFromState(input.state) : input.state;
-  const skipFrom = extracted?.tagged && input.skipFrom
-    ? stripProposalFromState(input.skipFrom)
-    : input.skipFrom;
-  const parsed = extracted?.parsed;
-  const honor = typeof input.automation?.honor === 'function' ? input.automation.honor() : input.automation?.honor === true;
-  const completed = state.terminal === 'done' || input.handle.outcome?.kind === 'completed';
-  let proposalSuffix: string | undefined;
-  let deliverProposal = false;
-  if (parsed && input.automation && honor && completed) {
-    const verdict = input.automation.plan(parsed);
-    proposalSuffix = automationProposalSuffix(verdict, parsed, input.automation.clock());
-    switch (verdict.outcome) {
-      case 'confirm':
-      case 'needs-end':
-      case 'delete':
-        deliverProposal = true;
-        break;
-      case 'reject':
-        noteAutomationRejected(verdict.reason, 'proposal');
-        break;
-      case 'unknown-id':
-        log.info('auto', 'rejected', {
-          reason: 'unknown-id',
-          source: 'proposal',
-          ...(parsed.op === 'create' ? {} : { id: parsed.id }),
-        });
-        break;
-      case 'refuse':
-        break;
-      default: {
-        const _exhaustive: never = verdict;
-        return _exhaustive;
-      }
-    }
-  }
+  const state = stripLegacyAutomationTagsFromState(input.state);
+  const skipFrom = input.skipFrom ? stripLegacyAutomationTagsFromState(input.skipFrom) : undefined;
   const unaugmented = renderText(state);
-  const baseState = unaugmented.trim() ? state : (skipFrom ?? state);
-  const replyState = proposalSuffix ? appendReplyLine(baseState, proposalSuffix) : baseState;
-  const applyAutomationProposal = async (): Promise<void> => {
-    if (!parsed || !input.automation) return;
-    if (!honor) {
-      log.info('auto', 'proposal-ignored', { scope: input.scope });
-      return;
-    }
-    if (!deliverProposal) return;
-    const applied = await input.automation.apply(parsed);
-    const nextLine = replaceProposalLineAfterApply(proposalSuffix, parsed, applied);
-    if (nextLine === proposalSuffix || !proposalSuffix) return;
-    await reconcileReplacePromise({
-      channel: input.channel,
-      chatId: input.chatId,
-      replyMode: input.replyMode,
-      cardRenderOptions: input.cardRenderOptions,
-      journal: input.journal,
-      turnId: input.turnId,
-      state: replyState,
-      plannedSuffix: proposalSuffix,
-      replacement: nextLine,
-      sendOpts: input.sendOpts,
-      onNotInChat: input.onNotInChat,
-    });
-  };
+  const replyState = unaugmented.trim() ? state : (skipFrom ?? state);
   const visibleBody = renderText(replyState);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
     && (input.skipFrom ?? input.state).terminal === 'done';
@@ -2761,21 +2607,9 @@ async function deliverFinalReply(input: {
     log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
   } else if (input.link?.isDown()) {
     if (deferJournalFlush && input.journal) await input.journal.flush();
-    await applyAutomationProposal();
     return;
   } else {
     try {
-      if (
-        proposalSuffix
-        && stream.kind === 'confirmed'
-        && stream.messageId
-        && !dedicatedFinal
-      ) {
-        await input.channel.updateCard(
-          stream.messageId,
-          settledReplyCard(input.replyMode, replyState, visibleBody, input.cardRenderOptions),
-        );
-      }
       const settled = await settleStreamDelivery({
         stream,
         channel: input.channel,
@@ -2800,7 +2634,6 @@ async function deliverFinalReply(input: {
       if (settled.kind === 'wait') {
         if (deferJournalFlush && input.journal) await input.journal.flush();
         input.onWait?.(rateLimitResetDelayMs(settled.error));
-        await applyAutomationProposal();
         return;
       }
     } catch (error) {
@@ -2823,235 +2656,9 @@ async function deliverFinalReply(input: {
       onWait: input.onWait,
     });
   }
-  await applyAutomationProposal();
 }
 
 type OutboundSettle = { kind: 'done' } | { kind: 'wait'; error?: unknown };
-
-function settledReplyCard(
-  replyMode: ReturnType<typeof getMessageReplyMode>,
-  state: RunState,
-  markdown: string,
-  cardRenderOptions: { signCallback?: (action: string) => string },
-): object {
-  switch (replyMode) {
-    case 'card':
-      return renderCard(state, cardRenderOptions);
-    case 'markdown':
-    case 'text':
-      return {
-        schema: '2.0',
-        body: { elements: [{ tag: 'markdown', content: markdown }] },
-      };
-    default: {
-      const _exhaustive: never = replyMode;
-      return _exhaustive;
-    }
-  }
-}
-
-function stateWithoutProposalLine(
-  state: RunState,
-  promise: string,
-  replacement: string | undefined,
-): RunState {
-  const needle = promise.trim();
-  let index = -1;
-  for (let i = state.blocks.length - 1; i >= 0; i -= 1) {
-    const block = state.blocks[i];
-    if (block?.kind === 'text' && block.content.trim() === needle) {
-      index = i;
-      break;
-    }
-  }
-  if (index < 0) return state;
-  const blocks = state.blocks.slice();
-  if (!replacement) {
-    blocks.splice(index, 1);
-    return { ...state, blocks };
-  }
-  const block = blocks[index];
-  if (block?.kind !== 'text') return state;
-  blocks[index] = { ...block, content: replacement };
-  return { ...state, blocks };
-}
-
-async function reconcileReplacePromise(input: {
-  channel: LarkChannel;
-  chatId: string;
-  replyMode: ReturnType<typeof getMessageReplyMode>;
-  cardRenderOptions: { signCallback?: (action: string) => string };
-  journal?: TurnJournal;
-  turnId?: string;
-  state: RunState;
-  plannedSuffix: string;
-  replacement: string | undefined;
-  sendOpts: { replyTo: string; replyInThread?: boolean };
-  onNotInChat?: (chatId: string) => void | Promise<unknown>;
-}): Promise<void> {
-  const corrected = stateWithoutProposalLine(input.state, input.plannedSuffix, input.replacement);
-  if (corrected === input.state) return;
-  const correctedBody = renderText(corrected);
-  const entry = input.journal && input.turnId ? input.journal.get(input.turnId) : undefined;
-  const reply = entry?.reply;
-  if (!reply || reply.state !== 'sent') {
-    if (input.journal && input.turnId && reply) {
-      input.journal.stageReply(input.turnId, {
-        markdown: correctedBody,
-        replyTo: reply.replyTo,
-        ...(reply.replyInThread ? { replyInThread: true } : {}),
-        ...(reply.threadId ? { threadId: reply.threadId } : {}),
-        replyMode: reply.replyMode,
-        ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
-        ...(reply.messageId ? { messageId: reply.messageId } : {}),
-        ...(reply.interactive ? { interactive: true } : {}),
-      });
-      await input.journal.flush();
-    }
-    return;
-  }
-  const interactive = reply.interactive === true || input.replyMode === 'card';
-  const previousMessageId = reply.messageId;
-  const canStage = Boolean(input.journal && input.turnId);
-  if (interactive && previousMessageId) {
-    if (canStage && input.journal && input.turnId) {
-      await stageFailedPromiseCorrection({
-        journal: input.journal,
-        turnId: input.turnId,
-        reply,
-        correctedBody,
-        interactive,
-        previousMessageId,
-      });
-    }
-    try {
-      await input.channel.updateCard(
-        previousMessageId,
-        settledReplyCard(input.replyMode, corrected, correctedBody, input.cardRenderOptions),
-      );
-    } catch (error) {
-      await keepOrRestorePromise(error, input, reply);
-      return;
-    }
-    if (input.turnId) {
-      input.journal?.reviseDeliveredReply(input.turnId, correctedBody);
-      input.journal?.replyDelivered(input.turnId);
-    }
-    await input.journal?.flush();
-    return;
-  }
-  if (previousMessageId) {
-    if (canStage && input.journal && input.turnId) {
-      await stageFailedPromiseCorrection({
-        journal: input.journal,
-        turnId: input.turnId,
-        reply,
-        correctedBody,
-        interactive,
-        previousMessageId,
-      });
-    }
-    let sent: { messageId?: string };
-    try {
-      sent = await input.channel.send(
-        input.chatId,
-        { markdown: correctedBody },
-        withDeliveryUuid({
-          ...(input.sendOpts.replyTo ? { replyTo: input.sendOpts.replyTo } : {}),
-          ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
-        }, input.turnId ? promiseCorrectionDeliveryKey(input.turnId) : undefined),
-      );
-    } catch (error) {
-      await keepOrRestorePromise(error, input, reply);
-      return;
-    }
-    const messageId = sent.messageId?.trim();
-    if (input.journal && input.turnId && messageId) {
-      input.journal.noteReplyReceipt(input.turnId, messageId);
-      await input.journal.flush();
-    }
-    let recall: SupersedeRecall;
-    try {
-      recall = await recallReplacedMessage(input.channel, previousMessageId);
-    } catch (error) {
-      if (!isNotInChat(error)) throw error;
-      if (input.turnId) input.journal?.replyRejected(input.turnId);
-      await input.journal?.flush();
-      await input.onNotInChat?.(input.chatId);
-      return;
-    }
-    switch (recall) {
-      case 'done':
-        if (input.turnId) input.journal?.replyDelivered(input.turnId);
-        break;
-      case 'retry':
-        break;
-      default: {
-        const _exhaustive: never = recall;
-        throw _exhaustive;
-      }
-    }
-    await input.journal?.flush();
-    return;
-  }
-  log.warn('auto', 'promise-uncorrected', {});
-}
-
-async function keepOrRestorePromise(
-  error: unknown,
-  input: {
-    journal?: TurnJournal;
-    turnId?: string;
-  },
-  reply: NonNullable<TurnJournalEntry['reply']>,
-): Promise<void> {
-  if (classify(error) === 'link' && input.journal && input.turnId) return;
-  if (input.journal && input.turnId && reply.messageId) {
-    input.journal.stageReply(input.turnId, {
-      markdown: reply.markdown,
-      replyTo: reply.replyTo,
-      ...(reply.replyInThread ? { replyInThread: true } : {}),
-      ...(reply.threadId ? { threadId: reply.threadId } : {}),
-      replyMode: reply.replyMode,
-      ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
-      messageId: reply.messageId,
-      ...(reply.interactive ? { interactive: true } : {}),
-    });
-    input.journal.replyDelivered(input.turnId);
-    await input.journal.flush();
-  }
-  log.warn('auto', 'promise-correct-failed', {
-    err: error instanceof Error ? error.message : String(error),
-  });
-}
-
-async function stageFailedPromiseCorrection(input: {
-  journal: TurnJournal;
-  turnId: string;
-  reply: NonNullable<TurnJournalEntry['reply']>;
-  correctedBody: string;
-  interactive: boolean;
-  previousMessageId?: string;
-}): Promise<void> {
-  const supersedes = !input.interactive && input.previousMessageId
-    ? input.previousMessageId
-    : undefined;
-  input.journal.stageReply(input.turnId, {
-    markdown: input.correctedBody,
-    replyTo: input.reply.replyTo,
-    ...(input.reply.replyInThread ? { replyInThread: true } : {}),
-    ...(input.reply.threadId ? { threadId: input.reply.threadId } : {}),
-    replyMode: input.reply.replyMode,
-    deliveryId: promiseCorrectionDeliveryKey(input.turnId),
-    ...(input.interactive && input.previousMessageId
-      ? { messageId: input.previousMessageId, interactive: true }
-      : {}),
-    ...(supersedes ? { supersedes } : {}),
-  });
-  if (supersedes) input.journal.noteNonAnswerId(input.turnId, supersedes);
-  input.journal.clearCliAlreadySent(input.turnId);
-  await input.journal.flush();
-}
 
 type SupersedeRecall = 'done' | 'retry';
 

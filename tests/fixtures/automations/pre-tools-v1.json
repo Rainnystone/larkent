@@ -1,0 +1,1011 @@
+{
+  "source": "953e7bdde3549b03bddb8d191d8856683d1dc4c5",
+  "now": 1792368000000,
+  "automations": {
+    "schemaVersion": 1,
+    "nextId": 5,
+    "items": [
+      {
+        "id": 1,
+        "taskType": "reminder",
+        "schedule": {
+          "kind": "one-shot",
+          "fireAt": 1792368900000
+        },
+        "timezone": "Asia/Shanghai",
+        "startAt": 1792368000000,
+        "endAt": 0,
+        "nextFireAt": 1792368900000,
+        "lastFireAt": 0,
+        "paused": false,
+        "missed": 0,
+        "lastStatus": "ok",
+        "fireHistory": [],
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "name": "Old saved reminder",
+        "taskText": "Deliver old saved reminder",
+        "missedInstants": [],
+        "skippedInstants": []
+      },
+      {
+        "id": 2,
+        "taskType": "agent",
+        "schedule": {
+          "kind": "one-shot",
+          "fireAt": 1792369200000
+        },
+        "timezone": "Asia/Shanghai",
+        "startAt": 1792368000000,
+        "endAt": 0,
+        "nextFireAt": 1792369200000,
+        "lastFireAt": 0,
+        "paused": false,
+        "missed": 0,
+        "lastStatus": "ok",
+        "fireHistory": [],
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "name": "Old saved agent",
+        "taskText": "Read automation skill and report the old saved agent result",
+        "cwd": "__WORKSPACE__",
+        "missedInstants": [],
+        "skippedInstants": []
+      },
+      {
+        "id": 3,
+        "taskType": "reminder",
+        "schedule": {
+          "kind": "one-shot",
+          "fireAt": 1792368900000
+        },
+        "timezone": "Asia/Shanghai",
+        "startAt": 1792368000000,
+        "endAt": 0,
+        "nextFireAt": 1792368900000,
+        "lastFireAt": 0,
+        "paused": false,
+        "missed": 0,
+        "lastStatus": "ok",
+        "fireHistory": [],
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "name": "Old delete target",
+        "taskText": "Delete target must not fire",
+        "missedInstants": [],
+        "skippedInstants": []
+      },
+      {
+        "id": 4,
+        "taskType": "reminder",
+        "schedule": {
+          "kind": "one-shot",
+          "fireAt": 1792368900000
+        },
+        "timezone": "Asia/Shanghai",
+        "startAt": 1792368000000,
+        "endAt": 0,
+        "nextFireAt": 1792368900000,
+        "lastFireAt": 0,
+        "paused": false,
+        "missed": 0,
+        "lastStatus": "ok",
+        "fireHistory": [],
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "name": "Old replace target",
+        "taskText": "Replace target must not fire",
+        "missedInstants": [],
+        "skippedInstants": []
+      }
+    ],
+    "drafts": [
+      {
+        "taskType": "reminder",
+        "schedule": {
+          "kind": "one-shot",
+          "fireAt": 1792369800000
+        },
+        "timezone": "Asia/Shanghai",
+        "startAt": 1792368000000,
+        "nextFireAt": 1792369800000,
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "name": "Old pending confirmation",
+        "taskText": "Deliver old confirmed reminder",
+        "op": "create",
+        "draftId": "draft-1792368000000-e614e6f4",
+        "createdAt": 1792368000000,
+        "cardMessageId": "om_old_card_1",
+        "cardId": "card_fake_1",
+        "cardBody": {
+          "title": "确认自动化",
+          "summary": "确认自动化",
+          "statusAt": 2,
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**任务类型：** 提醒\n\n**名称：** Old pending confirmation\n\n**时间表：** 一次性 2026-10-19 08:30\n\n**时区：** Asia/Shanghai\n\n触发时间：2026-10-19 08:30（共 1 次）\n\n**结束：** 一次性\n\n**任务：** Deliver old confirmed reminder\n\n**执行身份：** 本 bot 发送提醒（不跑 agent）"
+            },
+            {
+              "tag": "hr"
+            }
+          ]
+        }
+      },
+      {
+        "taskType": "reminder",
+        "schedule": {
+          "kind": "weekday",
+          "timezone": "Asia/Shanghai",
+          "times": [
+            {
+              "hour": 9,
+              "minute": 0
+            }
+          ]
+        },
+        "timezone": "Asia/Shanghai",
+        "startAt": 1792368000000,
+        "nextFireAt": 0,
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "name": "Old incomplete reminder",
+        "taskText": "Deliver old completed draft",
+        "pendingRecurring": {
+          "kind": "weekday",
+          "timezone": "Asia/Shanghai",
+          "times": [
+            {
+              "hour": 9,
+              "minute": 0
+            }
+          ]
+        },
+        "op": "create",
+        "draftId": "draft-1792368000000-8de0a0cc",
+        "createdAt": 1792368000000,
+        "cardMessageId": "om_old_card_2",
+        "cardId": "card_fake_2",
+        "cardBody": {
+          "title": "指定结束时间",
+          "summary": "指定结束时间",
+          "statusAt": 1,
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "周期任务必须指定结束时间。请选择常用时长，或输入结束日期。"
+            },
+            {
+              "tag": "hr"
+            }
+          ]
+        }
+      },
+      {
+        "op": "delete",
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "targetId": 3,
+        "target": {
+          "id": 3,
+          "name": "Old delete target",
+          "taskType": "reminder",
+          "scheduleLabel": "一次性 2026-10-19 08:15",
+          "nextFireLabel": "2026-10-19 08:15",
+          "endLabel": "一次性"
+        },
+        "draftId": "draft-1792368000000-3c44760d",
+        "createdAt": 1792368000000,
+        "cardMessageId": "om_old_card_3",
+        "cardId": "card_fake_3",
+        "cardBody": {
+          "title": "确认删除",
+          "summary": "确认删除",
+          "statusAt": 2,
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "确认删除 #3 Old delete target？\n\n**类型：** 提醒\n\n**时间表：** 一次性 2026-10-19 08:15\n\n**下次触发：** 2026-10-19 08:15\n\n**结束：** 一次性"
+            },
+            {
+              "tag": "hr"
+            }
+          ]
+        }
+      },
+      {
+        "op": "replace",
+        "targetId": 4,
+        "target": {
+          "id": 4,
+          "name": "Old replace target",
+          "taskType": "reminder",
+          "scheduleLabel": "一次性 2026-10-19 08:15",
+          "nextFireLabel": "2026-10-19 08:15",
+          "endLabel": "一次性"
+        },
+        "scheduleText": "40 分钟后",
+        "taskType": "reminder",
+        "schedule": {
+          "kind": "one-shot",
+          "fireAt": 1792370400000
+        },
+        "timezone": "Asia/Shanghai",
+        "startAt": 1792368000000,
+        "nextFireAt": 1792370400000,
+        "chatId": "oc_synthetic",
+        "createdBy": "ou_synthetic",
+        "name": "Old replacement",
+        "taskText": "Deliver old replacement",
+        "draftId": "draft-1792368000000-5e49f434",
+        "createdAt": 1792368000000,
+        "cardMessageId": "om_old_card_4",
+        "cardId": "card_fake_4",
+        "cardBody": {
+          "title": "确认替换 #4",
+          "summary": "确认替换 #4",
+          "statusAt": 2,
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "将删除：#4 Old replace target · 一次性 2026-10-19 08:15\n\n**任务类型：** 提醒\n\n**名称：** Old replacement\n\n**时间表：** 一次性 2026-10-19 08:40\n\n**时区：** Asia/Shanghai\n\n触发时间：2026-10-19 08:40（共 1 次）\n\n**结束：** 一次性\n\n**任务：** Deliver old replacement\n\n**执行身份：** 本 bot 发送提醒（不跑 agent）"
+            },
+            {
+              "tag": "hr"
+            }
+          ]
+        }
+      }
+    ],
+    "started": [],
+    "boards": [
+      {
+        "chatId": "oc_synthetic",
+        "messageId": "om_old_board",
+        "cardId": "card_fake_5"
+      }
+    ]
+  },
+  "nonces": {
+    "old-revoked-nonce": "revoked"
+  },
+  "sessions": {
+    "schemaVersion": 2,
+    "entries": {
+      "oc_synthetic": {
+        "resumeHandle": "old-synthetic-session",
+        "cwd": "__WORKSPACE__",
+        "updatedAt": 1792411573904,
+        "agentKind": "claude",
+        "byAgent": {
+          "claude": {
+            "resumeHandle": "old-synthetic-session",
+            "cwd": "__WORKSPACE__"
+          }
+        }
+      }
+    }
+  },
+  "cards": [
+    {
+      "messageId": "om_old_card_1",
+      "content": {
+        "card": {
+          "schema": "2.0",
+          "config": {
+            "update_multi": true,
+            "summary": {
+              "content": "确认自动化"
+            }
+          },
+          "header": {
+            "title": {
+              "tag": "plain_text",
+              "content": "确认自动化"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "**任务类型：** 提醒\n\n**名称：** Old pending confirmation\n\n**时间表：** 一次性 2026-10-19 08:30\n\n**时区：** Asia/Shanghai\n\n触发时间：2026-10-19 08:30（共 1 次）\n\n**结束：** 一次性\n\n**任务：** Deliver old confirmed reminder\n\n**执行身份：** 本 bot 发送提醒（不跑 agent）"
+              },
+              {
+                "tag": "hr"
+              },
+              {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_spacing": "small",
+                "columns": [
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "是"
+                        },
+                        "type": "primary",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.confirm",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC1lNjE0ZTZmNCIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5jb25maXJtIiwiZXhwIjoxNzkyNDU0NDAwMDAwLCJuIjoib2xkLXN5bnRoZXRpYy0xIn0.T8ai_mxjQVKG3TQ4g6mqaFdQGkaq2t54cgVjhEksuiU"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "否"
+                        },
+                        "type": "default",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.reject",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC1lNjE0ZTZmNCIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5yZWplY3QiLCJleHAiOjE3OTI0NTQ0MDAwMDAsIm4iOiJvbGQtc3ludGhldGljLTIifQ.VWfBN_GjWJp_SzYlGys8YtBQd5Ab3QI0Q0Qr9Gm5Xjk"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "messageId": "om_old_card_2",
+      "content": {
+        "card": {
+          "schema": "2.0",
+          "config": {
+            "update_multi": true,
+            "summary": {
+              "content": "指定结束时间"
+            }
+          },
+          "header": {
+            "title": {
+              "tag": "plain_text",
+              "content": "指定结束时间"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "周期任务必须指定结束时间。请选择常用时长，或输入结束日期。"
+              },
+              {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_spacing": "small",
+                "columns": [
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "一个月"
+                        },
+                        "type": "primary",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.end.1m",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC04ZGUwYTBjYyIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5lbmQuMW0iLCJleHAiOjE3OTI0NTQ0MDAwMDAsIm4iOiJvbGQtc3ludGhldGljLTMifQ.srDp_YkWvglm5GD537m9gc_t-uQvxMpxyB65hpIMSCw"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "三个月"
+                        },
+                        "type": "default",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.end.3m",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC04ZGUwYTBjYyIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5lbmQuM20iLCJleHAiOjE3OTI0NTQ0MDAwMDAsIm4iOiJvbGQtc3ludGhldGljLTQifQ.UawnkAbKS341tlVBjbuyxY92dHJhwLC_O63CpLQ994Y"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "今年年底"
+                        },
+                        "type": "default",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.end.eoy",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC04ZGUwYTBjYyIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5lbmQuZW95IiwiZXhwIjoxNzkyNDU0NDAwMDAwLCJuIjoib2xkLXN5bnRoZXRpYy01In0.y_KyLDHJBaOXz5ir7_TwVOAcPak2nKE8xhNXa1XiyEY"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "一年"
+                        },
+                        "type": "default",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.end.1y",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC04ZGUwYTBjYyIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5lbmQuMXkiLCJleHAiOjE3OTI0NTQ0MDAwMDAsIm4iOiJvbGQtc3ludGhldGljLTYifQ.kTk9xASy4-_rWD4ar4JLfaHCDbrOn5GnoAo_ILp8Y38"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "tag": "hr"
+              },
+              {
+                "tag": "form",
+                "name": "auto_end",
+                "elements": [
+                  {
+                    "tag": "input",
+                    "name": "end_at",
+                    "placeholder": {
+                      "tag": "plain_text",
+                      "content": "YYYY-MM-DD 或 YYYY-MM-DD HH:MM"
+                    }
+                  },
+                  {
+                    "tag": "column_set",
+                    "flex_mode": "flow",
+                    "horizontal_spacing": "small",
+                    "columns": [
+                      {
+                        "tag": "column",
+                        "width": "auto",
+                        "elements": [
+                          {
+                            "tag": "button",
+                            "name": "submit_end",
+                            "text": {
+                              "tag": "plain_text",
+                              "content": "提交"
+                            },
+                            "type": "primary",
+                            "form_action_type": "submit",
+                            "behaviors": [
+                              {
+                                "type": "callback",
+                                "value": {
+                                  "cmd": "auto.end.custom",
+                                  "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC04ZGUwYTBjYyIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5lbmQuY3VzdG9tIiwiZXhwIjoxNzkyNDU0NDAwMDAwLCJuIjoib2xkLXN5bnRoZXRpYy03In0.0tECDoo0E_2dt7GaDS2D93g8KjFDsNbVcKAiW1eSGVo"
+                                }
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_spacing": "small",
+                "columns": [
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "取消"
+                        },
+                        "type": "default",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.reject",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC04ZGUwYTBjYyIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5yZWplY3QiLCJleHAiOjE3OTI0NTQ0MDAwMDAsIm4iOiJvbGQtc3ludGhldGljLTgifQ.EFGx-Od2JTEvf-6olBDbVf1Fpq1WBPSUkYJa11vy-C4"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "messageId": "om_old_card_3",
+      "content": {
+        "card": {
+          "schema": "2.0",
+          "config": {
+            "update_multi": true,
+            "summary": {
+              "content": "确认删除"
+            }
+          },
+          "header": {
+            "title": {
+              "tag": "plain_text",
+              "content": "确认删除"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "确认删除 #3 Old delete target？\n\n**类型：** 提醒\n\n**时间表：** 一次性 2026-10-19 08:15\n\n**下次触发：** 2026-10-19 08:15\n\n**结束：** 一次性"
+              },
+              {
+                "tag": "hr"
+              },
+              {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_spacing": "small",
+                "columns": [
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "是"
+                        },
+                        "type": "primary",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.confirm",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC0zYzQ0NzYwZCIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5jb25maXJtIiwiZXhwIjoxNzkyNDU0NDAwMDAwLCJuIjoib2xkLXN5bnRoZXRpYy05In0.OlUl7cv43M7pD9XORzXqe6zgZ2F4Mt-QNTA5cJT8Gr0"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "否"
+                        },
+                        "type": "default",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.reject",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC0zYzQ0NzYwZCIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5yZWplY3QiLCJleHAiOjE3OTI0NTQ0MDAwMDAsIm4iOiJvbGQtc3ludGhldGljLTEwIn0.Iz00lQIXV09JNkOpMP9iOQ7Sj9kJD4_shSRQFzu9di0"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "messageId": "om_old_card_4",
+      "content": {
+        "card": {
+          "schema": "2.0",
+          "config": {
+            "update_multi": true,
+            "summary": {
+              "content": "确认替换 #4"
+            }
+          },
+          "header": {
+            "title": {
+              "tag": "plain_text",
+              "content": "确认替换 #4"
+            }
+          },
+          "body": {
+            "elements": [
+              {
+                "tag": "markdown",
+                "content": "将删除：#4 Old replace target · 一次性 2026-10-19 08:15\n\n**任务类型：** 提醒\n\n**名称：** Old replacement\n\n**时间表：** 一次性 2026-10-19 08:40\n\n**时区：** Asia/Shanghai\n\n触发时间：2026-10-19 08:40（共 1 次）\n\n**结束：** 一次性\n\n**任务：** Deliver old replacement\n\n**执行身份：** 本 bot 发送提醒（不跑 agent）"
+              },
+              {
+                "tag": "hr"
+              },
+              {
+                "tag": "column_set",
+                "flex_mode": "flow",
+                "horizontal_spacing": "small",
+                "columns": [
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "是"
+                        },
+                        "type": "primary",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.confirm",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC01ZTQ5ZjQzNCIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5jb25maXJtIiwiZXhwIjoxNzkyNDU0NDAwMDAwLCJuIjoib2xkLXN5bnRoZXRpYy0xMSJ9.n4RdG6VyYyxpdRKa1a9_O_TH8FCdr0UkM6jDfE1F6lE"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  },
+                  {
+                    "tag": "column",
+                    "width": "auto",
+                    "elements": [
+                      {
+                        "tag": "button",
+                        "text": {
+                          "tag": "plain_text",
+                          "content": "否"
+                        },
+                        "type": "default",
+                        "behaviors": [
+                          {
+                            "type": "callback",
+                            "value": {
+                              "cmd": "auto.reject",
+                              "auto_token": "auto_cb.v1.eyJkIjoiZHJhZnQtMTc5MjM2ODAwMDAwMC01ZTQ5ZjQzNCIsImMiOiJvY19zeW50aGV0aWMiLCJhIjoiYXV0by5yZWplY3QiLCJleHAiOjE3OTI0NTQ0MDAwMDAsIm4iOiJvbGQtc3ludGhldGljLTEyIn0.0ftiqNtUtH7HsqXndzZHz1riMZ5MAo6YDU6iH6fhG-c"
+                            }
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      }
+    }
+  ],
+  "board": {
+    "messageId": "om_old_board",
+    "content": {
+      "card": {
+        "schema": "2.0",
+        "config": {
+          "update_multi": true,
+          "summary": {
+            "content": "本群自动化"
+          }
+        },
+        "header": {
+          "title": {
+            "tag": "plain_text",
+            "content": "本群自动化"
+          }
+        },
+        "body": {
+          "elements": [
+            {
+              "tag": "markdown",
+              "content": "**#1 Old saved reminder** · 提醒\n下次 2026-10-19 08:15 · 结束 一次性 · 待触发"
+            },
+            {
+              "tag": "column_set",
+              "flex_mode": "flow",
+              "horizontal_spacing": "small",
+              "columns": [
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "暂停"
+                      },
+                      "type": "default",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.pause",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6MSwiYSI6ImF1dG8ucGF1c2UiLCJleHAiOjE4MjY5MjgwMDAwMDB9.u30h9Tvj2chs69DSWWGDgS97xOKiEUAcvF37lvGoBlU"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "删除"
+                      },
+                      "type": "danger",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.delete",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6MSwiYSI6ImF1dG8uZGVsZXRlIiwiZXhwIjoxODI2OTI4MDAwMDAwfQ.5__gTljoCotrPNeciZ468Ij6pdnLFZzI1YXlQdpwn1c"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "hr"
+            },
+            {
+              "tag": "markdown",
+              "content": "**#2 Old saved agent** · agent 任务\n下次 2026-10-19 08:20 · 结束 一次性 · 待触发"
+            },
+            {
+              "tag": "column_set",
+              "flex_mode": "flow",
+              "horizontal_spacing": "small",
+              "columns": [
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "暂停"
+                      },
+                      "type": "default",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.pause",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6MiwiYSI6ImF1dG8ucGF1c2UiLCJleHAiOjE4MjY5MjgwMDAwMDB9.Or_CA5A48Jf4wTwue-LpR5_IoFsvOvuB-Z44p88NzKI"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "删除"
+                      },
+                      "type": "danger",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.delete",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6MiwiYSI6ImF1dG8uZGVsZXRlIiwiZXhwIjoxODI2OTI4MDAwMDAwfQ.NXaPvHp412Bqa7HVOl3kwp4Ig1BsSt7ZG8WAYxiDXGQ"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "hr"
+            },
+            {
+              "tag": "markdown",
+              "content": "**#3 Old delete target** · 提醒\n下次 2026-10-19 08:15 · 结束 一次性 · 待触发"
+            },
+            {
+              "tag": "column_set",
+              "flex_mode": "flow",
+              "horizontal_spacing": "small",
+              "columns": [
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "暂停"
+                      },
+                      "type": "default",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.pause",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6MywiYSI6ImF1dG8ucGF1c2UiLCJleHAiOjE4MjY5MjgwMDAwMDB9.GGyomi5tcaKn1ltnqcgZGJ2CNGBFRZ-EGSho008L6qo"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "删除"
+                      },
+                      "type": "danger",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.delete",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6MywiYSI6ImF1dG8uZGVsZXRlIiwiZXhwIjoxODI2OTI4MDAwMDAwfQ.LlwshmRh6KZ9DR4y-i2MmrFVUTV7NfhOnGUey3hPbdM"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tag": "hr"
+            },
+            {
+              "tag": "markdown",
+              "content": "**#4 Old replace target** · 提醒\n下次 2026-10-19 08:15 · 结束 一次性 · 待触发"
+            },
+            {
+              "tag": "column_set",
+              "flex_mode": "flow",
+              "horizontal_spacing": "small",
+              "columns": [
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "暂停"
+                      },
+                      "type": "default",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.pause",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6NCwiYSI6ImF1dG8ucGF1c2UiLCJleHAiOjE4MjY5MjgwMDAwMDB9.i3416JpB2pP7lVu4ywukJ5VXsrhBPKHc1TN2oUrZsTE"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "tag": "column",
+                  "width": "auto",
+                  "elements": [
+                    {
+                      "tag": "button",
+                      "text": {
+                        "tag": "plain_text",
+                        "content": "删除"
+                      },
+                      "type": "danger",
+                      "behaviors": [
+                        {
+                          "type": "callback",
+                          "value": {
+                            "cmd": "auto.delete",
+                            "auto_token": "auto_board.v1.eyJjIjoib2Nfc3ludGhldGljIiwiaSI6NCwiYSI6ImF1dG8uZGVsZXRlIiwiZXhwIjoxODI2OTI4MDAwMDAwfQ.qTYMiUtrS2ZwdQaY08pfDOXYUMprOeZRRzwtk28QVWE"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    }
+  }
+}
