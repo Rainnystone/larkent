@@ -23,6 +23,10 @@ vi.mock('@larksuite/channel', async original => ({ ...await original<typeof impo
 import type { startChannel as sourceStartChannel } from '../../src/bot/channel';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z');
+const CORRECTED_PREVIEW = [
+  { category: 'needs-input', code: 'missing-end-at' },
+  { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } },
+];
 const cleanup: Array<() => Promise<unknown>> = [];
 let client: Awaited<ReturnType<typeof buildToolProcess>>;
 let startChannel: typeof sourceStartChannel;
@@ -115,7 +119,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
   expectResumeArgv(kind, created.argv);
   expect(runs[0]!.resumeHandle).toBeUndefined();
   expect(calls(created, 'automation.create')).toMatchObject([{ category: 'validation-failed', code: 'invalid-params' }, { category: 'waiting-confirmation' }, { category: 'waiting-confirmation' }]);
-  expect(calls(created, 'automation.preview')).toMatchObject([{ category: 'needs-input', code: 'missing-end-at' }, { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } }]);
+  expect(calls(created, 'automation.preview')).toMatchObject(CORRECTED_PREVIEW);
   const operationId = calls(created, 'automation.operation.get')[0].data.operationId;
   expect(store.list()).toEqual([]); expect(store.listDrafts()).toHaveLength(1);
   await confirm('auto.confirm');
@@ -128,7 +132,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
   expect(calls(managed, 'automation.operation.get')).toMatchObject([{ category: 'applied', data: { executedCount: 0 } }, { category: 'applied' }]);
   expect(calls(managed, 'automation.pause')[0].category).toBe('applied');
   expect(calls(managed, 'automation.resume')[0].category).toBe('applied');
-  expect(calls(managed, 'automation.preview')).toMatchObject([{ category: 'needs-input', code: 'missing-end-at' }, { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } }]);
+  expect(calls(managed, 'automation.preview')).toMatchObject(CORRECTED_PREVIEW);
   expect(calls(managed, 'automation.replace')[0].category).toBe('waiting-confirmation');
   const replacementId = calls(managed, 'automation.replace')[0].data.operationId;
   await confirm('auto.confirm');
