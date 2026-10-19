@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
 import { flushDraftCardOnce, type DraftFlushContext } from './command';
 import { AUTOMATION_OPERATION_TTL_MS, automationOperationScope, readAutomationOperationId } from './operation-id';
-import { nextFireAfter, parseSchedule, type PendingRecurring } from './schedule';
+import { nextFireAfter } from './schedule';
+import { normalizeAutomationSchedule } from './schedule-input';
 import type { AutomationOperation, AutomationsStore } from './store';
 import type { AutomationToolContext } from './tools';
 
@@ -25,7 +26,7 @@ export async function getReminderOperation(operationId: unknown, context: Remind
   }
 }
 
-export async function createReminderOperation(params: Record<string, unknown>, context: ReminderOperationContext, validate: (params: Record<string, unknown>, context: AutomationToolContext) => ToolResult): Promise<ToolResult> {
+export async function createReminderOperation(params: Record<string, unknown>, context: ReminderOperationContext): Promise<ToolResult> {
   const operationId = params.operationId;
   const invalid = checkId(operationId, context);
   if (invalid) return invalid;
@@ -34,7 +35,7 @@ export async function createReminderOperation(params: Record<string, unknown>, c
   let map = claims.get(context.store!);
   if (!map) { map = new Map(); claims.set(context.store!, map); }
   const prior = map.get(operationId as string);
-  if (prior) { await prior; return createReminderOperation(params, context, validate); }
+  if (prior) { await prior; return createReminderOperation(params, context); }
   const promise = submit();
   map.set(operationId as string, promise);
   try { return await promise; } finally { if (map.get(operationId as string) === promise) map.delete(operationId as string); }
@@ -50,39 +51,31 @@ export async function createReminderOperation(params: Record<string, unknown>, c
       const missing = ['name', 'taskText'].filter(key => params[key] === undefined);
       if (missing.length) return toolResult('needs-input', 'missing-fields', { fields: missing, operationId });
       if (typeof params.name !== 'string' || !params.name.trim() || typeof params.taskText !== 'string' || !params.taskText.trim()) return toolResult('validation-failed', 'invalid-task-content', { operationId });
-      const preview = validate({ taskType: params.taskType, schedule: params.schedule, ...(params.timezone !== undefined ? { timezone: params.timezone } : {}) }, { ...context, now: () => at });
-      const needsEnd = preview.code === 'missing-end-at';
-      if (preview.category !== 'ok' && !needsEnd) return { ...preview, data: { ...(preview.data as object), operationId } };
-      const input = params.schedule as Record<string, unknown>;
-      const parsed = parseSchedule(needsEnd ? { ...input, endAt: (input.startAt as number) + 30 * 86400_000 } : input, { taskType: 'reminder', now: at });
-      if (!parsed.ok) return toolResult('validation-failed', parsed.reason, { operationId });
-      const schedule = parsed.schedule;
-      const timezone = needsEnd ? new Intl.DateTimeFormat('en', { timeZone: String(input.timezone) }).resolvedOptions().timeZone : (preview.data as { timezone: string }).timezone;
-      const normalized = schedule.kind === 'one-shot' ? schedule : { ...schedule, timezone };
-      const pending: PendingRecurring | undefined = needsEnd ? {
-        kind: input.kind as PendingRecurring['kind'], timezone,
-        ...(input.times ? { times: (normalized as PendingRecurring).times } : {}),
-        ...(input.weekdays ? { weekdays: (normalized as PendingRecurring).weekdays } : {}),
-        ...(input.every ? { every: input.every as PendingRecurring['every'] } : {}),
-        ...(input.window ? { window: (normalized as PendingRecurring).window } : {}),
-      } : undefined;
+      const normalized = normalizeAutomationSchedule(params, { ...context, now: () => at }, true);
+      if (!normalized.ok) return { ...normalized.result, data: { ...(normalized.result.data as object), operationId } };
+      const { timezone } = normalized;
+      const pending = 'pendingRecurring' in normalized ? normalized.pendingRecurring : undefined;
+      const schedule = 'schedule' in normalized ? normalized.schedule : undefined;
+      const startAt = 'pendingRecurring' in normalized ? normalized.startAt : normalized.schedule.kind === 'one-shot' ? normalized.schedule.fireAt : normalized.schedule.startAt;
+      const endAt = schedule ? schedule.kind === 'one-shot' ? schedule.fireAt : schedule.endAt : undefined;
       const fingerprint = createHash('sha256').update(JSON.stringify({ taskType: 'reminder', name: params.name.trim(), taskText: params.taskText.trim(), timezone,
-        schedule: needsEnd ? { ...normalized, endAt: null } : normalized })).digest('hex');
+        schedule: pending ? { ...pending, startAt, endAt: null } : schedule })).digest('hex');
       if (previous) {
         if (previous.fingerprint !== fingerprint) return toolResult('validation-failed', 'operation-conflict', { operationId });
         return getReminderOperation(operationId, context);
       }
-      const pendingOperation = context.store!.findPendingOperation(context.profile, context.chatId, fingerprint);
+      const pendingOperation = context.store!.findReusableOperation(context.profile, context.chatId, fingerprint);
       if (pendingOperation) {
+        await context.store!.aliasOperation(pendingOperation.operationId, operationId as string);
         const result = await getReminderOperation(pendingOperation.operationId, context);
         return result.category === 'unknown' ? { ...result, code: 'prior-operation-unknown' } : result;
       }
-      const nextFireAt = needsEnd ? 0 : nextFireAfter(normalized, at);
-      if (!needsEnd && !nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
+      const nextFireAt = schedule ? nextFireAfter(schedule, at) : 0;
+      if (schedule && !nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
       const draft = await context.store!.saveDraft({
-        taskType: 'reminder', operationId: operationId as string, schedule: pending ?? normalized, timezone,
-        startAt: normalized.kind === 'one-shot' ? normalized.fireAt : normalized.startAt,
-        ...(needsEnd ? { pendingRecurring: pending } : { endAt: normalized.kind === 'one-shot' ? normalized.fireAt : normalized.endAt }),
+        taskType: 'reminder', operationId: operationId as string, cardReply: context.cardReply, schedule: pending ?? schedule!, timezone,
+        startAt,
+        ...(pending ? { pendingRecurring: pending } : { endAt }),
         nextFireAt, name: params.name.trim(), taskText: params.taskText.trim(), chatId: context.chatId, createdBy: context.actorId,
       }, { operationId: operationId as string, profile: context.profile, chatId: context.chatId, fingerprint });
       await flushDraftCardOnce(context.drafts!, draft.draftId, at);
@@ -102,21 +95,28 @@ function operationResult(operation: AutomationOperation, context: ReminderOperat
   const executions = context.journal?.list().filter(entry => current.taskId && entry.turnId.startsWith(`af:${current.taskId}@`)) ?? [];
   const delivered = executions.filter(entry => entry.reply?.state === 'sent');
   const last = executions.at(-1);
-  const base = { operationId: current.operationId, draftId: current.draftId, ...(current.taskId ? { taskId: current.taskId } : {}), dispatchedCount: current.executedCount, executedCount: delivered.length, executionHistoryComplete: executions.length === current.executedCount, ...(last ? { lastExecution: last.reply?.state === 'sent' ? 'ok' : last.reply?.state === 'rejected' ? 'failed' : 'pending' } : {}) };
+  const base = {
+    operationId: current.operationId, draftId: current.draftId, received: true,
+    ...(current.taskId ? { taskId: current.taskId } : {}),
+    dispatchedCount: current.dispatchedCount, executedCount: delivered.length,
+    executionHistoryComplete: executions.length === current.dispatchedCount,
+    ...(last ? { lastExecution: last.reply?.state === 'sent' ? 'ok' : last.reply?.state === 'rejected' ? 'failed' : 'pending' } : {}),
+  };
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });
-  const draft = context.store!.getDraft(current.draftId);
+  const draft = context.store!.getOperationDraft(current.draftId);
   if (draft?.delivery?.state === 'sending') return unknown(current.operationId, 'card-delivery-unknown', base);
   if (!draft || draft.createdAt + AUTOMATION_OPERATION_TTL_MS <= (context.now ?? Date.now)()) return toolResult('execution-failed', 'draft-expired', { ...base, state: 'not-applied', applied: false });
-  if (draft.cardMessageId) return toolResult(draft.op !== 'delete' && draft.pendingRecurring ? 'needs-input' : 'waiting-confirmation', draft.op !== 'delete' && draft.pendingRecurring ? 'missing-end-at' : 'waiting-confirmation', {
-    ...base, state: draft.op !== 'delete' && draft.pendingRecurring ? 'needs-input' : 'waiting-confirmation', applied: false, cardMessageId: draft.cardMessageId,
-    ...(draft.op !== 'delete' && draft.pendingRecurring ? { fields: ['schedule.endAt'] } : {}),
+  const needsEnd = draft.op !== 'delete' && Boolean(draft.pendingRecurring);
+  if (draft.cardMessageId) return toolResult(needsEnd ? 'needs-input' : 'waiting-confirmation', needsEnd ? 'missing-end-at' : 'waiting-confirmation', {
+    ...base, state: needsEnd ? 'needs-input' : 'waiting-confirmation', applied: false, cardMessageId: draft.cardMessageId,
+    ...(needsEnd ? { fields: ['schedule.endAt'] } : {}),
   });
   return toolResult('execution-failed', draft.delivery?.state === 'rejected' ? 'card-send-failed' : 'card-not-sent', { ...base, state: 'not-applied', applied: false });
 }
 function checkId(value: unknown, context: AutomationToolContext): ToolResult | undefined {
   const id = readAutomationOperationId(value);
-  if (!id) return toolResult('validation-failed', 'invalid-operation-id');
+  if (!id || id.issuedAt > (context.now ?? Date.now)() + 5 * 60_000) return toolResult('validation-failed', 'invalid-operation-id');
   if (id.scope !== automationOperationScope(context.profile, context.chatId)) return toolResult('unauthorized', 'operation-scope-mismatch');
   return undefined;
 }

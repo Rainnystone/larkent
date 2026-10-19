@@ -14,6 +14,12 @@ import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel
 import { createTmpProfile } from '../../helpers/tmp-profile';
 import { buildToolProcess } from '../../helpers/bridge-tool-process';
 
+const fsFault = vi.hoisted(() => ({ beforeRename: undefined as undefined | ((destination: string) => Promise<void>) }));
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  return { ...actual, rename: async (from: string, to: string) => { await fsFault.beforeRename?.(String(to)); return actual.rename(from, to); } };
+});
+
 const sdk = vi.hoisted(() => ({ channel: undefined as ReturnType<typeof createRecordingLarkChannel> | undefined }));
 vi.mock('@larksuite/channel', async original => ({ ...await original<typeof import('@larksuite/channel')>(), createLarkChannel: () => sdk.channel }));
 import { startChannel } from '../../../src/bot/channel';
@@ -27,10 +33,10 @@ let client: Awaited<ReturnType<typeof buildToolProcess>>;
 beforeAll(async () => { client = await buildToolProcess(); }, 30000);
 afterAll(async () => { await client?.cleanup(); });
 const cleanups: Array<() => Promise<unknown>> = [];
-afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); sdk.channel = undefined; });
+afterEach(async () => { fsFault.beforeRename = undefined; for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); sdk.channel = undefined; });
 
 type Call = (operation: string, params?: object) => Promise<any>;
-async function harness() {
+async function harness(chatMode: 'group' | 'topic' = 'group') {
   const tmp = await createTmpProfile('reminder-tools-'); cleanups.push(tmp.cleanup);
   let now = NOW;
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now); cleanups.push(async () => { clock.mockRestore(); });
@@ -41,7 +47,7 @@ async function harness() {
   const makeStore = () => new AutomationsStore({ path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now });
   let store = makeStore(); await store.load();
   const journal = new TurnJournal(join(tmp.profile, 'journal.json'), { now: () => now }); await journal.load();
-  const makeChannel = (messages: unknown[] = []) => createRecordingLarkChannel({ chats: [{ id: 'oc_synthetic', name: 'Synthetic' }], chatMode: 'group', messagesByChat: messages.length ? { oc_synthetic: messages } : {} });
+  const makeChannel = (messages: unknown[] = []) => createRecordingLarkChannel({ chats: [{ id: 'oc_synthetic', name: 'Synthetic' }], chatMode, messagesByChat: messages.length ? { oc_synthetic: messages } : {} });
   let channel = makeChannel(); sdk.channel = channel;
   let script: (call: Call, opts: AgentRunOptions) => Promise<void> = async () => {};
   let failure: unknown; let runCount = 0;
@@ -77,7 +83,7 @@ async function harness() {
     setNow: (value: number) => { now = value; },
     async turn(next: typeof script, chatId = 'oc_synthetic', waitReply = true) {
       script = next; const count = runCount; failure = undefined;
-      await channel.handlers.message?.({ messageId: `om_synthetic_${++message}`, content: '今天、明天、后天每天 09:00 提醒', chatId, chatType: 'group', senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
+      await channel.handlers.message?.({ messageId: `om_synthetic_${++message}`, content: '今天、明天、后天每天 09:00 提醒', chatId, chatType: 'group', ...(chatMode === 'topic' ? { threadId: 'omt_synthetic' } : {}), senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
       await vi.waitFor(() => expect(runCount).toBeGreaterThan(count), { timeout: 25000 });
       if (waitReply) await vi.waitFor(() => expect(channel.sent.some(item => JSON.stringify(item.content).includes(`Synthetic turn ${runCount} completed`))).toBe(true), { timeout: 12000 });
       if (failure) throw failure;
@@ -205,6 +211,11 @@ it('keeps an unprovable send unknown through restart and refuses recreation unde
   expect(h.store.listDrafts()).toHaveLength(1);
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(0);
   expect(h.channel.rawClient.requests.some(item => item.method === 'im.v1.message.list')).toBe(true);
+  h.setNow(NOW + 2 * 86400000); await h.restart({ messages: [] });
+  await h.turn(async call => {
+    expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'unknown', data: { operationId } });
+    expect(await call('automation.create', reminder)).toMatchObject({ category: 'unknown', code: 'prior-operation-unknown', data: { operationId } });
+  });
 }, 30000);
 
 it('recovers a sent card after the receipt write fails without sending a second card', async () => {
@@ -346,4 +357,100 @@ it('reports offline creation as received without a sent card, then sends it once
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation' }); });
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
   expect(h.store.list()).toHaveLength(0);
+}, 30000);
+
+it('rejects future-dated IDs so a caller cannot bypass the submission lifetime', async () => {
+  const h = await harness();
+  await h.turn(async (call, opts) => {
+    const operationId = `op1.${opts.toolEnv!.LARK_BRIDGE_TOOL_SCOPE}.${NOW + 86400000}.${'f'.repeat(32)}`;
+    expect(await call('automation.create', { ...reminder, operationId })).toMatchObject({ category: 'validation-failed', code: 'invalid-operation-id' });
+  });
+  expect(h.store.listDrafts()).toHaveLength(0);
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+}, 30000);
+
+it('never reports an applied operation before the confirmation write commits', async () => {
+  const h = await harness(); let operationId = '';
+  await h.turn(async call => { const result = await call('automation.create', reminder); operationId = result.data.operationId; });
+  const draft = h.store.listDrafts()[0]!;
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  let entered!: () => void; const writing = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  cleanups.push(async () => { release(); });
+  let armed = true;
+  fsFault.beforeRename = async destination => {
+    if (armed && destination === h.store.getFilePath()) { armed = false; entered(); await gate; }
+  };
+  const confirming = Promise.resolve(h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm'))));
+  void confirming.catch(() => {});
+  await writing;
+  try {
+    await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).not.toMatchObject({ category: 'applied' }); });
+  } finally { release(); }
+  await confirming;
+  await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: 1, applied: true } }); });
+}, 30000);
+
+it('recovers every submitted semantic-retry ID after its response is lost and the original task is confirmed', async () => {
+  const h = await harness(); let originalId = ''; let retriedId = '';
+  await h.turn(async (call, opts) => {
+    const first = await call('automation.create', reminder); originalId = first.data.operationId;
+    retriedId = `op1.${opts.toolEnv!.LARK_BRIDGE_TOOL_SCOPE}.${NOW}.${'a'.repeat(32)}`;
+    // The model loses this response and retains only the ID known before submission.
+    await call('automation.create', { ...reminder, operationId: retriedId });
+  });
+  const draft = h.store.listDrafts()[0]!;
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.restart();
+  await h.turn(async call => {
+    expect(await call('automation.operation.get', { operationId: retriedId })).toMatchObject({ category: 'applied', data: { operationId: originalId, taskId: 1, applied: true } });
+    expect(await call('automation.create', { ...reminder, operationId: retriedId })).toMatchObject({ category: 'applied', data: { taskId: 1 } });
+  });
+  expect(h.store.list()).toHaveLength(1); expect(h.store.listDrafts()).toHaveLength(0);
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+}, 30000);
+
+it.each(['delivery', 'operations'] as const)('refuses malformed v2 %s data without losing the original uncertain receipt', async field => {
+  const h = await harness();
+  h.channel.sendErrors.send = new Error('synthetic uncertain send');
+  await h.turn(async call => { expect(await call('automation.create', reminder)).toMatchObject({ category: 'unknown' }); });
+  const document = JSON.parse(await readFile(h.store.getFilePath(), 'utf8'));
+  if (field === 'delivery') document.drafts[0].delivery = {};
+  else delete document.operations;
+  const corrupted = JSON.stringify(document); await writeFile(h.store.getFilePath(), corrupted);
+  await expect(h.restart()).rejects.toThrow(/Invalid automation/);
+  expect(await readFile(h.store.getFilePath(), 'utf8')).toBe(corrupted);
+}, 30000);
+
+it('keeps a topic-group confirmation card in the originating topic', async () => {
+  const h = await harness('topic');
+  await h.turn(async call => { expect(await call('automation.create', reminder)).toMatchObject({ category: 'waiting-confirmation' }); });
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!;
+  expect(card.options).toMatchObject({ replyTo: 'om_synthetic_1', replyInThread: true });
+}, 30000);
+
+it('serializes end completion with a concurrent recovery query so one confirmation card is created', async () => {
+  const h = await harness(); let operationId = '';
+  const createdCards: unknown[] = []; const createCard = h.channel.createCard.bind(h.channel);
+  h.channel.createCard = async card => { const result = await createCard(card); createdCards.push(card); return result; };
+  await h.turn(async call => {
+    const { endAt: _, ...withoutEnd } = schedule;
+    operationId = (await call('automation.create', { ...reminder, schedule: withoutEnd })).data.operationId;
+  });
+  const draft = h.store.listDrafts()[0]!;
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.end.custom'))!.content;
+  let entered!: () => void; const writing = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void; const gate = new Promise<void>(resolve => { release = resolve; });
+  cleanups.push(async () => { release(); }); let armed = true;
+  fsFault.beforeRename = async destination => {
+    if (armed && destination === h.store.getFilePath()) { armed = false; entered(); await gate; }
+  };
+  const completing = Promise.resolve(h.channel.handlers.cardAction?.(click(draft.cardMessageId!, { ...button(card, 'auto.end.custom'), end_at: '2026-10-21' })));
+  void completing.catch(() => {}); await writing;
+  const querying = h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation' }); });
+  try { await vi.waitFor(() => expect(h.store.listDrafts()[0]?.delivery?.state).toBe('prepared')); } finally { release(); }
+  await completing; await querying;
+  expect(createdCards).toHaveLength(2); // one end card and one confirmation card
+  expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
 }, 30000);

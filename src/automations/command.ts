@@ -1273,8 +1273,8 @@ async function deliverUnboundDraftCard(
     automations: ctx.automations,
     autoAuth: ctx.autoAuth,
     automationsScheduler: ctx.automationsScheduler,
-    chatMode: 'group' as const,
-    msg: { chatId: draft.chatId, messageId: '', threadId: undefined },
+    chatMode: draft.cardReply?.replyInThread ? 'topic' as const : 'group' as const,
+    msg: { chatId: draft.chatId, messageId: draft.cardReply?.replyTo ?? '', threadId: draft.cardReply?.threadId },
   };
   switch (draft.op) {
     case 'delete':
@@ -1289,7 +1289,7 @@ async function deliverUnboundDraftCard(
       {
         const schedule = readSchedule(draft.schedule);
         if (!schedule) return;
-        await postConfirmCard(cardCtx, draft, schedule, now, '');
+        await postConfirmCard(cardCtx, draft, schedule, now, cardCtx.msg.messageId);
       }
       return;
     default: {
@@ -1336,8 +1336,13 @@ export async function completeDraftEnd(
     nextFireAt,
     pendingRecurring: null,
     cardMessageId: null,
+    ...(draft.operationId ? { cardReply: { ...(draft.cardReply ?? {}), replyTo } } : {}),
   });
   if (!updated || updated.op === 'delete') return { ok: false, message: AUTO_INVALID_HINT };
+  if (updated.operationId) {
+    await flushDraftCardOnce(ctx, updated.draftId, now);
+    return { ok: true };
+  }
   await postConfirmCard({
     channel: ctx.channel,
     automations: ctx.automations,
@@ -1609,7 +1614,10 @@ async function postEndCard(
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
-    if (draft.operationId) throw error;
+    if (draft.operationId) {
+      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
+      throw error;
+    }
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
@@ -1690,7 +1698,10 @@ async function postConfirmCard(
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
-    if (draft.operationId) throw error;
+    if (draft.operationId) {
+      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
+      throw error;
+    }
     await settleDraftCardFailure(ctx, draft, error, replyTo);
     return;
   }
@@ -1738,7 +1749,10 @@ async function postDeleteCard(
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
-    if (draft.operationId) throw error;
+    if (draft.operationId) {
+      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
+      throw error;
+    }
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }

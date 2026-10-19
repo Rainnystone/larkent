@@ -1,3 +1,5 @@
+import { AUTOMATIONS_SCHEMA_VERSION, upgradeAutomationsDocument } from './migrations';
+import { automationOperationScope, readAutomationOperationId } from './operation-id';
 import { randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
@@ -10,7 +12,7 @@ import { parseFireKey, type PendingRecurring } from './schedule';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
 
-export const AUTOMATIONS_SCHEMA_VERSION = 2 as const;
+export { AUTOMATIONS_SCHEMA_VERSION } from './migrations';
 export const AUTOMATIONS_DRAFT_TTL_MS = 24 * 60 * 60 * 1000;
 export const AUTOMATIONS_MISSED_TTL_MS = 24 * 60 * 60 * 1000;
 export const AUTOMATIONS_FIRE_HISTORY_MAX = 20;
@@ -66,6 +68,7 @@ export interface AutomationItem {
 
 export interface AutomationOperation {
   operationId: string;
+  aliases?: string[];
   profile: string;
   chatId: string;
   fingerprint: string;
@@ -74,16 +77,23 @@ export interface AutomationOperation {
   state: 'received' | 'applied' | 'not-applied';
   code?: string;
   taskId?: number;
-  executedCount: number;
-  lastExecution?: AutomationLastStatus;
+  dispatchedCount: number;
 }
+export type RegisterAutomationOperationInput = Pick<AutomationOperation, 'operationId' | 'profile' | 'chatId' | 'fingerprint'>;
+
 export interface DraftDelivery {
   state: 'prepared' | 'sending' | 'sent' | 'rejected';
   deliveryId: string;
   card: object;
   cardId?: string;
 }
+export interface DraftCardReply {
+  replyTo: string;
+  replyInThread?: boolean;
+  threadId?: string;
+}
 export interface CreateAutomationInput {
+  cardReply?: DraftCardReply;
   operationId?: string;
   taskType: AutomationTaskType;
   schedule: unknown;
@@ -103,6 +113,7 @@ export interface AutomationDraftBase {
   draftId: string;
   operationId?: string;
   delivery?: DraftDelivery;
+  cardReply?: DraftCardReply;
   createdAt: number;
   chatId: string;
   createdBy: string;
@@ -162,6 +173,7 @@ export type SaveAutomationDraftInput =
     });
 
 export interface UpdateDraftPatch {
+  cardReply?: DraftCardReply;
   schedule?: unknown;
   endAt?: number;
   nextFireAt?: number;
@@ -252,6 +264,8 @@ export class AutomationsStore {
   private started = new Set<string>();
   private boards: AutomationBoardBinding[] = [];
   private operations: AutomationOperation[] = [];
+  private durableOperations: AutomationOperation[] = [];
+  private durableDrafts: AutomationDraft[] = [];
   private logEntries: AutomationsLogEntry[] = [];
   private queue = new PersistenceQueue();
   private logQueue = new PersistenceQueue();
@@ -403,6 +417,9 @@ export class AutomationsStore {
       || boards.length !== this.boards.length;
     if (!changed) return false;
     this.items = items;
+    for (const operation of this.operations) {
+      if (operation.chatId === chatId && operation.state === 'received') { operation.state = 'not-applied'; operation.code = 'chat-unavailable'; }
+    }
     this.drafts = drafts;
     this.boards = boards;
     await this.persistNow();
@@ -481,7 +498,7 @@ export class AutomationsStore {
 
   async saveDraft(
     input: CreateAutomationInput & { op?: 'create'; pendingRecurring?: PendingRecurring },
-    operation?: Omit<AutomationOperation, 'draftId' | 'createdAt' | 'state' | 'executedCount'>,
+    operation?: RegisterAutomationOperationInput,
   ): Promise<CreateAutomationDraft>;
   async saveDraft(
     input: Extract<SaveAutomationDraftInput, { op: 'delete' }>,
@@ -489,13 +506,13 @@ export class AutomationsStore {
   async saveDraft(
     input: Extract<SaveAutomationDraftInput, { op: 'replace' }>,
   ): Promise<ReplaceAutomationDraft>;
-  async saveDraft(input: SaveAutomationDraftInput, operation?: Omit<AutomationOperation, 'draftId' | 'createdAt' | 'state' | 'executedCount'>): Promise<AutomationDraft> {
+  async saveDraft(input: SaveAutomationDraftInput, operation?: RegisterAutomationOperationInput): Promise<AutomationDraft> {
     this.assertMutable();
     this.pruneDrafts();
     const draftId = `draft-${this.now()}-${randomBytes(4).toString('hex')}`;
     const createdAt = this.now();
     const draft = draftFromInput(input, draftId, createdAt);
-    if (operation) this.operations.push({ ...operation, draftId, createdAt, state: 'received', executedCount: 0 });
+    if (operation) this.operations.push({ ...operation, draftId, createdAt, state: 'received', dispatchedCount: 0 });
     this.drafts.push(draft);
     await this.persistNow();
     return cloneDraft(draft);
@@ -504,17 +521,34 @@ export class AutomationsStore {
   getOperation(operationId: string): AutomationOperation | undefined {
     // Never report an uncommitted in-memory mutation as a durable result.
     this.assertMutable();
-    const operation = this.operations.find(entry => entry.operationId === operationId);
-    return operation ? { ...operation } : undefined;
+    const operation = this.durableOperations.find(entry => entry.operationId === operationId || entry.aliases?.includes(operationId));
+    return operation ? cloneOperation(operation) : undefined;
   }
 
-  findPendingOperation(profile: string, chatId: string, fingerprint: string): AutomationOperation | undefined {
+  getOperationDraft(draftId: string): AutomationDraft | undefined {
+    this.assertMutable();
+    const draft = this.durableDrafts.find(entry => entry.draftId === draftId);
+    return draft ? cloneDraft(draft) : undefined;
+  }
+
+  async aliasOperation(operationId: string, alias: string): Promise<void> {
+    this.assertMutable();
+    const operation = this.operations.find(entry => entry.operationId === operationId);
+    if (!operation) throw new Error('operation unavailable');
+    if (operation.operationId === alias || operation.aliases?.includes(alias)) return;
+    if (this.operations.some(entry => entry.operationId === alias || entry.aliases?.includes(alias))) throw new Error('operation alias conflict');
+    operation.aliases = [...(operation.aliases ?? []), alias];
+    await this.persistNow();
+  }
+
+  findReusableOperation(profile: string, chatId: string, fingerprint: string): AutomationOperation | undefined {
     this.assertMutable();
     const operation = this.operations.find(entry => entry.profile === profile && entry.chatId === chatId && entry.fingerprint === fingerprint
-      && entry.state === 'received' && this.drafts.some(draft => draft.draftId === entry.draftId
-        && draft.delivery?.state !== 'rejected'
-        && (draft.delivery?.state === 'sending' || draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS > this.now())));
-    return operation ? { ...operation } : undefined;
+      && ((entry.state === 'applied' && entry.createdAt + AUTOMATIONS_DRAFT_TTL_MS > this.now())
+        || (entry.state === 'received' && this.drafts.some(draft => draft.draftId === entry.draftId
+          && draft.delivery?.state !== 'rejected'
+          && (draft.delivery?.state === 'sending' || draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS > this.now())))));
+    return operation ? cloneOperation(operation) : undefined;
   }
 
   async setDraftDelivery(draftId: string, delivery: DraftDelivery): Promise<void> {
@@ -595,6 +629,7 @@ export class AutomationsStore {
       if (patch.pendingRecurring === null) delete draft.pendingRecurring;
       else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
     }
+    if (patch.cardReply) draft.cardReply = { ...patch.cardReply };
     if (patch.cardMessageId === null) {
       delete draft.delivery;
       delete draft.cardMessageId;
@@ -682,7 +717,7 @@ export class AutomationsStore {
         item.lastFireAt = parsed.fireAt;
         item.lastStatus = 'running';
         const operation = this.operations.find(entry => entry.taskId === item.id);
-        if (operation) { operation.executedCount++; operation.lastExecution = 'running'; }
+        if (operation) { operation.dispatchedCount++; }
         item.fireHistory = [
           ...item.fireHistory,
           { fireAt: parsed.fireAt, startedAt: this.now() },
@@ -764,8 +799,6 @@ export class AutomationsStore {
       return false;
     }
     item.lastStatus = status;
-    const operation = this.operations.find(entry => entry.taskId === id);
-    if (operation) { operation.lastExecution = status; }
     if (status === 'ok' && item.nextFireAt === 0) {
       this.items.splice(index, 1);
     }
@@ -790,9 +823,9 @@ export class AutomationsStore {
         this.loadFailure = undefined;
         return;
       }
-      const document = parseAutomationsDocument(text);
+      const { document, upgraded } = parseAutomationsDocument(text);
       this.publish(document, false, true);
-      if ((JSON.parse(text) as { schemaVersion: number }).schemaVersion === 1) await this.persistNow();
+      if (upgraded) await this.persistNow();
       this.logEntries = await this.loadLogEntries();
       await this.loadStatusUpdatedAt();
       if (this.pruneDrafts()) this.schedulePersist();
@@ -805,7 +838,9 @@ export class AutomationsStore {
   }
 
   private publish(document: AutomationsDocument, persistenceDisabled: boolean, hasDocument: boolean): void {
-    this.operations = document.operations.map(entry => ({ ...entry }));
+    this.durableOperations = document.operations.map(cloneOperation);
+    this.durableDrafts = document.drafts.map(cloneDraft);
+    this.operations = document.operations.map(cloneOperation);
     this.nextId = document.nextId;
     this.items = document.items.map(cloneItem);
     this.drafts = document.drafts.map((draft) => ({ ...draft }));
@@ -890,8 +925,11 @@ export class AutomationsStore {
       try {
         while (this.persistDirty) {
           this.persistDirty = false;
-          const snapshot = `${JSON.stringify(this.serialize(), null, 2)}\n`;
+          const document = this.serialize();
+          const snapshot = `${JSON.stringify(document, null, 2)}\n`;
           await writeFileAtomic(this.path, snapshot, { mode: 0o600 });
+          this.durableOperations = document.operations;
+          this.durableDrafts = document.drafts;
         }
       } finally {
         this.persistScheduled = false;
@@ -940,13 +978,17 @@ export class AutomationsStore {
       drafts: this.drafts.map((draft) => cloneDraft(draft)),
       started: [...this.started],
       boards: this.boards.map((board) => cloneBoard(board)),
-      operations: this.operations.map(entry => ({ ...entry })),
+      operations: this.operations.map(cloneOperation),
     };
   }
 }
 
 function emptyDocument(): AutomationsDocument {
   return { nextId: 1, items: [], drafts: [], started: [], boards: [], operations: [] };
+}
+
+function cloneOperation(operation: AutomationOperation): AutomationOperation {
+  return { ...operation, ...(operation.aliases ? { aliases: [...operation.aliases] } : {}) };
 }
 
 function cloneItem(item: AutomationItem): AutomationItem {
@@ -958,12 +1000,8 @@ function cloneItem(item: AutomationItem): AutomationItem {
   };
 }
 
-function parseAutomationsDocument(text: string): AutomationsDocument {
-  const raw: unknown = JSON.parse(text);
-  if (!isObject(raw)) throw new Error('Invalid automations document: expected object');
-  if (raw.schemaVersion !== 1 && raw.schemaVersion !== AUTOMATIONS_SCHEMA_VERSION) {
-    throw new Error(`Unsupported automations schemaVersion: ${String(raw.schemaVersion)}`);
-  }
+function parseAutomationsDocument(text: string): { document: AutomationsDocument; upgraded: boolean } {
+  const { current: raw, upgraded } = upgradeAutomationsDocument(JSON.parse(text));
   const nextId = typeof raw.nextId === 'number' && Number.isInteger(raw.nextId) && raw.nextId >= 1
     ? raw.nextId
     : 1;
@@ -976,6 +1014,7 @@ function parseAutomationsDocument(text: string): AutomationsDocument {
   const drafts = Array.isArray(raw.drafts)
     ? raw.drafts.flatMap((entry) => {
       const draft = parseDraft(entry);
+      if (isObject(entry) && (entry.operationId !== undefined || entry.delivery !== undefined) && !draft) throw new Error('Invalid automation operation draft');
       return draft ? [draft] : [];
     })
     : [];
@@ -988,21 +1027,60 @@ function parseAutomationsDocument(text: string): AutomationsDocument {
       return board ? [board] : [];
     })
     : [];
+  if (!Array.isArray(raw.operations)) throw new Error('Invalid automation operation receipts');
+  const operations = raw.operations.map(parseOperation);
+  const ids = new Set<string>();
+  for (const operation of operations) {
+    for (const id of [operation.operationId, ...(operation.aliases ?? [])]) {
+      if (ids.has(id)) throw new Error('Invalid automation duplicate operation ID');
+      ids.add(id);
+    }
+  }
+  for (const draft of drafts) {
+    if (!draft.operationId) continue;
+    const operation = operations.find(entry => entry.operationId === draft.operationId);
+    if (!operation || operation.draftId !== draft.draftId || operation.chatId !== draft.chatId) throw new Error('Invalid automation draft receipt association');
+  }
   const maxItemId = items.reduce((max, item) => Math.max(max, item.id), 0);
+  return { upgraded, document: { nextId: Math.max(nextId, maxItemId + 1), items, drafts, started, boards, operations } };
+}
+
+function parseOperation(raw: unknown): AutomationOperation {
+  if (!isObject(raw) || typeof raw.operationId !== 'string' || typeof raw.profile !== 'string' || !raw.profile
+    || typeof raw.chatId !== 'string' || !raw.chatId || typeof raw.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(raw.fingerprint)
+    || typeof raw.draftId !== 'string' || !raw.draftId || !isFiniteNumber(raw.createdAt)
+    || !Number.isSafeInteger(raw.dispatchedCount) || (raw.dispatchedCount as number) < 0
+    || !['received', 'applied', 'not-applied'].includes(String(raw.state))
+    || (raw.state === 'applied' && !isPositiveInt(raw.taskId))
+    || (raw.taskId !== undefined && !isPositiveInt(raw.taskId))
+    || (raw.code !== undefined && typeof raw.code !== 'string')
+    || (raw.aliases !== undefined && !Array.isArray(raw.aliases))) throw new Error('Invalid automation operation receipt');
+  const aliases = raw.aliases as unknown[] | undefined;
+  for (const id of [raw.operationId, ...(aliases ?? [])]) {
+    const parsed = readAutomationOperationId(id);
+    if (!parsed || parsed.scope !== automationOperationScope(raw.profile, raw.chatId)) throw new Error('Invalid automation operation scope');
+  }
   return {
-    operations: Array.isArray(raw.operations) ? raw.operations.map(entry => {
-      if (!isObject(entry) || typeof entry.operationId !== 'string' || typeof entry.profile !== 'string'
-        || typeof entry.chatId !== 'string' || typeof entry.fingerprint !== 'string' || typeof entry.draftId !== 'string'
-        || !isFiniteNumber(entry.createdAt) || !isFiniteNumber(entry.executedCount)
-        || !['received', 'applied', 'not-applied'].includes(String(entry.state))) throw new Error('Invalid automation operation receipt');
-      return entry as unknown as AutomationOperation;
-    }) : [],
-    nextId: Math.max(nextId, maxItemId + 1),
-    items,
-    drafts,
-    started,
-    boards,
+    operationId: raw.operationId, profile: raw.profile, chatId: raw.chatId, fingerprint: raw.fingerprint, draftId: raw.draftId,
+    createdAt: raw.createdAt, state: raw.state as AutomationOperation['state'], dispatchedCount: raw.dispatchedCount as number,
+    ...(aliases ? { aliases: aliases as string[] } : {}), ...(raw.taskId ? { taskId: raw.taskId as number } : {}), ...(raw.code ? { code: raw.code as string } : {}),
   };
+}
+
+function parseDraftCardReply(raw: unknown): DraftCardReply {
+  if (!isObject(raw) || typeof raw.replyTo !== 'string' || !raw.replyTo
+    || (raw.replyInThread !== undefined && typeof raw.replyInThread !== 'boolean')
+    || (raw.threadId !== undefined && (typeof raw.threadId !== 'string' || !raw.threadId))
+    || (raw.replyInThread === true && !raw.threadId)) throw new Error('Invalid automation card reply');
+  return { replyTo: raw.replyTo, ...(raw.replyInThread === true ? { replyInThread: true } : {}), ...(raw.threadId ? { threadId: raw.threadId as string } : {}) };
+}
+
+function parseDraftDelivery(raw: unknown): DraftDelivery {
+  if (!isObject(raw) || !['prepared', 'sending', 'sent', 'rejected'].includes(String(raw.state))
+    || typeof raw.deliveryId !== 'string' || !/^[a-f0-9]{32}$/.test(raw.deliveryId) || !isObject(raw.card)
+    || (raw.cardId !== undefined && (typeof raw.cardId !== 'string' || !raw.cardId))
+    || ((raw.state === 'sending' || raw.state === 'sent') && !raw.cardId)) throw new Error('Invalid automation draft delivery');
+  return { state: raw.state as DraftDelivery['state'], deliveryId: raw.deliveryId, card: structuredClone(raw.card), ...(raw.cardId ? { cardId: raw.cardId as string } : {}) };
 }
 
 function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
@@ -1227,12 +1305,16 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
   if (op !== undefined && op !== 'create' && op !== 'delete' && op !== 'replace') return undefined;
   const card = {
     ...(typeof raw.operationId === 'string' ? { operationId: raw.operationId } : {}),
-    ...(isObject(raw.delivery) ? { delivery: raw.delivery as unknown as DraftDelivery } : {}),
+    ...(raw.cardReply !== undefined ? { cardReply: parseDraftCardReply(raw.cardReply) } : {}),
+    ...(raw.delivery !== undefined ? { delivery: parseDraftDelivery(raw.delivery) } : {}),
     ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
     ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
     ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
     ...parsedCardBody(raw.cardBody),
   };
+  if (raw.delivery !== undefined && (typeof raw.operationId !== 'string' || !raw.operationId)) throw new Error('Invalid automation delivery association');
+  if (card.delivery?.state === 'sent' && (!card.cardMessageId || card.cardId !== card.delivery.cardId)) throw new Error('Invalid automation delivery receipt');
+  if (card.delivery && card.delivery.state !== 'sent' && card.cardMessageId) throw new Error('Invalid automation delivery state');
   if (op === 'delete') {
     const target = parseTargetSnapshot(raw.target);
     if (!isPositiveInt(raw.targetId) || !target || target.id !== raw.targetId) return undefined;
@@ -1332,7 +1414,7 @@ function parsedCardBody(raw: unknown): { cardBody: DraftCardBody } | undefined {
 }
 
 function cloneDraft(draft: AutomationDraft): AutomationDraft {
-  draft = { ...draft, ...(draft.delivery ? { delivery: structuredClone(draft.delivery) } : {}) };
+  draft = { ...draft, ...(draft.cardReply ? { cardReply: { ...draft.cardReply } } : {}), ...(draft.delivery ? { delivery: structuredClone(draft.delivery) } : {}) };
   const cardBody = draft.cardBody ? { cardBody: cloneDraftCardBody(draft.cardBody) } : {};
   switch (draft.op) {
     case 'delete':

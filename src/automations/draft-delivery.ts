@@ -27,29 +27,34 @@ export async function sendAutomationDraftCard(channel: LarkChannel, store: Autom
   }
 }
 
-/** Only exact card identity or an exact signed callback is positive evidence. Absence proves nothing. */
+/** Only an exact signed callback from this bot is positive evidence. Absence proves nothing. */
 export async function reconcileDraftCard(channel: LarkChannel, store: AutomationsStore, draft: AutomationDraft, botAppId?: string): Promise<void> {
   const delivery = draft.delivery;
   if (!delivery || delivery.state !== 'sending' || !botAppId) return;
   const tokens = callbackTokens(delivery.card);
   let pageToken: string | undefined;
+  const matches = new Set<string>();
+  const inThread = draft.cardReply?.replyInThread === true;
+  const container = inThread ? draft.cardReply?.threadId : draft.chatId;
+  if (!container) return;
   for (let page = 0; page < FEISHU_READBACK_MAX_PAGES; page++) {
-    const response = await channel.rawClient.im.v1.message.list({ params: { container_id_type: 'chat', container_id: draft.chatId,
+    const response = await channel.rawClient.im.v1.message.list({ params: { container_id_type: inThread ? 'thread' : 'chat', container_id: container,
       start_time: String(Math.floor(draft.createdAt / 1000)), page_size: FEISHU_READBACK_PAGE_SIZE, sort_type: 'ByCreateTimeDesc', ...(pageToken ? { page_token: pageToken } : {}) } });
     const data = response?.data;
-    const matches: string[] = [];
+
     for (const item of data?.items ?? []) {
-      if (item.sender?.id !== botAppId || item.sender?.sender_type !== 'app' || !item.message_id || Number(item.create_time) < draft.createdAt) continue;
+      if (item.sender?.id !== botAppId || item.sender?.sender_type !== 'app' || !item.message_id || !Number.isFinite(Number(item.create_time)) || Number(item.create_time) < draft.createdAt) continue;
       let body: unknown;
       try { body = JSON.parse(item.body?.content ?? ''); } catch { continue; }
       const found = callbackTokens(body);
-      if (tokens.some(token => found.includes(token))) matches.push(item.message_id);
+      if (tokens.some(token => found.includes(token))) matches.add(item.message_id);
     }
-    if (matches.length === 1) {
-      await store.bindDraftCard(draft.draftId, matches[0]!, delivery.cardId, draftCardBodyFromCard(delivery.card)); return;
+    if (matches.size > 1) return;
+    if (!data?.has_more) {
+      if (matches.size === 1) await store.bindDraftCard(draft.draftId, [...matches][0]!, delivery.cardId, draftCardBodyFromCard(delivery.card));
+      return;
     }
-    if (matches.length > 1) return;
-    if (!data?.has_more || !data.page_token) return;
+    if (!data.page_token) return;
     pageToken = data.page_token;
   }
 }
