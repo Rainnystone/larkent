@@ -35,6 +35,7 @@ End to end in one slice:
 - [ ] Frontmatter `name` equals the registry entry name; `description` is non-empty.
 - [ ] `npm pack --dry-run` lists the `SKILL.md`; the resolver's path also resolves from the built `dist` (unit test or a process test that builds once).
 - [ ] Deploy check: after `pnpm build` and installing the built package the way the live bridge is deployed, the path the running bridge puts in the index exists on disk. JS-only output with no doc is a failure.
+- [ ] The doc states that scheduled agent tasks run with bot identity only: the task text must never contain `--as user`, and it maps reason `user-identity` (policy-guard pause) to that fix, including that the bot app needs read access to the target resource.
 - [ ] The index path is absolute, never relative: the agent CLI's working directory is the per-profile bridge workspace, not the package.
 - [ ] `CONTEXT.md` has the new words. `pnpm ci:local` passes in the worktree (on a memory-tight host run the touched test files, then let CI run the full suite).
 
