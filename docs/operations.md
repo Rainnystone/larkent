@@ -46,7 +46,9 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 
 未订阅时，bridge 仍会在发送被拒为不在群内（`230002`）或群已解散（`232009`）时删除该群任务。
 
-Agent 任务（`automations.agentTasks`）按 **run** 使用 bot-only 身份和 bridge 工具白名单：建群、成员增删、退群、群设置、通讯录、人事，或 `--as user` 等用户身份请求，立即 `policy-guard` 中断、任务暂停、群内通知、脱敏审计。agent 仍有完整 shell，这是纵深防御不是安全边界；验证前不要在生产打开 agent 任务。提醒不受此限。
+Agent 任务（`automations.agentTasks`）沿用当前 profile 已授权的 bot/user 身份；任务正文、适用 skill 和操作需要决定选择。`--as user` 等已有身份选择不会触发策略中断，历史建群、成员、通讯录、人事等业务类别限制已退出。平台权限、profile 的明确配置和最终回复归属仍适用。任务的 `createdBy` 保留创建者，不据此切换 OAuth 用户。
+
+无人值守时，登录、登出、绑定/初始化/移除配置、设置 strict-mode 或 default-as 等认证/身份配置变更仍触发 `policy-guard`：中断、暂停任务、群内通知和脱敏审计（`auth-config`）。读取 `auth status`、`config show` 或无参数的 strict-mode/default-as 是状态查询。工具事件检查覆盖常见 argv、命令字符串、包装命令和工具名称，但事件可能在命令执行后才出现；agent 仍有完整 shell，这不是主机权限隔离或完整 shell 拦截器。
 
 Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
 
@@ -77,7 +79,24 @@ Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并�
 }
 ```
 
-**lark-cli identity policy / lark-cli 身份策略**：发言保持 bot；读取用户资源显式使用 `--as user`。Token 保存在 profile-local lark-cli directory，即当前 profile 的 lark-cli 目录。首次完整授权、权限核验和续接步骤见 [setup 指南](agent-setup.md#3-主动请求一次完整用户身份授权)。Agent 任务不改 profile 的 `larkCli.identityPreset`，也不调用共享的 identity-policy；该 fire 用自动化系统提示词变体（仅 bot）加 bridge 白名单。人工对话仍用 profile 预设。
+**lark-cli identity policy / lark-cli 身份策略**：人工对话保持原身份约定，用户资源操作显式使用 `--as user`。首次完整授权、权限核验和续接步骤见 [setup 指南](agent-setup.md#3-主动请求一次完整用户身份授权)。自动任务复用同一 profile 的 adapter 和以下环境，不调用配置变更用的 identity-policy，不修改 `larkCli.identityPreset` 或向群发送授权链接：
+
+- `LARK_CHANNEL_HOME` / `LARK_CHANNEL_PROFILE`：同一数据根和 profile。
+- `LARK_CHANNEL_CONFIG`：`<data-root>/profiles/<profile>/lark-cli-source/config.json`。
+- `LARKSUITE_CLI_CONFIG_DIR`：`<data-root>/profiles/<profile>/lark-cli`。人工与自动 run 共用此目录；不能以 bridge tool 的连接环境覆盖这些身份环境。
+
+Token 刷新、并发锁和写回校验由 lark-cli 负责；bridge 不复制 token、不另建凭据存储、不自行刷新。配置目录须由同一部署用户持有并可写，CLI 自身使用的凭据存储须对该用户可用。授权缺失/过期、平台拒绝或显式 strict-mode 限制沿用任务失败处理；无人值守时不登录、不改配置、不借其他 profile 授权。维护者处理依赖、授权或账号变更后再恢复任务。
+
+### 自动任务的 lark-cli 依赖核验
+
+部署前用只读命令记录实际版本和 profile 绑定能力：`lark-cli --version`、`lark-cli config bind --help`（应包含 `lark-channel`）。锁与刷新写回不能由帮助文本证明；核对对应发布版的实现和受控并发结果。缺少 profile 绑定、并发刷新锁或写回校验时，诊断为“lark-cli 依赖未就绪：需要 profile 绑定及并发刷新加锁/写回校验能力”，停止相关操作并由维护者准备合适版本；不要通过改环境、自动登录或复制 token 绕过。bridge 不以猜测的最低版本号替代能力核验。
+
+P03 代码阶段（2026-10-19）的证据：
+
+- 隔离安装的 Linux x64 `@larksuite/cli@1.0.98` 实际输出 `lark-cli version 1.0.98`；只执行 version/help，确认 `lark-channel` 绑定、strict-mode 的读写区分及 `auth status --verify` 是网络验证；未执行绑定、登录或平台请求。
+- 对应发布标签 [v1.0.98（ac81f505）](https://github.com/larksuite/cli/tree/ac81f5056ab88f37d581d25916f3dab85abfca76) 的 [token_lock.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/token_lock.go) 使用进程内和跨进程锁；[uat_client.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/uat_client.go) 在锁内重读、检查存储可写性并比较原代凭据后写回。这是源码证据，不宣称 1.0.98 为最低版本。
+- 自动回归经 `startChannel` 启动真实 adapter/子进程，用合成授权主体和可控凭据存储替身验证人工/自动并发共享目录、一次刷新及后续人工会话配置不变，覆盖 bot/user 和失败路径。替身版本为 `0.0.0-controlled`，不代表原生 CLI 或真实平台验收。
+- **Operator-pending（P09）**：在目标部署版本/OS/凭据存储上验证真实 CLI 的并发刷新，以及已授权 bot/user 的实际飞书操作和六种模型 CLI 的实际选择；本阶段没有这些结果。
 
 `LARK_CHANNEL_CLAUDE_BIN`、`LARK_CHANNEL_CODEX_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_CURSOR_BIN`、`LARK_CHANNEL_ANTIGRAVITY_BIN` 用于创建 profile 时解析并保存程序路径。已有 profile 使用保存的 `agent.binaryPath`；更换程序前先停止 profile，再更新路径。数据根与 coding CLI 的登录目录是两回事。Antigravity 的程序名是 `agy`。
 
