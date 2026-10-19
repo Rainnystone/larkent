@@ -19,6 +19,7 @@ export function feishuReadbackListParams(input: {
   sort_type: 'ByCreateTimeDesc';
   page_size: number;
   page_token?: string;
+  card_msg_content_type: 'user_card_content';
 } {
   return {
     container_id_type: input.inThread ? 'thread' : 'chat',
@@ -27,6 +28,7 @@ export function feishuReadbackListParams(input: {
     sort_type: 'ByCreateTimeDesc',
     page_size: FEISHU_READBACK_PAGE_SIZE,
     ...(input.pageToken ? { page_token: input.pageToken } : {}),
+    card_msg_content_type: 'user_card_content',
   };
 }
 

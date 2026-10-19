@@ -6,6 +6,7 @@ import {
   FEISHU_READBACK_MAX_PAGES,
   FEISHU_READBACK_PAGE_SIZE,
   FEISHU_UUID_WINDOW_MS,
+  feishuReadbackListParams,
   readBackBotReply,
   redeliverStagedReply,
   recoveryAnswerCard,
@@ -25,6 +26,36 @@ const dirs: string[] = [];
 
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe('feishuReadbackListParams', () => {
+  it('asks Feishu for user_card_content in both chat and thread containers', () => {
+    expect(feishuReadbackListParams({
+      containerId: CHAT,
+      inThread: false,
+      afterMs: 1_760_000_000_000,
+    })).toEqual({
+      container_id_type: 'chat',
+      container_id: CHAT,
+      start_time: '1760000000',
+      sort_type: 'ByCreateTimeDesc',
+      page_size: FEISHU_READBACK_PAGE_SIZE,
+      card_msg_content_type: 'user_card_content',
+    });
+    expect(feishuReadbackListParams({
+      containerId: 'omt_topic',
+      inThread: true,
+      afterMs: 1_760_000_000_000,
+      pageToken: 'p2',
+    })).toEqual({
+      container_id_type: 'thread',
+      container_id: 'omt_topic',
+      sort_type: 'ByCreateTimeDesc',
+      page_size: FEISHU_READBACK_PAGE_SIZE,
+      page_token: 'p2',
+      card_msg_content_type: 'user_card_content',
+    });
+  });
 });
 
 describe('delivery keys', () => {
@@ -481,6 +512,7 @@ describe('readBackBotReply', () => {
       container_id: 'omt_topic',
       sort_type: 'ByCreateTimeDesc',
       page_size: FEISHU_READBACK_PAGE_SIZE,
+      card_msg_content_type: 'user_card_content',
     }]);
   });
 
@@ -518,6 +550,42 @@ describe('readBackBotReply', () => {
     expect(result.delivered).toBe(true);
     expect(result.messageId).toBe(posted.messageId);
     expect(channel.sent).toHaveLength(1);
+  });
+
+  it('still treats a user_card_content schema 2.0 receipt as a card', async () => {
+    const channel = createFakeChannel({ botAppId: APP });
+    channel.rawClient.im.v1.message.list = async (params: unknown) => {
+      expect(asListParams(params).card_msg_content_type).toBe('user_card_content');
+      return {
+        data: {
+          items: [{
+            message_id: 'om_card_receipt',
+            parent_id: 'om_src',
+            msg_type: 'interactive',
+            create_time: '1760000001000',
+            sender: { id: APP, sender_type: 'app' },
+            body: {
+              content: JSON.stringify({
+                schema: '2.0',
+                header: { title: { tag: 'plain_text', content: 'ANSWER' } },
+                body: { elements: [{ tag: 'markdown', content: 'ANSWER' }] },
+              }),
+            },
+          }],
+          has_more: false,
+        },
+      };
+    };
+    const found = await readBackBotReply({
+      channel,
+      chatId: CHAT,
+      parentId: 'om_src',
+      botAppId: APP,
+      afterMs: 1_760_000_000_000,
+      receiptId: 'om_card_receipt',
+      markdown: 'ANSWER',
+    });
+    expect(found).toEqual({ kind: 'card', messageId: 'om_card_receipt' });
   });
 
   it('does not match another sender or a message before the turn start', async () => {
