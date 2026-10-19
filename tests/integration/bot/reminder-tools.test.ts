@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdir, rename, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, rename, rm, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
 import { afterEach, beforeAll, afterAll, expect, it, vi } from 'vitest';
@@ -700,7 +700,7 @@ it('manages existing agent tasks without agent creation, preserves captured cwd,
   expect(h.store.list()).toMatchObject([{ id: 2, taskType: 'agent', cwd: h.tmp.workspace }]);
   h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`2@${FIRES[0]}`);
   await vi.waitFor(() => expect(h.journal.list().find(entry => entry.turnId === `af:2@${FIRES[0]}`)?.reply?.state).toBe('sent'), { timeout: 12000 });
-  expect(automated?.cwd).toBe(h.tmp.workspace); expect(automated?.prompt).toContain('Synthetic replacement instruction');
+  expect(await realpath(automated!.cwd!)).toBe(await realpath(h.tmp.workspace)); expect(automated?.prompt).toContain('Synthetic replacement instruction');
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId: replacementId })).toMatchObject({ category: 'applied', data: { taskId: 2, executedCount: 1 } });
     expect(await call('automation.delete', { id: 2 })).toMatchObject({ category: 'waiting-confirmation' });
