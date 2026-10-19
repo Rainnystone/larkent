@@ -91,7 +91,7 @@ export class ClaudeAdapter implements AgentAdapter {
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
       stdin: opts.prompt,
       translator: wrapParsedTranslator(
         new ClaudeStreamTranslator(),

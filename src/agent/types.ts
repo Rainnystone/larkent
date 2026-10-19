@@ -41,6 +41,8 @@ export interface AgentRunOptions {
   agentOptions?: unknown;
   sandbox?: string;
   permissionMode?: string;
+  /** Opaque connection for this run only; adapters pass it through the child environment. */
+  toolEnv?: NodeJS.ProcessEnv;
   /** Automation fires request the unattended bot-only system-prompt variant. */
   promptVariant?: AgentPromptVariant;
   /**

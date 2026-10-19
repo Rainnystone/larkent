@@ -20,6 +20,7 @@ import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
 import { log } from '../core/logger';
 import { RunCleanupFailed, RunRejected, SpawnFailed } from './errors';
+import { openToolRun, type ToolRun, type ToolRunContext } from '../bridge-tools/server';
 
 export interface RunExecutorDeps {
   agent: AgentAdapter;
@@ -38,6 +39,7 @@ export interface RunExecutorDeps {
 }
 
 export interface SubmitRunInput {
+  toolContext?: ToolRunContext;
   scopeId: string;
   policy: RunPolicyAllow;
   resumeHandle?: string;
@@ -60,6 +62,7 @@ export interface SubmitRunInput {
 }
 
 export interface RunExecution {
+  usedBridgeTools(): boolean;
   runId: string;
   scopeId: string;
   run: AgentRun;
@@ -143,9 +146,19 @@ export class RunExecutor {
           },
         )
       : undefined;
+    let tools: ToolRun | undefined;
+    try {
+      if (input.toolContext) tools = await openToolRun(input.toolContext);
+    } catch (error) {
+      release();
+      releaseScope();
+      throw new SpawnFailed('bridge tool connection failed', error);
+    }
+    const closeTools = (): Promise<void> => tools?.close() ?? Promise.resolve();
     const runOptions = {
       runId,
       prompt: input.policy.prompt,
+      ...(tools ? { toolEnv: tools.env } : {}),
       cwd: input.policy.cwdRealpath,
       resumeHandle: input.resumeHandle,
       model: input.model,
@@ -160,12 +173,14 @@ export class RunExecutor {
     try {
       await this.agent.prepareRun?.(runOptions);
     } catch (err) {
+      await closeTools();
       release();
       releaseScope();
       if (err instanceof SpawnFailed) throw err;
       throw new SpawnFailed('agent prepare failed', err, 'agent-prepare-failed');
     }
     if (!input.bypassPool && this.activeRuns.newRunsPaused()) {
+      await closeTools();
       release();
       releaseScope();
       throw new RunRejected(
@@ -176,6 +191,7 @@ export class RunExecutor {
     try {
       run = this.agent.run(runOptions);
     } catch (err) {
+      await closeTools();
       release();
       releaseScope();
       throw new SpawnFailed('agent spawn failed', err);
@@ -202,17 +218,20 @@ export class RunExecutor {
     let stopping: Promise<void> | undefined;
     let settled = false;
     const stopChild = (): Promise<void> => {
+      void closeTools().catch(() => {});
       stopping ??= (async () => { await rawRun.stop(); })();
       // A forced stop can reject while the graceful wait is still pending.
       void stopping.catch(() => {});
       return stopping;
     };
     const finish = (forceStop: boolean): Promise<void> => {
+      const toolsClosed = closeTools();
       if (forceStop && !settled) {
         requestStop(handle, { type: 'subscriber-abandoned' });
         stopChild();
       }
       finishing ??= (async () => {
+        await toolsClosed;
         if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
           log.warn('run', 'post-done-exit-timeout', {
             ...dimensions, graceMs: this.postDoneExitGraceMs,
@@ -252,6 +271,7 @@ export class RunExecutor {
     try {
       handle = this.activeRuns.register(input.scopeId, ownedRun);
     } catch (err) {
+      await closeTools();
       // No owner was registered, but the spawned child still owns its slot.
       await rawRun.stop();
       if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
@@ -285,6 +305,7 @@ export class RunExecutor {
     });
 
     return {
+      usedBridgeTools: () => tools?.used() ?? false,
       runId,
       scopeId: input.scopeId,
       run: ownedRun,

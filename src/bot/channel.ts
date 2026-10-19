@@ -151,13 +151,10 @@ import {
 import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
 import {
-  AUTOMATION_PROPOSAL_INSTRUCTION,
   appendReplyLine,
   extractAutomationProposal,
-  formatGroupTaskSnapshot,
   proposalTextFromState,
   shouldHonorAutomationProposal,
-  shouldInjectGroupTaskSnapshot,
   stripProposalFromState,
   type AutomationProposalFields,
 } from '../automations/proposal';
@@ -166,6 +163,8 @@ import {
   type AutomationScheduler,
 } from '../automations/scheduler';
 import type { AutomationItem, AutomationsStore } from '../automations/store';
+import { builtinPluginCatalog } from '../plugins/catalog';
+import type { ToolRunContext } from '../bridge-tools/server';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
 import { createIdleWatchdog } from './idle-watchdog';
 import { isAutomationRunScope, isAutomationScope, parseAutomationRunScope } from './scope';
@@ -1837,28 +1836,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const extraInstructions: string[] = [];
   const taken = await continuations.take(scope, batch);
   applyTakenInstruction(taken, extraInstructions);
-  if (
-    controls.profileConfig.automations.enabled
-    && !scope.startsWith('auto:')
-    && !scope.startsWith('meeting:')
-  ) {
-    extraInstructions.push(AUTOMATION_PROPOSAL_INSTRUCTION);
-    if (shouldInjectGroupTaskSnapshot({
-      enabled: true,
-      scope,
-      mode,
-      chatType: firstMsg.chatType,
-      hasStore: Boolean(automations),
-    }) && automations) {
-      extraInstructions.push(formatGroupTaskSnapshot({
-        items: automations.list(),
-        chatId: firstMsg.chatId,
-        timeZone: controls.profileConfig.automations.timezone,
-        now: (now ?? Date.now)(),
-        senderId: lastMsg.senderId,
-      }));
-    }
-  }
+  const catalog = await builtinPluginCatalog();
+  const toolContext: ToolRunContext = {
+    catalog, profile: controls.profile, chatId, actorId: lastMsg.senderId,
+    runType: scope.startsWith('auto:') ? 'automation' : 'im', store: automations,
+    timezone: controls.profileConfig.automations.timezone, agentTasks: controls.profileConfig.automations.agentTasks,
+    now,
+    availability: () => !controls.profileConfig.automations.enabled ? 'automations-disabled'
+      : firstMsg.chatType === 'p2p' || mode === 'p2p' || scope.startsWith('meeting:') ? 'automation-requires-group'
+      : senderTypeFromRaw((lastMsg as { raw?: unknown }).raw) !== 'user' ? 'automation-requires-human' : undefined,
+  };
+  extraInstructions.push(
+    'Bridge plugins：用 lark-channel-bridge tool 从 stdin 发送版本化 JSON（version:1, operation, params），stdout 是本轮实际工具结果。' +
+    '先 plugins.list，再 plugins.inspect（params.plugin），再 plugins.read（params.skill）；唯一的 skill 名可直读。' +
+    '根据结果在本轮补字段或修正；最终回复由你负责。连接由环境提供，不得展示或保存运行凭据。创建及变更当前不可用。',
+    `<bridge_plugins>${JSON.stringify({ plugins: catalog.list(), diagnostics: catalog.diagnostics })}</bridge_plugins>`,
+    `<bridge_run>${JSON.stringify({ profile: controls.profile, runType: toolContext.runType, now: (now ?? Date.now)(), timezone: toolContext.timezone, automationUnavailable: toolContext.availability() ?? (!automations ? 'automation-store-unavailable' : null) })}</bridge_run>`,
+  );
   if (modelSwitched) {
     extraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
@@ -1936,6 +1930,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   }
 
   const flow = await startRunFlow({
+    toolContext,
     scopeId: scope,
     scope: scopeContext,
     prompt,
@@ -2066,7 +2061,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const triggerSenderType = senderTypeFromRaw((lastMsg as { raw?: unknown }).raw);
   const automationReply = controls.profileConfig.automations.enabled
     ? {
-        honor: shouldHonorAutomationProposal({
+        honor: () => !execution.usedBridgeTools() && shouldHonorAutomationProposal({
           enabled: true,
           scope,
           senderId: lastMsg.senderId,
@@ -2629,7 +2624,7 @@ async function deliverFinalReply(input: {
   onWait?: (delayMs?: number) => void;
   onNotInChat?: (chatId: string) => void | Promise<unknown>;
   automation?: {
-    honor: boolean;
+    honor: boolean | (() => boolean);
     plan: (parsed: AutomationProposalFields) => AutomationProposalVerdict;
     clock: () => RejectionExampleClock;
     apply: (parsed: AutomationProposalFields) => Promise<ReplaceProposalApplyResult | void>;
@@ -2646,7 +2641,7 @@ async function deliverFinalReply(input: {
     ? stripProposalFromState(input.skipFrom)
     : input.skipFrom;
   const parsed = extracted?.parsed;
-  const honor = input.automation?.honor === true;
+  const honor = typeof input.automation?.honor === 'function' ? input.automation.honor() : input.automation?.honor === true;
   const completed = state.terminal === 'done' || input.handle.outcome?.kind === 'completed';
   let proposalSuffix: string | undefined;
   let deliverProposal = false;

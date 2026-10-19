@@ -105,7 +105,7 @@ export class CursorAdapter implements AgentAdapter {
         ...(parsed.sandbox ? { sandbox: parsed.sandbox } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
       translator: wrapParsedTranslator(new CursorJsonlTranslator(), 'cursor'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'cursor',

@@ -95,7 +95,7 @@ export class AntigravityAdapter implements AgentAdapter {
         ...(parsed.printTimeout ? { printTimeout: parsed.printTimeout } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
       translator: wrapParsedTranslator(new AntigravityJsonlTranslator(), 'agy'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'agy',

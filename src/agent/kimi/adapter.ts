@@ -78,7 +78,7 @@ export class KimiAdapter implements AgentAdapter {
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
       translator: wrapParsedTranslator(new KimiJsonlTranslator(), 'kimi'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'kimi',

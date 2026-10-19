@@ -65,7 +65,8 @@ describe('A6 natural-language creation', () => {
     expect(answers[0]).not.toContain('auto:9:1');
 
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
-    expect(prompt).toContain('automation_proposal');
+    expect(prompt).toContain('plugins.inspect');
+    expect(prompt).not.toContain('automation_proposal');
     expect(prompt).toContain('10 分钟后提醒我交周报');
 
     const card = confirmCard(h);

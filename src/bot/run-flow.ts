@@ -18,11 +18,13 @@ import {
 } from '../policy/workspace';
 import type { RunExecution, RunExecutor } from '../runtime/run-executor';
 import { RunRejected, type RunRejectedCode } from '../runtime/errors';
+import type { ToolRunContext } from '../bridge-tools/server';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 
 export interface StartRunFlowInput {
+  toolContext?: ToolRunContext;
   scopeId: string;
   scope: ScopeContext;
   prompt: string;
@@ -187,6 +189,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   let execution: RunExecution;
   try {
     execution = await input.executor.submit({
+      toolContext: input.toolContext,
       scopeId: input.scopeId,
       policy,
       resumeHandle: resumeFrom,

@@ -80,7 +80,7 @@ export class GrokAdapter implements AgentAdapter {
       }),
       cwd: opts.cwd,
       env: mergeProcessEnv(process.env, {
-        ...buildLarkChannelEnv(this.larkChannel),
+        ...buildLarkChannelEnv(this.larkChannel, opts.toolEnv),
         GROK_DISABLE_AUTOUPDATER: '1',
       }),
       translator: wrapParsedTranslator(new GrokJsonlTranslator(), 'grok'),

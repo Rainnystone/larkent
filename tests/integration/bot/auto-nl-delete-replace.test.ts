@@ -45,7 +45,7 @@ afterEach(async () => {
 });
 
 describe('A28 natural-language delete and replace', () => {
-  it('injects this chat’s confirmed tasks and leaves drafts, other chats, and open ids out', async () => {
+  it('exposes only the short plugin summary before a task query, leaving task bodies and identities out', async () => {
     const h = await harness({
       events: done('先看一下。'),
       items: [
@@ -56,11 +56,9 @@ describe('A28 natural-language delete and replace', () => {
     });
     await h.channel.handlers.message?.(mention('om_snap', '本群有哪些任务'));
     await waitFor(() => h.agent.runOptions.length === 1);
-    const block = snapshotBlock(h.agent.runOptions[0]?.prompt ?? '');
-    expect(block).toContain('group_automations');
-    expect(block).toContain('#1 · 提醒 · 总结马斯克推特');
-    expect(block).toContain('待触发');
-    expect(block).toContain('结束 一次性');
+    const block = pluginSummary(h.agent.runOptions[0]?.prompt ?? '');
+    expect(block).toContain('automation');
+    expect(block).not.toContain('总结马斯克推特');
     expect(block).not.toContain('别的群');
     expect(block).not.toContain('未确认草稿');
     expect(block).not.toContain(OWNER);
@@ -68,13 +66,13 @@ describe('A28 natural-language delete and replace', () => {
     expect(block).not.toContain('(你创建)');
   }, 15_000);
 
-  it('says the chat has no tasks when the list is empty', async () => {
+  it('does not claim an empty task list before a tool query', async () => {
     const h = await harness({ events: done('看看。') });
     await h.channel.handlers.message?.(mention('om_empty', '有任务吗'));
     await waitFor(() => h.agent.runOptions.length === 1);
-    const block = snapshotBlock(h.agent.runOptions[0]?.prompt ?? '');
-    expect(block).toContain('本群暂无自动化任务');
-    expect(block).toContain('group_automations');
+    const block = pluginSummary(h.agent.runOptions[0]?.prompt ?? '');
+    expect(block).not.toContain('本群暂无自动化任务');
+    expect(block).toContain('automation');
   }, 15_000);
 
   it('does not inject the snapshot into a p2p prompt', async () => {
@@ -90,7 +88,7 @@ describe('A28 natural-language delete and replace', () => {
     expect(prompt).not.toContain('总结马斯克推特');
   }, 15_000);
 
-  it('lists the whole chat inside a topic thread', async () => {
+  it('keeps the topic context while exposing the same short plugin summary', async () => {
     const h = await harness({
       events: done('话题里也能看到。'),
       items: [item({ name: '总结马斯克推特', taskText: '总结马斯克推特' })],
@@ -99,7 +97,8 @@ describe('A28 natural-language delete and replace', () => {
     await waitFor(() => h.agent.runOptions.length === 1);
     const prompt = h.agent.runOptions[0]?.prompt ?? '';
     expect(prompt).toContain('omt_topic');
-    expect(snapshotBlock(prompt)).toContain('#1 · 提醒 · 总结马斯克推特');
+    expect(pluginSummary(prompt)).toContain('automation');
+    expect(prompt).not.toContain('总结马斯克推特');
   }, 15_000);
 
   it('deletes on 是 for someone who did not create the task, refreshes the board, and keeps the question', async () => {
@@ -904,12 +903,12 @@ function mention(
   } as unknown as NormalizedMessage;
 }
 
-function snapshotBlock(prompt: string): string {
-  const start = prompt.indexOf('本群当前自动化任务');
-  const end = prompt.indexOf('/group_automations');
-  expect(start, 'expected a group task snapshot').toBeGreaterThanOrEqual(0);
-  expect(end, 'expected a snapshot closer').toBeGreaterThan(start);
-  return prompt.slice(start, end);
+function pluginSummary(prompt: string): string {
+  const raw = prompt.match(/<bridge_instructions>\s*([\s\S]*?)\s*<\/bridge_instructions>/)?.[1];
+  const instructions = JSON.parse(raw ?? '[]') as string[];
+  const summary = instructions.find(text => text.includes('<bridge_plugins>'));
+  expect(summary).toBeDefined();
+  return summary!;
 }
 
 function sentText(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string {
