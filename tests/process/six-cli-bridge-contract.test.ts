@@ -23,6 +23,9 @@ vi.mock('@larksuite/channel', async original => ({ ...await original<typeof impo
 import type { startChannel as sourceStartChannel } from '../../src/bot/channel';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z');
+// Seven runtime turns and 90+ real client processes share a row. Hosted Windows
+// reached the final stop phase at the old 120s limit; individual request budgets stay unchanged.
+const CONTRACT_ROW_TIMEOUT_MS = 240_000;
 const CORRECTED_PREVIEW = [
   { category: 'needs-input', code: 'missing-end-at' },
   { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } },
@@ -189,4 +192,4 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
     expect(created.env.CODEX_HOME).toBe(nativeHome);
     expect(managed.argv).not.toContain('--ignore-user-config'); expect(managed.argv).not.toContain('--ignore-rules');
   }
-}, 120000);
+}, CONTRACT_ROW_TIMEOUT_MS);
