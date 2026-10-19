@@ -70,7 +70,7 @@ function inspectToolName(name: string): PolicyGuardHit | undefined {
 function inspectArgv(raw: readonly string[]): PolicyGuardHit | undefined {
   const commands: string[][] = [[]];
   for (const token of raw) {
-    if (/^(?:&&|\|\||[;|&])$/.test(token)) commands.push([]);
+    if (/^(?:&&|\|\||[;|&]|\r?\n)$/.test(token)) commands.push([]);
     else commands[commands.length - 1]!.push(token);
   }
   for (const command of commands) {
@@ -104,6 +104,7 @@ function inspectLarkArgs(args: readonly string[]): PolicyGuardHit | undefined {
 }
 
 function mutatesIdentityConfiguration(args: readonly string[], positional: readonly string[]): boolean {
+  if (positional[0] === 'profile') return ['add', 'use', 'remove', 'rename'].includes(positional[1] ?? '');
   if (positional[0] === 'auth') return ['login', 'logout'].includes(positional[1] ?? '');
   if (positional[0] !== 'config') return false;
   const operation = positional[1];
@@ -140,7 +141,7 @@ function commandArgv(input: unknown): string[] | undefined {
 
 function tokenize(command: string): string[] {
   const tokens: string[] = [];
-  const token = /(?:'([^']*)'|"([^"]*)"|(&&|\|\||[;|&]|[^\s;&|]+))/g;
+  const token = /(?:'([^']*)'|"([^"]*)"|(&&|\|\||[;|&]|\r?\n|[^\s;&|]+))/g;
   for (const match of command.matchAll(token)) {
     tokens.push(match[1] ?? match[2] ?? match[3] ?? '');
   }

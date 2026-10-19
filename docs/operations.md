@@ -48,7 +48,7 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 
 Agent 任务（`automations.agentTasks`）沿用当前 profile 已授权的 bot/user 身份；任务正文、适用 skill 和操作需要决定选择。`--as user` 等已有身份选择不会触发策略中断，历史建群、成员、通讯录、人事等业务类别限制已退出。平台权限、profile 的明确配置和最终回复归属仍适用。任务的 `createdBy` 保留创建者，不据此切换 OAuth 用户。
 
-无人值守时，登录、登出、绑定/初始化/移除配置、设置 strict-mode/default-as/risk-control、tenant-access-token 写入/移除、keychain-downgrade 等认证/身份配置变更仍触发 `policy-guard`：中断、暂停任务、群内通知和脱敏审计（`auth-config`）。读取 `auth status`、`config show` 或无参数的 strict-mode/default-as 是状态查询。工具事件检查覆盖常见 argv、命令字符串、包装命令和工具名称，但事件可能在命令执行后才出现；agent 仍有完整 shell，这不是主机权限隔离或完整 shell 拦截器。
+无人值守时，登录、登出、绑定/初始化/移除配置、设置 strict-mode/default-as/risk-control、tenant-access-token 写入/移除、keychain-downgrade 和 profile add/use/remove/rename 等认证/身份配置变更仍触发 `policy-guard`：中断、暂停任务、群内通知和脱敏审计（`auth-config`）。读取 `auth status`、`config show` 或无参数的 strict-mode/default-as 是状态查询。工具事件检查覆盖常见 argv、命令字符串、包装命令和工具名称，但事件可能在命令执行后才出现；agent 仍有完整 shell，这不是主机权限隔离或完整 shell 拦截器。
 
 Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
 

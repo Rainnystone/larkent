@@ -51,6 +51,7 @@ it.each([
   ['config', 'bind', '--identity', 'user-default'], ['config', 'remove'], ['config', 'init'],
   ['config', 'tenant-access-token', 'set'], ['config', 'tenant-access-token', 'remove'],
   ['config', 'keychain-downgrade'], ['config', 'risk-control', 'off'], ['config', 'risk-control', 'default'],
+  ['profile', 'add', 'synthetic'], ['profile', 'remove', 'synthetic'], ['profile', 'rename', 'synthetic', 'synthetic-next'],
 ])('interrupts unattended configuration change %j, pauses and audits without running it', async (...args) => {
   const h = await harness({ args, hold: true });
   await h.fire();
@@ -156,7 +157,7 @@ it.each([
 
 it.each([
   ['auth', 'status', '--json', '--verify'], ['config', 'show'], ['config', 'strict-mode'], ['config', 'default-as'],
-  ['config', 'risk-control'],
+  ['config', 'risk-control'], ['profile', 'list'],
   ['im', '+chat-messages-list', '--as', 'bot'], ['docs', '+fetch', '--identity=user-default'],
 ])('allows status queries and existing identity selection: %j', async (...args) => {
   const h = await harness({ args });
@@ -178,6 +179,8 @@ it.each([
   { toolInput: { command: 'lark-cli config show || lark-cli config default-as bot' } },
   { toolInput: { command: 'lark-cli --profile synthetic config --as bot strict-mode off' } },
   { toolInput: { command: 'bash -c "lark-cli auth status && lark-cli auth logout"' } },
+  { toolInput: { command: 'lark-cli config show\nlark-cli config strict-mode off' } },
+  { toolInput: { command: 'lark-cli auth status\r\nlark-cli auth logout' } },
 ])('observes configuration changes in supported tool-event shapes: %j', async shape => {
   const h = await harness({ args: ['auth', 'logout'], hold: true, ...shape });
   await h.fire();
@@ -189,6 +192,15 @@ it.each([
 
 it('interrupts a later authentication mutation after a read in the same shell command', async () => {
   const h = await harness({ args: ['auth', 'logout'], hold: true, toolInput: { command: 'lark-cli auth status && lark-cli auth logout' } });
+  await h.fire();
+  await vi.waitFor(() => expect(h.store.get(1)?.paused).toBe(true), { timeout: 10000 });
+  await h.settled();
+  expect(await h.calls()).toEqual([]);
+  await h.configUnchanged();
+});
+
+it('interrupts an authentication mutation after an unquoted newline in a shell command', async () => {
+  const h = await harness({ args: ['auth', 'logout'], hold: true, toolInput: { command: 'lark-cli auth status\nlark-cli auth logout' } });
   await h.fire();
   await vi.waitFor(() => expect(h.store.get(1)?.paused).toBe(true), { timeout: 10000 });
   await h.settled();
@@ -209,8 +221,8 @@ it.each([
   expect(await h.store.readLog()).toEqual([]);
 });
 
-it('interrupts native credential-store mutation before the controlled CLI can write', async () => {
-  const h = await harness({ args: ['config', 'tenant-access-token', 'set'], hold: true });
+it('interrupts native profile switching before the controlled CLI can change the selected profile', async () => {
+  const h = await harness({ args: ['profile', 'use', 'synthetic'], hold: true });
   await h.fire();
   await vi.waitFor(() => expect(h.store.get(1)?.paused).toBe(true), { timeout: 10000 });
   await h.settled();

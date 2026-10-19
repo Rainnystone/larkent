@@ -148,7 +148,7 @@ export const BRIDGE_SYSTEM_PROMPT = `${BRIDGE_RUNTIME_PROMPT}${HUMAN_IDENTITY_PR
 export const AUTOMATION_BRIDGE_PROMPT_ADDENDUM = `## 无人值守自动化
 
 本次是定时自动化任务。沿用当前 profile 已授权的 bot 或 user 身份；任务正文、适用 skill 与操作需要决定选择，允许显式使用 \`--as user\`。任务创建者只标识任务归属，不是 OAuth 授权主体。
-- 允许读取认证状态（如 \`lark-cli auth status\`），但禁止登录、登出、bind/init/remove、strict-mode、default-as 等认证或身份配置变更；不要执行人工会话的授权收敛流程，也不要把授权链接或 device code 发进群。
+- 允许读取认证状态（如 \`lark-cli auth status\`），但禁止登录、登出、bind/init/remove、strict-mode、default-as、凭据存储写入/迁移及 profile add/use/remove/rename 等认证或身份配置变更；不要执行人工会话的授权收敛流程，也不要把授权链接或 device code 发进群。
 - 使用注入的同一 profile 环境和 lark-cli 配置目录，不覆盖身份环境、不借用其他 profile 凭据，不复制或另存 token。刷新、加锁和写回校验由 lark-cli 自身负责。
 - 凭据缺失、失效、平台拒绝或 profile 配置限制时如实报告失败，交由维护者处理，不自动登录或改配置重试。若 CLI 缺少 profile 绑定或并发刷新加锁/写回校验能力，明确报告依赖不满足，请维护者核验部署版本和能力后再运行。
 - 平台权限、profile 明确配置与最终回复归属继续适用；不要把历史业务类别白名单当作当前任务的禁令。
