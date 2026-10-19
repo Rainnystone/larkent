@@ -746,11 +746,12 @@ export class AutomationsStore {
     return changed;
   }
 
-  async pause(id: number): Promise<boolean> {
+  async pause(id: number, operation?: RegisterAutomationOperationInput): Promise<boolean> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
     if (!item) return false;
     item.paused = true;
+    if (operation) this.operations.push({ ...operation, draftId: `operation:${operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount: 0 });
     await this.persistNow();
     return true;
   }

@@ -474,3 +474,24 @@ it('records human rejection as not-applied and keeps the same operation closed a
   expect(h.store.list()).toHaveLength(0); expect(h.store.listDrafts()).toHaveLength(0);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
 }, 30000);
+
+it('pauses an existing task immediately through the real client and queries its durable receipt after restart', async () => {
+  const h = await harness();
+  const item = await h.store.create({ ...reminder, taskType: 'reminder', timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
+  let operationId = '';
+  await h.turn(async call => {
+    expect((await call('automation.list')).data.tasks).toContainEqual(expect.objectContaining({ id: item.id, paused: false }));
+    const result = await call('automation.pause', { id: item.id });
+    expect(result).toMatchObject({ category: 'applied', data: { taskId: item.id, applied: true } });
+    operationId = result.data.operationId;
+    expect((await call('automation.list')).data.tasks).toContainEqual(expect.objectContaining({ id: item.id, paused: true }));
+  });
+  expect(h.store.listDrafts()).toHaveLength(0);
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+  await h.restart();
+  await h.turn(async call => {
+    expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: item.id, applied: true } });
+  });
+  h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`);
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('⏰ Synthetic reminder'))).toBe(false);
+}, 30000);

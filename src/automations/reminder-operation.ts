@@ -114,12 +114,12 @@ function operationResult(operation: AutomationOperation, context: ReminderOperat
   });
   return toolResult('execution-failed', draft.delivery?.state === 'rejected' ? 'card-send-failed' : 'card-not-sent', { ...base, state: 'not-applied', applied: false });
 }
-function checkId(value: unknown, context: AutomationToolContext): ToolResult | undefined {
+export function checkId(value: unknown, context: AutomationToolContext): ToolResult | undefined {
   const id = readAutomationOperationId(value);
   if (!id || id.issuedAt > (context.now ?? Date.now)() + 5 * 60_000) return toolResult('validation-failed', 'invalid-operation-id');
   if (id.scope !== automationOperationScope(context.profile, context.chatId)) return toolResult('unauthorized', 'operation-scope-mismatch');
   return undefined;
 }
-function unknown(operationId: string, code: string, data = {}): ToolResult {
+export function unknown(operationId: string, code: string, data = {}): ToolResult {
   return toolResult('unknown', code, { ...data, operationId, state: 'unknown', applied: null });
 }

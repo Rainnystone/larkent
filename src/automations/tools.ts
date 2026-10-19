@@ -1,3 +1,4 @@
+import { manageAutomationOperation } from './manage-operation';
 import { AUTOMATION_OPERATION_TTL_MS } from './operation-id';
 import type { TurnJournal } from '../bot/turn-journal';
 import { createReminderOperation, getReminderOperation } from './reminder-operation';
@@ -46,7 +47,8 @@ export function automationSchema(context: AutomationToolContext) {
       ['automation.preview', { available: !reason, ...(reason ? { reason } : {}), params: AUTOMATION_PREVIEW_SCHEMA }],
       ['automation.create', { available: !createReason, ...(createReason ? { reason: createReason } : {}), params: { type: 'object', additionalProperties: false, required: ['taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, taskType: { const: 'reminder' }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string', description: 'Client assigns before submission; retain for queries and retries' } } } }],
       ['automation.operation.get', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['operationId'], properties: { operationId: { type: 'string' } } } }],
-      ...['replace', 'delete', 'pause', 'resume'].map(name => [`automation.${name}`, { available: false, reason: 'not-implemented' }]),
+      ['automation.pause', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'integer', minimum: 1 }, operationId: { type: 'string' } } } }],
+      ...['replace', 'delete', 'resume'].map(name => [`automation.${name}`, { available: false, reason: 'not-implemented' }]),
     ]),
     defaults: { timezone: context.timezone }, agentTasks: context.agentTasks,
     limits: { reminderMinIntervalMs: REMINDER_MIN_INTERVAL_MS, agentMinIntervalMs: AGENT_MIN_INTERVAL_MS, maxHorizonMs: ONE_YEAR_MS },
@@ -71,6 +73,7 @@ export async function callAutomationTool(operation: string, params: Record<strin
       paused: item.paused, lastStatus: item.lastStatus,
     })) });
   }
+  if (operation === 'automation.pause') return manageAutomationOperation(operation, params, context);
   if (operation === 'automation.create') return createReminderOperation(params, context);
   if (operation === 'automation.operation.get') {
     if (Object.keys(params).some(key => key !== 'operationId')) return toolResult('validation-failed', 'unknown-field');
