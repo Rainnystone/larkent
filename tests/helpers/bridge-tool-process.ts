@@ -22,10 +22,16 @@ export async function buildToolProcess() {
   `);
   await build({ entry: { cli: resolve('src/cli/index.ts'), host: hostEntry }, outDir: join(directory, 'dist'), format: ['esm'], platform: 'node', target: 'node20',
     bundle: true, splitting: false, dts: false, clean: false, silent: true, loader: { '.html': 'text' } });
+  const calls = new Set<ReturnType<typeof runToolProcess>>();
+  let closing = false;
   return {
     directory,
     async call(input: unknown, env: NodeJS.ProcessEnv = {}, args: string[] = []) {
-      return runToolProcess(join(directory, 'bin/lark-channel-bridge.mjs'), typeof input === 'string' ? input : JSON.stringify(input), env, args, directory);
+      if (closing) throw new Error('tool client fixture is closing');
+      const call = runToolProcess(join(directory, 'bin/lark-channel-bridge.mjs'), typeof input === 'string' ? input : JSON.stringify(input), env, args, directory);
+      calls.add(call);
+      try { return await call; }
+      finally { calls.delete(call); }
     },
     async startHost() {
       // Credential exchange stays on private IPC, separate from stdout/stderr and fixture files.
@@ -40,7 +46,11 @@ export async function buildToolProcess() {
         child.send('close');
       }) };
     },
-    cleanup: () => rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }),
+    async cleanup() {
+      closing = true;
+      await Promise.allSettled([...calls]);
+      await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+    },
   };
 }
 

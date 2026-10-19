@@ -40,7 +40,13 @@ it('discovers and reads automation, corrects real preview feedback in the same I
   let captured: AgentRunOptions | undefined;
   const runs: AgentRunOptions[] = [];
   let holdRun = false;
-  let waiting = false;
+  let markHeldRunReady!: (opts: AgentRunOptions) => void;
+  let rejectHeldRunReady!: (error: unknown) => void;
+  const heldRunReady = new Promise<AgentRunOptions>((resolve, reject) => {
+    markHeldRunReady = resolve;
+    rejectHeldRunReady = reject;
+  });
+  void heldRunReady.catch(() => {});
   const agent: AgentAdapter = {
     id: 'codex', displayName: 'Controllable Codex seam', isAvailable: async () => true,
     run(opts) {
@@ -63,7 +69,7 @@ it('discovers and reads automation, corrects real preview feedback in the same I
               return result;
             };
             expect((await call('plugins.list')).data.plugins[0].id).toBe('automation');
-            if (holdRun) { waiting = true; await stopped; yield { type: 'done', terminationReason: 'interrupted' }; return; }
+            if (holdRun) { markHeldRunReady(opts); await stopped; yield { type: 'done', terminationReason: 'interrupted' }; return; }
             const inspected = await call('plugins.inspect', { plugin: 'automation' });
             expect(inspected.data.skills[0].id).toBe('automation:automations');
             expect((await call('plugins.read', { skill: 'automation:automations' })).data.content).toContain('automation.preview');
@@ -78,7 +84,7 @@ it('discovers and reads automation, corrects real preview feedback in the same I
               nextFires: [1792371600000, 1792458000000, 1792544400000], endAt: 1792598400000 } });
             // A resumed transcript may still emit the old protocol. A tool-using run must not apply it too.
             yield { type: 'final_text', content: `预览共 ${preview.data.totalCount} 次，每天 09:00；结束于 22 日 00:00，尚未创建。\n<automation_proposal>{"taskType":"reminder","schedule":"10 分钟后","name":"synthetic legacy","taskText":"synthetic legacy"}</automation_proposal>` };
-          } catch (err) { agentError = err; yield { type: 'final_text', content: 'client path failed' }; }
+          } catch (err) { agentError = err; if (holdRun) rejectHeldRunReady(err); yield { type: 'final_text', content: 'client path failed' }; }
           yield { type: 'done', terminationReason: 'normal' };
         })(),
       };
@@ -118,9 +124,9 @@ it('discovers and reads automation, corrects real preview feedback in the same I
 
   holdRun = true;
   await send('om_stop_run', '预览并等待');
-  await vi.waitFor(() => expect(waiting).toBe(true));
-  const stopEnv = runs[2]!.toolEnv!;
+  const stopEnv = (await heldRunReady).toolEnv!;
   await send('om_stop', '/stop');
   expect(JSON.parse((await processClient.call({ version: 1, operation: 'automation.list' }, stopEnv)).stdout)).toMatchObject({ category: 'unavailable', code: 'run-connection-closed' });
   expect(store.list()).toEqual([]); expect(store.listDrafts()).toEqual([]);
-}, 20000);
+  // Allow both 12-second full turns, a 10-second held client call, setup and stop.
+}, 45000);

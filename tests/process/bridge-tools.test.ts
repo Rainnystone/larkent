@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -10,6 +11,8 @@ import { buildToolProcess, runToolProcess } from '../helpers/bridge-tool-process
 import { createTmpProfile } from '../helpers/tmp-profile';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z');
+// Several sequential real Node clients need more than the default 5 seconds on hosted Windows.
+const MULTI_CLIENT_TIMEOUT_MS = 20_000;
 let client: Awaited<ReturnType<typeof buildToolProcess>>;
 const cleanup: Array<() => Promise<unknown>> = [];
 beforeAll(async () => { client = await buildToolProcess(); });
@@ -49,7 +52,7 @@ it('provides an absolute common client launcher that works from an unrelated wor
 
 it('resolves the packaged host launcher and built-in content from the installed layout without a checkout cwd', async () => {
   const host = await client.startHost(); cleanup.push(host.close);
-  expect(host.env.LARK_BRIDGE_TOOL_CLIENT).toBe(join(client.directory, 'bin/lark-channel-bridge.mjs'));
+  expect(await realpath(host.env.LARK_BRIDGE_TOOL_CLIENT!)).toBe(await realpath(join(client.directory, 'bin/lark-channel-bridge.mjs')));
   const result = await runToolProcess(host.env.LARK_BRIDGE_TOOL_CLIENT!, JSON.stringify({ version: 1, operation: 'plugins.read', params: { skill: 'automation:automations' } }), host.env, [], tmpdir());
   expect(result.code).toBe(0); expect(result.stderr).toBe('');
   expect(JSON.parse(result.stdout)).toMatchObject({ category: 'ok', data: { content: expect.stringContaining('automation.preview'), source: { plugin: 'automation', version: '1.0.0' } } });
@@ -195,7 +198,7 @@ it('gives deterministic errors for malformed, oversize and unsupported input and
   const schema = await client.call('', {}, ['--schema']);
   expect(schema.stderr).toBe(''); expect(JSON.parse(schema.stdout)).toMatchObject({ required: ['version', 'operation'] });
   expect(h.store.list()).toEqual([]); expect(h.store.listDrafts()).toEqual([]);
-});
+}, MULTI_CLIENT_TIMEOUT_MS);
 
 it('reports missing built-in content and absent or forged connections without granting other authority', async () => {
   const h = await harness({ catalog: await PluginCatalog.load(['/synthetic-missing-plugin']) });
@@ -207,4 +210,4 @@ it('reports missing built-in content and absent or forged connections without gr
   expect(await h.call('plugins.list', {}, { ...h.run.env, LARK_BRIDGE_TOOL_TOKEN: 'synthetic-forged' })).toMatchObject({ category: 'unauthorized', code: 'invalid-run-credential' });
   const top = await client.call({ version: 1, operation: 'automation.list', profile: 'forged-profile' }, h.run.env);
   expect(JSON.parse(top.stdout)).toMatchObject({ category: 'validation-failed', code: 'unknown-field' });
-});
+}, MULTI_CLIENT_TIMEOUT_MS);
