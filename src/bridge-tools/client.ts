@@ -3,7 +3,7 @@ import { record, TOOL_MAX_BYTES, TOOL_REQUEST_SCHEMA, toolResult, type ToolResul
 
 export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv = process.env): Promise<ToolResult> {
   const request = record(input);
-  if (request && ['automation.create', 'automation.replace', 'automation.delete', 'automation.pause', 'automation.resume'].includes(String(request?.operation))) {
+  if (request && (request.params === undefined || record(request.params)) && ['automation.create', 'automation.replace', 'automation.delete', 'automation.pause', 'automation.resume'].includes(String(request?.operation))) {
     const params = record(request.params) ?? {};
     input = { ...request, params: { ...params, operationId: params.operationId ?? newAutomationOperationId(env.LARK_BRIDGE_TOOL_SCOPE ?? '', Number(env.LARK_BRIDGE_TOOL_ISSUED_AT) || Date.now()) } };
   }

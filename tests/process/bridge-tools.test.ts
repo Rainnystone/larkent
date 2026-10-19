@@ -41,6 +41,15 @@ it('rejects context supplied by the caller even on schema discovery', async () =
     .toMatchObject({ category: 'validation-failed', code: 'unknown-field' });
 });
 
+it('preserves malformed write parameters for deterministic validation and allows a same-turn correction', async () => {
+  const h = await harness();
+  const invalid = await client.call({ version: 1, operation: 'automation.create', params: null }, h.run.env);
+  expect(JSON.parse(invalid.stdout)).toMatchObject({ category: 'validation-failed', code: 'invalid-params' });
+  expect(await h.call('automation.list')).toMatchObject({ category: 'ok', data: { tasks: [] } });
+  expect(await h.call('automation.preview', { taskType: 'reminder', schedule: { kind: 'one-shot', fireAt: NOW + 3600000 } }))
+    .toMatchObject({ category: 'ok', data: { totalCount: 1 } });
+});
+
 it('provides an absolute common client launcher that works from an unrelated workspace', async () => {
   const h = await harness();
   const launcher = h.run.env.LARK_BRIDGE_TOOL_CLIENT;
