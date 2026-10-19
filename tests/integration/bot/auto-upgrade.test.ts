@@ -1,5 +1,5 @@
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { automationButton as button, automationClick as click, createAutomationToolHarness } from '../../helpers/automation-tool-harness';
 import { buildToolProcess } from '../../helpers/bridge-tool-process';
@@ -25,7 +25,8 @@ async function harness() {
   return createAutomationToolHarness({ client, cleanup, initialNow: fixture.now, agentKind: 'claude', agentTasks: true,
     initialMessages: messages, setChannel: channel => { sdk.channel = channel; },
     setup: async tmp => {
-      const old = JSON.parse(JSON.stringify(fixture), (_key, value) => value === '__WORKSPACE__' ? resolve(tmp.workspace) : value);
+      const cwd = await realpath(tmp.workspace);
+      const old = JSON.parse(JSON.stringify(fixture), (_key, value) => value === '__WORKSPACE__' ? cwd : value);
       await writeFile(join(tmp.profile, 'automations.json'), JSON.stringify(old.automations));
       await writeFile(join(tmp.profile, 'callback-nonces.json'), JSON.stringify(old.nonces));
       await writeFile(join(tmp.profile, 'sessions.json'), JSON.stringify(old.sessions));
