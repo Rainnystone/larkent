@@ -136,6 +136,7 @@ Larkent 接纳由外部维护者安装的 bridge plugin。插件是一组 skills
 - 本机请求通道与 supervisor 管理权限分离；运行凭据只代表本轮上下文，不用于安装插件或选择其他 profile。
 - 停止、完成或取消 run 后关闭其调用资格；已接收操作可由后续合法 run 按编号查询，旧凭据不保留调用权。连接断开不等于业务撤销。
 - 本机传输必须支持目标操作系统并经 process 测试验证。包、skill 和业务不依赖传输细节；不为六家 CLI 分别新增原生工具注册协议。
+- 修订（[P09d](bridge-skills/tickets/P09d-bridge-tool-call-label.md)）：`showToolCalls` 开启时，bridge tool 调用在工具进度卡中折叠为友好标签，不展示命令、客户端路径和协议 JSON。
 
 ### D6 — Automation 机器契约
 

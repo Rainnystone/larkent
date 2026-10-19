@@ -26,7 +26,21 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P08](P08-cutover-and-upgrade.md) | 唯一入口切换、旧协议退出与存储升级 | P07 |
 | [P09](P09-real-feishu-acceptance.md) | 真实飞书 E2E 验收（无 UAT）：Grok Build、Antigravity、Cursor CLI、Kimi 待验收，其余 CLI 标记未验证 | P08 |
 | [P09a](P09a-recurring-count-copy.md) | Bug P2：周期确认卡次数文案错误（每天一个月显示“约每月 28 次”，应为“共 31 次”） | P09 发现 |
+| [P09b](P09b-backfill-requires-human.md) | Bug P2：重连补发的真人消息未保留 raw，automation 全部判为 `automation-requires-human` | P09 发现 |
+| [P09c](P09c-card-readback-reconcile.md) | Bug P2：发卡结果未知时回读对账不带 `card_msg_content_type` 且依赖不回传的 `auto_token`，草稿永远绑不上卡（F7 fail） | P09 发现 |
+| [P09d](P09d-bridge-tool-call-label.md) | Bug P3：`showToolCalls` 原样展示内部 bridge tool 命令与协议 JSON，应折叠为“自动化：list/create…”标签（修订 D5） | P09 发现 |
+| [P09e](P09e-card-click-reply-race.md) | Bug P3：最终回复发出前已点卡，回复仍写“待确认”，与卡片状态矛盾 | P09 发现 |
+| [P09f](P09f-reply-protocol-fields.md) | Bug P3：回复原样搬运 `waiting-confirmation`、`applied` 等协议字段（skill 文案） | P09 发现 |
+| [P09g](P09g-replace-card-copy.md) | Bug P3：替换确认卡正文“将删除：#N”易误解为删除 | P09 发现 |
+| [P09h](P09h-laststatus-never-fired.md) | Bug P3：从未触发的任务 `lastStatus` 初始为 `ok` | P09 发现 |
+| [P09i](P09i-end-date-presets.md) | Bug P3：补全结束日期卡最短预设为一个月 | P09 发现 |
+| [P09j](P09j-plugin-conflict-shadowing.md) | Bug P3：同名冲突包遮蔽合法包，`skill-ambiguous` 无法用选择器消歧 | P09 发现 |
+| [P09k](P09k-missing-root-diagnostic.md) | Bug P3：插件目录不存在时返回未文档化的 `invalid-package` | P09 发现 |
 | [P10](P10-uat-real-usage.md) | 生产 Grok bridge 真实使用 UAT：14 条自然语言句子覆盖提醒、文档、新闻摘要与五类排期及管理操作，核对 larkent-monitor | P09、#52 合并并部署 |
+
+P09 E2E 发现的 won't-fix（不建票）：
+
+- **B3 暂停→恢复后 revision ABA：** won't-fix，内容完全相同且无副作用。
 
 P03 可通过现有已存 agent 任务验收，不依赖新创建入口。P05 能管理现有任务，不依赖 P04。P06 以内容读取和脚本使用验收，不依赖 automation 写操作。P07 需要完整能力作为共同测试对象，P08 等完整替代路径就绪后才移除旧协议。
 
