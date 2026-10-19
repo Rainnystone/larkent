@@ -1,13 +1,21 @@
+import { newAutomationOperationId } from '../automations/operation-id';
 import { record, TOOL_MAX_BYTES, TOOL_REQUEST_SCHEMA, toolResult, type ToolResult } from './protocol';
 
 export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv = process.env): Promise<ToolResult> {
+  const request = record(input);
+  if (request?.operation === 'automation.create') {
+    const params = record(request.params) ?? {};
+    input = { ...request, params: { ...params, operationId: params.operationId ?? newAutomationOperationId(env.LARK_BRIDGE_TOOL_SCOPE ?? '', Number(env.LARK_BRIDGE_TOOL_ISSUED_AT) || Date.now()) } };
+  }
+  const operationId = record(record(input)?.params)?.operationId;
+  const failed = (category: 'unavailable' | 'unknown', code: string) => toolResult(operationId ? 'unknown' : category, code, operationId ? { operationId, state: 'unknown', applied: null } : undefined);
   const endpoint = env.LARK_BRIDGE_TOOL_ENDPOINT;
   const credential = env.LARK_BRIDGE_TOOL_TOKEN;
-  if (!endpoint || !credential) return toolResult('unavailable', 'no-active-run');
+  if (!endpoint || !credential) return failed('unavailable', 'no-active-run');
   try {
     const url = new URL(endpoint);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !== '/tool' || url.username || url.password || url.search || url.hash) {
-      return toolResult('unavailable', 'invalid-run-endpoint');
+      return failed('unavailable', 'invalid-run-endpoint');
     }
     const response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(10_000) });
     const text = await response.text();
@@ -16,7 +24,7 @@ export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv =
     const result = record(JSON.parse(text));
     return result?.version === 1 && typeof result.category === 'string' && typeof result.code === 'string'
       ? result as unknown as ToolResult : toolResult('execution-failed', 'invalid-tool-response');
-  } catch { return toolResult('unavailable', 'run-connection-closed'); }
+  } catch { return failed('unavailable', 'run-connection-closed'); }
 }
 
 export async function runToolCli(options: { schema?: boolean } = {}): Promise<void> {

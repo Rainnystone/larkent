@@ -1,4 +1,5 @@
 import type { NormalizedMessage } from '@larksuite/channel';
+import { reconcileDraftCard, sendAutomationDraftCard } from './draft-delivery';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { senderTypeFromRaw } from '../bot/self-message';
@@ -1207,7 +1208,8 @@ function canPostMutationProposal(ctx: AutomationProposalContext): boolean {
   return Boolean(ctx.automations && ctx.autoAuth && ctx.automationsScheduler);
 }
 
-type DraftFlushContext = {
+export type DraftFlushContext = {
+  botAppId?: string;
   channel: CommandContext['channel'];
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
@@ -1232,9 +1234,9 @@ export async function flushPendingDraftCards(ctx: DraftFlushContext): Promise<vo
   }
 }
 
-async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: number): Promise<void> {
+export async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: number): Promise<void> {
   const automations = ctx.automations;
-  if (!automations || !ctx.autoAuth) return;
+  if (!automations || !ctx.autoAuth || ctx.isLinkDown?.()) return;
   for (;;) {
     const inflight = draftCardClaims.get(draftId);
     if (inflight) {
@@ -1243,6 +1245,8 @@ async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: 
     }
     const draft = automations.getDraft(draftId);
     if (!draft || draft.cardMessageId) return;
+    if (draft.delivery?.state === 'sending') { await reconcileDraftCard(ctx.channel, automations, draft, ctx.botAppId); return; }
+    if (draft.delivery?.state === 'rejected') return;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -1399,6 +1403,7 @@ async function confirmCreateDraft(
 ): Promise<AutomationConfirmOutcome> {
   if (!ctx.automations || draft.pendingRecurring) return confirmInvalid();
   const item = await ctx.automations.create({
+    ...(draft.operationId ? { operationId: draft.operationId } : {}),
     taskType: draft.taskType,
     schedule: draft.schedule,
     timezone: draft.timezone,
@@ -1599,11 +1604,12 @@ async function postEndCard(
   const card = automationEndCard(tokens);
   let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo: ctx.msg.messageId,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
+    if (draft.operationId) throw error;
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
@@ -1679,11 +1685,12 @@ async function postConfirmCard(
     : automationConfirmCard(body);
   let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
+    if (draft.operationId) throw error;
     await settleDraftCardFailure(ctx, draft, error, replyTo);
     return;
   }
@@ -1726,11 +1733,12 @@ async function postDeleteCard(
   });
   let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       ...(ctx.msg.messageId ? { replyTo: ctx.msg.messageId } : {}),
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
+    if (draft.operationId) throw error;
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }

@@ -1,6 +1,6 @@
 {
   "name": "automation",
   "version": "1.0.0",
-  "description": "查看本群自动化任务，校验和预览排期；当前版本不提供创建或变更。",
+  "description": "查看本群自动化任务，预览排期并创建需人工确认的提醒。",
   "skills": "./skills"
 }

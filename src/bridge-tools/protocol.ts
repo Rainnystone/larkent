@@ -1,6 +1,6 @@
 export const TOOL_VERSION = 1;
 export const TOOL_MAX_BYTES = 256 * 1024;
-export type ToolCategory = 'ok' | 'validation-failed' | 'needs-input' | 'unavailable' | 'unauthorized' | 'execution-failed';
+export type ToolCategory = 'ok' | 'validation-failed' | 'needs-input' | 'unavailable' | 'unauthorized' | 'execution-failed' | 'waiting-confirmation' | 'applied' | 'unknown';
 export interface ToolResult {
   version: 1;
   category: ToolCategory;

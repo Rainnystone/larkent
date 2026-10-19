@@ -1,3 +1,6 @@
+import type { TurnJournal } from '../bot/turn-journal';
+import { createReminderOperation, getReminderOperation } from './reminder-operation';
+import type { DraftFlushContext } from './command';
 import { formatZonedDateTime } from './confirm-card';
 import { nextFireAfter, nextFires, parseSchedule, REMINDER_MIN_INTERVAL_MS, AGENT_MIN_INTERVAL_MS, ONE_YEAR_MS } from './schedule';
 import type { AutomationsStore } from './store';
@@ -12,6 +15,8 @@ export interface AutomationToolContext {
   /** Bound at intake, never derived from model arguments. Rechecked on every call. */
   availability(): string | undefined;
   store?: AutomationsStore;
+  drafts?: DraftFlushContext;
+  journal?: TurnJournal;
   timezone: string;
   agentTasks: boolean;
   now?: () => number;
@@ -52,17 +57,19 @@ export function automationSchema(context: AutomationToolContext) {
       ['automation.schema', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false } }],
       ['automation.list', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false } }],
       ['automation.preview', { available: !reason, ...(reason ? { reason } : {}), params: AUTOMATION_PREVIEW_SCHEMA }],
-      ...['create', 'replace', 'delete', 'pause', 'resume', 'operation.get'].map(name => [`automation.${name}`, { available: false, reason: 'not-implemented' }]),
+      ['automation.create', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, taskType: { const: 'reminder' }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string', description: 'Client assigns before submission; retain for queries and retries' } } } }],
+      ['automation.operation.get', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['operationId'], properties: { operationId: { type: 'string' } } } }],
+      ...['replace', 'delete', 'pause', 'resume'].map(name => [`automation.${name}`, { available: false, reason: 'not-implemented' }]),
     ]),
     defaults: { timezone: context.timezone }, agentTasks: context.agentTasks,
     limits: { reminderMinIntervalMs: REMINDER_MIN_INTERVAL_MS, agentMinIntervalMs: AGENT_MIN_INTERVAL_MS, maxHorizonMs: ONE_YEAR_MS },
     boundary: 'start-inclusive-end-exclusive', timestampUnit: 'UTC epoch milliseconds',
-    categories: ['ok', 'validation-failed', 'needs-input', 'unavailable', 'unauthorized', 'execution-failed'],
+    categories: ['ok', 'validation-failed', 'needs-input', 'unavailable', 'unauthorized', 'execution-failed', 'waiting-confirmation', 'applied', 'unknown'],
   };
 }
 
-/** Read-only adapter to the existing schedule and store interfaces; no text parser. */
-export function callAutomationTool(operation: string, params: Record<string, unknown>, context: AutomationToolContext): ToolResult {
+/** Adapter to the existing schedule and store interfaces; no text parser. */
+export async function callAutomationTool(operation: string, params: Record<string, unknown>, context: AutomationToolContext): Promise<ToolResult> {
   const reason = automationToolAvailability(context);
   if (reason) return toolResult('unavailable', reason);
   if (operation === 'automation.schema') return Object.keys(params).length
@@ -75,7 +82,16 @@ export function callAutomationTool(operation: string, params: Record<string, unk
       paused: item.paused, lastStatus: item.lastStatus,
     })) });
   }
+  if (operation === 'automation.create') return createReminderOperation(params, context, previewAutomation);
+  if (operation === 'automation.operation.get') {
+    if (Object.keys(params).some(key => key !== 'operationId')) return toolResult('validation-failed', 'unknown-field');
+    return getReminderOperation(params.operationId, context);
+  }
   if (operation !== 'automation.preview') return toolResult('unavailable', 'not-implemented');
+  return previewAutomation(params, context);
+}
+
+function previewAutomation(params: Record<string, unknown>, context: AutomationToolContext): ToolResult {
   if (Object.keys(params).some(key => !['taskType', 'schedule', 'timezone'].includes(key))) return toolResult('validation-failed', 'unknown-field');
   const fields = ['taskType', 'schedule'].filter(key => params[key] === undefined);
   if (fields.length) return toolResult('needs-input', 'missing-fields', { fields });

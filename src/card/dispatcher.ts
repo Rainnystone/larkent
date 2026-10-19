@@ -418,7 +418,7 @@ async function dispatchAutoAction(
   if (!deps.controls.profileConfig.automations.enabled) {
     return actionToast('error', AUTO_INVALID_HINT);
   }
-  const verified = deps.autoAuth.verify(token, { consume: !isAutoEndAction(cmd) });
+  const verified = deps.autoAuth.verify(token, { consume: !isAutoEndAction(cmd) && !registered.operationId });
   if (!verified.ok || verified.payload.action !== cmd) {
     log.info('cardAction', 'skip-auto-auth-failed', {
       cmd,
@@ -473,6 +473,15 @@ async function dispatchAutoAction(
     return actionToast('success', DRAFT_SETTLED_END_CHOSEN);
   }
 
+  if (registered.operationId && cmd === 'auto.confirm' && registered.op === 'create') {
+    if (!deps.autoAuth.claimNonce(verified.payload.nonce)) return actionToast('error', AUTO_INVALID_HINT);
+    try {
+      const result = await confirmAutomationDraft({ automations: deps.automations, onAutomationConfirmed: deps.onAutomationConfirmed, now: deps.now }, registered);
+      if (result.ok) deps.autoAuth.consume(verified.payload.nonce);
+      scheduleDraftCardSettle(deps.channel, registered, result.status);
+      return actionToast(result.ok ? 'success' : 'error', result.toast);
+    } finally { deps.autoAuth.releaseNonce(verified.payload.nonce); }
+  }
   const taken = await deps.automations.takeDraft(registered.draftId);
   if (!taken) {
     return actionToast('error', AUTO_INVALID_HINT);

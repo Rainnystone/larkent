@@ -73,7 +73,7 @@ it('discovers and reads automation, corrects real preview feedback in the same I
             const inspected = await call('plugins.inspect', { plugin: 'automation' });
             expect(inspected.data.skills[0].id).toBe('automation:automations');
             expect((await call('plugins.read', { skill: 'automation:automations' })).data.content).toContain('automation.preview');
-            expect((await call('automation.schema')).data.operations['automation.create'].available).toBe(false);
+            expect((await call('automation.schema')).data.operations['automation.create'].available).toBe(true);
             expect((await call('automation.list')).data.tasks).toEqual([]);
             const schedule = { kind: 'daily', timezone: 'Asia/Shanghai', times: [{ hour: 9, minute: 0 }], startAt: NOW };
             const invalid = await call('automation.preview', { taskType: 'reminder', schedule });

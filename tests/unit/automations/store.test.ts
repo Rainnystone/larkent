@@ -120,13 +120,13 @@ describe('AutomationsStore', () => {
   it('refuses a future schemaVersion without overwriting the original file', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     const future = `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       nextId: 9,
       items: [{ id: 8, taskType: 'reminder', name: 'keep-me' }],
     }, null, 2)}\n`;
     await writeFile(path, future);
 
-    await expect(store.load()).rejects.toThrow(/schemaVersion: 2/);
+    await expect(store.load()).rejects.toThrow(/schemaVersion: 3/);
     expect(await readFile(path, 'utf8')).toBe(future);
     await expect(store.create(reminderInput())).rejects.toBeDefined();
     expect(await readFile(path, 'utf8')).toBe(future);

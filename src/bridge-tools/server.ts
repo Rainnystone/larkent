@@ -1,3 +1,4 @@
+import { automationOperationScope } from '../automations/operation-id';
 import { randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -43,7 +44,7 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
       let value: unknown;
       try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { reply(toolResult('validation-failed', 'invalid-json')); return; }
-      reply(dispatch(value, context));
+      reply(await dispatch(value, context));
     } catch { reply(toolResult('execution-failed', 'tool-failed')); }
   });
   server.requestTimeout = 10_000;
@@ -52,7 +53,7 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
   server.unref();
   const port = (server.address() as AddressInfo).port;
   return {
-    env: { LARK_BRIDGE_TOOL_ENDPOINT: `http://127.0.0.1:${port}/tool`, LARK_BRIDGE_TOOL_TOKEN: credential, LARK_BRIDGE_TOOL_CLIENT: client },
+    env: { LARK_BRIDGE_TOOL_ENDPOINT: `http://127.0.0.1:${port}/tool`, LARK_BRIDGE_TOOL_TOKEN: credential, LARK_BRIDGE_TOOL_ISSUED_AT: String((context.now ?? Date.now)()), LARK_BRIDGE_TOOL_SCOPE: automationOperationScope(context.profile, context.chatId), LARK_BRIDGE_TOOL_CLIENT: client },
     used: () => used,
     close() {
       active = false;
@@ -65,7 +66,7 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
   };
 }
 
-function dispatch(value: unknown, context: ToolRunContext): ToolResult {
+async function dispatch(value: unknown, context: ToolRunContext): Promise<ToolResult> {
   const request = record(value);
   if (!request || request.version !== 1) return toolResult('validation-failed', 'unsupported-version');
   if (Object.keys(request).some(key => !['version', 'operation', 'params'].includes(key))) return toolResult('validation-failed', 'unknown-field');
