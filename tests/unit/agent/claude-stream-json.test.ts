@@ -83,6 +83,27 @@ describe('Claude stream-json translator', () => {
     expect([...translateEvent({ type: 'result', session_id: 'sess-2' })][0]).not.toHaveProperty('sessionId');
   });
 
+  it.each([
+    { subtype: 'error_max_budget_usd', is_error: true },
+    { subtype: 'error_during_execution', is_error: false },
+    { subtype: 'success', is_error: true },
+  ])('reports a failed result instead of normal completion ($subtype / $is_error)', (status) => {
+    expect([...translateEvent({
+      type: 'result', ...status, session_id: 'failed-session',
+      errors: ['Reached maximum budget ($0.000001)'],
+      usage: { input_tokens: 12, output_tokens: 3 }, total_cost_usd: 0.01,
+    })]).toEqual([
+      { type: 'usage', inputTokens: 12, outputTokens: 3, cachedInputTokens: undefined, costUsd: 0.01 },
+      { type: 'error', message: 'Reached maximum budget ($0.000001)', terminationReason: 'failed' },
+    ]);
+  });
+
+  it('uses the error subtype when Claude supplies no error detail', () => {
+    expect([...translateEvent({ type: 'result', subtype: 'error_max_turns', is_error: true })]).toEqual([
+      { type: 'error', message: 'claude result: error_max_turns', terminationReason: 'failed' },
+    ]);
+  });
+
   it('ignores unknown, empty, and incomplete raw events', () => {
     expect([...translateEvent(null)]).toEqual([]);
     expect([...translateEvent({ type: 'assistant', message: { content: [{ type: 'text', text: '' }] } })]).toEqual([]);

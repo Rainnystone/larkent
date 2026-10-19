@@ -2,6 +2,9 @@ import type { AgentAvailability } from './preflight';
 
 export type EffectiveAccess = 'read-only' | 'workspace' | 'full';
 
+/** Default is the human-chat prompt. Automation fires use the bot-only variant. */
+export type AgentPromptVariant = 'default' | 'automation';
+
 export interface AgentOptionsSchema {
   readonly parse: (value: unknown) => unknown;
 }
@@ -38,6 +41,8 @@ export interface AgentRunOptions {
   agentOptions?: unknown;
   sandbox?: string;
   permissionMode?: string;
+  /** Automation fires request the unattended bot-only system-prompt variant. */
+  promptVariant?: AgentPromptVariant;
   /**
    * Grace period (ms) between SIGTERM and SIGKILL when stop() is called on
    * the returned run. Lets the agent (and any subprocess it spawned, e.g.

@@ -56,7 +56,7 @@ describe('FeishuLink recovery through the bridge', () => {
       },
     });
 
-    await waitFor(() => recovered.length === 1);
+    expect(recovered).toHaveLength(1);
     // Startup recover is fire-and-forget after the first tick. Join the
     // in-flight pass before the silent-probe clock starts, or lastEvidenceAt
     // jumps and the outage window starts after failureStart.
@@ -80,12 +80,12 @@ describe('FeishuLink recovery through the bridge', () => {
     probeOk = true;
     now += FEISHU_LINK_TICK_MS;
     await h.bridge.tickLink();
-    await waitFor(() => recovered.length === 1);
+    expect(recovered).toHaveLength(1);
     expect(recovered[0]!.since).toBeLessThanOrEqual(failureStart);
 
+    await h.bridge.recover();
     await waitForDebounce();
-    await waitFor(() => h.agent.runOptions.length === 1);
-    expect(h.agent.runOptions).toHaveLength(1);
+    await until(() => h.agent.runOptions.length === 1);
     expect(h.agent.runOptions[0]!.prompt).toContain('missed while REST was down');
     const replies = h.channel.snapshotCalls().filter((call) => call.op === 'send' || call.op === 'stream');
     expect(replies).toHaveLength(1);
@@ -100,7 +100,7 @@ describe('FeishuLink recovery through the bridge', () => {
       history: { [CHAT]: [] },
       withJournal: true,
     });
-    await waitFor(() => h.ledger.getLiveAt() === NOW);
+    expect(h.ledger.getLiveAt()).toBe(NOW);
     expect(h.journal).toBeDefined();
     // Drain startup Recovery before staging so its redeliver does not
     // observe a reply enqueued after the outage callback fired.
@@ -138,7 +138,8 @@ describe('FeishuLink recovery through the bridge', () => {
 
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
-    await waitFor(() => h.journal!.get('turn-staged')?.status === 'reply-delivered');
+    await h.bridge.recover();
+    expect(h.journal!.get('turn-staged')?.status).toBe('reply-delivered');
     expect(stagedSends()).toHaveLength(1);
 
     await h.bridge.recover();
@@ -148,7 +149,7 @@ describe('FeishuLink recovery through the bridge', () => {
     await h.bridge.tickLink();
     h.channel.connectionState = 'connected';
     await h.bridge.tickLink();
-    await waitForDebounce();
+    await h.bridge.recover();
     expect(stagedSends()).toHaveLength(1);
   });
 
@@ -161,7 +162,7 @@ describe('FeishuLink recovery through the bridge', () => {
       history: { [CHAT]: [] },
       withJournal: true,
     });
-    await waitFor(() => h.ledger.getLiveAt() === NOW);
+    expect(h.ledger.getLiveAt()).toBe(NOW);
     await h.bridge.recover();
 
     const orig = h.journal!.redeliver.bind(h.journal);
@@ -200,7 +201,6 @@ describe('FeishuLink recovery through the bridge', () => {
 
     boom = false;
     await h.bridge.recover({ since: NOW - 1_000, until: NOW, hostSuspended: false });
-    await waitFor(() => stagedSends().length === 1);
     expect(stagedSends()).toHaveLength(1);
   });
 
@@ -220,13 +220,13 @@ describe('FeishuLink recovery through the bridge', () => {
         withJournal: true,
         boomRedeliver: true,
       });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      await h.bridge.recover();
       expect(rejections, String(rejections[0])).toEqual([]);
       expect(fail.mock.calls.some((call) => call[0] === 'recovery')).toBe(true);
 
       await h.channel.handlers.message?.(mention('om_live', 'still listening'));
       await waitForDebounce();
-      await waitFor(() => h.agent.runOptions.length === 1);
+      await until(() => h.agent.runOptions.length === 1);
       expect(h.agent.runOptions[0]?.prompt).toContain('still listening');
     } finally {
       process.off('unhandledRejection', onUnhandled);
@@ -241,7 +241,7 @@ describe('FeishuLink recovery through the bridge', () => {
       lastLiveAt: NOW,
       history: { [CHAT]: [] },
     });
-    await waitFor(() => h.ledger.getLiveAt() === NOW);
+    expect(h.ledger.getLiveAt()).toBe(NOW);
     // Join startup recover before the connected-tick loop advances `now`.
     await h.bridge.recover();
     const listed = h.channel.listChatsCalls;
@@ -266,9 +266,8 @@ describe('FeishuLink recovery through the bridge', () => {
       history,
       withJournal: true,
     });
-    // waitFor is 10k setImmediate turns and cannot see Recovery's 1s
-    // retry after an incomplete startup scan. Join the in-flight pass
-    // (or retry immediately) before wrapping redeliver.
+    // Join the in-flight startup pass before wrapping redeliver. A pending
+    // Recovery retry still waits RECOVERY_RETRY_MIN_MS.
     await h.bridge.recover();
 
     let releaseRedeliver!: () => void;
@@ -289,19 +288,25 @@ describe('FeishuLink recovery through the bridge', () => {
     history[CHAT] = [mentionItem('om_mid_recover', CHAT, 'posted during outage', postedAt)];
 
     h.channel.connectionState = 'connected';
-    // Advance past the 2-minute scan margin so a restart that only has the
-    // new lastLiveAt cannot still see this message.
-    now += WATERMARK_MARGIN_MS + FEISHU_LINK_TICK_MS;
-    await h.bridge.tickLink();
-    await waitFor(() => redeliverStarted);
-    expect(h.agent.runOptions).toHaveLength(0);
-    await h.ledger.flush();
+    // Step past the scan margin. One jump would be a suspend gap and would
+    // wait for a new-socket frame before this reconnect can recover.
+    const target = now + WATERMARK_MARGIN_MS + FEISHU_LINK_TICK_MS;
+    while (now < target) {
+      now += FEISHU_LINK_TICK_MS;
+      await h.bridge.tickLink();
+    }
+    try {
+      await until(() => redeliverStarted);
+      expect(h.agent.runOptions).toHaveLength(0);
+      await h.ledger.flush();
+      const stopping = h.bridge.disconnect();
+      releaseRedeliver();
+      await stopping;
+    } finally {
+      releaseRedeliver();
+    }
 
     const ledgerFile = h.ledger.getFilePath();
-    const stopping = h.bridge.disconnect();
-    releaseRedeliver();
-    await stopping;
-
     const reloaded = new BackfillLedger(ledgerFile, { now: () => now });
     await reloaded.load();
     expect(reloaded.getLiveAt()!).toBeGreaterThan(postedAt + WATERMARK_MARGIN_MS);
@@ -320,6 +325,7 @@ describe('FeishuLink recovery through the bridge', () => {
       ledger: reloaded,
       now: () => now,
       probe: async () => true,
+      sleepProbe: notSleepingProbe(),
       controls: {
         profile: 'test',
         profileConfig: h.cfg,
@@ -338,7 +344,7 @@ describe('FeishuLink recovery through the bridge', () => {
     });
     await second.recover();
     await waitForDebounce();
-    await waitFor(() => h.agent.runOptions.some((opts) => opts.prompt.includes('posted during outage')));
+    await until(() => h.agent.runOptions.some((opts) => opts.prompt.includes('posted during outage')));
     expect(h.agent.runOptions.filter((opts) => opts.prompt.includes('posted during outage'))).toHaveLength(1);
   });
 
@@ -371,8 +377,8 @@ describe('FeishuLink recovery through the bridge', () => {
       },
     });
 
-    const deadline = Date.now() + 2_000;
-    while (lists < 2 && Date.now() < deadline) await yieldIO();
+    await vi.advanceTimersByTimeAsync(0);
+    for (let n = 0; lists < 2 && n < 20_000; n++) await yieldIO();
     expect(lists).toBeGreaterThanOrEqual(2);
     holdingOk = false;
     releaseOk();
@@ -444,6 +450,7 @@ async function startHarness(opts: {
     ...(journal ? { journal } : {}),
     now: opts.now,
     probe: opts.probe,
+    sleepProbe: notSleepingProbe(),
     ...(opts.onRecovered ? { onRecovered: opts.onRecovered } : {}),
     controls: {
       profile: 'test',
@@ -527,10 +534,24 @@ async function waitForDebounce() {
   await new Promise((resolve) => setTimeout(resolve, 700));
 }
 
-async function waitFor(predicate: () => boolean) {
-  for (let n = 0; n < 10_000; n++) {
-    if (predicate()) return;
+/** Join a recovery transition already in flight. No wall-clock deadline. */
+async function until(predicate: () => boolean | Promise<boolean>) {
+  for (let n = 0; n < 30; n++) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await yieldIO();
   }
   throw new Error('expected FeishuLink recovery transition was not observed');
+}
+
+function notSleepingProbe(): {
+  note(): void;
+  detect(): Promise<{ suspended: false }>;
+} {
+  return {
+    note() {},
+    async detect() {
+      return { suspended: false };
+    },
+  };
 }

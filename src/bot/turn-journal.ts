@@ -39,6 +39,15 @@ export interface TurnReply {
   messageId?: string;
   /** True when the receipt is an interactive card (stream create or card send). */
   interactive?: boolean;
+  /**
+   * Message this reply replaces. Recovery recalls it after the replacement
+   * send lands, and never treats that id as the correction itself.
+   * The reply stays staged, with the correction receipt in `messageId`,
+   * until recall succeeds, Feishu says this message is already gone, or the
+   * recall is permanently rejected. Recovery must not send the correction
+   * again while that receipt is known.
+   */
+  supersedes?: string;
   state?: OutboxItemState;
 }
 
@@ -242,6 +251,7 @@ export class TurnJournal {
     deliveryId?: string;
     messageId?: string;
     interactive?: boolean;
+    supersedes?: string;
   }): void {
     const current = this.entries.find((item) => item.turnId === turnId);
     const threadId = reply.threadId?.trim() || current?.threadId;
@@ -254,6 +264,7 @@ export class TurnJournal {
       deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
       ...(reply.messageId ? { messageId: reply.messageId } : {}),
       ...(reply.interactive === true ? { interactive: true } : {}),
+      ...(reply.supersedes?.trim() ? { supersedes: reply.supersedes.trim() } : {}),
       state: 'staged',
     };
     this.patch(turnId, {
@@ -261,6 +272,20 @@ export class TurnJournal {
         ? 'notice-pending'
         : 'completed-undelivered',
       reply: nextReply,
+    });
+  }
+
+  reviseDeliveredReply(turnId: string, markdown: string, messageId?: string): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    if (!current?.reply) return;
+    const nextId = messageId?.trim();
+    this.patch(turnId, {
+      reply: {
+        ...current.reply,
+        markdown,
+        ...(nextId ? { messageId: nextId } : {}),
+        state: 'sent',
+      },
     });
   }
 
@@ -306,6 +331,13 @@ export class TurnJournal {
 
   noteCliAlreadySent(turnId: string): void {
     this.patch(turnId, { cliAlreadySent: true });
+  }
+
+  /** The CLI posted the previous text. A replacement still has to be sent. */
+  clearCliAlreadySent(turnId: string): void {
+    const current = this.entries.find((item) => item.turnId === turnId);
+    if (!current?.cliAlreadySent) return;
+    this.patch(turnId, { cliAlreadySent: false });
   }
 
   noteNonAnswerId(turnId: string, messageId: string): void {
@@ -443,12 +475,22 @@ export class TurnJournal {
 
   async redeliver(opts: JournalRecoverOptions = {}): Promise<void> {
     if (this.redelivering) return this.redelivering;
-    this.redelivering = this.redeliverOwned(opts).then(async () => {
-      await this.flush();
-    }).finally(() => {
+    this.redelivering = this.finishRedeliver(opts).finally(() => {
       this.redelivering = undefined;
     });
     return this.redelivering;
+  }
+
+  private async finishRedeliver(opts: JournalRecoverOptions): Promise<void> {
+    try {
+      await this.redeliverOwned(opts);
+    } catch (error) {
+      // replyDelivered already scheduled a persist. Join that writer before
+      // rejecting so its atomic tmp file is not still in the journal directory.
+      await this.queue.flush().catch(() => {});
+      throw error;
+    }
+    await this.flush();
   }
 
   private async redeliverOwned(
@@ -881,6 +923,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
     ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
     ...(typeof raw.messageId === 'string' && raw.messageId ? { messageId: raw.messageId } : {}),
     ...(raw.interactive === true ? { interactive: true } : {}),
+    ...(typeof raw.supersedes === 'string' && raw.supersedes ? { supersedes: raw.supersedes } : {}),
     ...(isOutboxItemState(raw.state) ? { state: raw.state } : {}),
   };
 }
@@ -1061,6 +1104,10 @@ export const FEISHU_DELIVERY_ID_MAX_CHARS = 50;
 
 export function replyDeliveryKey(turnId: string): string {
   return clipDeliveryId(`reply:${turnId}`);
+}
+
+export function promiseCorrectionDeliveryKey(turnId: string): string {
+  return clipDeliveryId(`correct:${turnId}`);
 }
 
 export function noticeDeliveryKey(turnId: string): string {

@@ -43,6 +43,32 @@ afterEach(async () => {
 });
 
 describe('transport-only WebSocket reconnect', () => {
+  it('does not report recovered on a keepalive wake until a socket frame arrives', async () => {
+    let now = NOW;
+    const recovered: number[] = [];
+    const h = await startHarness({
+      now: () => now,
+      restart: async () => {},
+      agent: new InFlightAgent(),
+      onRecovered: () => {
+        recovered.push(now);
+      },
+    });
+    recovered.length = 0;
+    const before = h.channel.forceReconnectCount;
+
+    now += 5 * 60_000;
+    sdk.options?.keepalive?.onWake?.();
+    expect(h.channel.forceReconnectCount).toBe(before + 1);
+    await h.bridge.tickLink();
+    expect(h.channel.forceReconnectCount).toBe(before + 1);
+    expect(recovered).toEqual([]);
+
+    sdk.options?.keepalive?.onSocketFrame?.();
+    expect(recovered).toHaveLength(1);
+    expect(h.channel.forceReconnectCount).toBe(before + 1);
+  });
+
   it('does not restart the bridge when the socket is stuck 60s with a healthy probe, and the active run replies once', async () => {
     let now = NOW;
     const restart = vi.fn(async () => {});
@@ -161,6 +187,7 @@ async function startHarness(opts: {
   now: () => number;
   restart: () => Promise<void>;
   agent: InFlightAgent;
+  onRecovered?: (outage: { since: number; until: number }) => void;
 }) {
   const tmp = await createTmpProfile('transport-only-reconnect-');
   const ledger = new BackfillLedger(join(tmp.profile, 'backfill-state.json'), { now: opts.now });
@@ -194,6 +221,13 @@ async function startHarness(opts: {
     ledger,
     now: opts.now,
     probe: async () => true,
+    sleepProbe: {
+      note() {},
+      async detect() {
+        return { suspended: false as const };
+      },
+    },
+    ...(opts.onRecovered ? { onRecovered: opts.onRecovered } : {}),
     controls: {
       profile: 'test',
       profileConfig: cfg,

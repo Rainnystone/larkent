@@ -5,9 +5,14 @@ export type FeishuErrorClass = 'link' | 'rejected' | 'local';
 
 /** Feishu IM codes that mean the target message is gone and cannot be patched. */
 export const FEISHU_GONE_MESSAGE_CODES = new Set([
-  230002, // invalid message id
-  230025, // message not found
+  230025, // The length of the message content reaches its limit
   230026, // message recalled
+]);
+
+/** Send/reply/patch codes that mean this bot is not in the chat (or the chat is gone). */
+export const FEISHU_NOT_IN_CHAT_CODES = new Set([
+  230002, // The bot can not be outside the group
+  232009, // chat which has already been dissolved
 ]);
 
 /** Frequency-limit / permission-budget codes the SDK maps before HTTP status. */
@@ -137,6 +142,41 @@ export function isGoneMessage(err: unknown): boolean {
     if (status === 404) return true;
     const code = feishuCode(node);
     if (code !== undefined && FEISHU_GONE_MESSAGE_CODES.has(code)) return true;
+  }
+  return false;
+}
+
+/**
+ * Codes that mean a superseded message can no longer be recalled: already
+ * recalled, deleted, or not found. 230025 is a content-length rejection,
+ * not this. 230110 / 230011 / 10020 / 10037 match the board's deleted-message set.
+ */
+const SUPERSEDED_MESSAGE_GONE_CODES = new Set([
+  230026,
+  230011,
+  230110,
+  10020,
+  10037,
+]);
+
+/** True when recall is finished because the old message is already gone. */
+export function isSupersededMessageGone(err: unknown): boolean {
+  for (const node of causeChain(err)) {
+    if (httpStatus(node) === 404) return true;
+    const code = feishuCode(node);
+    if (code !== undefined && SUPERSEDED_MESSAGE_GONE_CODES.has(code)) return true;
+  }
+  return false;
+}
+
+/**
+ * A rejected 4xx that means the bot is outside the group or the chat was
+ * dissolved. Distinct from {@link isGoneMessage}: 230002 is not a gone card.
+ */
+export function isNotInChat(err: unknown): boolean {
+  for (const node of causeChain(err)) {
+    const code = feishuCode(node);
+    if (code !== undefined && FEISHU_NOT_IN_CHAT_CODES.has(code)) return true;
   }
   return false;
 }

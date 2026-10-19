@@ -4,7 +4,7 @@ import {
   refreshOwnerControls,
   type AppInfoSource,
 } from '../../../src/policy/owner';
-import { isCreator, type RuntimeControls } from '../../../src/policy/access';
+import { isBotOwner, type RuntimeControls } from '../../../src/policy/access';
 
 describe('owner refresh', () => {
   afterEach(() => {
@@ -37,7 +37,7 @@ describe('owner refresh', () => {
     expect(controls.botOwnerId).toBe('ou_previous');
     expect(controls.ownerRefreshState).toBe('failed');
     expect(controls.ownerRefreshError).toContain('permission denied');
-    expect(isCreator(controls, 'ou_previous')).toBe(true);
+    expect(isBotOwner(controls, 'ou_previous')).toBe(true);
   });
 
   it('fails closed when owner refresh fails without a cached owner', async () => {
@@ -49,7 +49,7 @@ describe('owner refresh', () => {
     expect(controls.botOwnerId).toBeUndefined();
     expect(controls.ownerRefreshState).toBe('failed');
     expect(controls.ownerRefreshError).toContain('permission denied');
-    expect(isCreator(controls, 'ou_previous')).toBe(false);
+    expect(isBotOwner(controls, 'ou_previous')).toBe(false);
   });
 
   it('refreshes immediately and then every 30 minutes while the controller is running', async () => {

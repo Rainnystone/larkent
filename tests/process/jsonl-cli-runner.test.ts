@@ -1000,6 +1000,61 @@ setInterval(() => {}, 1000);
     expectSpawnError(await collect(run.events), 'claude');
   });
 
+  it('delivers one protocol error before a nonzero exit without reporting normal completion', async () => {
+    const fake = await createFakeClaude({
+      lines: [{ type: 'result', subtype: 'error_max_budget_usd', is_error: true,
+        session_id: 'failed-budget', errors: ['Reached maximum budget ($0.000001)'] }],
+      exitCode: 1,
+    });
+    cleanup.push(fake.dir);
+    const run = new ClaudeAdapter({ binary: fake.path }).run({ runId: 'budget-error', prompt: 'hello', cwd: fake.dir });
+    expect(await collect(run.events)).toEqual([
+      { type: 'error', message: 'Reached maximum budget ($0.000001)', terminationReason: 'failed' },
+    ]);
+    expect(await run.waitForExit(1000)).toBe(true);
+  });
+
+  it('reports an incomplete stream when a successful process exits without a result', async () => {
+    const fake = await createFakeClaude({ lines: [
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'partial answer' }] } },
+    ] });
+    cleanup.push(fake.dir);
+    const run = new ClaudeAdapter({ binary: fake.path }).run({ runId: 'incomplete', prompt: 'hello', cwd: fake.dir });
+    expect(await collect(run.events)).toEqual([
+      { type: 'text', delta: 'partial answer' },
+      { type: 'error', message: 'claude stream ended before a result event', terminationReason: 'failed' },
+    ]);
+  });
+
+  it('emits interrupted with the session handle after stopping a live child', async () => {
+    const fake = await createFakeRunnerBinary(`
+process.stdin.resume();
+console.log(JSON.stringify({ type: 'system', subtype: 'init', session_id: 'claude-stop' }));
+setInterval(() => {}, 1000);
+`);
+    cleanup.push(fake.dir);
+    const run = new ClaudeAdapter({ binary: fake.path }).run({ runId: 'claude-stop', prompt: 'hello', cwd: fake.dir, stopGraceMs: 50 });
+    const iterator = run.events[Symbol.asyncIterator]();
+    try {
+      expect(await iterator.next()).toMatchObject({ value: { type: 'system', resumeHandle: 'claude-stop' } });
+      await run.stop();
+      const remaining: AgentEvent[] = [];
+      for (;;) { const next = await iterator.next(); if (next.done) break; remaining.push(next.value); }
+      expect(remaining).toEqual([{ type: 'done', resumeHandle: 'claude-stop', terminationReason: 'interrupted' }]);
+      expect(await run.waitForExit(1000)).toBe(true);
+    } finally { await run.stop(); await iterator.return?.(); }
+  });
+
+  it('preserves nonzero process diagnostics after a successful result', async () => {
+    const fake = await createFakeClaude({ lines: [{ type: 'result', subtype: 'success', session_id: 'tail-failure' }], exitCode: 42, stderr: 'tail failed' });
+    cleanup.push(fake.dir);
+    const run = new ClaudeAdapter({ binary: fake.path }).run({ runId: 'tail-failure', prompt: 'hello', cwd: fake.dir });
+    expect(await collect(run.events)).toEqual([
+      { type: 'done', resumeHandle: 'tail-failure', terminationReason: 'normal' },
+      { type: 'error', message: 'claude exited with code 42: tail failed', terminationReason: 'failed' },
+    ]);
+  });
+
   it('waits for post-done process exit before stop fallback is needed', async () => {
     const fake = await createFakeClaude({
       lines: [{ type: 'result', session_id: 'sess-tail' }],

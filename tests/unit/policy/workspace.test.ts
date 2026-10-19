@@ -53,6 +53,16 @@ describe('working directory resolver', () => {
       reason: 'temp-root',
     });
   });
+
+  // macOS exposes these system roots through symlinks into /private.
+  it.skipIf(process.platform !== 'darwin').each([
+    '/etc', '/var', '/private/etc', '/private/var',
+  ])('rejects macOS system root %s after canonicalization', async (path) => {
+    await expect(resolveWorkingDirectory(path)).resolves.toMatchObject({
+      ok: false,
+      reason: 'system-root',
+    });
+  });
 });
 
 async function makeTmp(): Promise<string> {

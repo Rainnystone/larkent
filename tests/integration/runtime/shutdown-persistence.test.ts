@@ -422,6 +422,8 @@ async function supervisorHarness(beforeReturn?: (bridge: BridgeChannel, index: n
       recover: async () => {},
       recoverMissed: async () => {},
       tickLink: async () => {},
+      noteLinkFrame: () => {},
+      wakeAutomation: async () => {},
     };
     bridges.push(item);
     await beforeReturn?.(item.bridge, bridges.length - 1);

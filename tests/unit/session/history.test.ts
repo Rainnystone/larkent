@@ -1,13 +1,16 @@
-import { mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { buildAgentPrompt } from '../../../src/agent/prompt.js';
 
 describe('Claude local session history', () => {
   const cleanup: string[] = [];
 
+  beforeEach(() => { vi.stubEnv('CLAUDE_CONFIG_DIR', undefined); });
+
   afterEach(async () => {
+    vi.unstubAllEnvs();
     vi.doUnmock('node:os');
     vi.resetModules();
     await Promise.all(
@@ -50,6 +53,47 @@ describe('Claude local session history', () => {
         lineCount: 1,
       },
     ]);
+  });
+
+  it('reads only the configured Claude directory rather than mixing the default identity', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'claude-history-home-'));
+    cleanup.push(home);
+    vi.doMock('node:os', async () => ({ ...(await vi.importActual<typeof import('node:os')>('node:os')), homedir: () => home }));
+    const custom = join(home, 'custom 中文 config');
+    vi.stubEnv('CLAUDE_CONFIG_DIR', custom);
+    for (const [root, id] of [[join(home, '.claude'), 'default-session'], [custom, 'custom-session']]) {
+      const dir = join(root!, 'projects', '-repo');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${id}.jsonl`), JSON.stringify({ type: 'user', message: { content: id } }) + '\n');
+    }
+    const { listRecentSessions } = await import('../../../src/session/history.js');
+    expect((await listRecentSessions('/repo', 5)).map(entry => entry.sessionId)).toEqual(['custom-session']);
+  });
+
+  it('finds the canonical CLI project when cwd is a filesystem alias', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'claude-history-home-'));
+    cleanup.push(home);
+    vi.doMock('node:os', async () => ({ ...(await vi.importActual<typeof import('node:os')>('node:os')), homedir: () => home }));
+    const target = join(home, 'project');
+    const alias = join(home, 'project alias');
+    await mkdir(target);
+    await symlink(target, alias, 'junction');
+    // Native Claude stores the canonical cwd with non-ASCII/punctuation replaced.
+    const nativeKey = (await realpath(target)).replace(/[^A-Za-z0-9]/g, '-');
+    const project = join(home, '.claude', 'projects', nativeKey);
+    await mkdir(project, { recursive: true });
+    await writeFile(join(project, 'canonical-session.jsonl'), JSON.stringify({ type: 'user', message: { content: 'canonical' } }) + '\n');
+    const { listRecentSessions } = await import('../../../src/session/history.js');
+    expect((await listRecentSessions(alias, 5)).map(entry => entry.sessionId)).toEqual(['canonical-session']);
+  });
+
+  it.skipIf(process.platform === 'win32')('surfaces invalid cwd traversal instead of silently returning no history', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'claude-history-home-'));
+    cleanup.push(home);
+    const file = join(home, 'file');
+    await writeFile(file, 'not a directory');
+    const { listRecentSessions } = await import('../../../src/session/history.js');
+    await expect(listRecentSessions(join(file, 'child'))).rejects.toMatchObject({ code: 'ENOTDIR' });
   });
 
   it('summarizes bridge prompts using the real user input section', async () => {

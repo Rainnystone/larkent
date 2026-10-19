@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActiveRuns } from '../../../src/bot/active-runs';
+import { resolveModelArg } from '../../../src/agent/models';
 import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
 import { resolveAppPaths } from '../../../src/config/app-paths';
 import { getSecret, listSecretIds } from '../../../src/config/keystore';
@@ -120,6 +121,26 @@ describe('profile-aware account and config commands', () => {
       candidate.profiles.claude?.preferences.model === undefined,
     );
     expect(cleared.profiles.claude?.preferences.model).toBeUndefined();
+  });
+
+  it('persists a current Codex model and resolves it for runs until default is chosen', async () => {
+    const h = await createHarness({ profile: 'codex-dev' });
+
+    await h.command('/config submit', { model: 'gpt-5.6-sol', message_reply: 'text' });
+    const saved = await waitForRoot(h.rootDir, (candidate) =>
+      candidate.profiles['codex-dev']?.preferences.messageReply === 'text',
+    );
+    expect(saved.profiles['codex-dev']?.preferences.model).toBe('gpt-5.6-sol');
+    expect(resolveModelArg('codex', saved.profiles['codex-dev']?.preferences.model))
+      .toBe('gpt-5.6-sol');
+    expect(saved.profiles.claude?.preferences.model).toBeUndefined();
+
+    await h.command('/config submit', { model: 'default' });
+    const cleared = await waitForRoot(h.rootDir, (candidate) =>
+      candidate.profiles['codex-dev']?.preferences.model === undefined,
+    );
+    expect(resolveModelArg('codex', cleared.profiles['codex-dev']?.preferences.model))
+      .toBeUndefined();
   });
 
   it('keeps the current message reply mode when the config submit payload omits it', async () => {
@@ -251,6 +272,7 @@ describe('profile-aware account and config commands', () => {
 
 async function createHarness(options: {
   preferences?: RootConfig['profiles'][string]['preferences'];
+  profile?: 'claude' | 'codex-dev';
 } = {}): Promise<{
   rootDir: string;
   channel: ReturnType<typeof createFakeChannel>;
@@ -260,15 +282,16 @@ async function createHarness(options: {
   roots.push(rootDir);
   const workspace = join(rootDir, 'workspace');
   await mkdir(workspace, { recursive: true });
-  const root = await writeRoot(rootDir, workspace, options.preferences);
-  const profileConfig = root.profiles.claude!;
-  const appPaths = resolveAppPaths({ rootDir, profile: 'claude' });
+  const profile = options.profile ?? 'claude';
+  const root = await writeRoot(rootDir, workspace, options.preferences, profile);
+  const profileConfig = root.profiles[profile]!;
+  const appPaths = resolveAppPaths({ rootDir, profile });
   const channel = createFakeChannel();
   const sessions = new SessionStore(appPaths.sessionsFile);
   const resumeCandidates = new ResumeCandidates();
   const workspaces = new WorkspaceStore(appPaths.workspacesFile);
   const controls = {
-    profile: 'claude',
+    profile,
     profileConfig,
     botOwnerId: 'ou-admin',
     ownerRefreshState: 'ok',
@@ -276,7 +299,7 @@ async function createHarness(options: {
     restart: vi.fn(async () => {}),
     exit: vi.fn(async () => {}),
     configPath: appPaths.configFile,
-    cfg: runtimeProfileConfig(root, 'claude'),
+    cfg: runtimeProfileConfig(root, profile),
     processId: 'proc-1',
   } satisfies Controls;
 
@@ -305,10 +328,11 @@ async function writeRoot(
   rootDir: string,
   workspace: string,
   preferences: RootConfig['profiles'][string]['preferences'] = {},
+  profile: 'claude' | 'codex-dev' = 'claude',
 ): Promise<RootConfig> {
   const root: RootConfig = {
     schemaVersion: 3,
-    activeProfile: 'claude',
+    activeProfile: profile,
     preferences: {},
     profiles: {
       claude: createDefaultProfileConfig({
@@ -333,13 +357,13 @@ async function writeRoot(
       }),
     },
   };
-  root.profiles.claude!.workspaces.default = workspace;
-  root.profiles.claude!.preferences = {
-    ...root.profiles.claude!.preferences,
+  root.profiles[profile]!.workspaces.default = workspace;
+  root.profiles[profile]!.preferences = {
+    ...root.profiles[profile]!.preferences,
     ...preferences,
   };
   await writeJson(resolveAppPaths({ rootDir }).configFile, root);
-  await writeFile(join(rootDir, 'active-profile'), 'claude\n', 'utf8');
+  await writeFile(join(rootDir, 'active-profile'), `${profile}\n`, 'utf8');
   return root;
 }
 

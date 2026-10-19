@@ -516,8 +516,8 @@ async function createHarness(
       },
     });
 
-  const dispatchResumeArg = (arg: string): Promise<void> =>
-    handleCardAction({
+  const dispatchResumeArg = async (arg: string): Promise<void> => {
+    await handleCardAction({
       channel: channel as unknown as Parameters<typeof handleCardAction>[0]['channel'],
       evt: cardEvent({ cmd: 'resume.use', arg }),
       sessions,
@@ -530,6 +530,7 @@ async function createHarness(
       pending,
       chatModeCache,
     });
+  };
 
   cleanups.push(async () => {
     pending.cancelAll();

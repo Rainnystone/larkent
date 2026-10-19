@@ -226,7 +226,8 @@ export class GrokJsonlTranslator {
   private finalTextEvents(): AgentEvent[] {
     const content = this.pendingText;
     this.pendingText = '';
-    return content ? [{ type: 'final_text', content }] : [];
+    if (!content || isControlTokenOnly(content)) return [];
+    return [{ type: 'final_text', content }];
   }
 
   private doneEvent(reason: 'normal' | 'interrupted' | 'timeout'): AgentEvent {
@@ -241,8 +242,14 @@ export class GrokJsonlTranslator {
     if (events.length === 0 || !this.pendingText) return events;
     const pending = this.pendingText;
     this.pendingText = '';
+    if (isControlTokenOnly(pending)) return events;
     return [{ type: 'text', delta: pending.endsWith('\n') ? pending : `${pending}\n\n` }, ...events];
   }
+}
+
+/** A buffer that is only a Grok control token, such as `<|eos|>`, is not an answer. */
+function isControlTokenOnly(value: string): boolean {
+  return /^<\|[a-z_]+\|>$/.test(value.trim());
 }
 
 function serializeToolOutput(value: unknown): string {

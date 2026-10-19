@@ -37,6 +37,10 @@ export const codexMetadata = defineMetadata({
   envBinVar: 'LARK_CHANNEL_CODEX_BIN',
   models: [
     FOLLOW_DEFAULT,
+    { value: 'gpt-6-astra', label: 'GPT-6 Astra' },
+    { value: 'gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+    { value: 'gpt-5.6-terra', label: 'GPT-5.6 Terra' },
+    { value: 'gpt-5.6-luna', label: 'GPT-5.6 Luna' },
     { value: 'gpt-5-codex', label: 'GPT-5 Codex' },
     { value: 'gpt-5', label: 'GPT-5' },
     { value: 'o3', label: 'o3' },

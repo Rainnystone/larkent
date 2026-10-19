@@ -1,4 +1,5 @@
 import { FEISHU_UUID_WINDOW_MS } from '../../src/bot/feishu-delivery';
+import { assertCardSchema2 } from './card-schema2';
 
 export interface FakeChannelMessage {
   chatId: string;
@@ -18,6 +19,11 @@ export interface FakeChannelStream {
 export interface FakeRawClientRequest {
   method: string;
   params: unknown;
+}
+
+export interface FakePin {
+  messageId: string;
+  chatId: string;
 }
 
 export interface FakeChannelOptions {
@@ -54,6 +60,11 @@ export interface FakeChannel {
           delete(params: unknown): Promise<unknown>;
           list(params: unknown): Promise<unknown>;
         };
+        readonly pin: {
+          create(params: unknown): Promise<unknown>;
+          list(params: unknown): Promise<unknown>;
+          delete(params: unknown): Promise<unknown>;
+        };
       };
     };
   };
@@ -61,6 +72,10 @@ export interface FakeChannel {
   updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void>;
   updateCard(messageId: string, cardJson: unknown): Promise<void>;
   readonly updatedCards: Array<{ messageId: string; card: unknown }>;
+  readonly pins: FakePin[];
+  readonly cardErrors: { update?: unknown; create?: unknown };
+  readonly sendErrors: { send?: unknown };
+  dropPins(): void;
   send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }>;
   stream(chatId: string, input: unknown, options?: unknown): Promise<{ messageId: string }>;
   /**
@@ -96,13 +111,30 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
   const updatedCards: Array<{ messageId: string; card: unknown }> = [];
   const rawThreadIds = new Map<string, string>();
   const cardById = new Map<string, unknown>();
+  const messageByCard = new Map<string, string>();
   const byUuid = new Map<string, StoredChatMessage>();
   const byId = new Map<string, StoredChatMessage>();
   const chat: StoredChatMessage[] = [];
+  const pins: FakePin[] = [];
   let nextCard = 1;
   let nextMessage = 1;
 
   const streamErrors: { open?: unknown; finish?: unknown; hangFinish?: boolean } = {};
+  const cardErrors: { update?: unknown; create?: unknown } = {};
+  const sendErrors: { send?: unknown } = {};
+
+  const throwCardUpdateIfArmed = (): void => {
+    if (cardErrors.update === undefined) return;
+    const err = cardErrors.update;
+    cardErrors.update = undefined;
+    throw err;
+  };
+
+  const applyCardToMessage = (messageId: string, cardJson: unknown): void => {
+    updatedCards.push({ messageId, card: cardJson });
+    const stored = byId.get(messageId);
+    if (stored) stored.content = { card: cardJson };
+  };
   const land = (input: {
     chatId: string;
     content: unknown;
@@ -165,7 +197,13 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
     sent,
     streams,
     streamErrors,
+    cardErrors,
+    sendErrors,
     updatedCards,
+    pins,
+    dropPins() {
+      pins.splice(0);
+    },
     rawThreadIds,
     async fetchRawMessage(messageId: string): Promise<Array<{ thread_id?: string }>> {
       const threadId = rawThreadIds.get(messageId);
@@ -188,7 +226,27 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
             },
             async update(params: unknown): Promise<unknown> {
               requests.push({ method: 'cardkit.v1.card.update', params });
-              return {};
+              throwCardUpdateIfArmed();
+              const path = asRecord(asRecord(params)?.path);
+              const cardId = typeof path?.card_id === 'string' ? path.card_id : '';
+              const payload = nestedData(params);
+              const wrapped = asRecord(payload?.card);
+              const rawCard = typeof wrapped?.data === 'string' ? wrapped.data : undefined;
+              let cardJson: unknown = undefined;
+              if (rawCard) {
+                try {
+                  cardJson = JSON.parse(rawCard) as unknown;
+                } catch {
+                  cardJson = undefined;
+                }
+              }
+              if (cardJson !== undefined) {
+                assertCardSchema2(cardJson);
+                cardById.set(cardId, cardJson);
+                const messageId = messageByCard.get(cardId);
+                if (messageId) applyCardToMessage(messageId, cardJson);
+              }
+              return { code: 0, msg: 'ok' };
             },
           },
         },
@@ -211,24 +269,72 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
               return listMessages(params);
             },
           },
+          pin: {
+            async create(params: unknown): Promise<unknown> {
+              requests.push({ method: 'im.v1.pin.create', params });
+              const messageId = stringField(nestedData(params), 'message_id') ?? '';
+              const stored = byId.get(messageId);
+              const chatId = stored?.chatId ?? '';
+              if (!pins.some((pin) => pin.messageId === messageId)) {
+                pins.push({ messageId, chatId });
+              }
+              return { data: { pin: { message_id: messageId, chat_id: chatId } } };
+            },
+            async list(params: unknown): Promise<unknown> {
+              requests.push({ method: 'im.v1.pin.list', params });
+              const nested = asRecord(asRecord(params)?.params) ?? asRecord(params) ?? {};
+              const chatId = typeof nested.chat_id === 'string' ? nested.chat_id : '';
+              return {
+                data: {
+                  items: pins
+                    .filter((pin) => !chatId || pin.chatId === chatId)
+                    .map((pin) => ({ message_id: pin.messageId, chat_id: pin.chatId })),
+                  has_more: false,
+                },
+              };
+            },
+            async delete(params: unknown): Promise<unknown> {
+              requests.push({ method: 'im.v1.pin.delete', params });
+              const path = asRecord(asRecord(params)?.path) ?? {};
+              const messageId = typeof path.message_id === 'string' ? path.message_id : '';
+              const index = pins.findIndex((pin) => pin.messageId === messageId);
+              if (index >= 0) pins.splice(index, 1);
+              return { data: {} };
+            },
+          },
         },
       },
     },
     async createCard(cardJson: unknown): Promise<{ cardId: string }> {
+      if (cardErrors.create !== undefined) {
+        const err = cardErrors.create;
+        cardErrors.create = undefined;
+        throw err;
+      }
+      assertCardSchema2(cardJson);
       const cardId = `card_fake_${nextCard++}`;
       cardById.set(cardId, cardJson);
       return { cardId };
     },
     async updateCardById(cardId: string, cardJson: unknown, sequence: number): Promise<void> {
+      throwCardUpdateIfArmed();
+      assertCardSchema2(cardJson);
       requests.push({ method: 'cardkit.v1.card.update', params: { cardId, cardJson, sequence } });
+      cardById.set(cardId, cardJson);
+      const messageId = messageByCard.get(cardId);
+      if (messageId) applyCardToMessage(messageId, cardJson);
     },
     async updateCard(messageId: string, cardJson: unknown): Promise<void> {
-      updatedCards.push({ messageId, card: cardJson });
+      throwCardUpdateIfArmed();
       requests.push({ method: 'im.v1.message.patch', params: { messageId, cardJson } });
-      const stored = byId.get(messageId);
-      if (stored) stored.content = { card: cardJson };
+      applyCardToMessage(messageId, cardJson);
     },
     async send(chatId: string, content: unknown, options?: unknown): Promise<{ messageId: string }> {
+      if (sendErrors.send !== undefined) {
+        const err = sendErrors.send;
+        sendErrors.send = undefined;
+        throw err;
+      }
       const cardId = (content as { cardId?: unknown } | undefined)?.cardId;
       const resolved =
         typeof cardId === 'string' && cardById.has(cardId)
@@ -242,6 +348,7 @@ export function createFakeChannel(options: FakeChannelOptions = {}): FakeChannel
         parentId: outboundReplyTo(options),
         msgType: inferMsgType(resolved),
       });
+      if (typeof cardId === 'string') messageByCard.set(cardId, landed.message_id);
       return { messageId: landed.message_id };
     },
     getConnectionStatus() {

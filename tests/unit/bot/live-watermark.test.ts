@@ -7,7 +7,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { runBackfill, WATERMARK_MARGIN_MS, type BackfillChannel } from '../../../src/bot/backfill';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import {
-  FEISHU_LINK_SILENT_PROBE_MS,
   FEISHU_LINK_TICK_MS,
   startFeishuLink,
   type Outage,
@@ -63,7 +62,7 @@ describe('FeishuLink live watermark', () => {
     expect(ledger.getLiveAt()).toBe(frozen);
 
     state = 'connected';
-    now += FEISHU_LINK_SILENT_PROBE_MS;
+    now += FEISHU_LINK_TICK_MS;
     await link.tick();
     await ledger.flush();
     expect(JSON.parse(await readFile(file, 'utf8')).lastLiveAt).toBe(now);
@@ -131,6 +130,8 @@ describe('FeishuLink live watermark', () => {
 
     now += 5 * 60_000;
     await link.tick();
+    expect(recovered).toHaveLength(0);
+    link.noteInbound(now);
     await pending;
     await waitFor(() => intake.includes('om_slept'));
     expect(intake).toEqual(['om_slept']);

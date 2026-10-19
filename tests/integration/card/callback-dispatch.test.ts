@@ -206,8 +206,8 @@ async function createHarness(
         ttlMs: 60_000,
       });
     },
-    dispatch: (value, formValue) =>
-      handleCardAction({
+    dispatch: async (value, formValue) => {
+      await handleCardAction({
         resumeCandidates,
         channel: channel as unknown as Parameters<typeof handleCardAction>[0]['channel'],
         evt: cardEvent(value, formValue),
@@ -220,7 +220,8 @@ async function createHarness(
         chatModeCache,
         ...(opts.callbackAuth === false ? {} : { callbackAuth: auth }),
         callbackPolicyFingerprint: 'fp-1',
-      }),
+      });
+    },
   };
 }
 

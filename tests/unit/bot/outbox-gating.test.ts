@@ -1,6 +1,6 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   TURN_JOURNAL_SCHEMA_VERSION,
@@ -8,6 +8,7 @@ import {
   type TurnJournalEntry,
 } from '../../../src/bot/turn-journal';
 import { redeliverStagedReply } from '../../../src/bot/feishu-delivery';
+import * as atomicWrite from '../../../src/platform/atomic-write';
 import { createFakeChannel } from '../../helpers/fake-channel';
 import {
   axiosErrno,
@@ -16,8 +17,11 @@ import {
 } from '../../helpers/sdk-feishu-errors';
 
 const dirs: string[] = [];
+const journals: TurnJournal[] = [];
 
 afterEach(async () => {
+  const pending = journals.splice(0);
+  for (const journal of pending) await journal.flush();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -25,7 +29,9 @@ async function fixture(now = () => 1_760_000_000_000) {
   const dir = await mkdtemp(join(tmpdir(), 'outbox-gating-'));
   dirs.push(dir);
   const file = join(dir, 'turn-journal.json');
-  return { file, journal: new TurnJournal(file, { now }) };
+  const journal = new TurnJournal(file, { now });
+  journals.push(journal);
+  return { file, journal };
 }
 
 function queued(overrides: Partial<TurnJournalEntry> = {}): Omit<TurnJournalEntry, 'updatedAt' | 'createdAt'> {
@@ -96,6 +102,58 @@ describe('per-item outbox (T13)', () => {
     await expect(journal.redeliver({ resend, resendNotice })).rejects.toBeInstanceOf(Error);
     expect(resend).toHaveBeenCalledTimes(1);
     expect(resendNotice).toHaveBeenCalledTimes(2);
+  });
+
+  it('joins the journal writer when notice resend throws so the temp dir has no atomic tmp', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const actual = atomicWrite.writeFileAtomic;
+    const spy = vi.spyOn(atomicWrite, 'writeFileAtomic').mockImplementation(async (path, data, opts) => {
+      await gate;
+      return actual(path, data, opts);
+    });
+    try {
+      const { file, journal } = await fixture();
+      await journal.load();
+      journal.enqueue(queued({ turnId: 'both' }));
+      journal.stageReply('both', {
+        markdown: 'ANSWER',
+        replyTo: 'om_1',
+        replyMode: 'text',
+        deliveryId: 'reply:both',
+      });
+      journal.stageNotice('both', {
+        kind: 'continue',
+        recipientChatId: 'oc_group',
+        markdown: 'notice',
+        deliveryId: 'notice:both',
+      });
+      const resend = vi.fn(async () => true);
+      const resendNotice = vi.fn(async () => {
+        throw sdkShapedSendError(
+          'unknown',
+          axiosErrno('ENETUNREACH', 'connect ENETUNREACH 1.2.3.4:443'),
+        );
+      });
+      const pending = journal.redeliver({ resend, resendNotice });
+      let settled = false;
+      void pending.then(() => {
+        settled = true;
+      }, () => {
+        settled = true;
+      });
+      await vi.waitUntil(() => spy.mock.calls.length > 0);
+      expect(settled).toBe(false);
+      release();
+      await expect(pending).rejects.toBeInstanceOf(Error);
+      const names = await readdir(dirname(file));
+      expect(names.some((name) => name.includes('.tmp-'))).toBe(false);
+    } finally {
+      release();
+      spy.mockRestore();
+    }
   });
 
   it('J1: abandoning a notice leaves a staged reply to be delivered once, then the entry is prunable', async () => {

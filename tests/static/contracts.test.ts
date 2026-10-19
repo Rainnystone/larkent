@@ -93,8 +93,22 @@ describe('static architecture contracts', () => {
     }
   });
 
+  it('does not keep isCreator in src/; bot owner is isBotOwner', () => {
+    for (const file of collectTsFiles('src')) {
+      const source = read(file);
+      expect(source, file).not.toMatch(/\bisCreator\b/);
+    }
+    expect(read('src/policy/access.ts')).toMatch(/\bisBotOwner\b/);
+  });
+
   it('persists profile runtime state through atomic 0600 writes', () => {
-    for (const file of ['src/session/store.ts', 'src/workspace/store.ts', 'src/card/callback-store.ts']) {
+    for (const file of [
+      'src/session/store.ts',
+      'src/workspace/store.ts',
+      'src/card/callback-store.ts',
+      'src/automations/store.ts',
+      'src/automations/wake-file.ts',
+    ]) {
       const source = read(file);
       expect(source, file).toContain('writeFileAtomic');
       expect(source, file).toContain('mode: 0o600');
@@ -188,6 +202,7 @@ describe('static architecture contracts', () => {
     expect(read('src/bot/channel.ts')).not.toMatch(/wrapChannelOutbound/);
     expect(read('src/bot/self-message.ts')).toMatch(/'getChatMode'/);
     expect(read('src/bot/self-message.ts')).toMatch(/'message\.list'/);
+    expect(read('src/bot/self-message.ts')).toMatch(/'cardkit\.card\.update'/);
     expect(read('src/bot/channel.ts')).not.toMatch(/outageEpoch: \(\) => 0/);
     expect(read('src/bot/channel.ts')).toMatch(/streamReliability\(controls\.profileConfig, \(\) => link\)/);
     expect(read('package.json')).toMatch(/"@larksuite\/channel@0\.7\.1": "patches\/@larksuite__channel@0\.7\.1\.patch"/);

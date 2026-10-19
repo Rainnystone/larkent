@@ -96,6 +96,8 @@ function classifyHighRiskWorkingDirectory(
     '/etc',
     '/Library',
     '/private',
+    '/private/etc',
+    '/private/var',
     '/sbin',
     '/System',
     '/usr',

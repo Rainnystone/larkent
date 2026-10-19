@@ -1,3 +1,4 @@
+import type { AgentReplyMode } from '../agent/definition';
 import type { AgentEvent } from '../agent/types';
 import type { CotMessagesMode, TenantBrand } from '../config/schema';
 import { log } from '../core/logger';
@@ -249,6 +250,40 @@ export class CotPublisher {
   }
 }
 
+/**
+ * What the final reply may carry. `final-answer` agents hold the answer in
+ * `finalText`; a progress stream that already rendered text blocks must not
+ * repeat them. `stream-deltas` agents already put the answer in blocks.
+ */
+export function finalReplyFor(
+  state: RunState,
+  input: { replyMode: AgentReplyMode; streamed: boolean },
+): RunState {
+  switch (input.replyMode) {
+    case 'final-answer':
+      return input.streamed ? streamedFinalAnswer(state) : finalAnswerOnlyState(state);
+    case 'stream-deltas':
+      return state;
+    default: {
+      const _exhaustive: never = input.replyMode;
+      return _exhaustive;
+    }
+  }
+}
+
+function streamedFinalAnswer(state: RunState): RunState {
+  return {
+    ...state,
+    blocks: state.finalText
+      ? [{ kind: 'text', content: state.finalText, streaming: false }]
+      : [],
+    reasoning: { content: '', active: false },
+    footer: null,
+    terminal: 'done',
+    errorMsg: undefined,
+  };
+}
+
 export function finalAnswerOnlyState(state: RunState): RunState {
   return {
     ...state,
@@ -264,6 +299,17 @@ export function finalAnswerOnlyState(state: RunState): RunState {
 }
 
 /** Text `applyOutcomeToState` appended after `finalText` (partial-outcome warnings). */
+export function appendOutcomeNotice(state: RunState, userMessage: string | undefined): RunState {
+  if (!userMessage) return state;
+  return {
+    ...state,
+    blocks: [
+      ...state.blocks,
+      { kind: 'text', content: userMessage, streaming: false, notice: true },
+    ],
+  };
+}
+
 export function outcomeNoticeBlocks(state: RunState): Array<{ kind: 'text'; content: string; streaming: false; notice: true }> {
   if (!state.finalText) return [];
   return state.blocks.flatMap((block) => (

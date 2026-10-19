@@ -303,6 +303,30 @@ describe('wrapChannelOutbound timeout', () => {
     });
   });
 
+  it('times out a hung cardkit.card.update so the classifier can take the link down', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const channel = {
+      rawClient: {
+        cardkit: {
+          v1: {
+            card: {
+              update: (_params?: unknown) => new Promise<never>(() => {}),
+            },
+          },
+        },
+      },
+    };
+    wrapChannelOutbound(channel, new OutboundMessageIds(), { timeoutMs: 20 });
+    const pending = channel.rawClient.cardkit.v1.card.update({ path: { card_id: 'card_x' } });
+    const assertion = expect(pending).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(OutboundTimeoutError);
+      expect((err as OutboundTimeoutError).op).toBe('cardkit.card.update');
+      return true;
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await assertion;
+  });
+
   it('times out a hung message.list read-back so the classifier can take the link down', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const channel = {

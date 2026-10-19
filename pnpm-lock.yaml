@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@larksuite/channel@0.7.1':
-    hash: cfc52e2751e655e8d3c5c3c151a507e504b03680cdc3588906e50e707d2c59b3
+    hash: 0d5331ceba002607e107ac9f6749b4932d9aba427744ac2df8b535413de938f1
     path: patches/@larksuite__channel@0.7.1.patch
 
 importers:
@@ -18,7 +18,7 @@ importers:
         version: 1.4.0
       '@larksuite/channel':
         specifier: ^0.7.1
-        version: 0.7.1(patch_hash=cfc52e2751e655e8d3c5c3c151a507e504b03680cdc3588906e50e707d2c59b3)
+        version: 0.7.1(patch_hash=0d5331ceba002607e107ac9f6749b4932d9aba427744ac2df8b535413de938f1)
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -2610,7 +2610,7 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@larksuite/channel@0.7.1(patch_hash=cfc52e2751e655e8d3c5c3c151a507e504b03680cdc3588906e50e707d2c59b3)':
+  '@larksuite/channel@0.7.1(patch_hash=0d5331ceba002607e107ac9f6749b4932d9aba427744ac2df8b535413de938f1)':
     dependencies:
       '@larksuiteoapi/node-sdk': 1.73.3
       https-proxy-agent: 9.0.0

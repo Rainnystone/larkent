@@ -25,6 +25,46 @@ interface ClaudeRawEvent {
     cache_read_input_tokens?: number;
   };
   total_cost_usd?: number;
+  is_error?: boolean;
+  errors?: unknown;
+  result?: string;
+}
+
+/** Per-run state for EOF, interruption and protocol errors. */
+export class ClaudeStreamTranslator {
+  private handle: string | undefined;
+  private terminal: 'done' | 'error' | undefined;
+
+  translate(raw: unknown): AgentEvent[] {
+    if (this.terminal) return [];
+    const events = [...translateEvent(raw)];
+    for (const event of events) {
+      if ('resumeHandle' in event && event.resumeHandle) this.handle = event.resumeHandle;
+      if (event.type === 'done' || event.type === 'error') this.terminal = event.type;
+    }
+    return events;
+  }
+
+  finish(reason?: string): AgentEvent[] {
+    if (this.terminal) return [];
+    if (reason === 'interrupted' || reason === 'timeout') {
+      this.terminal = 'done';
+      return [{ type: 'done', resumeHandle: this.handle, terminationReason: reason }];
+    }
+    return this.fail('claude stream ended before a result event');
+  }
+
+  fail(message: string): AgentEvent[] {
+    // An error result is already authoritative, even if the CLI then exits 1.
+    // Preserve the existing nonzero-tail diagnostic after a success result.
+    if (this.terminal === 'error') return [];
+    this.terminal = 'error';
+    return [{ type: 'error', message, terminationReason: 'failed' }];
+  }
+
+  terminalEmitted(): boolean {
+    return this.terminal !== undefined;
+  }
 }
 
 export function* translateEvent(raw: unknown): Generator<AgentEvent> {
@@ -80,6 +120,14 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
         costUsd: evt.total_cost_usd,
       };
     }
-    yield { type: 'done', resumeHandle: evt.session_id, terminationReason: 'normal' };
+    if (evt.is_error === true || (typeof evt.subtype === 'string' && evt.subtype.startsWith('error_'))) {
+      const details = Array.isArray(evt.errors)
+        ? evt.errors.filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+        : [];
+      const message = details.join('\n') || evt.result || `claude result: ${evt.subtype ?? 'error'}`;
+      yield { type: 'error', message: message.slice(0, 4096), terminationReason: 'failed' };
+    } else {
+      yield { type: 'done', resumeHandle: evt.session_id, terminationReason: 'normal' };
+    }
   }
 }

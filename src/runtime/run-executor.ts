@@ -1,7 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import type { CliSignature } from '../agent/cli-signatures';
 import { descriptorFor, isAgentKind } from '../agent/registry';
-import { mergeAgentOptions, type AgentAdapter, type AgentEvent, type AgentRun } from '../agent/types';
+import {
+  mergeAgentOptions,
+  type AgentAdapter,
+  type AgentEvent,
+  type AgentPromptVariant,
+  type AgentRun,
+} from '../agent/types';
 import { ActiveRuns, type RunHandle } from '../bot/active-runs';
 import {
   deriveRunOutcome,
@@ -39,6 +45,12 @@ export interface SubmitRunInput {
   images?: readonly string[];
   stopGraceMs?: number;
   nowait?: boolean;
+  /**
+   * Automation fires skip the process pool and reconnect pause (ADR-011).
+   * Link-down is gated by the scheduler, not here.
+   */
+  bypassPool?: boolean;
+  promptVariant?: AgentPromptVariant;
   observability?: {
     profile: string;
     agent: string;
@@ -86,7 +98,7 @@ export class RunExecutor {
     if (input.policy.expiresAt <= this.now()) {
       throw new RunRejected('policy-expired', 'run policy expired before spawn');
     }
-    if (this.activeRuns.newRunsPaused()) {
+    if (!input.bypassPool && this.activeRuns.newRunsPaused()) {
       throw new RunRejected(
         'reconnect-in-progress',
         this.activeRuns.newRunsPauseReason() ?? 'new runs are temporarily paused',
@@ -97,7 +109,9 @@ export class RunExecutor {
       throw new RunRejected('run-already-active', 'another run is already active for this scope');
     }
 
-    const release = input.nowait ? this.pool.tryAcquire() : await this.pool.acquire();
+    const release = input.bypassPool
+      ? () => {}
+      : input.nowait ? this.pool.tryAcquire() : await this.pool.acquire();
     if (!release) {
       releaseScope();
       if (this.activeRuns.newRunsPaused()) {
@@ -108,7 +122,7 @@ export class RunExecutor {
       }
       throw new RunRejected('pool-full', 'process pool is full');
     }
-    if (this.activeRuns.newRunsPaused()) {
+    if (!input.bypassPool && this.activeRuns.newRunsPaused()) {
       release();
       releaseScope();
       throw new RunRejected(
@@ -140,6 +154,7 @@ export class RunExecutor {
       sandbox: input.policy.sandbox,
       permissionMode: input.policy.permissionMode,
       stopGraceMs: input.stopGraceMs,
+      ...(input.promptVariant ? { promptVariant: input.promptVariant } : {}),
     };
     let run: AgentRun;
     try {
@@ -150,7 +165,7 @@ export class RunExecutor {
       if (err instanceof SpawnFailed) throw err;
       throw new SpawnFailed('agent prepare failed', err, 'agent-prepare-failed');
     }
-    if (this.activeRuns.newRunsPaused()) {
+    if (!input.bypassPool && this.activeRuns.newRunsPaused()) {
       release();
       releaseScope();
       throw new RunRejected(

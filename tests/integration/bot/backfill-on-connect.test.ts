@@ -107,9 +107,9 @@ describe('backfill on connect', () => {
         [CHAT]: [mentionItem('om_dry', CHAT, 'would run', NOW - 90_000)],
       },
     });
-    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
-    await waitForDebounce();
-    await yieldIO();
+    await waitFor(() =>
+      info.mock.calls.some((call) => call[0] === 'backfill' && call[1] === 'would-enqueue'),
+    );
     expect(h.agent.runOptions).toHaveLength(0);
     expect(h.ledger.has('om_dry')).toBe(false);
     expect(info.mock.calls).toContainEqual([
@@ -210,9 +210,11 @@ async function waitForDebounce() {
   await new Promise((resolve) => setTimeout(resolve, 700));
 }
 
-async function waitFor(predicate: () => boolean) {
-  for (let n = 0; n < 10_000; n++) {
-    if (predicate()) return;
+async function waitFor(predicate: () => boolean | Promise<boolean>) {
+  const deadline = Date.now() + 8_000;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
     await yieldIO();
   }
   throw new Error('expected backfill transition was not observed');

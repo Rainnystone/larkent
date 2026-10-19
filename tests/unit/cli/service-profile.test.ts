@@ -60,7 +60,7 @@ vi.mock('../../../src/cli/preflight', () => ({
   preFlightChecks: mocks.preFlightChecks,
 }));
 
-const { runServiceStart, runServiceStatus, runServiceStop, runServiceUnregister } = await import('../../../src/cli/commands/service');
+const { runServiceStart, runServiceStatus, runServiceStop, runServiceRestart, runServiceUnregister } = await import('../../../src/cli/commands/service');
 
 describe('profile-aware service commands', () => {
   beforeEach(() => {
@@ -529,6 +529,69 @@ describe('profile-aware service commands', () => {
     expect(mocks.adapter.disableAutostart).toHaveBeenCalled();
     expect(mocks.adapter.stopAndDisableAutostart).not.toHaveBeenCalled();
     expect(lines).toContain('  已关闭开机自启。');
+  });
+
+  it('does not advertise a loaded job without a worker as running', async () => {
+    const lines: string[] = [];
+    vi.spyOn(console, 'log').mockImplementation((line: string) => { lines.push(line); });
+    Object.assign(mocks.adapter, { isLoaded: vi.fn(() => true) });
+
+    await runServiceStatus({ profile: 'codex-dev' });
+
+    expect(lines).toContain('bot 当前没在后台运行');
+    expect(lines.some(line => line.includes('正在后台运行'))).toBe(false);
+  });
+
+  it.each([false, true])('unloads a job without a worker before start (webUi=%s)', async (webUi) => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    Object.assign(mocks.adapter, { isLoaded: vi.fn(() => true) });
+    mocks.readAndPrune.mockReturnValueOnce([]).mockReturnValue([
+      processEntry({ appId: 'cli_codex', profileName: 'codex-dev', botName: 'Codex Bot' }),
+    ]);
+
+    await runServiceStart({ profile: 'codex-dev', webUi, skipCheckLarkCli: true });
+
+    expect(mocks.adapter.stop).toHaveBeenCalledOnce();
+    expect(mocks.adapter.waitUntilStopped).toHaveBeenCalledOnce();
+    const order = (method: keyof ServiceAdapter) =>
+      (mocks.adapter[method] as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!;
+    expect(order('stop')).toBeLessThan(order('waitUntilStopped'));
+    expect(order('waitUntilStopped')).toBeLessThan(order('start'));
+  });
+
+  it('restarts a loaded job without a worker instead of bootstrapping it again', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    Object.assign(mocks.adapter, { isLoaded: vi.fn(() => true) });
+    mocks.readAndPrune.mockReturnValueOnce([]).mockReturnValue([
+      processEntry({ appId: 'cli_codex', profileName: 'codex-dev', botName: 'Codex Bot' }),
+    ]);
+
+    await runServiceRestart({ profile: 'codex-dev' });
+
+    expect(mocks.adapter.restart).toHaveBeenCalledOnce();
+    expect(mocks.adapter.start).not.toHaveBeenCalled();
+  });
+
+  it('unloads and disables a job without a worker when stopping it', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    Object.assign(mocks.adapter, { isLoaded: vi.fn(() => true) });
+
+    await runServiceStop({ profile: 'codex-dev' });
+
+    expect(mocks.adapter.stopAndDisableAutostart).toHaveBeenCalledOnce();
+    expect(mocks.adapter.disableAutostart).not.toHaveBeenCalled();
+  });
+
+  it('unloads a job without a worker before deleting its registration', async () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    Object.assign(mocks.adapter, { isLoaded: vi.fn(() => true) });
+
+    await runServiceUnregister({ profile: 'codex-dev' });
+
+    expect(mocks.adapter.stopAndDisableAutostart).toHaveBeenCalledOnce();
+    expect(mocks.adapter.deleteFile).toHaveBeenCalledOnce();
+    expect((mocks.adapter.stopAndDisableAutostart as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0])
+      .toBeLessThan((mocks.adapter.deleteFile as ReturnType<typeof vi.fn>).mock.invocationCallOrder[0]!);
   });
 
   it('leaves an explicit --profile target alone even when a supervisor service exists', async () => {

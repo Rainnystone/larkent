@@ -5,7 +5,7 @@ import {
   canUseDm,
   canUseGroup,
   evaluateAccess,
-  isCreator,
+  isBotOwner,
   requireMentionForChat,
   type AccessEntry,
   type RuntimeControls,
@@ -22,7 +22,7 @@ describe('access policy', () => {
   it('lets the runtime owner use DMs, groups, and admin commands regardless of lists', () => {
     const profile = profileWithAccess();
 
-    expect(isCreator(ownerControls, 'ou_owner')).toBe(true);
+    expect(isBotOwner(ownerControls, 'ou_owner')).toBe(true);
     expect(canUseDm(profile, ownerControls, 'ou_owner').ok).toBe(true);
     expect(canUseGroup(profile, ownerControls, 'chat_any', 'ou_owner').ok).toBe(true);
     expect(canRunAdminCommand(profile, ownerControls, 'ou_owner').ok).toBe(true);
@@ -36,7 +36,7 @@ describe('access policy', () => {
       ownerRefreshError: 'permission denied',
     };
 
-    expect(isCreator(controls, 'ou_owner')).toBe(true);
+    expect(isBotOwner(controls, 'ou_owner')).toBe(true);
     expect(canUseDm(profile, controls, 'ou_owner')).toEqual({ ok: true, reason: 'owner' });
     expect(canRunAdminCommand(profile, controls, 'ou_owner')).toEqual({ ok: true, reason: 'owner' });
   });
@@ -48,7 +48,7 @@ describe('access policy', () => {
       ownerRefreshError: 'permission denied',
     };
 
-    expect(isCreator(controls, 'ou_owner')).toBe(false);
+    expect(isBotOwner(controls, 'ou_owner')).toBe(false);
     expect(canUseDm(profile, controls, 'ou_owner').ok).toBe(false);
     expect(canRunAdminCommand(profile, controls, 'ou_owner').ok).toBe(false);
   });
@@ -60,7 +60,7 @@ describe('access policy', () => {
       ownerRefreshState: 'unknown',
     };
 
-    expect(isCreator(controls, 'ou_owner')).toBe(false);
+    expect(isBotOwner(controls, 'ou_owner')).toBe(false);
     expect(canUseDm(profile, controls, 'ou_owner').ok).toBe(false);
     expect(canRunAdminCommand(profile, controls, 'ou_owner').ok).toBe(false);
   });

@@ -66,7 +66,6 @@ import {
   formatRunOutcome,
   formatStopRequest,
   noteTerminalStop,
-  requestStop,
   runOverlappedOutage,
   shouldDeliverAgentEvent,
   type RunOutcome,
@@ -110,13 +109,15 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { classify, rateLimitResetDelayMs } from './feishu-error';
+import { classify, isNotInChat, isSupersededMessageGone, rateLimitResetDelayMs } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
+import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
 import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
 import {
   isJournalResourceType,
   noticeState,
+  promiseCorrectionDeliveryKey,
   replyDeliveryKey,
   replyState,
   streamDeliveryKey,
@@ -124,7 +125,50 @@ import {
   type TurnJournalEntry,
   type TurnJournalResource,
 } from './turn-journal';
+import { AutoActionAuth } from '../automations/action-auth';
+import { BoardActionAuth } from '../automations/board-auth';
+import { createAutomationBoard, type AutomationBoard } from '../automations/board';
+import {
+  CATCH_UP_PROMPT_MARKER,
+  formatAgentFailureNotice,
+  runAutomationAgentFire,
+  automationScopeForReply,
+} from '../automations/agent-run';
+import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
+import {
+  automationProposalSuffix,
+  flushPendingDraftCards,
+  noteAutomationRejected,
+  planAutomationProposalReply,
+  replaceProposalLineAfterApply,
+  submitAutomationDeleteProposal,
+  submitAutomationProposal,
+  submitAutomationReplaceProposal,
+  type AutomationProposalVerdict,
+  type RejectionExampleClock,
+  type ReplaceProposalApplyResult,
+} from '../automations/command';
+import { expireDueDraftCards } from '../automations/draft-card';
+import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
+import {
+  AUTOMATION_PROPOSAL_INSTRUCTION,
+  appendReplyLine,
+  extractAutomationProposal,
+  formatGroupTaskSnapshot,
+  proposalTextFromState,
+  shouldHonorAutomationProposal,
+  shouldInjectGroupTaskSnapshot,
+  stripProposalFromState,
+  type AutomationProposalFields,
+} from '../automations/proposal';
+import {
+  createAutomationScheduler,
+  type AutomationScheduler,
+} from '../automations/scheduler';
+import type { AutomationItem, AutomationsStore } from '../automations/store';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
+import { createIdleWatchdog } from './idle-watchdog';
+import { isAutomationRunScope, isAutomationScope, parseAutomationRunScope } from './scope';
 import { handleCommentMention } from './comments';
 import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
@@ -139,7 +183,9 @@ import {
   consumeCotEvents,
   CotClient,
   CotPublisher,
+  appendOutcomeNotice,
   finalAnswerOnlyState,
+  finalReplyFor,
 } from './cot';
 
 const DEBOUNCE_MS = 600;
@@ -154,6 +200,38 @@ const OUTBOX_IDLE_MS = 60_000;
 export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
 /** `connect()` / force-reconnect wait. Channel 0.6.1+ no longer reads handshakeTimeoutMs for this. */
 export const CHANNEL_CONNECT_TIMEOUT_MS = CHANNEL_HANDSHAKE_TIMEOUT_MS;
+
+/**
+ * Seconds to wait for any inbound frame after a client ping before the SDK
+ * terminates the socket.
+ *
+ * Armed when the client sends a ping, cleared on any inbound frame, and
+ * reset by the next ping. The wait must stay strictly under the server
+ * PingInterval or a silent socket is never torn down. The documented default
+ * is {@link WS_SERVER_PING_INTERVAL_SEC}; field reports also describe 30s.
+ * 15s is under both.
+ *
+ * 3s sat inside routine jitter and tore a healthy link down. 15s still covers
+ * a lost ping through TCP retransmission (about 1s, then 3s, then 7s) and a
+ * short stall. Node runs an expired timer before I/O, so a stall longer than
+ * this wait drops a pong that already arrived.
+ *
+ * At the documented 120s cadence a silent link is torn down within
+ * {@link WS_DEFAULT_DEAD_LINK_DETECT_BOUND_SEC}. A longer server interval
+ * detects later. An interval of 15s or less never trips this watchdog.
+ */
+export const WS_PING_TIMEOUT_SEC = 15;
+/**
+ * Documented Feishu ClientConfig PingInterval and the SDK pre-handshake
+ * default, in seconds. The server may push another value. This client does
+ * not set it.
+ */
+export const WS_SERVER_PING_INTERVAL_SEC = 120;
+/**
+ * Worst case, at {@link WS_SERVER_PING_INTERVAL_SEC}, from the last inbound
+ * frame until the socket is torn down. A different server cadence changes it.
+ */
+export const WS_DEFAULT_DEAD_LINK_DETECT_BOUND_SEC = WS_SERVER_PING_INTERVAL_SEC + WS_PING_TIMEOUT_SEC;
 
 const BRIDGE_AGENT_INSTRUCTIONS = [
   '你在 bridge 进程中运行，普通 lark-cli 会继承 LARK_CHANNEL=1 并进入 bridge-bound 模式。',
@@ -248,6 +326,19 @@ export interface BridgeChannel {
   recover(outage?: Outage): Promise<void>;
   recoverMissed(outage?: Outage): Promise<void>;
   tickLink(): Promise<void>;
+  /** Frame on the socket opened by the current wake reconnect. */
+  noteLinkFrame(at?: number): void;
+  /** Local wake entry (A5 owns transport). Already-started fire keys stay silent. */
+  wakeAutomation(fireKey: string): Promise<void>;
+}
+
+/** Drain `onChanged`'s setImmediate board refresh, then wait until it is idle. */
+async function awaitDeferredBoard(board: AutomationBoard | undefined): Promise<void> {
+  if (!board) return;
+  await new Promise<void>((resolve) => {
+    setImmediate(resolve);
+  });
+  await board.idle();
 }
 
 export interface StartChannelDeps {
@@ -258,10 +349,15 @@ export interface StartChannelDeps {
   workspaces: WorkspaceStore;
   ledger?: BackfillLedger;
   journal?: TurnJournal;
+  automations?: AutomationsStore;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
   controls: Controls;
-  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'> & Partial<Pick<AppPaths, 'logsDir'>>;
+  appPaths?: Pick<AppPaths, 'secretsFile' | 'keystoreSaltFile' | 'mediaDir'>
+    & Partial<Pick<AppPaths, 'logsDir' | 'automationsWakeDir'>>;
   now?: () => number;
   probe?: (signal?: AbortSignal) => Promise<boolean>;
+  /** Tests with a fake clock stub this so a watermark jump is not OS sleep. */
+  sleepProbe?: HostSleepProbe;
   onRecovered?: (outage: Outage) => void;
   /** Per-request REST/outbound deadline. Tests shorten it; production uses the default. */
   outboundTimeoutMs?: number;
@@ -299,6 +395,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     pool,
     activeRuns,
     stderrSignatures: () => streamReliability(controls.profileConfig).signatures,
+    ...(deps.now ? { now: deps.now } : {}),
     onSpawn: (input) => {
       journal?.noteSpawn({
         scope: input.scopeId,
@@ -327,6 +424,27 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   const noticeAuth = callbackNonceStore
     ? new NoticeActionAuth({ secret: appSecret, nonceStore: callbackNonceStore })
     : undefined;
+  const autoAuth = callbackNonceStore
+    ? new AutoActionAuth({
+        secret: appSecret,
+        nonceStore: callbackNonceStore,
+        ...(deps.now ? { now: deps.now } : {}),
+      })
+    : undefined;
+  const automationsCtl: {
+    scheduler?: AutomationScheduler;
+    board?: AutomationBoard;
+    boardAuth?: BoardActionAuth;
+  } = {};
+  const removeFromChat = (chatId: string): Promise<unknown> => (
+    automationsCtl.scheduler?.removeFromChat(chatId) ?? Promise.resolve()
+  );
+  let detachAutomationChatLifecycle = (): void => {};
+  const onAutomationConfirmed = async (item: AutomationItem): Promise<void> => {
+    await deps.onAutomationConfirmed?.(item);
+    await automationsCtl.scheduler?.notifyChanged();
+    await automationsCtl.scheduler?.nudge();
+  };
   const activePolicyFingerprints = new Map<string, string>();
   // Per-scope record of the model used on the last run, so a `/config` model
   // switch can inject a one-time "model changed" note into the next (resumed)
@@ -348,6 +466,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     log.warn('chat', 'mode-overridden-by-thread', fields);
   };
 
+  let feishuLink: ReturnType<typeof startFeishuLink> | undefined;
   const opts: LarkChannelOptions = {
     appId: cfg.accounts.app.id,
     appSecret,
@@ -374,18 +493,23 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     outbound: {
       streamThrottleMs: 400,
     },
-    // SDK 1.65.0-alpha.3+ knobs.
+    // SDK 1.65.0-alpha.3+ knobs. See WS_PING_TIMEOUT_SEC.
     wsConfig: {
-      // 3s liveness watchdog: if no inbound message arrives within 3s after
-      // the last ping, SDK presumes connection dead and forces a reconnect.
-      pingTimeout: 3,
+      pingTimeout: WS_PING_TIMEOUT_SEC,
     },
     // Transport-only reconnect: the SDK watchdog force-reconnects a stuck
     // WebSocket. The bridge never calls controls.restart for link problems.
+    // A suspend gap uses the same socket reconnect and waits for a new frame.
     keepalive: {
       enabled: true,
       onUnrecoverable: (err) => {
         log.fail('ws', err, { kind: 'unrecoverable' });
+      },
+      onWake: () => {
+        feishuLink?.noteKeepaliveWake();
+      },
+      onSocketFrame: () => {
+        feishuLink?.noteSocketFrame();
       },
     },
     // 8s handshake timeout (replaces hardcoded 15s). Fast-fail + fast-retry
@@ -488,6 +612,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           link,
           onDeliveryWait: (delayMs) => outboxSweep.schedule(delayMs),
           outboundTimeoutMs,
+          automations: deps.automations,
+          autoAuth,
+          automationsScheduler: automationsCtl.scheduler,
+          ...(deps.now ? { now: deps.now } : {}),
         });
       } finally {
         sessionWriter.release();
@@ -519,6 +647,13 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         logThreadModeOverride,
         executor,
         pool,
+        automations: deps.automations,
+        autoAuth,
+        automationsScheduler: automationsCtl.scheduler,
+        journal,
+        ...(deps.now ? { now: deps.now } : {}),
+        isLinkDown: () => closing || started.isDown(),
+        onAutomationConfirmed,
       }),
     ).catch((err) => {
       log.fail('intake', err);
@@ -559,6 +694,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       entry,
       botAppId: cfg.accounts.app.id,
       now: deps.now,
+      onNotInChat: removeFromChat,
     }),
     resendNotice: (entry: TurnJournalEntry) => resendPendingNotice({
       send: (chatId: string, content: { markdown: string } | { card: object }, options?: {
@@ -577,6 +713,49 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         retriable: true,
         needsHuman: false,
       };
+      if (isAutomationScope(entry.scope)) {
+        if (entry.cliAlreadySent || replyState(entry) === 'sent') return true;
+        if (isAutomationRunScope(entry.scope) && !owned.get(entry.turnId)?.reply) {
+          const parsed = parseAutomationRunScope(entry.scope);
+          const item = parsed ? deps.automations?.get(parsed.id) : undefined;
+          const timezone = item?.timezone;
+          const fireAt = parsed?.fireAt;
+          owned.stageReply(entry.turnId, {
+            markdown: formatAgentFailureNotice(outcome, {
+              now: (deps.now ?? Date.now)(),
+              catchUp: typeof entry.userInput === 'string'
+                && entry.userInput.includes(CATCH_UP_PROMPT_MARKER),
+              ...(typeof timezone === 'string' && timezone.length > 0 ? { timezone } : {}),
+              ...(typeof fireAt === 'number' ? { fireAt } : {}),
+            }),
+            replyTo: '',
+            replyMode: 'text',
+            deliveryId: replyDeliveryKey(entry.turnId),
+          });
+          await owned.flush();
+          log.info('auto', 'result', {
+            turnId: entry.turnId,
+            scope: entry.scope,
+            outcome: formatRunOutcome(outcome),
+          });
+        }
+        const latest = owned.get(entry.turnId) ?? entry;
+        if (!latest.reply) return true;
+        if (link.isDown()) return false;
+        const delivered = await resendJournalReply({
+          channel,
+          journal: owned,
+          entry: latest,
+          botAppId: cfg.accounts.app.id,
+          now: deps.now,
+          onNotInChat: removeFromChat,
+        });
+        if (delivered) {
+          owned.replyDelivered(entry.turnId);
+          await owned.flush();
+        }
+        return delivered;
+      }
       if (planInterruptionNotice(outcome).kind === 'continue') {
         continuations.offer(entry.turnId, outcome);
       }
@@ -715,6 +894,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   const started = startFeishuLink({
     channel,
+    reconnect: () => {
+      if (typeof channel.forceReconnect !== 'function') return;
+      return channel.forceReconnect();
+    },
     probe: deps.probe ?? createFeishuProbe(channel),
     watermark: {
       get: () => ledger?.getLiveAt(),
@@ -728,12 +911,119 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     outbound: outboundIds,
     ...(deps.now ? { now: deps.now } : {}),
     ...(deps.outboundTimeoutMs !== undefined ? { outboundTimeoutMs: deps.outboundTimeoutMs } : {}),
+    ...(deps.sleepProbe ? { sleepProbe: deps.sleepProbe } : {}),
     heartbeatPath: deps.appPaths?.logsDir ? join(deps.appPaths.logsDir, 'heartbeat') : undefined,
   });
+  if (deps.automations) {
+    const automations = deps.automations;
+    if (controls.profileConfig.automations.enabled) {
+      automationsCtl.boardAuth = new BoardActionAuth({
+        secret: appSecret,
+        ...(deps.now ? { now: deps.now } : {}),
+      });
+      automationsCtl.board = createAutomationBoard({
+        store: deps.automations,
+        channel,
+        auth: automationsCtl.boardAuth,
+        lockPath: join(dirname(deps.automations.getFilePath()), 'automations-board.lock'),
+        onNotInChat: removeFromChat,
+        ...(deps.now ? { now: deps.now } : {}),
+      });
+    }
+    const automationOutbox: AutomationDeliveryDeps = {
+      journal,
+      channel,
+      botAppId: cfg.accounts.app.id,
+      botOpenId: () => channel.botIdentity?.openId ?? '',
+      isLinkDown: () => closing || started.isDown(),
+      ...(deps.now ? { now: deps.now } : {}),
+      ...(journal ? {
+        deliver: (entry) => resendJournalReply({
+          channel,
+          journal,
+          entry,
+          botAppId: cfg.accounts.app.id,
+          now: deps.now,
+          onNotInChat: removeFromChat,
+        }),
+      } : {}),
+      onUndelivered: () => outboxSweep.schedule(),
+      onNotInChat: removeFromChat,
+    };
+    automationsCtl.scheduler = createAutomationScheduler({
+      store: deps.automations,
+      ...createAutomationDelivery({
+        ...automationOutbox,
+        runAgentFire: (fire) => trackConsumer(runAutomationAgentFire(fire, {
+          ...automationOutbox,
+          executor,
+          sessions,
+          ...(sessionCatalog ? { sessionCatalog } : {}),
+          workspaces,
+          profile: controls.profile,
+          profileConfig: controls.profileConfig,
+          cfg: controls.cfg,
+          ...(controls.botOwnerId ? { botOwnerId: controls.botOwnerId } : {}),
+          ownerRefreshState: controls.ownerRefreshState,
+          automations,
+          pauseItem: (id) => automationsCtl.scheduler?.pause(id) ?? automations.pause(id),
+          botDisplayName: () => channel.botIdentity?.name ?? 'bot',
+          onFireSettled: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
+        }), 'auto'),
+      }),
+      botDisplayName: () => channel.botIdentity?.name ?? 'bot',
+      ...(deps.now ? { now: deps.now } : {}),
+      isLinkUp: () => !closing && !started.isDown(),
+      enabled: () => controls.profileConfig.automations.enabled,
+      agentTasks: () => controls.profileConfig.automations.agentTasks,
+      onChanged: () => {
+        const board = automationsCtl.board;
+        if (!board) return Promise.resolve();
+        setImmediate(() => {
+          void board.refresh();
+        });
+        return Promise.resolve();
+      },
+      onExpireDrafts: () => expireDueDraftCards({ store: automations, channel }),
+      wakeDir: deps.appPaths?.automationsWakeDir
+        ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
+      statusPush: {
+        profile: controls.profile,
+        ...(controls.profileConfig.automations.statusEndpoint
+          ? { endpoint: controls.profileConfig.automations.statusEndpoint }
+          : {}),
+        ...(controls.profileConfig.automations.statusSecret
+          ? { secret: controls.profileConfig.automations.statusSecret }
+          : {}),
+      },
+    });
+    detachAutomationChatLifecycle = attachAutomationChatLifecycle(channel, removeFromChat);
+  }
+  const automationsScheduler = automationsCtl.scheduler;
   started.onRecovered((outage) => {
     deps.onRecovered?.(outage);
     void trackConsumer(recover(outage), 'recovery');
+    if (automationsScheduler || automationsCtl.board) {
+      void trackConsumer((async () => {
+        await automationsScheduler?.onLinkRecovered();
+        if (deps.automations && autoAuth) {
+          await flushPendingDraftCards({
+            channel,
+            automations: deps.automations,
+            autoAuth,
+            automationsScheduler,
+            ...(deps.now ? { now: deps.now } : {}),
+            isLinkDown: () => closing || started.isDown(),
+          });
+        }
+        await automationsCtl.board?.refresh();
+      })(), 'auto');
+    }
   });
+  started.onSuspendAmended((outage) => {
+    reviewActiveRuns(activeRuns.snapshot(), outage);
+  });
+  feishuLink = started;
   const link = started;
 
   channel.on({
@@ -760,8 +1050,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     },
     cardAction: async (evt) => {
       if (closing) return;
-      await withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
-        await handleCardAction({
+      return withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
+        return handleCardAction({
           channel,
           evt,
           sessions,
@@ -780,6 +1070,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
           journal,
           noticeAuth,
+          autoAuth,
+          boardAuth: automationsCtl.boardAuth,
+          automations: deps.automations,
+          automationsScheduler: automationsCtl.scheduler,
+          ...(deps.now ? { now: deps.now } : {}),
+          onAutomationConfirmed,
           continuations,
           onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
             if (action !== 'notice.continue') return;
@@ -932,13 +1228,28 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   });
   console.log('正在监听消息。按 Ctrl+C 退出。\n');
 
+  if (automationsScheduler) await automationsScheduler.start();
+  await awaitDeferredBoard(automationsCtl.board);
+
   return {
     channel,
     recover,
     recoverMissed: recover,
     tickLink: () => started.tick(),
+    noteLinkFrame: (at?: number) => {
+      started.noteSocketFrame(at);
+    },
+    wakeAutomation: async (fireKey) => {
+      if (!automationsScheduler) return;
+      await automationsScheduler.wake(fireKey);
+      await awaitDeferredBoard(automationsCtl.board);
+    },
     disconnect: async (opts?: { stopReason?: StopRequest }) => {
       closing = true;
+      detachAutomationChatLifecycle();
+      automationsScheduler?.stop();
+      await automationsScheduler?.idle();
+      await awaitDeferredBoard(automationsCtl.board);
       await recovery.stop();
       outboxSweep.stop();
       resumeCandidates.clear();
@@ -963,10 +1274,10 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       // Both must settle before flush observes the last queued session write.
       const saved = await Promise.allSettled([
         sessions.flush(), sessionCatalog?.flush(), callbackNonceStore?.flush(), workspaces.flush(),
-        ledger?.flush(), journal?.flush(),
+        ledger?.flush(), journal?.flush(), deps.automations?.flush(),
       ]);
       const steps = ['channel', 'stopAll', ...consumers.map(() => 'run-consumer'),
-        'sessions', 'catalog', 'callback-nonces', 'workspaces', 'ledger', 'journal'];
+        'sessions', 'catalog', 'callback-nonces', 'workspaces', 'ledger', 'journal', 'automations'];
       const failures: unknown[] = [];
       for (const [index, result] of [...first, ...saved].entries()) {
         if (result.status === 'rejected') {
@@ -1065,6 +1376,13 @@ interface IntakeDeps {
   logThreadModeOverride: LogThreadModeOverride;
   executor: RunExecutor;
   pool: ProcessPool;
+  automations?: AutomationsStore;
+  autoAuth?: AutoActionAuth;
+  automationsScheduler?: AutomationScheduler;
+  journal?: TurnJournal;
+  now?: () => number;
+  isLinkDown?: () => boolean;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 
 type LogThreadModeOverride = (input: {
@@ -1110,6 +1428,13 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     logThreadModeOverride,
     executor,
     pool,
+    automations,
+    autoAuth,
+    automationsScheduler,
+    journal,
+    now,
+    isLinkDown,
+    onAutomationConfirmed,
   } = deps;
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
@@ -1149,9 +1474,10 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
       threadId,
     });
   }
-  const scope = chatMode === 'topic' && threadId
-    ? `${msg.chatId}:${threadId}`
-    : msg.chatId;
+  const scope = automationScopeForReply(journal, emsg)
+    ?? (chatMode === 'topic' && threadId
+      ? `${msg.chatId}:${threadId}`
+      : msg.chatId);
   log.info('intake', 'enter', {
     scope,
     chatType: msg.chatType,
@@ -1244,6 +1570,12 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     processPool: pool,
     pending,
     controls,
+    automations,
+    autoAuth,
+    automationsScheduler,
+    ...(now ? { now } : {}),
+    ...(isLinkDown ? { isLinkDown } : {}),
+    onAutomationConfirmed,
   });
   if (handled) {
     if (commandClearsPending(emsg.content)) {
@@ -1349,6 +1681,10 @@ interface RunBatchDeps {
   link?: { outageEpoch(): number; isDown(): boolean };
   onDeliveryWait?: (delayMs?: number) => void;
   outboundTimeoutMs: number;
+  automations?: AutomationsStore;
+  autoAuth?: AutoActionAuth;
+  automationsScheduler?: AutomationScheduler;
+  now?: () => number;
 }
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
@@ -1376,6 +1712,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     link,
     onDeliveryWait,
     outboundTimeoutMs,
+    automations,
+    autoAuth,
+    automationsScheduler,
+    now,
   } = deps;
   if (batch.length === 0) return;
   const firstMsg = batch[0];
@@ -1497,6 +1837,28 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const extraInstructions: string[] = [];
   const taken = await continuations.take(scope, batch);
   applyTakenInstruction(taken, extraInstructions);
+  if (
+    controls.profileConfig.automations.enabled
+    && !scope.startsWith('auto:')
+    && !scope.startsWith('meeting:')
+  ) {
+    extraInstructions.push(AUTOMATION_PROPOSAL_INSTRUCTION);
+    if (shouldInjectGroupTaskSnapshot({
+      enabled: true,
+      scope,
+      mode,
+      chatType: firstMsg.chatType,
+      hasStore: Boolean(automations),
+    }) && automations) {
+      extraInstructions.push(formatGroupTaskSnapshot({
+        items: automations.list(),
+        chatId: firstMsg.chatId,
+        timeZone: controls.profileConfig.automations.timezone,
+        now: (now ?? Date.now)(),
+        senderId: lastMsg.senderId,
+      }));
+    }
+  }
   if (modelSwitched) {
     extraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
@@ -1553,7 +1915,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     source: 'im',
     chatId,
     actorId: firstMsg.senderId,
-    ...(threadId ? { threadId } : {}),
+    ...(threadId && !isAutomationRunScope(scope) ? { threadId } : {}),
   };
   const turnId = journal ? randomUUID() : undefined;
   if (journal && turnId) {
@@ -1637,7 +1999,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   }
   const handle = execution.handle;
   const eventStream = execution.subscribe();
-  const noticeCtx = journal
+  const noticeCtx = journal && !isAutomationRunScope(scope)
     ? {
         enabled: true as const,
         auth: noticeAuth,
@@ -1701,12 +2063,81 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   log.info('flush', 'reply-mode', { mode: replyMode });
   const cotMessages = getCotMessages(controls.cfg);
   const cotEnabled = cotMessages !== 'off';
+  const triggerSenderType = senderTypeFromRaw((lastMsg as { raw?: unknown }).raw);
+  const automationReply = controls.profileConfig.automations.enabled
+    ? {
+        honor: shouldHonorAutomationProposal({
+          enabled: true,
+          scope,
+          senderId: lastMsg.senderId,
+          ...(triggerSenderType ? { senderType: triggerSenderType } : {}),
+          ...(channel.botIdentity?.openId ? { botOpenId: channel.botIdentity.openId } : {}),
+        }),
+        plan: (parsed: AutomationProposalFields): AutomationProposalVerdict => {
+          const taskType = parsed.op === 'delete' ? 'reminder' : parsed.taskType;
+          const cwd = parsed.op !== 'delete' && taskType === 'agent'
+            ? workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default
+            : undefined;
+          const target = parsed.op === 'create' ? undefined : automations?.get(parsed.id);
+          return planAutomationProposalReply({
+            proposal: parsed,
+            now: (now ?? Date.now)(),
+            timezone: controls.profileConfig.automations.timezone,
+            agentTasks: controls.profileConfig.automations.agentTasks,
+            hasCwd: parsed.op === 'delete' || taskType !== 'agent' || (typeof cwd === 'string' && cwd.trim().length > 0),
+            group: mode !== 'p2p' && lastMsg.chatType !== 'p2p',
+            canSave: parsed.op === 'create'
+              ? Boolean(automations && autoAuth)
+              : Boolean(automations && autoAuth && automationsScheduler),
+            targetInChat: Boolean(target && target.chatId === lastMsg.chatId),
+          });
+        },
+        clock: (): RejectionExampleClock => ({
+          now: (now ?? Date.now)(),
+          timezone: controls.profileConfig.automations.timezone,
+        }),
+        apply: (parsed: AutomationProposalFields): Promise<ReplaceProposalApplyResult | void> => {
+          const proposalCtx = {
+            channel,
+            msg: lastMsg,
+            scope,
+            chatMode: mode,
+            workspaces,
+            automations,
+            autoAuth,
+            automationsScheduler,
+            ...(now ? { now } : {}),
+            isLinkDown: () => Boolean(link?.isDown()),
+            controls,
+          };
+          switch (parsed.op) {
+            case 'delete':
+              return submitAutomationDeleteProposal(proposalCtx, parsed);
+            case 'replace':
+              return submitAutomationReplaceProposal(proposalCtx, parsed);
+            case 'create':
+              return submitAutomationProposal(proposalCtx, {
+                taskType: parsed.taskType,
+                scheduleText: parsed.scheduleText,
+                name: parsed.name,
+                taskText: parsed.taskText,
+              }, 'proposal');
+            default: {
+              const _exhaustive: never = parsed;
+              return _exhaustive;
+            }
+          }
+        },
+      }
+    : undefined;
 
   // Re-read prefs on every flush so toggling /config mid-stream takes
   // effect immediately. Cheap object lookups, no allocation when on.
   const filterForPrefs = (state: RunState): RunState => {
-    if (getShowToolCalls(controls.cfg)) return state;
-    return { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
+    const withoutTools = getShowToolCalls(controls.cfg)
+      ? state
+      : { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
+    return automationReply ? stripProposalFromState(withoutTools) : withoutTools;
   };
   const cardRenderOptions = callbackAuth
     ? {
@@ -1730,6 +2161,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const reactionPromise =
     cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
 
+  const onNotInChat = (chatId: string): Promise<unknown> => (
+    automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve()
+  );
   cliSelfSent?.begin(scope, turnId);
   try {
     if (cotEnabled) {
@@ -1777,6 +2211,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           chatId,
           scope,
           state: finalAnswerOnlyState(finalState),
+          skipFrom: finalState,
           replyMode,
           sendOpts,
           cardRenderOptions,
@@ -1787,6 +2222,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           cliSelfSent,
           link,
           onWait: onDeliveryWait,
+          onNotInChat,
+          ...(automationReply ? { automation: automationReply } : {}),
         });
         return;
       }
@@ -1851,9 +2288,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         timeoutMs: outboundTimeoutMs,
       });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
-        ? finalReplyState(progress, filterForPrefs(latestState))
-        : filterForPrefs(latestState);
+        ? finalReplyState(stream, visible)
+        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
       await deliverFinalReply({
         channel,
         chatId,
@@ -1872,6 +2310,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        onNotInChat,
+        ...(automationReply ? { automation: automationReply } : {}),
       });
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
@@ -1926,9 +2366,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         timeoutMs: outboundTimeoutMs,
       });
       await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
+      const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
-        ? finalReplyState(progress, filterForPrefs(latestState))
-        : filterForPrefs(latestState);
+        ? finalReplyState(stream, visible)
+        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
       await deliverFinalReply({
         channel,
         chatId,
@@ -1947,6 +2388,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        onNotInChat,
+        ...(automationReply ? { automation: automationReply } : {}),
       });
     } else {
       // text mode: drain the agent stream without sending anything during
@@ -1966,9 +2409,11 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         channel,
         chatId,
         scope,
-        state: finalAnswerOnly
-          ? finalAnswerOnlyState(filterForPrefs(finalState))
-          : filterForPrefs(finalState),
+        state: finalReplyFor(filterForPrefs(finalState), {
+          replyMode: finalAnswerOnly ? 'final-answer' : 'stream-deltas',
+          streamed: false,
+        }),
+        skipFrom: finalState,
         replyMode,
         sendOpts,
         cardRenderOptions,
@@ -1979,6 +2424,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         cliSelfSent,
         link,
         onWait: onDeliveryWait,
+        onNotInChat,
+        ...(automationReply ? { automation: automationReply } : {}),
       });
     }
   } catch (err) {
@@ -2092,18 +2539,11 @@ function shouldOpenProgressStream(state: RunState): boolean {
  *
  * Terminal notices are dropped for the same reason — the stream rendered them.
  */
-function finalReplyState(progress: LazyProgressStream, state: RunState): RunState {
-  if (!progress.opened() || progress.abandoned()) return finalAnswerOnlyState(state);
-  return {
-    ...state,
-    blocks: state.finalText
-      ? [{ kind: 'text', content: state.finalText, streaming: false }]
-      : [],
-    reasoning: { content: '', active: false },
-    footer: null,
-    terminal: 'done',
-    errorMsg: undefined,
-  };
+function finalReplyState(stream: StreamDelivery, state: RunState): RunState {
+  return finalReplyFor(state, {
+    replyMode: 'final-answer',
+    streamed: stream.kind === 'confirmed',
+  });
 }
 
 /**
@@ -2187,12 +2627,84 @@ async function deliverFinalReply(input: {
   cliSelfSent?: CliSelfSendTracker;
   link?: { isDown(): boolean };
   onWait?: (delayMs?: number) => void;
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
+  automation?: {
+    honor: boolean;
+    plan: (parsed: AutomationProposalFields) => AutomationProposalVerdict;
+    clock: () => RejectionExampleClock;
+    apply: (parsed: AutomationProposalFields) => Promise<ReplaceProposalApplyResult | void>;
+  };
 }): Promise<void> {
   if (input.journal && input.turnId && input.handle.outcome) {
     input.journal.markSettled(input.turnId, input.handle.outcome);
   }
-  const body = renderText(input.state);
-  const visibleBody = body.trim() ? body : renderText(input.skipFrom ?? input.state);
+  const extracted = input.automation
+    ? extractAutomationProposal(proposalTextFromState(input.skipFrom ?? input.state))
+    : undefined;
+  const state = extracted?.tagged ? stripProposalFromState(input.state) : input.state;
+  const skipFrom = extracted?.tagged && input.skipFrom
+    ? stripProposalFromState(input.skipFrom)
+    : input.skipFrom;
+  const parsed = extracted?.parsed;
+  const honor = input.automation?.honor === true;
+  const completed = state.terminal === 'done' || input.handle.outcome?.kind === 'completed';
+  let proposalSuffix: string | undefined;
+  let deliverProposal = false;
+  if (parsed && input.automation && honor && completed) {
+    const verdict = input.automation.plan(parsed);
+    proposalSuffix = automationProposalSuffix(verdict, parsed, input.automation.clock());
+    switch (verdict.outcome) {
+      case 'confirm':
+      case 'needs-end':
+      case 'delete':
+        deliverProposal = true;
+        break;
+      case 'reject':
+        noteAutomationRejected(verdict.reason, 'proposal');
+        break;
+      case 'unknown-id':
+        log.info('auto', 'rejected', {
+          reason: 'unknown-id',
+          source: 'proposal',
+          ...(parsed.op === 'create' ? {} : { id: parsed.id }),
+        });
+        break;
+      case 'refuse':
+        break;
+      default: {
+        const _exhaustive: never = verdict;
+        return _exhaustive;
+      }
+    }
+  }
+  const unaugmented = renderText(state);
+  const baseState = unaugmented.trim() ? state : (skipFrom ?? state);
+  const replyState = proposalSuffix ? appendReplyLine(baseState, proposalSuffix) : baseState;
+  const applyAutomationProposal = async (): Promise<void> => {
+    if (!parsed || !input.automation) return;
+    if (!honor) {
+      log.info('auto', 'proposal-ignored', { scope: input.scope });
+      return;
+    }
+    if (!deliverProposal) return;
+    const applied = await input.automation.apply(parsed);
+    const nextLine = replaceProposalLineAfterApply(proposalSuffix, parsed, applied);
+    if (nextLine === proposalSuffix || !proposalSuffix) return;
+    await reconcileReplacePromise({
+      channel: input.channel,
+      chatId: input.chatId,
+      replyMode: input.replyMode,
+      cardRenderOptions: input.cardRenderOptions,
+      journal: input.journal,
+      turnId: input.turnId,
+      state: replyState,
+      plannedSuffix: proposalSuffix,
+      replacement: nextLine,
+      sendOpts: input.sendOpts,
+      onNotInChat: input.onNotInChat,
+    });
+  };
+  const visibleBody = renderText(replyState);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
     && (input.skipFrom ?? input.state).terminal === 'done';
   const skipCli = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent;
@@ -2208,7 +2720,7 @@ async function deliverFinalReply(input: {
     ? input.journal?.get(input.turnId)?.reply?.deliveryId ?? replyDeliveryKey(input.turnId)
     : undefined;
   const stream = input.stream ?? { kind: 'none' as const };
-  const dedicatedFinal = input.dedicatedFinal === true && Boolean(body.trim());
+  const dedicatedFinal = input.dedicatedFinal === true && Boolean(unaugmented.trim());
   const streamMessageId = stream.kind === 'none' ? undefined : stream.messageId;
   if (dedicatedFinal && streamMessageId && input.journal && input.turnId) {
     input.journal.noteNonAnswerId(input.turnId, streamMessageId);
@@ -2234,7 +2746,11 @@ async function deliverFinalReply(input: {
       notice: input.notice,
     });
   }
-  if (input.journal) await input.journal.flush();
+  // The stream card is already on screen. Persist the journal after the
+  // in-memory delivery mark so a slow fsync cannot leave readers on
+  // `completed-undelivered` for the whole write.
+  const deferJournalFlush = stream.kind === 'confirmed' && !dedicatedFinal;
+  if (input.journal && !deferJournalFlush) await input.journal.flush();
   if (skipCli) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
@@ -2245,35 +2761,57 @@ async function deliverFinalReply(input: {
   } else if (skip && stream.kind === 'none') {
     log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
   } else if (input.link?.isDown()) {
+    if (deferJournalFlush && input.journal) await input.journal.flush();
+    await applyAutomationProposal();
     return;
   } else {
-    const settled = await settleStreamDelivery({
-      stream,
-      channel: input.channel,
-      body: visibleBody,
-      send: () => sendFinalReply({
-        ...input,
-        deliveryId,
-        state: body.trim() ? input.state : (input.skipFrom ?? input.state),
-      }),
-      fallback: () => sendPlainTextReply({
+    try {
+      if (
+        proposalSuffix
+        && stream.kind === 'confirmed'
+        && stream.messageId
+        && !dedicatedFinal
+      ) {
+        await input.channel.updateCard(
+          stream.messageId,
+          settledReplyCard(input.replyMode, replyState, visibleBody, input.cardRenderOptions),
+        );
+      }
+      const settled = await settleStreamDelivery({
+        stream,
         channel: input.channel,
-        chatId: input.chatId,
         body: visibleBody,
-        sendOpts: input.sendOpts,
-        deliveryId,
-      }),
-      journal: input.journal,
-      turnId: input.turnId,
-      replyMode: input.replyMode,
-      dedicatedFinal,
-    });
-    if (settled.kind === 'wait') {
-      input.onWait?.(rateLimitResetDelayMs(settled.error));
+        send: () => sendFinalReply({
+          ...input,
+          deliveryId,
+          state: replyState,
+        }),
+        fallback: () => sendPlainTextReply({
+          channel: input.channel,
+          chatId: input.chatId,
+          body: visibleBody,
+          sendOpts: input.sendOpts,
+          deliveryId,
+        }),
+        journal: input.journal,
+        turnId: input.turnId,
+        replyMode: input.replyMode,
+        dedicatedFinal,
+      });
+      if (settled.kind === 'wait') {
+        if (deferJournalFlush && input.journal) await input.journal.flush();
+        input.onWait?.(rateLimitResetDelayMs(settled.error));
+        await applyAutomationProposal();
+        return;
+      }
+    } catch (error) {
+      if (deferJournalFlush && input.journal) await input.journal.flush();
+      if (!isNotInChat(error)) throw error;
       return;
     }
   }
   if (input.journal && input.turnId) input.journal.replyDelivered(input.turnId);
+  if (deferJournalFlush && input.journal) await input.journal.flush();
   if (willNotice && input.notice && input.journal && input.turnId && outcome) {
     await sendTurnNotice({
       channel: input.channel,
@@ -2286,9 +2824,271 @@ async function deliverFinalReply(input: {
       onWait: input.onWait,
     });
   }
+  await applyAutomationProposal();
 }
 
 type OutboundSettle = { kind: 'done' } | { kind: 'wait'; error?: unknown };
+
+function settledReplyCard(
+  replyMode: ReturnType<typeof getMessageReplyMode>,
+  state: RunState,
+  markdown: string,
+  cardRenderOptions: { signCallback?: (action: string) => string },
+): object {
+  switch (replyMode) {
+    case 'card':
+      return renderCard(state, cardRenderOptions);
+    case 'markdown':
+    case 'text':
+      return {
+        schema: '2.0',
+        body: { elements: [{ tag: 'markdown', content: markdown }] },
+      };
+    default: {
+      const _exhaustive: never = replyMode;
+      return _exhaustive;
+    }
+  }
+}
+
+function stateWithoutProposalLine(
+  state: RunState,
+  promise: string,
+  replacement: string | undefined,
+): RunState {
+  const needle = promise.trim();
+  let index = -1;
+  for (let i = state.blocks.length - 1; i >= 0; i -= 1) {
+    const block = state.blocks[i];
+    if (block?.kind === 'text' && block.content.trim() === needle) {
+      index = i;
+      break;
+    }
+  }
+  if (index < 0) return state;
+  const blocks = state.blocks.slice();
+  if (!replacement) {
+    blocks.splice(index, 1);
+    return { ...state, blocks };
+  }
+  const block = blocks[index];
+  if (block?.kind !== 'text') return state;
+  blocks[index] = { ...block, content: replacement };
+  return { ...state, blocks };
+}
+
+async function reconcileReplacePromise(input: {
+  channel: LarkChannel;
+  chatId: string;
+  replyMode: ReturnType<typeof getMessageReplyMode>;
+  cardRenderOptions: { signCallback?: (action: string) => string };
+  journal?: TurnJournal;
+  turnId?: string;
+  state: RunState;
+  plannedSuffix: string;
+  replacement: string | undefined;
+  sendOpts: { replyTo: string; replyInThread?: boolean };
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
+}): Promise<void> {
+  const corrected = stateWithoutProposalLine(input.state, input.plannedSuffix, input.replacement);
+  if (corrected === input.state) return;
+  const correctedBody = renderText(corrected);
+  const entry = input.journal && input.turnId ? input.journal.get(input.turnId) : undefined;
+  const reply = entry?.reply;
+  if (!reply || reply.state !== 'sent') {
+    if (input.journal && input.turnId && reply) {
+      input.journal.stageReply(input.turnId, {
+        markdown: correctedBody,
+        replyTo: reply.replyTo,
+        ...(reply.replyInThread ? { replyInThread: true } : {}),
+        ...(reply.threadId ? { threadId: reply.threadId } : {}),
+        replyMode: reply.replyMode,
+        ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
+        ...(reply.messageId ? { messageId: reply.messageId } : {}),
+        ...(reply.interactive ? { interactive: true } : {}),
+      });
+      await input.journal.flush();
+    }
+    return;
+  }
+  const interactive = reply.interactive === true || input.replyMode === 'card';
+  const previousMessageId = reply.messageId;
+  const canStage = Boolean(input.journal && input.turnId);
+  if (interactive && previousMessageId) {
+    if (canStage && input.journal && input.turnId) {
+      await stageFailedPromiseCorrection({
+        journal: input.journal,
+        turnId: input.turnId,
+        reply,
+        correctedBody,
+        interactive,
+        previousMessageId,
+      });
+    }
+    try {
+      await input.channel.updateCard(
+        previousMessageId,
+        settledReplyCard(input.replyMode, corrected, correctedBody, input.cardRenderOptions),
+      );
+    } catch (error) {
+      await keepOrRestorePromise(error, input, reply);
+      return;
+    }
+    if (input.turnId) {
+      input.journal?.reviseDeliveredReply(input.turnId, correctedBody);
+      input.journal?.replyDelivered(input.turnId);
+    }
+    await input.journal?.flush();
+    return;
+  }
+  if (previousMessageId) {
+    if (canStage && input.journal && input.turnId) {
+      await stageFailedPromiseCorrection({
+        journal: input.journal,
+        turnId: input.turnId,
+        reply,
+        correctedBody,
+        interactive,
+        previousMessageId,
+      });
+    }
+    let sent: { messageId?: string };
+    try {
+      sent = await input.channel.send(
+        input.chatId,
+        { markdown: correctedBody },
+        withDeliveryUuid({
+          ...(input.sendOpts.replyTo ? { replyTo: input.sendOpts.replyTo } : {}),
+          ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+        }, input.turnId ? promiseCorrectionDeliveryKey(input.turnId) : undefined),
+      );
+    } catch (error) {
+      await keepOrRestorePromise(error, input, reply);
+      return;
+    }
+    const messageId = sent.messageId?.trim();
+    if (input.journal && input.turnId && messageId) {
+      input.journal.noteReplyReceipt(input.turnId, messageId);
+      await input.journal.flush();
+    }
+    let recall: SupersedeRecall;
+    try {
+      recall = await recallReplacedMessage(input.channel, previousMessageId);
+    } catch (error) {
+      if (!isNotInChat(error)) throw error;
+      if (input.turnId) input.journal?.replyRejected(input.turnId);
+      await input.journal?.flush();
+      await input.onNotInChat?.(input.chatId);
+      return;
+    }
+    switch (recall) {
+      case 'done':
+        if (input.turnId) input.journal?.replyDelivered(input.turnId);
+        break;
+      case 'retry':
+        break;
+      default: {
+        const _exhaustive: never = recall;
+        throw _exhaustive;
+      }
+    }
+    await input.journal?.flush();
+    return;
+  }
+  log.warn('auto', 'promise-uncorrected', {});
+}
+
+async function keepOrRestorePromise(
+  error: unknown,
+  input: {
+    journal?: TurnJournal;
+    turnId?: string;
+  },
+  reply: NonNullable<TurnJournalEntry['reply']>,
+): Promise<void> {
+  if (classify(error) === 'link' && input.journal && input.turnId) return;
+  if (input.journal && input.turnId && reply.messageId) {
+    input.journal.stageReply(input.turnId, {
+      markdown: reply.markdown,
+      replyTo: reply.replyTo,
+      ...(reply.replyInThread ? { replyInThread: true } : {}),
+      ...(reply.threadId ? { threadId: reply.threadId } : {}),
+      replyMode: reply.replyMode,
+      ...(reply.deliveryId ? { deliveryId: reply.deliveryId } : {}),
+      messageId: reply.messageId,
+      ...(reply.interactive ? { interactive: true } : {}),
+    });
+    input.journal.replyDelivered(input.turnId);
+    await input.journal.flush();
+  }
+  log.warn('auto', 'promise-correct-failed', {
+    err: error instanceof Error ? error.message : String(error),
+  });
+}
+
+async function stageFailedPromiseCorrection(input: {
+  journal: TurnJournal;
+  turnId: string;
+  reply: NonNullable<TurnJournalEntry['reply']>;
+  correctedBody: string;
+  interactive: boolean;
+  previousMessageId?: string;
+}): Promise<void> {
+  const supersedes = !input.interactive && input.previousMessageId
+    ? input.previousMessageId
+    : undefined;
+  input.journal.stageReply(input.turnId, {
+    markdown: input.correctedBody,
+    replyTo: input.reply.replyTo,
+    ...(input.reply.replyInThread ? { replyInThread: true } : {}),
+    ...(input.reply.threadId ? { threadId: input.reply.threadId } : {}),
+    replyMode: input.reply.replyMode,
+    deliveryId: promiseCorrectionDeliveryKey(input.turnId),
+    ...(input.interactive && input.previousMessageId
+      ? { messageId: input.previousMessageId, interactive: true }
+      : {}),
+    ...(supersedes ? { supersedes } : {}),
+  });
+  if (supersedes) input.journal.noteNonAnswerId(input.turnId, supersedes);
+  input.journal.clearCliAlreadySent(input.turnId);
+  await input.journal.flush();
+}
+
+type SupersedeRecall = 'done' | 'retry';
+
+/**
+ * Recall a promise the correction replaced.
+ * Success, or an already recalled / deleted / not-found message, is done.
+ * A link or local failure stays retryable and does not fail the turn or recovery:
+ * the staged correction already holds the new receipt, so a later pass recalls
+ * this id and does not send the correction again.
+ * A permanent rejection settles that correction after one log.
+ * Not-in-chat is rethrown so the caller can run the existing chat cleanup.
+ */
+async function recallReplacedMessage(channel: LarkChannel, messageId: string): Promise<SupersedeRecall> {
+  try {
+    await channel.recallMessage(messageId);
+    return 'done';
+  } catch (error) {
+    if (isSupersededMessageGone(error)) return 'done';
+    log.warn('auto', 'promise-recall-failed', {
+      err: error instanceof Error ? error.message : String(error),
+    });
+    if (isNotInChat(error)) throw error;
+    const kind = classify(error);
+    switch (kind) {
+      case 'link':
+      case 'local':
+        return 'retry';
+      case 'rejected':
+        return 'done';
+      default: {
+        const _exhaustive: never = kind;
+        throw _exhaustive;
+      }
+    }
+  }
+}
 
 async function settleStreamDelivery(input: {
   stream: StreamDelivery;
@@ -2309,7 +3109,7 @@ async function settleStreamDelivery(input: {
         } else {
           input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
         }
-        await input.journal.flush();
+        if (input.dedicatedFinal) await input.journal.flush();
       }
       return input.dedicatedFinal ? sendOrWait(input) : { kind: 'done' };
     case 'none':
@@ -2363,6 +3163,10 @@ async function sendOrWait(input: {
       case 'link':
         return { kind: 'wait', error: err };
       case 'rejected': {
+        if (isNotInChat(err)) {
+          if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
+          throw err;
+        }
         if (!input.fallback) {
           if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
           return { kind: 'done' };
@@ -2373,6 +3177,7 @@ async function sendOrWait(input: {
           log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
           if (classify(retryErr) === 'link') return { kind: 'wait', error: retryErr };
           if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
+          if (isNotInChat(retryErr)) throw retryErr;
           return { kind: 'done' };
         }
       }
@@ -2410,6 +3215,7 @@ async function resendJournalReply(input: {
   entry: TurnJournalEntry;
   botAppId: string;
   now?: () => number;
+  onNotInChat?: (chatId: string) => void | Promise<unknown>;
 }): Promise<boolean> {
   const { entry } = input;
   if (entry.cliAlreadySent) {
@@ -2460,15 +3266,38 @@ async function resendJournalReply(input: {
     if (settled.error !== undefined) throw settled.error;
     return false;
   }
-  if (delivered) {
-    log.info('outbound', 'journal-resend', {
-      scope: entry.scope,
-      turnId: entry.turnId,
-      chatId: entry.chatId,
-      messageId,
-    });
+  if (!delivered) return false;
+  const superseded = reply.supersedes?.trim();
+  if (superseded && messageId !== superseded) {
+    if (input.journal) await input.journal.flush();
+    let recall: SupersedeRecall;
+    try {
+      recall = await recallReplacedMessage(input.channel, superseded);
+    } catch (error) {
+      if (!isNotInChat(error)) throw error;
+      input.journal.replyRejected(entry.turnId);
+      await input.journal.flush();
+      await input.onNotInChat?.(entry.chatId);
+      throw error;
+    }
+    switch (recall) {
+      case 'done':
+        break;
+      case 'retry':
+        return false;
+      default: {
+        const _exhaustive: never = recall;
+        throw _exhaustive;
+      }
+    }
   }
-  return delivered;
+  log.info('outbound', 'journal-resend', {
+    scope: entry.scope,
+    turnId: entry.turnId,
+    chatId: entry.chatId,
+    messageId,
+  });
+  return true;
 }
 
 function journalReplyMode(mode: string | undefined): ReturnType<typeof getMessageReplyMode> {
@@ -2561,10 +3390,14 @@ async function sendPlainTextReply(input: {
   deliveryId?: string;
 }): Promise<{ messageId?: string } | undefined> {
   if (!input.body.trim()) return undefined;
+  const replyTo = input.sendOpts.replyTo.trim();
   const result = await input.channel.send(
     input.chatId,
     { text: input.body },
-    withDeliveryUuid(input.sendOpts, input.deliveryId),
+    withDeliveryUuid({
+      ...(replyTo ? { replyTo } : {}),
+      ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
+    }, input.deliveryId),
   );
   requireMessageReceipt(result, 'text');
   return result;
@@ -2646,55 +3479,8 @@ async function processAgentStream(
   // Idle watchdog: silence for `idleTimeoutMs` is treated as "presumed hung".
   // An open tool call pauses that bound (a long `lark-cli` OAuth can be
   // quiet for a while) but the pause itself is capped at 60 minutes.
-  //
-  // The watchdog re-arms when:
-  //  - a tool_result drains the in-flight set to zero, OR
-  //  - any event arrives (configured idle when quiet, 60 min while a tool is open).
-  // Recovery can replace that delay with a 2-minute stall for runs already
-  // silent before the outage (`stallDeadlineMs` / `armStallDeadline`).
-  const TOOL_IDLE_PAUSE_CAP_MS = 60 * 60_000;
-  let timer: NodeJS.Timeout | undefined;
-  let armedDelayMs = idleTimeoutMs;
-  let stallTimerArmed = false;
-  const inFlightTools = new Set<string>();
-  const clearIdleTimer = (): void => {
-    if (timer) clearTimeout(timer);
-    timer = undefined;
-  };
-  const armIdleTimer = (delayMs: number): void => {
-    clearIdleTimer();
-    delete handle.stallDeadlineMs;
-    armedDelayMs = delayMs;
-    timer = setTimeout(() => {
-      requestStop(handle, { type: 'bridge-idle-watchdog' });
-      log.warn('agent', 'idle-timeout', { scope, idleTimeoutMs: delayMs });
-      void handle.run.stop().catch(() => {
-        /* stop errors are non-fatal */
-      });
-    }, delayMs);
-  };
-  const armIdleWatchdog = (): void => {
-    delete handle.stallDeadlineMs;
-    delete handle.stallArmedAt;
-    stallTimerArmed = false;
-    if (!idleTimeoutMs) {
-      clearIdleTimer();
-      return;
-    }
-    const delayMs = inFlightTools.size > 0 ? TOOL_IDLE_PAUSE_CAP_MS : idleTimeoutMs;
-    armIdleTimer(delayMs);
-  };
-  handle.armStallDeadline = (delayMs: number): void => {
-    if (stallTimerArmed) return;
-    stallTimerArmed = true;
-    handle.stallArmedAt = Date.now();
-    armIdleTimer(delayMs);
-  };
-  if (handle.stallDeadlineMs !== undefined) {
-    handle.armStallDeadline(handle.stallDeadlineMs);
-  } else {
-    armIdleWatchdog();
-  }
+  // Shared with agent-task fires via createIdleWatchdog.
+  const watchdog = createIdleWatchdog({ handle, idleTimeoutMs, scope });
 
   try {
     for await (const evt of events) {
@@ -2702,7 +3488,7 @@ async function processAgentStream(
       // A stopped run can still deliver its final resume handle before cleanup.
       // Keep draining owned events while suppressing further UI updates.
       if (evt.type === 'system') {
-        if (!handle.interrupted) armIdleWatchdog();
+        if (!handle.interrupted) watchdog.arm();
         recordSession(evt);
         continue;
       }
@@ -2711,19 +3497,7 @@ async function processAgentStream(
       // Track tool flight before re-arming the idle timer so the arm step
       // sees the correct set size. tool_use opens a window; tool_result
       // closes it. Other event types are bookkept after the if/else.
-      if (evt.type === 'tool_use') {
-        inFlightTools.add(evt.id);
-        handle.hasOpenToolCall = true;
-        log.info('agent', 'tool-in-flight', {
-          tool: evt.name,
-          inFlight: inFlightTools.size,
-        });
-      } else if (evt.type === 'tool_result') {
-        inFlightTools.delete(evt.id);
-        handle.hasOpenToolCall = inFlightTools.size > 0;
-        log.info('agent', 'tool-done', { inFlight: inFlightTools.size });
-      }
-      armIdleWatchdog();
+      watchdog.noteDelivered(evt);
 
       if (evt.type === 'usage') {
         const { costUsd, inputTokens, outputTokens } = evt;
@@ -2773,11 +3547,7 @@ async function processAgentStream(
       if (state.terminal !== 'running') break;
     }
   } finally {
-    clearIdleTimer();
-    delete handle.armStallDeadline;
-    delete handle.stallDeadlineMs;
-    delete handle.stallArmedAt;
-    delete handle.hasOpenToolCall;
+    watchdog.dispose();
   }
 
   // If state already reached a terminal event (done/error/etc.) before the
@@ -2808,7 +3578,7 @@ async function processAgentStream(
     || cardTerminalFromOutcome(outcome) !== state.terminal
     || userMessage !== undefined
   ) {
-    state = applyOutcomeToState(state, outcome, armedDelayMs, userMessage);
+    state = applyOutcomeToState(state, outcome, watchdog.armedDelayMs(), userMessage);
   }
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };
@@ -2850,14 +3620,8 @@ function applyOutcomeToState(
         footer: null,
         ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
       };
-    case 'done': {
-      const next = finalizeIfRunning(state);
-      if (!userMessage) return next;
-      return {
-        ...next,
-        blocks: [...next.blocks, { kind: 'text' as const, content: userMessage, streaming: false, notice: true }],
-      };
-    }
+    case 'done':
+      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
     case 'running':
       return state;
     default: {

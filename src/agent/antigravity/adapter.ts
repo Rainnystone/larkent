@@ -88,7 +88,7 @@ export class AntigravityAdapter implements AgentAdapter {
       runId: opts.runId,
       binaryPath: this.binary,
       argv: buildAntigravityArgs({
-        prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity),
+        prompt: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity, opts.promptVariant),
         ...(opts.resumeHandle ? { conversationId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
         ...(parsed.sandbox ? { sandbox: parsed.sandbox } : {}),

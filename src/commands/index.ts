@@ -85,6 +85,10 @@ import { isMeetingNo } from '../meeting/api';
 import { answerInMeeting, meetingScopeId } from '../meeting/orchestrator';
 import type { MeetingSession } from '../meeting/session';
 import { hasStructuredLarkCliUserAuth } from '../lark-cli/identity-policy';
+import type { AutoActionAuth } from '../automations/action-auth';
+import { handleAutoCommand } from '../automations/command';
+import type { AutomationScheduler } from '../automations/scheduler';
+import type { AutomationItem, AutomationsStore } from '../automations/store';
 
 export interface Controls {
   profile: string;
@@ -147,6 +151,12 @@ export interface CommandContext {
    * text command. Determines whether to update the existing card vs send a
    * new one. */
   fromCardAction?: boolean;
+  automations?: AutomationsStore;
+  autoAuth?: AutoActionAuth;
+  automationsScheduler?: AutomationScheduler;
+  now?: () => number;
+  isLinkDown?: () => boolean;
+  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 
 type Handler = (args: string, ctx: CommandContext) => Promise<void>;
@@ -174,6 +184,7 @@ const handlers: Record<string, Handler> = {
   '/invite': handleInvite,
   '/remove': handleRemove,
   '/meeting': handleMeeting,
+  '/auto': handleAutoCommand,
 };
 
 /**
@@ -201,10 +212,14 @@ function isAdminCommand(cmd: string): boolean {
   return ADMIN_COMMANDS.has(cmd.startsWith('/') ? cmd : `/${cmd}`);
 }
 
-export function isRegisteredSlashCommand(content: string): boolean {
+export function isRegisteredSlashCommand(
+  content: string,
+  options?: { automationsEnabled?: boolean },
+): boolean {
   const trimmed = content.trim();
   if (!trimmed.startsWith('/')) return false;
   const cmd = trimmed.split(/\s+/)[0] ?? '';
+  if (cmd === '/auto') return options?.automationsEnabled === true;
   return Object.hasOwn(handlers, cmd);
 }
 
@@ -233,7 +248,13 @@ export async function tryHandleCommand(ctx: CommandContext): Promise<boolean> {
   const parts = trimmed.split(/\s+/);
   const cmd = parts[0] ?? '';
   const args = parts.slice(1).join(' ');
-  if (!isRegisteredSlashCommand(trimmed)) return false;
+  if (
+    !isRegisteredSlashCommand(trimmed, {
+      automationsEnabled: ctx.controls.profileConfig.automations.enabled,
+    })
+  ) {
+    return false;
+  }
   const h = handlers[cmd];
   if (!h) return false;
   if (
