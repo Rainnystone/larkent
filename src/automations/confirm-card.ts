@@ -1,10 +1,10 @@
 import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
 import {
-  countFiresAfter,
   EXACT_FIRE_COUNT_CAP,
   monthlyFireCount,
   nextFires,
   readSchedule,
+  remainingFireCount,
   type Schedule,
 } from './schedule';
 import { zonedParts } from './zoned-time';
@@ -97,10 +97,9 @@ function frequencyLine(schedule: Schedule, now: number): string | undefined {
     case 'weekday':
     case 'weekly':
     case 'interval': {
-      const origin = Math.max(now, schedule.startAt);
-      const counted = countFiresAfter(schedule, origin - 1, EXACT_FIRE_COUNT_CAP);
+      const counted = remainingFireCount(schedule, now, EXACT_FIRE_COUNT_CAP);
       if (counted.capped) {
-        return `超过 ${EXACT_FIRE_COUNT_CAP} 次 · 约每月 ${monthlyFireCount(schedule, origin)} 次`;
+        return `超过 ${EXACT_FIRE_COUNT_CAP} 次 · 约每月 ${monthlyFireCount(schedule, now)} 次`;
       }
       return `共 ${counted.count} 次`;
     }
