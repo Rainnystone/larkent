@@ -170,6 +170,31 @@ Retain `source.reference` when following a resource link. `stale-plugin-referenc
 
 The automated catalog, real-client IM and subprocess checks cover synthetic pure skills and command/script bundles, shared profiles, restart/resume, dependencies, ambiguity and containment. Real model selection, the deployment's native CLI versions/access modes, paid model calls, and real Feishu bot/user permissions remain operator acceptance work; skipped opt-in smoke tests are not evidence of those checks.
 
+### Six-CLI invocation contract and operator evidence
+
+`pnpm exec vitest run tests/process/six-cli-bridge-contract.test.ts tests/process/bridge-tools.test.ts` runs without native CLI logins or opt-in flags. The six-row suite starts the actual profile adapters through `startChannel`, using controlled runtime executables (`0.0.0-controlled`, no model). Each child invokes the shared client with JSON stdin and reads actual results before replying. The matrix includes external package scripts, discovery, schema/query, same-turn correction, create/replace/delete confirmation receipts, pause/resume, result queries after automatic execution, fresh credentials, forged-context rejection, completion and stop revocation. Runtime, package and working paths contain spaces and shell metacharacters. The existing CI runs this suite inside `pnpm test` on Ubuntu, macOS and Windows; inspect the exact commit's job logs for six executed rows.
+
+| Adapter | Control-process new/resumed IM | Scheduled runs / result continuation | Native CLI version/model and new/resume loops |
+| --- | --- | --- | --- |
+| Claude | Covered; workspace permission argv retained | Fresh fires; human continuation resumes fire session | Operator-pending |
+| Codex | Covered; workspace sandbox and native config options retained | Fresh fires; human continuation resumes fire thread | Operator-pending |
+| Kimi | Covered; existing access mapping retained | Fresh fires; human continuation resumes fire session | Operator-pending |
+| Grok | Covered; existing access mapping retained | Fresh fires; human continuation resumes fire session | Operator-pending |
+| Cursor | Covered; existing full-access mapping retained | Fresh fires; human continuation resumes fire session | Operator-pending |
+| Antigravity | Covered; existing full-access mapping retained | Fresh fires; human continuation resumes fire conversation | Operator-pending |
+
+These are adapter/control-process checks. A synthetic native-config sentinel staying unchanged does not establish native plugin loading, trust enforcement or a model tool loop. Scheduled fires intentionally start fresh; a human follow-up to their result is an IM run with current facts and a new credential, even when it resumes that session.
+
+P09 operators should complete the following for **each row independently**, on the final accepted commit:
+
+1. Follow [agent setup](agent-setup.md) with an existing dedicated test profile/group and installed, authorized CLI. Record OS, Node and bridge versions, native executable `--version`, selected model, access mode/trust and relevant existing native plugins. Keep profile secrets and raw private logs off the public repository. Do not raise permissions to make a check pass; record a blocked access mode explicitly.
+2. Use the corresponding opt-in `tests/process/<kind>-real.smoke.test.ts` and its `*_REAL_SMOKE=1` switch for baseline native new/resume behavior (see Development checks). Those tests can spend quota and do not themselves exercise this complete bridge-tool contract.
+3. In a fresh IM session, ask the agent to discover/read automation and a preinstalled benign script package, execute its declared script, query tasks/schema, and preview a fixed three-day 09:00 schedule. Ask for one preview with the end boundary omitted, then correction using the actual returned `missing-end-at` result while retaining 09:00. Observe client invocations and structured results in the native tool loop; do not paste successful results into the conversation. Have the agent create the task and report its operation ID and waiting-confirmation state. Confirm the real card, then query the operation from a resumed turn; it must report applied and the three exact occurrences.
+4. In that resumed session, exercise pause/resume, replace and delete with their real confirmation boundaries; query each receipt. For an agent task, allow an actual scheduled fire, verify plugin/script access and bot/user operations within the profile's existing authorization, and verify management calls are unavailable during that automatic run. Reply to its delivered result and check that human continuation can query the actual execution/delivery state. Record new/resume separately, including same-turn error correction in both.
+5. Stop an active test run and verify its former client connection fails; query any already-accepted operation from a later valid run. After deploying a new immutable plugin version through the normal operator restart procedure, resume the old session and verify the current summary/version, stale-reference rejection and unchanged native plugins/trust. Include literal Unicode, quotes, spaces and shell characters through JSON stdin on each target OS; keep stdout as one protocol result and diagnostics on stderr.
+
+Publish a sanitized per-row evidence record with exact SHA, OS, native CLI/model versions, new/resume outcomes, invocation/result observations, card/task/receipt state, and failures or unavailable permissions. Missing native CLIs, authorization, paid probes, live Feishu checks and native plugin/trust evidence remain **unverified/operator-pending**; another adapter's result or skipped smoke test cannot fill a row.
+
 ## Self-heal
 
 Sleep, a process restart, or a short WebSocket blip can drop live messages. The bridge catches them up on its own: it pulls recent group history plus session-known DMs with bot identity, runs each survivor through the normal intake path once, and adds one lateness hint to the prompt. Groups still need an @mention. Ordinary human DMs do not. A first-contact DM with no prior session is out of scope (the user can resend). `maxMentionsPerChat` caps newest-first enqueue per chat for both. Personal-mode DM allowlisting stays on the live intake path. There is no `/config` toggle for backfill. No external poller or host routine.
