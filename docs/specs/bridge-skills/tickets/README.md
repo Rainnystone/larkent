@@ -25,6 +25,7 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P07](P07-six-cli-contract.md) | 六种 CLI 的完整共同调用契约 | P04、P05、P06 |
 | [P08](P08-cutover-and-upgrade.md) | 唯一入口切换、旧协议退出与存储升级 | P07 |
 | [P09](P09-real-feishu-acceptance.md) | 真实飞书 E2E 验收（无 UAT）：Grok Build、Antigravity、Cursor CLI、Kimi 待验收，其余 CLI 标记未验证 | P08 |
+| [P10](P10-uat-real-usage.md) | 生产 Grok bridge 真实使用 UAT：14 条自然语言句子覆盖提醒、文档、新闻摘要与五类排期及管理操作，核对 larkent-monitor | P09、#52 合并并部署 |
 
 P03 可通过现有已存 agent 任务验收，不依赖新创建入口。P05 能管理现有任务，不依赖 P04。P06 以内容读取和脚本使用验收，不依赖 automation 写操作。P07 需要完整能力作为共同测试对象，P08 等完整替代路径就绪后才移除旧协议。
 
