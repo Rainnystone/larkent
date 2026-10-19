@@ -1,5 +1,7 @@
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { openToolRun, type ToolRunContext } from '../../src/bridge-tools/server';
 import { AutomationsStore } from '../../src/automations/store';
@@ -62,6 +64,31 @@ it('returns a valid full task query when stored bodies exceed the input request-
   expect(result.category).toBe('ok'); expect(result.data.tasks).toHaveLength(100);
   expect(result.data.tasks[99].taskText).toBe(text);
 }, 12000);
+
+it('preserves UTF-8 when a real stdin writer splits a character between chunks', async () => {
+  const h = await harness();
+  let received: unknown;
+  const proxy = createServer(async (request, response) => {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = Buffer.concat(chunks).toString('utf8');
+    received = JSON.parse(body).params.skill;
+    // Forward the request to the actual bridge; no fixture tool result is injected.
+    const actual = await fetch(h.run.env.LARK_BRIDGE_TOOL_ENDPOINT!, { method: 'POST', body, headers: { authorization: request.headers.authorization! } });
+    response.end(await actual.text());
+  });
+  await new Promise<void>(resolve => proxy.listen(0, '127.0.0.1', resolve));
+  cleanup.push(() => new Promise<void>((resolve, reject) => { proxy.closeAllConnections(); proxy.close(error => error ? reject(error) : resolve()); }));
+  const skill = 'a中🙂b\n"\' $(synthetic)';
+  const bytes = Buffer.from(JSON.stringify({ version: 1, operation: 'plugins.read', params: { skill } }));
+  const split = bytes.indexOf(Buffer.from('中')) + 1;
+  const result = await runToolProcess(join(client.directory, 'bin/lark-channel-bridge.mjs'), [bytes.subarray(0, split), bytes.subarray(split)], {
+    ...h.run.env, LARK_BRIDGE_TOOL_ENDPOINT: `http://127.0.0.1:${(proxy.address() as AddressInfo).port}/tool`,
+  }, [], client.directory);
+  expect(result.code).toBe(0); expect(result.stderr).toBe('');
+  expect(JSON.parse(result.stdout)).toMatchObject({ category: 'unavailable', code: 'skill-not-found-or-ambiguous' });
+  expect(received).toBe(skill);
+});
 
 it('advertises the same accepted schedule fields that preview validation enforces', async () => {
   const h = await harness();

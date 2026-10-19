@@ -21,15 +21,18 @@ export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv =
 
 export async function runToolCli(options: { schema?: boolean } = {}): Promise<void> {
   if (options.schema) { process.stdout.write(`${JSON.stringify(TOOL_REQUEST_SCHEMA)}\n`); return; }
-  let input = '';
+  const chunks: Buffer[] = [];
+  let bytes = 0;
   let result: ToolResult;
   try {
     for await (const chunk of process.stdin) {
-      input += chunk;
-      if (Buffer.byteLength(input) > TOOL_MAX_BYTES) { process.stdout.write(`${JSON.stringify(toolResult('validation-failed', 'request-too-large'))}\n`); return; }
+      const buffer = Buffer.from(chunk);
+      bytes += buffer.length;
+      if (bytes > TOOL_MAX_BYTES) { process.stdout.write(`${JSON.stringify(toolResult('validation-failed', 'request-too-large'))}\n`); return; }
+      chunks.push(buffer);
     }
     let parsed: unknown;
-    try { parsed = JSON.parse(input); }
+    try { parsed = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
     catch { process.stdout.write(`${JSON.stringify(toolResult('validation-failed', 'invalid-json'))}\n`); return; }
     result = await requestBridgeTool(parsed);
   } catch { result = toolResult('execution-failed', 'stdin-failed'); }

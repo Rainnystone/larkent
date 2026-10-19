@@ -2,6 +2,7 @@ import { fork, spawn } from 'node:child_process';
 import { cp, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { build } from 'tsup';
 
 /** Build the actual CLI entry, including its normal packaged resources, without a source cwd dependency. */
@@ -43,7 +44,7 @@ export async function buildToolProcess() {
   };
 }
 
-export function runToolProcess(cli: string, input: string, env: NodeJS.ProcessEnv, args: string[] = [], cwd?: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
+export function runToolProcess(cli: string, input: string | readonly Uint8Array[], env: NodeJS.ProcessEnv, args: string[] = [], cwd?: string): Promise<{ code: number | null; stdout: string; stderr: string }> {
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, [cli, 'tool', ...args], { cwd, env: { ...process.env, LARK_BRIDGE_TOOL_ENDPOINT: '', LARK_BRIDGE_TOOL_TOKEN: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
@@ -51,6 +52,13 @@ export function runToolProcess(cli: string, input: string, env: NodeJS.ProcessEn
     child.on('error', reject);
     child.on('close', code => resolveResult({ code, stdout, stderr }));
     child.stdin.on('error', reject);
-    child.stdin.end(input);
+    if (typeof input === 'string') child.stdin.end(input);
+    else void (async () => {
+      for (let i = 0; i < input.length; i++) {
+        child.stdin.write(input[i]!);
+        if (i < input.length - 1) await delay(1000);
+      }
+      child.stdin.end();
+    })().catch(reject);
   });
 }
