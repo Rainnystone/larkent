@@ -274,10 +274,13 @@ describe('FeishuLink recovery through the bridge', () => {
     const holdRedeliver = new Promise<void>((resolve) => {
       releaseRedeliver = resolve;
     });
+    let sawRedeliver!: () => void;
+    const redeliverEntered = new Promise<void>((resolve) => {
+      sawRedeliver = resolve;
+    });
     const orig = h.journal!.redeliver.bind(h.journal);
-    let redeliverStarted = false;
     h.journal!.redeliver = async (opts) => {
-      redeliverStarted = true;
+      sawRedeliver();
       await holdRedeliver;
       return orig(opts);
     };
@@ -296,7 +299,7 @@ describe('FeishuLink recovery through the bridge', () => {
       await h.bridge.tickLink();
     }
     try {
-      await until(() => redeliverStarted);
+      await redeliverEntered;
       expect(h.agent.runOptions).toHaveLength(0);
       await h.ledger.flush();
       const stopping = h.bridge.disconnect();
