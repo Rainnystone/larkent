@@ -6,7 +6,7 @@ import { resolveExecutablePath } from '../platform/executable';
 
 interface SkillContent { id: string; name: string; aliases: string[]; content: string; resource: string; available: boolean; diagnostics: PluginDiagnostic[] }
 interface Resource { content: Buffer; path: string }
-interface Plugin { id: string; aliases: string[]; version: string; description: string; skills: SkillContent[]; files: Map<string, Resource>; reference: string; base: string; manifest: string }
+interface Plugin { id: string; aliases: string[]; version: string; description: string; skills: SkillContent[]; files: Map<string, Resource>; reference: string; base: string; manifest: string; contentRoots: string[]; scopes: string[] }
 export interface CatalogResult { code: string; data?: unknown }
 export interface PluginDiagnostic { code: string; plugin?: string; detail?: string; skill?: string; root?: string }
 
@@ -78,10 +78,11 @@ export class PluginCatalog {
         const files = new Map<string, Resource>();
         const declared = [...directories, ...await Promise.all(metadata.resources.map(path => inside(base, path)))];
         const scopes = await Promise.all(declared.map(directory => realpath(directory)));
-        for (const directory of declared) await snapshot(base, relative(base, directory), files, scopes);
+        const contentRoots = declared.map(directory => relative(base, directory).split(sep).join('/'));
+        for (const directory of contentRoots) await snapshot(base, directory, files, scopes);
         const hash = createHash('sha256').update(base).update(JSON.stringify(manifest));
         for (const [resource, file] of [...files].sort(([a], [b]) => a.localeCompare(b))) hash.update(resource).update(file.content);
-        plugins.push({ id: manifest.name, aliases: metadata.aliases, version, description: manifest.description, skills, files, reference: hash.digest('hex'), base, manifest: manifestText });
+        plugins.push({ id: manifest.name, aliases: metadata.aliases, version, description: manifest.description, skills, files, reference: hash.digest('hex'), base, manifest: manifestText, contentRoots, scopes });
       } catch (err) {
         const code = err instanceof Error && ['missing-manifest', 'invalid-manifest', 'invalid-metadata', 'invalid-skill-name', 'missing-skills', 'invalid-path'].includes(err.message)
           ? err.message : 'invalid-package';
@@ -152,9 +153,12 @@ export class PluginCatalog {
 async function unchanged(plugin: Plugin): Promise<boolean> {
   try {
     if (await readFile(await inside(plugin.base, '.codex-plugin/plugin.json'), 'utf8') !== plugin.manifest) return false;
+    const current = new Map<string, Resource>();
+    for (const root of plugin.contentRoots) await snapshot(plugin.base, root, current, plugin.scopes);
+    if (current.size !== plugin.files.size) return false;
     for (const [resource, file] of plugin.files) {
-      const path = await inside(plugin.base, resource);
-      if (path !== file.path || !(await readFile(path)).equals(file.content)) return false;
+      const actual = current.get(resource);
+      if (!actual || actual.path !== file.path || !actual.content.equals(file.content)) return false;
     }
     return true;
   } catch { return false; }

@@ -171,6 +171,13 @@ it('diagnoses duplicate skill identifiers and keeps an independent capability re
   expect(await catalog.resolveRead('duplicates:sample')).toMatchObject({ code: 'content' });
 });
 
+it('rejects newly added declared files rather than mixing an old script with new imported resources', async () => {
+  const p = await packageFixture('immutable');
+  const catalog = await PluginCatalog.load([p.root]);
+  await writeFile(join(p.root, 'skills/sample/late-import.json'), '{"new":true}');
+  expect(await catalog.resolveRead('immutable:sample')).toMatchObject({ code: 'package-changed' });
+});
+
 it('discovers summaries, resolves qualified and unique skill names, and snapshots a consistent package version', async () => {
   const p = await packageFixture();
   const catalog = await PluginCatalog.load([p.root]);
