@@ -1,3 +1,4 @@
+import { resolveWorkingDirectory } from '../policy/workspace';
 import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
 import { flushDraftCardOnce } from './command';
@@ -30,7 +31,7 @@ export async function getAutomationOperation(operationId: unknown, context: Auto
   }
 }
 
-export async function createReminderOperation(params: Record<string, unknown>, context: AutomationToolContext): Promise<ToolResult> {
+export async function createAutomationOperation(params: Record<string, unknown>, context: AutomationToolContext): Promise<ToolResult> {
   const operationId = params.operationId;
   const invalid = validateAutomationOperationId(operationId, context);
   if (invalid) return invalid;
@@ -45,7 +46,10 @@ export async function createReminderOperation(params: Record<string, unknown>, c
       if (issued.issuedAt + AUTOMATION_OPERATION_TTL_MS <= now) return toolResult('validation-failed', 'operation-expired', { operationId });
       const previous = context.store!.getOperation(operationId as string);
       const at = previous?.createdAt ?? now;
-      if (params.taskType !== 'reminder') return toolResult(params.taskType === 'agent' ? 'unavailable' : 'validation-failed', params.taskType === 'agent' ? 'agent-creation-not-implemented' : 'invalid-task-type');
+      if (params.taskType !== 'reminder' && params.taskType !== 'agent') return toolResult('validation-failed', 'invalid-task-type');
+      if (params.taskType === 'agent' && !context.agentTasks) return toolResult('unavailable', 'agent-tasks-disabled');
+      const cwd = params.taskType === 'agent' ? context.cwd?.trim() : undefined;
+      if (params.taskType === 'agent' && !cwd) return toolResult('unavailable', 'agent-needs-cwd');
       const missing = ['name', 'taskText'].filter(key => params[key] === undefined);
       if (missing.length) return toolResult('needs-input', 'missing-fields', { fields: missing, operationId });
       if (typeof params.name !== 'string' || !params.name.trim() || typeof params.taskText !== 'string' || !params.taskText.trim()) return toolResult('validation-failed', 'invalid-task-content', { operationId });
@@ -56,7 +60,7 @@ export async function createReminderOperation(params: Record<string, unknown>, c
       const schedule = 'schedule' in normalized ? normalized.schedule : undefined;
       const startAt = 'pendingRecurring' in normalized ? normalized.startAt : normalized.schedule.kind === 'one-shot' ? normalized.schedule.fireAt : normalized.schedule.startAt;
       const endAt = schedule ? schedule.kind === 'one-shot' ? schedule.fireAt : schedule.endAt : undefined;
-      const fingerprint = createHash('sha256').update(JSON.stringify({ taskType: 'reminder', name: params.name.trim(), taskText: params.taskText.trim(), timezone,
+      const fingerprint = createHash('sha256').update(JSON.stringify({ taskType: params.taskType, ...(cwd ? { cwd } : {}), name: params.name.trim(), taskText: params.taskText.trim(), timezone,
         schedule: pending ? { ...pending, startAt, endAt: null } : schedule })).digest('hex');
       if (previous) {
         if (previous.fingerprint !== fingerprint) return toolResult('validation-failed', 'operation-conflict', { operationId });
@@ -68,10 +72,14 @@ export async function createReminderOperation(params: Record<string, unknown>, c
         const result = await getAutomationOperation(pendingOperation.operationId, context);
         return result.category === 'unknown' ? { ...result, code: 'prior-operation-unknown' } : result;
       }
+      if (cwd) {
+        const workspace = await resolveWorkingDirectory(cwd);
+        if (!workspace.ok) return toolResult('unavailable', 'agent-cwd-unavailable', { operationId, reason: workspace.reason });
+      }
       const nextFireAt = schedule ? nextFireAfter(schedule, at) : 0;
       if (schedule && !nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
       const draft = await context.store!.saveDraft({
-        taskType: 'reminder', operationId: operationId as string, cardReply: context.cardReply, schedule: pending ?? schedule!, timezone,
+        taskType: params.taskType, ...(cwd ? { cwd } : {}), operationId: operationId as string, cardReply: context.cardReply, schedule: pending ?? schedule!, timezone,
         startAt,
         ...(pending ? { pendingRecurring: pending } : { endAt }),
         nextFireAt, name: params.name.trim(), taskText: params.taskText.trim(), chatId: context.chatId, createdBy: context.actorId,
@@ -92,14 +100,18 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   const current = context.store!.getOperation(operation.operationId)!;
   const executions = context.journal?.list().filter(entry => current.taskId && entry.turnId.startsWith(`af:${current.taskId}@`)) ?? [];
   const delivered = executions.filter(entry => entry.reply?.state === 'sent');
+  const executionResult = (entry: (typeof executions)[number]): 'ok' | 'failed' | 'pending' => entry.outcome
+    ? entry.outcome.kind === 'completed' || entry.outcome.kind === 'partial' ? 'ok' : 'failed'
+    : entry.runId ? 'pending' : entry.reply?.state === 'sent' ? 'ok' : entry.reply?.state === 'rejected' ? 'failed' : 'pending';
   const last = executions.at(-1);
   const base = {
     operationId: current.operationId, draftId: current.draftId, received: true,
     ...(current.taskId ? { taskId: current.taskId } : {}),
     executionScope: 'task', dispatchedCount: current.dispatchedCountKnown === false ? null : current.dispatchedCount,
-    ...(current.dispatchedCountKnown === false ? { dispatchedCountLowerBound: current.dispatchedCount } : {}), executedCount: delivered.length,
+    ...(current.dispatchedCountKnown === false ? { dispatchedCountLowerBound: current.dispatchedCount } : {}), executedCount: executions.filter(entry => executionResult(entry) === 'ok').length,
+    failedCount: executions.filter(entry => executionResult(entry) === 'failed').length, deliveredCount: delivered.length,
     executionHistoryComplete: current.dispatchedCountKnown !== false && executions.length === current.dispatchedCount,
-    ...(last ? { lastExecution: last.reply?.state === 'sent' ? 'ok' : last.reply?.state === 'rejected' ? 'failed' : 'pending' } : {}),
+    ...(last ? { lastExecution: executionResult(last), executionState: last.outcome?.kind ?? (last.runId ? 'running' : 'queued'), lastDelivery: last.reply?.state ?? 'pending' } : {}),
   };
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });

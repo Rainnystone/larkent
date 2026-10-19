@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 export interface IdentityPlan {
   args: string[];
+  bridgeRequests?: Array<{ operation: string; params?: Record<string, unknown> }>;
   hold?: boolean;
   toolName?: string;
   toolInput?: unknown;
@@ -49,6 +50,21 @@ const plan = JSON.parse(readFileSync(join(directory, id + '.json'), 'utf8'));
 const systemPrompt = readFileSync(argv[argv.indexOf('--append-system-prompt-file') + 1], 'utf8');
 appendFileSync(join(directory, 'runs.jsonl'), JSON.stringify({ id, systemPrompt, prompt, resumed: argv.includes('--resume'), hasToolConnection: Boolean(process.env.LARK_BRIDGE_TOOL_ENDPOINT && process.env.LARK_BRIDGE_TOOL_TOKEN) }) + '\n');
 emit({ type: 'system', subtype: 'init', session_id: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' });
+const bridgeResults = [];
+for (const request of plan.bridgeRequests ?? []) {
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [process.env.LARK_BRIDGE_TOOL_CLIENT, 'tool'], { env: process.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    let stdout = ''; let stderr = '';
+    child.stdout.on('data', chunk => stdout += chunk);
+    child.stderr.on('data', chunk => stderr += chunk);
+    child.on('error', reject);
+    child.on('close', code => code === 0 && !stderr ? resolve(JSON.parse(stdout)) : reject(new Error('controlled bridge client failed')));
+    child.stdin.end(JSON.stringify({ version: 1, ...request }));
+  });
+  bridgeResults.push(result);
+}
+if (bridgeResults.length) emit({ type: 'assistant', message: { content: [{ type: 'text', text: 'bridge-results:' + JSON.stringify(bridgeResults) }] } });
+
 emit({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'identity-tool', name: plan.toolName ?? 'Bash', input: plan.toolInput ?? { command: ['lark-cli', ...plan.args] } }] } });
 writeFileSync(join(directory, id + '.ready'), 'ready');
 if (plan.hold) { while (!existsSync(join(directory, id + '.release'))) await delay(10); }

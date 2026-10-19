@@ -15,6 +15,8 @@ export function buildLarkChannelEnv(context?: LarkChannelEnvContext, toolEnv?: N
     LARK_BRIDGE_TOOL_ENDPOINT: toolEnv?.LARK_BRIDGE_TOOL_ENDPOINT,
     LARK_BRIDGE_TOOL_TOKEN: toolEnv?.LARK_BRIDGE_TOOL_TOKEN,
     LARK_BRIDGE_TOOL_CLIENT: toolEnv?.LARK_BRIDGE_TOOL_CLIENT,
+    LARK_BRIDGE_TOOL_SCOPE: toolEnv?.LARK_BRIDGE_TOOL_SCOPE,
+    LARK_BRIDGE_TOOL_ISSUED_AT: toolEnv?.LARK_BRIDGE_TOOL_ISSUED_AT,
   };
   const profile = nonEmpty(context?.profile);
   if (profile) env.LARK_CHANNEL_PROFILE = profile;

@@ -1,3 +1,4 @@
+import { bridgeToolInstructions } from '../bridge-tools/prompt';
 import type {
   LarkChannel,
   LarkChannelOptions,
@@ -958,6 +959,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         runAgentFire: (fire) => trackConsumer(runAutomationAgentFire(fire, {
           ...automationOutbox,
           executor,
+          pluginCatalog,
           sessions,
           ...(sessionCatalog ? { sessionCatalog } : {}),
           workspaces,
@@ -1844,7 +1846,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const automationPluginAvailable = await catalog.isAvailable('automation');
   const toolContext: ToolRunContext = {
     catalog, profile: controls.profile, chatId, actorId: lastMsg.senderId,
-    runType: scope.startsWith('auto:') ? 'automation' : 'im', store: automations,
+    runType: 'im', store: automations,
     timezone: controls.profileConfig.automations.timezone, agentTasks: controls.profileConfig.automations.agentTasks,
     cardReply: { replyTo: lastMsg.messageId, ...(mode === 'topic' && threadId ? { replyInThread: true, threadId } : {}) },
     cwd: workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default,
@@ -1854,15 +1856,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       : firstMsg.chatType === 'p2p' || mode === 'p2p' || scope.startsWith('meeting:') ? 'automation-requires-group'
       : senderTypeFromRaw((lastMsg as { raw?: unknown }).raw) !== 'user' ? 'automation-requires-human' : undefined,
   };
-  extraInstructions.push(
-    'Bridge plugins：共用入口为 lark-channel-bridge tool；客户端 JS 绝对路径在环境 LARK_BRIDGE_TOOL_CLIENT，用 node <该路径> tool 调用，按当前 shell 安全引用路径。' +
-    '从 stdin 发送版本化 JSON（version:1, operation, params），stdout 是本轮实际工具结果。' +
-    '按需 plugins.list、plugins.inspect（params.plugin）、plugins.read（params.skill）；唯一的插件/skill 名或别名可直达，歧义按候选选择。' +
-    '资源读取使用 plugins.read 的 params.resource（包内路径）和 params.reference（读取结果的版本引用）；脚本按返回路径用 runtime 现有工具执行，遵守当前访问模式。旧引用失效需重新发现。' +
-    '根据结果在本轮补字段或修正；最终回复由你负责。连接由环境提供，不得展示或保存运行凭据。创建提醒须以实际工具回执为准，人工确认后生效；其他变更按 schema 可用性处理。',
-    `<bridge_plugins>${JSON.stringify({ plugins: await catalog.list(), diagnostics: catalog.diagnostics })}</bridge_plugins>`,
-    `<bridge_run>${JSON.stringify({ profile: controls.profile, runType: toolContext.runType, now: (now ?? Date.now)(), timezone: toolContext.timezone, automationUnavailable: toolContext.availability() ?? (!automations ? 'automation-store-unavailable' : null) })}</bridge_run>`,
-  );
+  extraInstructions.push(...await bridgeToolInstructions(toolContext));
   if (modelSwitched) {
     extraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +

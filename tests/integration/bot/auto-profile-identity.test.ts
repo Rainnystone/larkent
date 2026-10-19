@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -42,6 +42,46 @@ it('runs an existing automatic task with the profile user authorization and pres
   expect(await h.store.readLog()).toEqual([]);
   await h.configUnchanged();
 });
+
+it.each(['bot', 'user', 'denied', 'missing-cli'] as const)('creates with an actual runtime client, then reads plugins and executes with profile identity in the scheduled subprocess (%s)', async identity => {
+  const args = ['docs', '+fetch', '--as', identity === 'bot' ? 'bot' : 'user'];
+  const h = await harness({ args, bridgeRequests: [{ operation: 'plugins.read', params: { skill: 'automations' } }] }, { seed: false, ...(identity === 'denied' ? { failure: 'synthetic platform authorization denied' } : {}) });
+  await h.cli.plan('creator', { args: ['auth', 'status'], bridgeRequests: [{ operation: 'automation.create', params: {
+    taskType: 'agent', name: 'Synthetic subprocess task', taskText: 'identity-case:automatic', schedule: { kind: 'interval', timezone: 'UTC', every: { unit: 'hours', n: 1 }, startAt: NOW, endAt: NOW + 3 * HOUR },
+  } }] });
+  await h.message('creator');
+  await vi.waitFor(() => expect(h.bodies()).toContain('bridge-results:'), { timeout: 10000 });
+  expect(h.bodies()).toContain('waiting-confirmation');
+  expect(h.store.list()).toEqual([]);
+  const draft = h.store.listDrafts()[0]!;
+  const findButton = (value: any): any => {
+    if (!value || typeof value !== 'object') return;
+    if (value.value?.cmd === 'auto.confirm') return value.value;
+    for (const child of Object.values(value)) { const found = findButton(child); if (found) return found; }
+  };
+  const card = h.channel.sent.find(row => JSON.stringify(row.content).includes('auto.confirm'))!.content;
+  expect(await h.channel.handlers.cardAction?.({ messageId: draft.cardMessageId, chatId: CHAT, operator: { openId: CREATOR }, action: { tag: 'button', value: findButton(card) } })).toMatchObject({ toast: { type: 'success' } });
+  if (identity === 'missing-cli') await rename(h.cli.agent, `${h.cli.agent}.moved`);
+  await h.fire(); await h.settled();
+  if (identity === 'missing-cli') {
+    expect(h.journal.get(`af:1@${NOW + HOUR}`)?.outcome?.kind).toBe('failed');
+    expect(h.bodies()).toContain('运行启动失败');
+    expect(h.store.list()).toMatchObject([{ id: 1, taskType: 'agent', lastStatus: 'failed' }]);
+    await h.configUnchanged();
+    return;
+  }
+  if (identity === 'denied') {
+    expect(h.bodies()).toContain('自动化任务中断');
+    expect(h.bodies()).not.toContain('identity-result:');
+  } else {
+    expect(h.bodies()).toContain(identity === 'bot' ? 'identity-result:{"identity":"bot"}' : `identity-result:{"identity":"user","subject":"${SUBJECT}","generation":1}`);
+    expect(h.bodies()).toContain('automation.preview');
+  }
+  expect(h.store.list()).toMatchObject([{ createdBy: CREATOR, chatId: CHAT, taskType: 'agent', lastStatus: identity === 'denied' ? 'failed' : 'ok' }]);
+  expect((await h.runs()).find(run => run.id === 'automatic')).toMatchObject({ hasToolConnection: true, resumed: false });
+  expect((await h.calls()).at(-1)).toMatchObject({ env: h.env, args });
+  await h.configUnchanged();
+}, 30000);
 
 it.each([
   ['auth', 'logout'], ['auth', 'login', '--no-wait'],
@@ -122,7 +162,7 @@ it('shares the profile store between concurrent human and automatic subprocesses
   ]);
   const runs = await h.runs();
   expect(runs.find(run => run.id === 'human')).toMatchObject({ hasToolConnection: true });
-  expect(runs.find(run => run.id === 'automatic')).toMatchObject({ hasToolConnection: false });
+  expect(runs.find(run => run.id === 'automatic')).toMatchObject({ hasToolConnection: true });
   expect(runs.find(run => run.id === 'human')?.systemPrompt).toContain('飞书 OAuth 授权（');
   expect(runs.find(run => run.id === 'automatic')?.systemPrompt).not.toContain('飞书 OAuth 授权（');
   expect(JSON.parse(await readFile(join(h.configDir, 'credential-substitute.json'), 'utf8'))).toEqual({ subject: SUBJECT, generation: 1, expired: false });
@@ -232,7 +272,7 @@ it('interrupts native profile switching before the controlled CLI can change the
 
 });
 
-async function harness(plan: IdentityPlan, options: { strictMode?: string; failure?: string; expired?: boolean; missing?: boolean; chatMode?: 'group' | 'topic' } = {}) {
+async function harness(plan: IdentityPlan, options: { strictMode?: string; failure?: string; expired?: boolean; missing?: boolean; chatMode?: 'group' | 'topic'; seed?: boolean } = {}) {
   const tmp = await createTmpProfile('auto-profile-identity-');
   cleanup.push(tmp.cleanup);
   const cli = await installProfileIdentityCli(tmp.root);
@@ -264,14 +304,14 @@ async function harness(plan: IdentityPlan, options: { strictMode?: string; failu
   const store = new AutomationsStore({ path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now });
   let now = NOW;
   await store.load();
-  await store.create({ taskType: 'agent', schedule: { kind: 'interval', timezone: 'UTC', everyMs: HOUR, startAt: NOW, endAt: NOW + 3 * HOUR }, timezone: 'UTC', startAt: NOW, endAt: NOW + 3 * HOUR, nextFireAt: NOW + HOUR,
+  if (options.seed !== false) await store.create({ taskType: 'agent', schedule: { kind: 'interval', timezone: 'UTC', everyMs: HOUR, startAt: NOW, endAt: NOW + 3 * HOUR }, timezone: 'UTC', startAt: NOW, endAt: NOW + 3 * HOUR, nextFireAt: NOW + HOUR,
     chatId: CHAT, createdBy: CREATOR, name: 'synthetic identity task', taskText: 'identity-case:automatic', cwd: tmp.workspace });
   const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now: () => now });
   await journal.load();
   const agent = createRuntimeAgent(cfg, { profileDir: tmp.profile, rootDir: tmp.root, profile: 'synthetic', larkCliConfigDir: configDir, larkCliSourceConfigFile: env.LARK_CHANNEL_CONFIG });
   const channel = createRecordingLarkChannel({ chats: [{ id: CHAT, name: 'Synthetic' }], chatMode: options.chatMode ?? 'group', botIdentity: { openId: 'ou_synthetic_bot', name: 'Synthetic' } });
   sdk.channel = channel;
-  const bridge = await startChannel({ cfg, agent, sessions: new SessionStore(join(tmp.profile, 'sessions.json')), workspaces: new WorkspaceStore(join(tmp.profile, 'workspaces.json')), automations: store, journal, now: () => now, probe: async () => true,
+  const bridge = await startChannel({ appPaths: { mediaDir: join(tmp.profile, 'media'), secretsFile: join(tmp.profile, 'secrets.enc'), keystoreSaltFile: join(tmp.profile, 'salt') }, cfg, agent, sessions: new SessionStore(join(tmp.profile, 'sessions.json')), workspaces: new WorkspaceStore(join(tmp.profile, 'workspaces.json')), automations: store, journal, now: () => now, probe: async () => true,
     controls: { profile: 'synthetic', profileConfig: cfg, cfg, botOwnerId: CREATOR, ownerRefreshState: 'ok', async refreshOwner() {}, async restart() {}, async exit() {}, configPath: join(tmp.root, 'config.json'), processId: 'synthetic-identity' },
   });
   cleanup.push(() => bridge.disconnect());
@@ -287,7 +327,7 @@ async function harness(plan: IdentityPlan, options: { strictMode?: string; failu
     runs: () => jsonLines<{ id: string; systemPrompt: string; prompt: string; resumed: boolean; hasToolConnection: boolean }>(join(cli.directory, 'runs.jsonl')),
     message: (id: string, reply?: string) => channel.handlers.message?.({
       messageId: `om_synthetic_${id}`, content: `identity-case:${id}`, chatId: CHAT, chatType: 'group',
-      senderId: CREATOR, senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now,
+      senderId: CREATOR, senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } },
       ...(reply ? { threadId: reply, rootId: reply, parentId: reply, replyToMessageId: reply } : {}),
     } as unknown as NormalizedMessage),
     async configUnchanged() {

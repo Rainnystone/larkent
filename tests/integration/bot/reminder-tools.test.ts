@@ -681,13 +681,12 @@ it.each(['pause', 'resume', 'delete', 'replace'] as const)('does not claim %s ap
   }
 }, 30000);
 
-it('manages existing agent tasks without agent creation, preserves captured cwd, and delivers a replacement fire', async () => {
+it('manages existing agent tasks, preserves captured cwd, and delivers a replacement fire', async () => {
   const h = await harness('group', true);
   await h.store.create({ ...reminder, taskType: 'agent', name: 'Existing agent', taskText: 'Existing agent instruction', cwd: h.tmp.workspace, timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
   let replacementId = ''; let automated: AgentRunOptions | undefined;
   await h.turn(async (call, opts) => {
     if (opts.promptVariant === 'automation') { automated = opts; return; }
-    expect(await call('automation.create', { ...reminder, taskType: 'agent' })).toMatchObject({ category: 'unavailable', code: 'agent-creation-not-implemented' });
     expect(await call('automation.pause', { id: 1 })).toMatchObject({ category: 'applied' });
     expect((await call('automation.list')).data.tasks[0]).toMatchObject({ taskType: 'agent', paused: true });
     expect(await call('automation.resume', { id: 1 })).toMatchObject({ category: 'applied' });
@@ -697,7 +696,8 @@ it('manages existing agent tasks without agent creation, preserves captured cwd,
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
-  expect(h.store.list()).toMatchObject([{ id: 2, taskType: 'agent', cwd: h.tmp.workspace }]);
+  expect(h.store.list()).toMatchObject([{ id: 2, taskType: 'agent' }]);
+  expect(await realpath(h.store.list()[0]!.cwd!)).toBe(await realpath(h.tmp.workspace));
   h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`2@${FIRES[0]}`);
   await vi.waitFor(() => expect(h.journal.list().find(entry => entry.turnId === `af:2@${FIRES[0]}`)?.reply?.state).toBe('sent'), { timeout: 12000 });
   expect(await realpath(automated!.cwd!)).toBe(await realpath(h.tmp.workspace)); expect(automated?.prompt).toContain('Synthetic replacement instruction');

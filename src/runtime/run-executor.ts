@@ -148,7 +148,10 @@ export class RunExecutor {
       : undefined;
     let tools: ToolRun | undefined;
     try {
-      if (input.toolContext) tools = await openToolRun(input.toolContext);
+      if (input.toolContext) tools = await openToolRun({
+        ...input.toolContext,
+        runType: input.promptVariant === 'automation' ? 'automation' : 'im',
+      });
     } catch (error) {
       release();
       releaseScope();

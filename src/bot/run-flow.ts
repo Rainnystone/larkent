@@ -189,7 +189,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   let execution: RunExecution;
   try {
     execution = await input.executor.submit({
-      toolContext: input.toolContext,
+      toolContext: input.toolContext ? { ...input.toolContext, cwd: workspace.cwdRealpath } : undefined,
       scopeId: input.scopeId,
       policy,
       resumeHandle: resumeFrom,

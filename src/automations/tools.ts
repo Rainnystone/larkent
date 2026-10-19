@@ -1,7 +1,7 @@
 import { manageAutomationOperation } from './manage-operation';
 import { AUTOMATION_OPERATION_TTL_MS } from './operation-id';
 import type { TurnJournal } from '../bot/turn-journal';
-import { createReminderOperation, getAutomationOperation, serializeAutomationWrite } from './operation';
+import { createAutomationOperation, getAutomationOperation, serializeAutomationWrite } from './operation';
 import type { DraftFlushContext } from './command';
 import { formatZonedDateTime } from './confirm-card';
 import { nextFireAfter, nextFires, REMINDER_MIN_INTERVAL_MS, AGENT_MIN_INTERVAL_MS, ONE_YEAR_MS } from './schedule';
@@ -49,7 +49,7 @@ export function automationSchema(context: AutomationToolContext) {
       ['automation.schema', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false } }],
       ['automation.list', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false } }],
       ['automation.preview', { available: !reason, ...(reason ? { reason } : {}), params: AUTOMATION_PREVIEW_SCHEMA }],
-      ['automation.create', { available: !createReason, ...(createReason ? { reason: createReason } : {}), params: { type: 'object', additionalProperties: false, required: ['taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, taskType: { const: 'reminder' }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string', description: 'Client assigns before submission; retain for queries and retries' } } } }],
+      ['automation.create', { available: !createReason, ...(createReason ? { reason: createReason } : {}), params: { type: 'object', additionalProperties: false, required: ['taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, taskType: { enum: context.agentTasks ? ['reminder', 'agent'] : ['reminder'] }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string', description: 'Client assigns before submission; retain for queries and retries' } } } }],
       ['automation.operation.get', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['operationId'], properties: { operationId: { type: 'string' } } } }],
       ...['pause', 'resume', 'delete'].map(name => { const unavailable = name === 'delete' ? confirmedMutationReason : mutationReason; return [`automation.${name}`, { available: !unavailable, ...(unavailable ? { reason: unavailable } : {}), params: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'integer', minimum: 1 }, revision: { type: 'string', description: 'Expected management revision from automation.list; stale state is rejected' }, operationId: { type: 'string' } } } }]; }),
       ['automation.replace', { available: !confirmedMutationReason, ...(confirmedMutationReason ? { reason: confirmedMutationReason } : {}), params: { type: 'object', additionalProperties: false, required: ['id', 'taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, id: { type: 'integer', minimum: 1 }, revision: { type: 'string' }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string' } } } }],
@@ -59,7 +59,7 @@ export function automationSchema(context: AutomationToolContext) {
     boundary: 'start-inclusive-end-exclusive', timestampUnit: 'UTC epoch milliseconds',
     confirmation: { create: 'human-card-only', replace: 'human-card-only', delete: 'human-card-only', pause: 'immediate', resume: 'immediate' },
     operationIds: { submissionTtlMs: AUTOMATION_OPERATION_TTL_MS, scope: 'profile-chat', retention: 'durable', recovery: 'query-original-id-before-retry' },
-    execution: { scope: 'task', dispatchedCount: 'integer-or-null', unknownCount: 'dispatchedCountLowerBound', history: 'retained-journal-evidence' },
+    execution: { scope: 'task', dispatchedCount: 'integer-or-null', unknownCount: 'dispatchedCountLowerBound', history: 'retained-journal-evidence', executedCount: 'successful-runtime-outcome-or-reminder-delivery', failedCount: 'failed-or-interrupted', deliveredCount: 'sent-results-including-failure-notices', executionState: 'queued-running-or-runtime-outcome', lastDelivery: 'independent-outbox-state' },
     categories: ['ok', 'validation-failed', 'needs-input', 'unavailable', 'unauthorized', 'execution-failed', 'waiting-confirmation', 'applied', 'unknown'],
   };
 }
@@ -79,7 +79,7 @@ export async function callAutomationTool(operation: string, params: Record<strin
     })) });
   }
   if (operation === 'automation.pause' || operation === 'automation.resume' || operation === 'automation.delete' || operation === 'automation.replace') return serializeAutomationWrite(context.store!, () => manageAutomationOperation(operation, params, context));
-  if (operation === 'automation.create') return serializeAutomationWrite(context.store!, () => createReminderOperation(params, context));
+  if (operation === 'automation.create') return serializeAutomationWrite(context.store!, () => createAutomationOperation(params, context));
   if (operation === 'automation.operation.get') {
     if (Object.keys(params).some(key => key !== 'operationId')) return toolResult('validation-failed', 'unknown-field');
     return getAutomationOperation(params.operationId, context);
