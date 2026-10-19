@@ -1,15 +1,15 @@
 # PR51 — Bridge plugins 与 automation 规格交接
 
-Revision 3 · 2026-10-19 · Status: ready-for-agent（规格可进入 to-tickets；尚未授权实施）
+Revision 3 · 2026-10-19 · Status: ready-for-agent（规格与 P01–P09 已就绪；尚未授权实施）
 
 ## 从这里开始
 
 1. 读 [Revision 3 规格](../bridge-skills.md)：产品边界、User Stories、模块契约与验收。
 2. 本文件提供代码导航和旧方案差异；实现时重新核对 checkout 与当前代码。
 3. [B01–B07](tickets/README.md) 全部是 superseded 的旧票，不能认领或照旧执行。
-4. 下一阶段按新规格运行 to-tickets，生成独立可验收的工作包；本轮不拆新票、不修改代码。
+4. [P01–P09](tickets/README.md) 是当前实施票；连同共同契约、各票正文和本导航读取。拆票已完成，代码实施尚未授权。
 
-文档载体：[PR #51](https://github.com/Rainnystone/larkent/pull/51)，分支 `docs/bridge-skills`；保留文档专用、不合并的既有约定。用户已明确授权本轮修订并提交到该 PR。测试 seam 已在本轮讨论中确认。
+文档载体：[PR #51](https://github.com/Rainnystone/larkent/pull/51)，分支 `docs/bridge-skills`；保留文档专用、不合并的既有约定。用户已明确授权修订该 PR，并委托按工程判断继续 to-tickets。测试 seam 已在讨论中确认。
 
 ## 本版解决什么
 
@@ -35,7 +35,7 @@ Revision 3 · 2026-10-19 · Status: ready-for-agent（规格可进入 to-tickets
 - 正常工具调用替代最终回复中的 `automation_proposal` 执行路径；B02 的下一次用户发言反馈不再是主方案。
 - 参数采用结构化排期，直接使用既有排期校验与计算；机器入口不绕回文本时间语法。
 - 结果必须来自实际保存/投递/状态，不以预先拼出的成功行或 skill 措辞代替。
-- 自动化支持 bot＋user，撤销旧规格的 bot-only 假设。
+- 自动化支持 bot＋user，撤销旧规格的 bot-only 假设；使用已有授权与修改 profile 认证配置分开，后者在自动 run 继续拦截。自动与人工 run 共用 profile 的 lark-cli 环境，刷新由 CLI 自身负责。
 - 组织运维与账号变更不扩成新产品治理流程。
 - 以完整业务链和真实客户端契约为测试重点，覆盖六种 CLI；skill 读取率只是辅助信号。
 - 无关的 prompt 搬迁不再成为本次 automation 交付的前置条件。
@@ -68,6 +68,26 @@ Revision 3 · 2026-10-19 · Status: ready-for-agent（规格可进入 to-tickets
 
 代码阶段遵循项目 TDD 和 `pnpm ci:local` 门禁。文档阶段仅核验路径、链接、状态、内容与范围；本次没有运行生产服务或功能验收。
 
-## 后续工作
+## 当前拆票与后续工作
 
-本版规格是下一次拆票的依据。to-tickets 应按可观察的完整交付切片，保留真实依赖和跨模块契约；不得恢复 B01–B07 的旧执行顺序。实现授权、任务认领和代码分支安排在后续工作明确，本规格状态不等于已获准编码。
+P01–P09 已覆盖完整首版范围，依赖及共同接口见 [tickets](tickets/README.md)。P01、P03 无业务前置；其他票按实际依赖进入 frontier，不恢复 B01–B07 的旧顺序。代码实施、任务认领与代码分支尚未开始；文档就绪不等于已获准编码。
+
+本次同步了远端 `0624458` 的 D8 补充。用户提供的 Grok Bot 环境核验支持沿用同一 profile 的授权/刷新路径；它不是新插件工具链或六种 CLI 的功能通过证据。P03/P09 仍需记录实际依赖版本及运行结果。
+
+## 各票代码与验证导航
+
+以下 Files 是按当前代码核对的入口；具体新增模块由票内接口和实现决定。实施 brief 必须连同本表、共同契约和完整票正文提供，不能把导航当作限定只能改一个文件。每票的 Verification loop 规定先失败、再实现、再复验；最终执行项目代码门禁。
+
+| 票 | Files / 当前变更入口 | 首轮验证 |
+| --- | --- | --- |
+| P01 | [CLI](../../../src/cli/index.ts)、[共用环境](../../../src/agent/lark-channel-env.ts)、[运行入口](../../../src/runtime/run-executor.ts)、[群接线](../../../src/bot/channel.ts)、[排期](../../../src/automations/schedule.ts)、[命令业务](../../../src/automations/command.ts)、[构建打包](../../../package.json) | `startChannel` 真实客户端预览；catalog/process；打包后读取 |
+| P02 | [命令业务](../../../src/automations/command.ts)、[存储](../../../src/automations/store.ts)、[调度](../../../src/automations/scheduler.ts)及 P01 新调用模块 | 自然语言创建、确认卡、周期边界、存储/发卡故障、进程重启 |
+| P03 | [自动任务](../../../src/automations/agent-run.ts)、[guard](../../../src/automations/policy-guard.ts)、[系统提示](../../../src/agent/bridge-system-prompt.ts)、[共用环境](../../../src/agent/lark-channel-env.ts)、[身份策略](../../../src/lark-cli/identity-policy.ts)、[运维](../../operations.md) | 自动任务身份集成；真实子进程环境；认证配置变更回归 |
+| P04 | [自动任务](../../../src/automations/agent-run.ts)、[运行入口](../../../src/runtime/run-executor.ts)、[创建业务](../../../src/automations/command.ts)及 P01/P02 新模块 | 创建 → 确认 → 实际 agent fire → 交付；递归管理拒绝 |
+| P05 | [命令业务](../../../src/automations/command.ts)、[存储](../../../src/automations/store.ts)及 P02 操作回执 | 删除/替换、暂停/恢复、看板确认、并发旧状态 |
+| P06 | P01 catalog/内容读取模块、[构建打包](../../../package.json)、[setup](../../agent-setup.md)、[运维](../../operations.md) | 临时真实包、实际脚本、版本与续会话、坏包隔离 |
+| P07 | [六种 adapters](../../../src/agent/)、[共用环境](../../../src/agent/lark-channel-env.ts)、[runner](../../../src/agent/runner/jsonl-cli-runner.ts)、[process](../../../tests/process/) | 六 CLI 新/续会话与实际工具循环；三平台进程契约 |
+| P08 | [群接线](../../../src/bot/channel.ts)、[旧提案](../../../src/automations/proposal.ts)、[命令业务](../../../src/automations/command.ts)、[存储](../../../src/automations/store.ts)、[系统提示](../../../src/agent/bridge-system-prompt.ts) | 固定旧数据升级、旧卡片完成、新旧混合无重复 |
+| P09 | [process](../../../tests/process/)、[integration](../../../tests/integration/bot/)及所选测试部署；缺陷按对应原票定位 | 依项目真实飞书指引执行 T4；汇总 A01–A16 与六 CLI 证据 |
+
+定向命令沿用 `pnpm test:process`、`pnpm test:integration`，或 `pnpm exec vitest run` 加本票实际用例；只有满足各票可观察验收才算通过。文档阶段没有运行这些功能检查。

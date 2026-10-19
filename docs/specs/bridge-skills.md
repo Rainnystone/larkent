@@ -1,10 +1,10 @@
 # Bridge plugins 与 automation 工具调用规格
 
-Revision 3 · 2026-10-19 · Status: ready-for-agent（规格可进入 to-tickets）· 实施尚未授权
+Revision 3 · 2026-10-19 · Status: ready-for-agent（规格与 P01–P09 已就绪）· 实施尚未授权
 
 文档载体：[PR #51](https://github.com/Rainnystone/larkent/pull/51)，分支 `docs/bridge-skills`。本 PR 保持文档专用，不合入主分支。代码核对基线：`master@953e7bdde3549b03bddb8d191d8856683d1dc4c5`，包含 PR49。
 
-本版依据 grill-with-docs 中确认的产品决定重写，替代 Revision 2.1。原 B01–B07 已标记 superseded，不能继续按旧票实施。下一阶段是 to-tickets；本轮只修订规格和交接材料。入口见 [HANDOFF](bridge-skills/HANDOFF.md)，旧票状态见 [tickets](bridge-skills/tickets/README.md)。
+本版依据 grill-with-docs 中确认的产品决定重写，替代 Revision 2.1。原 B01–B07 已标记 superseded，不能继续按旧票实施。to-tickets 已完成，新的 P01–P09 覆盖完整首版范围；代码实施尚未授权。入口见 [HANDOFF](bridge-skills/HANDOFF.md)，当前与旧票状态见 [tickets](bridge-skills/tickets/README.md)。
 
 ## Problem Statement
 
@@ -236,11 +236,11 @@ Larkent 接纳由外部维护者安装的 bridge plugin。插件是一组 skills
 - 改变主机权限模型，或宣称插件目录隔离完整 shell。
 - Base 巡检业务插件：它只作为脚本扩展示例。
 - 原 B04–B06 的其他业务说明迁移及无关重构。
-- 本轮生成新实现 tickets、修改生产代码、启动服务或合并 PR。
+- 本次文档阶段修改生产代码、启动服务或合并 PR；P01–P09 的编写已获后续授权并完成。
 
 ## Further Notes
 
-- 产品方向与测试 seam 已确认，本规格 ready-for-agent 表示可以进入 to-tickets；不等于实现票已就绪或获得代码实施授权。
+- 产品方向、测试 seam 与拆票已收敛，规格及 P01–P09 为 ready-for-agent；该状态不等于获得代码实施授权。
 - 当前采用文档 PR 作为本项工作的规格载体；按用户明确指示更新 PR51，不另建 Issue、不修改 NHK 或全局 skill 配置。
 - 三类已观察问题分别回归：非法参数反复提交、次数偏离原意、已授权 user 被错误阻断。聊天记录不能证明某个具体函数是全部根因。
 - 未来扩展共用“简介 → 按需知识 → 正常工具调用 → 真实反馈”。确定性排期、状态与副作用留在代码，避免自然语言补丁成为长期业务协议。
