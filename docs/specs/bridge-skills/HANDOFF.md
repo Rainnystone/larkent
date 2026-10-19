@@ -1,6 +1,6 @@
 # PR51 — Bridge plugins 与 automation 规格交接
 
-Revision 3 · 2026-10-19 · Status: ready-for-agent（规格与 P01–P09 已就绪；尚未授权实施）
+Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09a–P09m 修复实施中（见下方“当前状态（2026-10-20）”）
 
 ## 从这里开始
 
@@ -10,6 +10,61 @@ Revision 3 · 2026-10-19 · Status: ready-for-agent（规格与 P01–P09 已就
 4. [P01–P09](tickets/README.md) 是当前实施票；连同共同契约、各票正文和本导航读取。拆票已完成，代码实施尚未授权。
 
 文档载体：[PR #51](https://github.com/Rainnystone/larkent/pull/51)，分支 `docs/bridge-skills`；保留文档专用、不合并的既有约定。用户已明确授权修订该 PR，并委托按工程判断继续 to-tickets。测试 seam 已在讨论中确认。
+
+## 当前状态（2026-10-20，接手先读）
+
+> 本节覆盖下文旧的“尚未授权实施”表述；下文代码导航仍可参考。时间为 UTC+8。
+
+- **代码：** PR #52（分支 `feat/bridge-skills`）最后一次经 Codex 审阅的 head 为 `0b55865`，即 P09 验收候选。
+- **P09 真实飞书 E2E：** 已完成一轮（Grok Build、Antigravity、Cursor CLI、Kimi）。发现的问题拆为 P09a–P09m，索引与依赖分组见 [tickets/README.md](tickets/README.md)（`f3c5254`）。
+- **派工：** 2026-10-20 00:59 把整批票作为一条消息发给 Cursor Project cloud agent。它在 `feat/bridge-skills` 上实施，从 P09b 开始（G1 组）按依赖顺序推进，一票一会话，用 TDD 并在会话内做 code review。截至本次更新，#52 head 尚未变化（仍为 `0b55865`）。
+- **实施约束：** 只推 `feat/bridge-skills`，不开新 PR，不把 `.scratch`/Spec 拷进代码分支，不 force-push；实施方**不得**发 `@codex` 或请求任何 review；仓库公开，不写入飞书 ID、人名或密钥。
+
+### 依赖分组（详见 tickets README）
+
+G1 P09b→P09d→P09e→P09f · G2 P09a→P09g · G3 P09k→P09j · G4 P09h→P09m · G5 P09c · G6 P09i · G7 P09l。组内串行，组间可并行。
+
+### 为什么要修（用户可见影响）
+
+| 票 | 级别 | 影响 |
+| --- | --- | --- |
+| P09a | P2 | 周期确认卡次数与实际不符（如每天一个月显示“约每月 28 次”，应为“共 31 次”） |
+| P09b | P2 | 桥重启/断线后补发的真人消息被判为非人工，自动化请求全部被拒 |
+| P09c | P2 | 发卡结果未知时回读对账永远绑不上卡，已送达的卡点了显示“已失效”，operation 卡在 unknown |
+| P09d | P3 | `showToolCalls` 开启时工具卡暴露内部 bridge tool 命令与协议 JSON |
+| P09e | P3 | 最终回复发出前用户已点卡，回复仍写“待确认”，与卡片矛盾 |
+| P09f | P3 | 回复原样搬运 `waiting-confirmation`、`applied` 等机器字段 |
+| P09g | P3 | 替换卡正文“将删除：#N”让人以为任务会被删掉 |
+| P09h | P3 | 从未触发的任务显示“上次运行成功” |
+| P09i | P3 | 补全结束日期卡最短预设一个月，一周/两周只能用自然语言 |
+| P09j | P3 | 同名冲突包让合法包消失，歧义结果给出的 reference 也无法用来选择 |
+| P09k | P3 | 插件目录不存在时只给未文档化的 `invalid-package` |
+| P09l | P3 | Grok 工具卡把 Bash 输出显示成十进制字节数组 |
+| P09m | P3 | 只读 `auth logout --help` 被误判为认证变更，任务被暂停；`auth-config` 码 agent 看不到 |
+
+- **Won't-fix：** B3 暂停→恢复后 revision 回到原值（ABA），内容相同、无副作用。
+- **实测（live）验证：** 场景 1–8 主要路径，包括场景 8 版本切换与过期 reference 拒绝；F4（拦截成立，见 P09m 误报）；F5（自动 run 内管理工具被拒、读取可用）；F7 结果为 fail（P09c）。
+- **仅代码审阅、未实测：** F6（停掉活动 run 后原连接失效、已接受的操作仍可查）需要 run 连接凭据，测试者不应接触；已授权 **user 身份**路径在测试 profile 没有 user token，未登录验证（bot 身份已实测）。
+
+### 剩余计划
+
+1. 实施完成后确认 #52 CI 全绿。
+2. 由编排方（不是实施方）在 #52 发起**限定范围**的 Codex review，只审 `0b55865..<新 head>`。
+3. 分诊 review 意见：P1/P2 必须能在飞书里真实触发，才做根因修复并补测试；无法触发的记 won't-fix；P3 转为延后票。
+4. 在飞书里对修复做可视化复验（卡片、回复、工具卡）。
+5. 正常合并 #52（merge commit，**禁止 squash**）。
+6. 部署生产 bridge，并做健康检查。
+7. 在生产 Grok bridge 上做 P10 UAT。
+8. 测试 bridge 继续保留，用于观察已排期的触发：10-21 11:00、10-22 15:00、10-23 10:00/11:00、10-24..26 每天 09:00（均为 UTC+8）。
+9. 清理测试环境，补建延后的 P3 票。
+
+### 测试环境经验（通用）
+
+- 桌面飞书客户端点卡返回 403，网页客户端（和手机）点击能到达 bridge；这是环境问题，不是 bug。
+- 卡片点击只有在发卡的那个 profile 正在运行时才生效；否则日志为 `cardAction skip-auto-unregistered`，toast 显示“此确认已失效”。
+- 切换 profile 或重启 bridge 会触发 backfill 重放历史消息（各 profile 的 ledger 分开，可能重复处理）。
+- 测试 profile 为调试开启了 `showToolCalls`，生产默认关闭。
+- Grok 额度留给 UAT，E2E 优先用 Kimi。
 
 ## 本版解决什么
 
