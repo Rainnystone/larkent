@@ -861,6 +861,7 @@ it.each([undefined, 21])('reports a lower bound instead of a complete lifetime c
   const first = NOW + 3600000; const interval = { kind: 'interval', timezone: 'Asia/Shanghai', everyMs: 1800000, startAt: first, endAt: NOW + 172800000 };
   await h.store.create({ ...reminder, taskType: 'reminder', schedule: interval, timezone: 'Asia/Shanghai', startAt: first, endAt: interval.endAt, nextFireAt: first, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
   for (let i = 0; i < 21; i++) { const at = first + i * 1800000; h.setNow(at); await h.bridge.wakeAutomation(`1@${at}`); }
+  await h.journal.flush();
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('⏰ Synthetic reminder'))).toHaveLength(21);
   expect(h.store.get(1)?.fireHistory).toHaveLength(20);
   let operationId = '';
