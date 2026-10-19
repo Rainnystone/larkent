@@ -76,7 +76,8 @@ it('discovers and reads automation, corrects real preview feedback in the same I
             const preview = await call('automation.preview', { taskType: 'reminder', schedule: { ...schedule, endAt: Date.parse('2026-10-21T16:00:00Z') } });
             expect(preview).toMatchObject({ category: 'ok', data: { timezone: 'Asia/Shanghai', totalCount: 3, endExclusive: true,
               nextFires: [1792371600000, 1792458000000, 1792544400000], endAt: 1792598400000 } });
-            yield { type: 'final_text', content: `预览共 ${preview.data.totalCount} 次，每天 09:00；结束于 22 日 00:00，尚未创建。` };
+            // A resumed transcript may still emit the old protocol. A tool-using run must not apply it too.
+            yield { type: 'final_text', content: `预览共 ${preview.data.totalCount} 次，每天 09:00；结束于 22 日 00:00，尚未创建。\n<automation_proposal>{"taskType":"reminder","schedule":"10 分钟后","name":"synthetic legacy","taskText":"synthetic legacy"}</automation_proposal>` };
           } catch (err) { agentError = err; yield { type: 'final_text', content: 'client path failed' }; }
           yield { type: 'done', terminationReason: 'normal' };
         })(),
@@ -102,6 +103,7 @@ it('discovers and reads automation, corrects real preview feedback in the same I
   expect(store.list()).toEqual([]);
   expect(store.listDrafts()).toEqual([]);
   expect(channel.sent.some(s => JSON.stringify(s.content).includes('auto.confirm'))).toBe(false);
+  expect(channel.sent.some(s => JSON.stringify(s.content).includes('automation_proposal'))).toBe(false);
   const firstEnv = captured!.toolEnv!;
   expect(JSON.parse((await processClient.call({ version: 1, operation: 'automation.list' }, firstEnv)).stdout)).toMatchObject({ category: 'unavailable', code: 'run-connection-closed' });
 

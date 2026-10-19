@@ -154,6 +154,7 @@ async function runOnce(opts: {
     sessions,
     workspaces,
     ledger,
+    now: () => opts.createTime + 90_000,
     controls: {
       profile: 'test',
       profileConfig: cfg,

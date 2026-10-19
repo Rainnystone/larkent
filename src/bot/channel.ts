@@ -1842,7 +1842,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     runType: scope.startsWith('auto:') ? 'automation' : 'im', store: automations,
     timezone: controls.profileConfig.automations.timezone, agentTasks: controls.profileConfig.automations.agentTasks,
     now,
-    availability: () => !controls.profileConfig.automations.enabled ? 'automations-disabled'
+    availability: () => !catalog.inspect('automation') ? 'automation-plugin-unavailable'
+      : !controls.profileConfig.automations.enabled ? 'automations-disabled'
       : firstMsg.chatType === 'p2p' || mode === 'p2p' || scope.startsWith('meeting:') ? 'automation-requires-group'
       : senderTypeFromRaw((lastMsg as { raw?: unknown }).raw) !== 'user' ? 'automation-requires-human' : undefined,
   };

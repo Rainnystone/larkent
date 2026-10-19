@@ -17,16 +17,16 @@ export interface AutomationToolContext {
   now?: () => number;
 }
 
-const localTime = { type: 'object', required: ['hour', 'minute'], additionalProperties: false, properties: {
+const localTime = { type: 'object', required: ['hour', 'minute'], properties: {
   hour: { type: 'integer', minimum: 0, maximum: 23 }, minute: { type: 'integer', minimum: 0, maximum: 59 },
 } };
 const scheduleSchema = { oneOf: [
-  { type: 'object', required: ['kind', 'fireAt'], properties: { kind: { const: 'one-shot' }, fireAt: { type: 'number', description: 'UTC epoch milliseconds' } } },
+  { type: 'object', additionalProperties: false, required: ['kind', 'fireAt'], properties: { kind: { const: 'one-shot' }, fireAt: { type: 'integer', description: 'UTC epoch milliseconds' } } },
   ...['daily', 'weekday', 'weekly', 'interval'].map(kind => ({
-    type: 'object', required: ['kind', 'timezone', 'startAt', 'endAt', ...(kind === 'interval' ? ['every'] : ['times']), ...(kind === 'weekly' ? ['weekdays'] : [])],
+    type: 'object', additionalProperties: false, required: ['kind', 'timezone', 'startAt', 'endAt', ...(kind === 'interval' ? ['every'] : ['times']), ...(kind === 'weekly' ? ['weekdays'] : [])],
     properties: { kind: { const: kind }, timezone: { type: 'string', description: 'IANA timezone' },
-      startAt: { type: 'number', description: 'Inclusive UTC epoch milliseconds' }, endAt: { type: 'number', description: 'Exclusive UTC epoch milliseconds; required' },
-      ...(kind === 'interval' ? { every: { type: 'object', required: ['unit', 'n'], properties: { unit: { enum: ['minutes', 'hours'] }, n: { type: 'integer', minimum: 1 } } },
+      startAt: { type: 'integer', description: 'Inclusive UTC epoch milliseconds' }, endAt: { type: 'integer', description: 'Exclusive UTC epoch milliseconds; required' },
+      ...(kind === 'interval' ? { every: { type: 'object', required: ['unit', 'n'], properties: { unit: { enum: ['minutes', 'hours'] }, n: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER } } },
         window: { type: 'object', required: ['from', 'to'], properties: { from: localTime, to: localTime } } } : { times: { type: 'array', minItems: 1, items: localTime } }),
       ...(kind === 'weekly' ? { weekdays: { type: 'array', minItems: 1, items: { type: 'integer', minimum: 1, maximum: 7 }, description: 'Monday=1, Sunday=7' } } : {}),
     },
@@ -83,16 +83,19 @@ export function callAutomationTool(operation: string, params: Record<string, unk
   if (params.taskType === 'agent' && !context.agentTasks) return toolResult('unavailable', 'agent-tasks-disabled');
   const input = record(params.schedule);
   if (!input) return toolResult('validation-failed', 'invalid-schedule');
-  const kindFields: Record<string, string[]> = {
-    'one-shot': ['kind', 'fireAt'], daily: ['kind', 'timezone', 'times', 'startAt', 'endAt'],
-    weekday: ['kind', 'timezone', 'times', 'startAt', 'endAt'], weekly: ['kind', 'timezone', 'times', 'weekdays', 'startAt', 'endAt'],
-    interval: ['kind', 'timezone', 'every', 'window', 'startAt', 'endAt'],
-  };
-  const allowed = typeof input.kind === 'string' ? kindFields[input.kind] : undefined;
-  if (!allowed || Object.keys(input).some(key => !allowed.includes(key))) return toolResult('validation-failed', 'invalid-schedule');
-  const required = allowed.filter(key => key !== 'window');
-  const missing = required.filter(key => input[key] === undefined);
-  if (missing.length) return toolResult('needs-input', missing.length === 1 && missing[0] === 'endAt' ? 'missing-end-at' : 'missing-fields', { fields: missing.map(key => `schedule.${key}`) });
+  if (input.kind === undefined) return toolResult('needs-input', 'missing-fields', { fields: ['schedule.kind'] });
+  const shape = scheduleSchema.oneOf.find(shape => shape.properties.kind.const === input.kind);
+  if (!shape || Object.keys(input).some(key => !Object.hasOwn(shape.properties, key))) return toolResult('validation-failed', 'invalid-schedule');
+  const missing = missingRequiredFields(input, shape, 'schedule');
+  if (missing.length) return toolResult('needs-input', missing.length === 1 && missing[0] === 'schedule.endAt' ? 'missing-end-at' : 'missing-fields', { fields: missing });
+  // The text parser permits an omitted start. A supplied machine field must never silently default.
+  const invalidInstants = ['startAt', 'endAt', 'fireAt'].filter(key => Object.hasOwn(input, key)
+    && (typeof input[key] !== 'number' || !Number.isSafeInteger(input[key]) || !Number.isFinite(new Date(input[key] as number).getTime())));
+  if (invalidInstants.length) return toolResult('validation-failed', 'invalid-schedule', { fields: invalidInstants.map(key => `schedule.${key}`) });
+  const every = record(input.every);
+  if (input.kind === 'interval' && every && typeof every.n === 'number' && !Number.isSafeInteger(every.n)) {
+    return toolResult('validation-failed', 'invalid-schedule', { fields: ['schedule.every.n'] });
+  }
   const now = (context.now ?? Date.now)();
   const parsed = parseSchedule(input, { taskType: params.taskType, now });
   if (!parsed.ok) return toolResult(parsed.reason === 'missing-end-at' ? 'needs-input' : 'validation-failed', parsed.reason,
@@ -117,4 +120,17 @@ export function callAutomationTool(operation: string, params: Record<string, unk
     startAt, endAt, endExclusive: schedule.kind !== 'one-shot', nextFires: fires, totalCount,
     local: { start: formatZonedDateTime(canonicalTimezone, startAt), end: formatZonedDateTime(canonicalTimezone, endAt), nextFires: fires.map(at => formatZonedDateTime(canonicalTimezone, at)) },
   });
+}
+
+function missingRequiredFields(value: unknown, schema: unknown, path: string): string[] {
+  const shape = record(schema);
+  if (!shape) return [];
+  if (Array.isArray(value) && shape.items) return value.flatMap((item, i) => missingRequiredFields(item, shape.items, `${path}[${i}]`));
+  const object = record(value);
+  if (!object) return [];
+  const missing = Array.isArray(shape.required) ? shape.required.filter((key): key is string => typeof key === 'string' && object[key] === undefined).map(key => `${path}.${key}`) : [];
+  for (const [key, child] of Object.entries(record(shape.properties) ?? {})) {
+    if (object[key] !== undefined) missing.push(...missingRequiredFields(object[key], child, `${path}.${key}`));
+  }
+  return missing;
 }

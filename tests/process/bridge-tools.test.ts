@@ -2,7 +2,7 @@ import { join } from 'node:path';
 import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
 import { openToolRun, type ToolRunContext } from '../../src/bridge-tools/server';
 import { AutomationsStore } from '../../src/automations/store';
-import { builtinPluginCatalog } from '../../src/plugins/catalog';
+import { builtinPluginCatalog, PluginCatalog } from '../../src/plugins/catalog';
 import { buildToolProcess } from '../helpers/bridge-tool-process';
 import { createTmpProfile } from '../helpers/tmp-profile';
 
@@ -33,6 +33,38 @@ it('rejects context supplied by the caller even on schema discovery', async () =
   const h = await harness();
   expect(await h.call('automation.schema', { profile: 'other', chatId: 'oc_other', actorId: 'ou_other', runType: 'im' }))
     .toMatchObject({ category: 'validation-failed', code: 'unknown-field' });
+});
+
+it('advertises the same accepted schedule fields that preview validation enforces', async () => {
+  const h = await harness();
+  const schema = await h.call('automation.schema');
+  const variants = schema.data.operations['automation.preview'].params.properties.schedule.oneOf;
+  expect(variants.every((variant: { additionalProperties?: boolean }) => variant.additionalProperties === false)).toBe(true);
+  expect(await h.call('automation.preview', { taskType: 'reminder', schedule: { kind: 'one-shot', fireAt: NOW + 3600000, unknown: true } }))
+    .toMatchObject({ category: 'validation-failed', code: 'invalid-schedule' });
+});
+
+it.each(['2026-10-20T00:00:00Z', null, {}, false])('rejects an invalid supplied startAt (%j) without silently moving the requested start to today', async startAt => {
+  const h = await harness();
+  expect(await h.call('automation.preview', { taskType: 'reminder', schedule: {
+    kind: 'daily', timezone: 'Asia/Shanghai', times: [{ hour: 9, minute: 0 }], startAt, endAt: Date.parse('2026-10-21T16:00:00Z'),
+  } })).toMatchObject({ category: 'validation-failed', code: 'invalid-schedule', data: { fields: ['schedule.startAt'] } });
+});
+
+it.each([
+  [{}, ['schedule.kind']],
+  [{ kind: 'daily', timezone: 'UTC', startAt: NOW, endAt: NOW + 86400000, times: [{ hour: 9 }] }, ['schedule.times[0].minute']],
+  [{ kind: 'interval', timezone: 'UTC', startAt: NOW, endAt: NOW + 86400000, every: { unit: 'hours' } }, ['schedule.every.n']],
+])('identifies nested missing schedule fields in the same real tool loop', async (schedule, fields) => {
+  const h = await harness();
+  expect(await h.call('automation.preview', { taskType: 'reminder', schedule })).toMatchObject({ category: 'needs-input', data: { fields } });
+});
+
+it('rejects an overflowing interval rather than returning a successful null interval', async () => {
+  const h = await harness();
+  expect(await h.call('automation.preview', { taskType: 'reminder', schedule: {
+    kind: 'interval', timezone: 'UTC', startAt: NOW, endAt: NOW + 86400000, every: { unit: 'hours', n: 1e308 },
+  } })).toMatchObject({ category: 'validation-failed', code: 'invalid-schedule', data: { fields: ['schedule.every.n'] } });
 });
 
 it('revokes the old connection and rejects cross-run credentials while a new run remains callable', async () => {
@@ -108,4 +140,16 @@ it('gives deterministic errors for malformed, oversize and unsupported input and
   const schema = await client.call('', {}, ['--schema']);
   expect(schema.stderr).toBe(''); expect(JSON.parse(schema.stdout)).toMatchObject({ required: ['version', 'operation'] });
   expect(h.store.list()).toEqual([]); expect(h.store.listDrafts()).toEqual([]);
+});
+
+it('reports missing built-in content and absent or forged connections without granting other authority', async () => {
+  const h = await harness({ catalog: await PluginCatalog.load(['/synthetic-missing-plugin']) });
+  expect((await h.call('plugins.list')).data.diagnostics).toEqual([{ code: 'invalid-package' }]);
+  expect(await h.call('automation.list')).toMatchObject({ category: 'unavailable', code: 'automation-plugin-unavailable' });
+  expect(await h.call('plugins.install', { source: 'synthetic' })).toMatchObject({ category: 'unavailable', code: 'unknown-operation' });
+  const absent = await client.call({ version: 1, operation: 'plugins.list' });
+  expect(JSON.parse(absent.stdout)).toMatchObject({ category: 'unavailable', code: 'no-active-run' });
+  expect(await h.call('plugins.list', {}, { ...h.run.env, LARK_BRIDGE_TOOL_TOKEN: 'synthetic-forged' })).toMatchObject({ category: 'unauthorized', code: 'invalid-run-credential' });
+  const top = await client.call({ version: 1, operation: 'automation.list', profile: 'forged-profile' }, h.run.env);
+  expect(JSON.parse(top.stdout)).toMatchObject({ category: 'validation-failed', code: 'unknown-field' });
 });
