@@ -87,7 +87,7 @@ Dungeon Master 的 loader 调研：三种 CLI 唯一共同读取的位置是 `~/
 - `available(ctx)`：capability 判定（纯函数）；
 - 文档路径；description 从 `SKILL.md` frontmatter 读取（单一事实来源，不在代码里再写一遍）。
 
-automations 的 `available`：`automations.enabled` 且 scope 不以 `auto:` / `meeting:` 开头且为群聊。（现状在 p2p 也注入长说明，然后 p2p 提案被「仅支持群」拒绝；新行为 p2p 不注入，见 Open questions Q2。）
+automations 的 `available`：`automations.enabled` 且 scope 不以 `auto:` / `meeting:` 开头且为群聊。（现状在 p2p 也注入长说明，然后 p2p 提案被「仅支持群」拒绝；新行为 p2p 不注入，已定，见 Decisions Q2。）
 
 加一个工具 = 一个文档目录 + 一个注册项。不引入插件系统、不动态扫描目录。
 
@@ -162,16 +162,16 @@ bridge 校验（解析器、下限 / 上限、群聊限制、编号必须属于�
 - 改写模型正文（例如删掉正文里提确认卡的句子）。
 - `<group_automations>` 快照格式、确认卡 / 看板 / 调度器行为。
 
-## Open questions（给用户）
+## Decisions（用户 2026-10-19 确认，原 Open questions 全取默认）
 
-- **Q1. 文档位置**：按 D1 选仓库内随包发布 + bridge 注入 index，不用 `~/.agents/skills`。是否同意？
-- **Q2. p2p 是否注入**：默认只在群聊注入（p2p 本来就会被「仅支持群」拒绝）。代价：私聊里问「能不能定时提醒」时模型不知道有这个功能。要不要在 p2p 也注入一行「仅群内可用」？
-- **Q3. 拒绝后是否自动重试**：默认不自动重试，下一轮注入反馈。备选：拒绝后 bridge 立刻追加一次（至多一次）修正 run，再出卡；代价是多一次 agent run 与延迟。
-- **Q4. `every 1d` 是否支持**：默认只教语法（文档写明 `every` 只有 m / h，日周用 `每天` / `每周`），不扩解析器。备选：解析器把 `every Nd` 归一成 `每天`（N=1）或拒绝 N>1。
-- **Q5. index 里是否保留一条硬规则**（如「点「是」前不说已创建」）：默认不保留，由 D7 的 bridge 行兜底。
-- **Q6. 读不到文件时**：若某 CLI 在受限 access mode 或 workspace 沙箱下无法读包内绝对路径，是否给该 agent kind 回退为内联全文？默认先由 B04 E2E 验证三种 CLI，确有问题再加回退。
-- **Q7. 文档语言**：默认中文正文 + 英文 reason code。
-- **Q8. 反馈持久化**：默认内存，按 scope，只用一次；重启丢失。是否需要持久化？
+- **Q1** 文档放仓库内随包发布，bridge 注入 index；不用 `~/.agents/skills`。
+- **Q2** 只在群聊注入；p2p 不注入。
+- **Q3** 拒绝后不自动重试，下一轮注入反馈。
+- **Q4** 不扩解析器支持 `every 1d`；文档教 `每天` / `每周`。
+- **Q5** index 不内联硬规则，由 D7 的 bridge 行兜底。
+- **Q6** 先由 B04 验证三种 CLI 能否读绝对路径；读不到再为该 agent kind 另开票做内联回退。
+- **Q7** 中文正文 + 英文 reason code。
+- **Q8** 反馈存内存，按 scope，用一次即清；重启丢失可接受。
 
 ## Further Notes
 

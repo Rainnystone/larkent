@@ -34,6 +34,8 @@ End to end in one slice:
 - [ ] Doc examples unit test: every schedule in the doc's examples parses with `parseScheduleText` at a fixed `now`; every example the doc marks invalid (at least `every 1d 09:00 until …`) fails with the reason the doc states.
 - [ ] Frontmatter `name` equals the registry entry name; `description` is non-empty.
 - [ ] `npm pack --dry-run` lists the `SKILL.md`; the resolver's path also resolves from the built `dist` (unit test or a process test that builds once).
+- [ ] Deploy check: after `pnpm build` and installing the built package the way the live bridge is deployed, the path the running bridge puts in the index exists on disk. JS-only output with no doc is a failure.
+- [ ] The index path is absolute, never relative: the agent CLI's working directory is the per-profile bridge workspace, not the package.
 - [ ] `CONTEXT.md` has the new words. `pnpm ci:local` passes in the worktree (on a memory-tight host run the touched test files, then let CI run the full suite).
 
 ## Out of scope

@@ -18,4 +18,5 @@ The skill index works without any CLI-native skill install and without `--trust`
 ## Acceptance
 
 - [ ] Scenarios 1–6 pass on all three agent kinds; results recorded in this PR as a comment (no Feishu IDs; redact to last 4).
+- [ ] Grok Build without `--trust` can read the doc at its absolute path outside its working directory (the per-profile bridge workspace); record the evidence.
 - [ ] If a CLI cannot read the absolute path under its access mode or sandbox, record it and open Q6 as a new ticket (inline fallback for that agent kind) instead of patching here.
