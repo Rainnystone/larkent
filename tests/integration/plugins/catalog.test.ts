@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -41,7 +41,7 @@ it('reads and locates declared resources with one version reference, and rejects
   expect(skill).toMatchObject({ code: 'content', data: { content: 'Synthetic full skill body', source: { reference: expect.any(String) } } });
   const reference = (skill.data as any).source.reference;
   const resource = await catalog.resolveRead('resources:sample', { resource: 'skills/sample/references/example.md', reference });
-  expect(resource).toMatchObject({ code: 'content', data: { content: 'Known fixture value: 42', source: { reference, path: join(p.root, 'skills/sample/references/example.md') } } });
+  expect(resource).toMatchObject({ code: 'content', data: { content: 'Known fixture value: 42', source: { reference, path: await realpath(join(p.root, 'skills/sample/references/example.md')) } } });
   expect(await catalog.resolveRead('resources:sample', { resource: '.codex-plugin/plugin.json' })).toMatchObject({ code: 'undeclared-resource' });
   const next = await packageFixture('resources', '2.0.0');
   await writeFile(next.skill, 'New version skill');
@@ -105,7 +105,7 @@ it('refuses changed script bytes instead of locating a mixed version, and reject
   await writeFile(script, 'console.log(42);');
   const catalog = await PluginCatalog.load([p.root]);
   expect(await catalog.resolveRead('scripts:sample', { resource: 'skills/sample/scripts/value.mjs' })).toMatchObject({
-    code: 'content', data: { source: { type: 'script', path: script } },
+    code: 'content', data: { source: { type: 'script', path: await realpath(script) } },
   });
   for (const resource of ['../private.txt', '/etc/passwd', 'C:\\private.txt', 'skills/../../private.txt']) {
     expect(await catalog.resolveRead('scripts:sample', { resource })).toMatchObject({ code: 'invalid-path' });
