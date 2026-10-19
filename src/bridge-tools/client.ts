@@ -2,6 +2,9 @@ import { newAutomationOperationId } from '../automations/operation-id';
 import { record, TOOL_MAX_BYTES, TOOL_REQUEST_SCHEMA, toolResult, type ToolResult } from './protocol';
 
 export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv = process.env): Promise<ToolResult> {
+  const endpoint = env.LARK_BRIDGE_TOOL_ENDPOINT;
+  const credential = env.LARK_BRIDGE_TOOL_TOKEN;
+  if (!endpoint || !credential) return toolResult('unavailable', 'no-active-run');
   const request = record(input);
   if (request && (request.params === undefined || record(request.params)) && ['automation.create', 'automation.replace', 'automation.delete', 'automation.pause', 'automation.resume'].includes(String(request?.operation))) {
     const params = record(request.params) ?? {};
@@ -9,9 +12,6 @@ export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv =
   }
   const operationId = record(record(input)?.params)?.operationId;
   const failed = (category: 'unavailable' | 'unknown' | 'execution-failed', code: string) => toolResult(operationId ? 'unknown' : category, code, operationId ? { operationId, state: 'unknown', applied: null } : undefined);
-  const endpoint = env.LARK_BRIDGE_TOOL_ENDPOINT;
-  const credential = env.LARK_BRIDGE_TOOL_TOKEN;
-  if (!endpoint || !credential) return failed('unavailable', 'no-active-run');
   try {
     const url = new URL(endpoint);
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !== '/tool' || url.username || url.password || url.search || url.hash) {

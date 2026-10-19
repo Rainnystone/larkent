@@ -284,7 +284,7 @@ it('reports offline creation as received without a sent card, then sends it once
   await h.turn(async call => {
     expect(await call('automation.create', reminder)).toMatchObject({ category: 'unknown' });
     const result = await call('automation.create', { ...reminder, name: 'Synthetic offline reminder' });
-    expect(result).toMatchObject({ category: 'execution-failed', code: 'card-not-sent', data: { applied: false } }); operationId = result.data.operationId;
+    expect(result).toMatchObject({ category: 'unknown', code: 'card-not-sent', data: { applied: null, state: 'unknown' } }); operationId = result.data.operationId;
   }, 'oc_synthetic', false);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
   await h.restart();
@@ -466,6 +466,22 @@ it('deletes only after the human confirms, then recovers the applied receipt wit
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: item.id, applied: true } });
     expect(await call('automation.delete', { id: item.id, operationId })).toMatchObject({ category: 'applied' });
   });
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+}, 30000);
+
+it('rejects a replacement whose schedule has no remaining fire before sending a card', async () => {
+  const h = await harness();
+  await h.store.create({ ...reminder, taskType: 'reminder', timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
+  const sundayOnly = {
+    kind: 'weekly', timezone: 'Asia/Shanghai', weekdays: [7], times: [{ hour: 9, minute: 0 }],
+    startAt: NOW, endAt: Date.parse('2026-10-20T16:00:00Z'),
+  };
+  await h.turn(async call => {
+    expect(await call('automation.create', { ...reminder, schedule: sundayOnly })).toMatchObject({ category: 'validation-failed', code: 'no-remaining-fires' });
+    expect(await call('automation.replace', { ...reminder, id: 1, schedule: sundayOnly })).toMatchObject({ category: 'validation-failed', code: 'no-remaining-fires' });
+  });
+  expect(h.store.list()).toMatchObject([{ id: 1, name: reminder.name }]);
+  expect(h.store.listDrafts()).toEqual([]);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
 }, 30000);
 

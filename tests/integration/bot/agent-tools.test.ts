@@ -2,7 +2,7 @@ import { createAutomationToolHarness, automationButton as button, automationClic
 import { writeExternalPlugin } from '../../helpers/external-plugin';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { writeFile, realpath, rename } from 'node:fs/promises';
+import { mkdir, writeFile, realpath, rename } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, beforeAll, afterAll, expect, it, vi } from 'vitest';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
@@ -137,6 +137,55 @@ it('rejects agent creation in the same turn when its captured working directory 
   });
   expect(h.store.listDrafts()).toEqual([]);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+}, 30000);
+
+it('rejects an agent replacement when the captured working directory is gone', async () => {
+  const h = await harness();
+  await h.store.create({
+    ...reminder, taskType: 'agent', cwd: h.tmp.workspace, timezone: 'Asia/Shanghai',
+    startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate',
+  });
+  await h.turn(async call => {
+    await rename(h.tmp.workspace, `${h.tmp.workspace}-moved`);
+    expect(await call('automation.replace', {
+      ...reminder, taskType: 'agent', name: 'Agent replacement', taskText: 'Synthetic replacement instruction', id: 1,
+    })).toMatchObject({ category: 'unavailable', code: 'agent-cwd-unavailable' });
+  });
+  expect(h.store.list()).toHaveLength(1);
+  expect(h.store.listDrafts()).toEqual([]);
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
+}, 30000);
+
+it('does not reuse an agent replacement drafted from a different workspace', async () => {
+  const h = await harness();
+  const other = join(h.tmp.root, 'other-workspace');
+  await mkdir(other);
+  await h.store.create({
+    ...reminder, taskType: 'agent', name: 'Existing agent', taskText: 'Existing agent instruction',
+    cwd: h.tmp.workspace, timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!,
+    chatId: 'oc_synthetic', createdBy: 'ou_mate',
+  });
+  const replacement = { ...reminder, taskType: 'agent', name: 'Agent replacement', taskText: 'Synthetic replacement instruction', id: 1 };
+  let firstId = '';
+  await h.turn(async call => {
+    const result = await call('automation.replace', replacement);
+    expect(result).toMatchObject({ category: 'waiting-confirmation' });
+    firstId = result.data.operationId;
+  });
+  const first = h.store.listDrafts()[0]!;
+  expect(first.op).not.toBe('delete');
+  expect(await realpath(first.op === 'delete' ? '' : first.cwd!)).toBe(await realpath(h.tmp.workspace));
+  h.cfg.workspaces.default = other;
+  await h.turn(async call => {
+    const result = await call('automation.replace', replacement);
+    expect(result).toMatchObject({ category: 'waiting-confirmation' });
+    expect(result.data.operationId).not.toBe(firstId);
+  });
+  const drafts = h.store.listDrafts();
+  expect(drafts).toHaveLength(2);
+  const cwds = await Promise.all(drafts.map(async draft => realpath(draft.op === 'delete' ? '' : draft.cwd!)));
+  expect(new Set(cwds).size).toBe(2);
+  expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(2);
 }, 30000);
 
 it('reports an empty successful run before delivery and recovers its staged result after restart without rerunning', async () => {

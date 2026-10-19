@@ -134,7 +134,8 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
     ...base, state: needsEnd ? 'needs-input' : 'waiting-confirmation', applied: false, cardMessageId: draft.cardMessageId,
     ...(needsEnd ? { fields: ['schedule.endAt'] } : {}),
   });
-  return toolResult('execution-failed', draft.delivery?.state === 'rejected' ? 'card-send-failed' : 'card-not-sent', { ...base, state: 'not-applied', applied: false });
+  if (draft.delivery?.state === 'rejected') return toolResult('execution-failed', 'card-send-failed', { ...base, state: 'not-applied', applied: false });
+  return unknownAutomationOperation(current.operationId, 'card-not-sent', base);
 }
 export function validateAutomationOperationId(value: unknown, context: AutomationToolContext): ToolResult | undefined {
   const id = readAutomationOperationId(value);

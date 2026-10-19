@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   FEISHU_READBACK_MAX_PAGES,
+  FEISHU_READBACK_PAGE_SIZE,
   FEISHU_UUID_WINDOW_MS,
   readBackBotReply,
   redeliverStagedReply,
@@ -455,6 +456,32 @@ describe('readBackBotReply', () => {
     });
     expect(found).toEqual({ kind: 'none' });
     expect(listed).toEqual([]);
+  });
+
+  it('omits time-range parameters when reading back a thread container', async () => {
+    const listed: Record<string, unknown>[] = [];
+    const channel = createFakeChannel({ botAppId: APP });
+    channel.rawClient.im.v1.message.list = async (params: unknown) => {
+      listed.push(asListParams(params));
+      return { data: { items: [], has_more: false } };
+    };
+    const found = await readBackBotReply({
+      channel,
+      chatId: CHAT,
+      parentId: 'om_src',
+      botAppId: APP,
+      afterMs: 1_760_000_000_000,
+      replyInThread: true,
+      threadId: 'omt_topic',
+      markdown: 'ANSWER',
+    });
+    expect(found).toEqual({ kind: 'none' });
+    expect(listed).toEqual([{
+      container_id_type: 'thread',
+      container_id: 'omt_topic',
+      sort_type: 'ByCreateTimeDesc',
+      page_size: FEISHU_READBACK_PAGE_SIZE,
+    }]);
   });
 
   it('reads a replyInThread answer from the thread container after the uuid window', async () => {

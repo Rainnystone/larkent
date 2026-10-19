@@ -216,6 +216,12 @@ it('reports missing built-in content and absent or forged connections without gr
   expect(await h.call('plugins.install', { source: 'synthetic' })).toMatchObject({ category: 'unavailable', code: 'unknown-operation' });
   const absent = await client.call({ version: 1, operation: 'plugins.list' });
   expect(JSON.parse(absent.stdout)).toMatchObject({ category: 'unavailable', code: 'no-active-run' });
+  const absentWrite = await client.call({
+    version: 1,
+    operation: 'automation.create',
+    params: { taskType: 'reminder', name: 'Synthetic reminder', taskText: 'Synthetic reminder body', schedule: { kind: 'one-shot', fireAt: NOW + 3_600_000 } },
+  });
+  expect(JSON.parse(absentWrite.stdout)).toEqual({ version: 1, category: 'unavailable', code: 'no-active-run' });
   expect(await h.call('plugins.list', {}, { ...h.run.env, LARK_BRIDGE_TOOL_TOKEN: 'synthetic-forged' })).toMatchObject({ category: 'unauthorized', code: 'invalid-run-credential' });
   const top = await client.call({ version: 1, operation: 'automation.list', profile: 'forged-profile' }, h.run.env);
   expect(JSON.parse(top.stdout)).toMatchObject({ category: 'validation-failed', code: 'unknown-field' });

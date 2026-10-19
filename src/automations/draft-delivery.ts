@@ -1,7 +1,7 @@
 import type { LarkChannel } from '@larksuite/channel';
 import { createHash } from 'node:crypto';
 import { classify } from '../bot/feishu-error';
-import { FEISHU_READBACK_MAX_PAGES, FEISHU_READBACK_PAGE_SIZE } from '../bot/feishu-delivery';
+import { FEISHU_READBACK_MAX_PAGES, feishuReadbackListParams } from '../bot/feishu-delivery';
 import { sendManagedCard, type ManagedCardSendResult } from '../card/managed';
 import { draftCardBodyFromCard } from './card-body';
 import type { AutomationDraft, AutomationsStore } from './store';
@@ -38,8 +38,9 @@ export async function reconcileDraftCard(channel: LarkChannel, store: Automation
   const container = inThread ? draft.cardReply?.threadId : draft.chatId;
   if (!container) return;
   for (let page = 0; page < FEISHU_READBACK_MAX_PAGES; page++) {
-    const response = await channel.rawClient.im.v1.message.list({ params: { container_id_type: inThread ? 'thread' : 'chat', container_id: container,
-      start_time: String(Math.floor(draft.createdAt / 1000)), page_size: FEISHU_READBACK_PAGE_SIZE, sort_type: 'ByCreateTimeDesc', ...(pageToken ? { page_token: pageToken } : {}) } });
+    const response = await channel.rawClient.im.v1.message.list({ params: feishuReadbackListParams({
+      containerId: container, inThread, afterMs: draft.createdAt, pageToken,
+    }) });
     const data = response?.data;
 
     for (const item of data?.items ?? []) {
