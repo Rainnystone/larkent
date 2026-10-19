@@ -1,6 +1,8 @@
-# B03 — Automations skill: rejected proposals never read as "card coming": bridge line says no card; skill wording stops promising one
+# [Superseded] B03 — Automations skill: rejected proposals never read as "card coming": bridge line says no card; skill wording stops promising one
 
-Status: ready-for-agent · Blocked by: B01 · Skill: `automations` · Track: code branch `feat/bridge-skills` (refs verified at `953e7bd`) · One ticket per session · Land after B02 on the shared branch (both touch the settle path)
+Status: superseded · Revision 2.1 reference only · Replaced by Revision 3 · Do not claim or implement
+
+> 当前依据为 [Revision 3](../../bridge-skills.md)。以下保留旧票内容用于追溯，不是当前实施要求；下一阶段重新运行 to-tickets。
 
 ## What to build
 

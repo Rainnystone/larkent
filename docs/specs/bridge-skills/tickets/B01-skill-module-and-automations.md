@@ -1,6 +1,8 @@
-# B01 — Tracer bullet: bridge skill module + per-turn catalog, with automations migrated as the first skill
+# [Superseded] B01 — Tracer bullet: bridge skill module + per-turn catalog, with automations migrated as the first skill
 
-Status: ready-for-agent · Blocked by: none · Track: code branch `feat/bridge-skills` (create from `origin/master` if absent; refs verified at `953e7bd`) · One ticket per session
+Status: superseded · Revision 2.1 reference only · Replaced by Revision 3 · Do not claim or implement
+
+> 当前依据为 [Revision 3](../../bridge-skills.md)。以下保留旧票内容用于追溯，不是当前实施要求；下一阶段重新运行 to-tickets。
 
 ## What to build
 

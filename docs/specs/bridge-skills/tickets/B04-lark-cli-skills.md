@@ -1,6 +1,8 @@
-# B04 — lark-cli how-to leaves the system prompt: `lark-cli` and `lark-user-identity` skills, catalog on every run kind
+# [Superseded] B04 — lark-cli how-to leaves the system prompt: `lark-cli` and `lark-user-identity` skills, catalog on every run kind
 
-Status: ready-for-agent · Blocked by: B01 · Track: code branch `feat/bridge-skills` (refs verified at `953e7bd`) · One ticket per session · Run after B03 on the shared branch (shared files: system prompt, IM prompt assembly)
+Status: superseded · Revision 2.1 reference only · Replaced by Revision 3 · Do not claim or implement
+
+> 当前依据为 [Revision 3](../../bridge-skills.md)。以下保留旧票内容用于追溯，不是当前实施要求；下一阶段重新运行 to-tickets。
 
 ## What to build
 

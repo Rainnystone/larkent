@@ -1,6 +1,8 @@
-# B07 — E2E on the test bridge: Grok Build, Antigravity CLI, Cursor CLI
+# [Superseded] B07 — E2E on the test bridge: Grok Build, Antigravity CLI, Cursor CLI
 
-Status: ready-for-human · Blocked by: B01, B02, B03, B04, B05, B06 · Track: test bridge on the head of `feat/bridge-skills` (no code unless a finding becomes a new ticket) · One session
+Status: superseded · Revision 2.1 reference only · Replaced by Revision 3 · Do not claim or implement
+
+> 当前依据为 [Revision 3](../../bridge-skills.md)。以下保留旧票内容用于追溯，不是当前实施要求；下一阶段重新运行 to-tickets。
 
 ## What to verify
 

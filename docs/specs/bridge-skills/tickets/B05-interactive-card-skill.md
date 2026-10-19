@@ -1,6 +1,8 @@
-# B05 — Card callback convention becomes the `interactive-card` skill
+# [Superseded] B05 — Card callback convention becomes the `interactive-card` skill
 
-Status: ready-for-agent · Blocked by: B01 · Track: code branch `feat/bridge-skills` (refs verified at `953e7bd`) · One ticket per session · Run after B04 on the shared branch (shared file: system prompt)
+Status: superseded · Revision 2.1 reference only · Replaced by Revision 3 · Do not claim or implement
+
+> 当前依据为 [Revision 3](../../bridge-skills.md)。以下保留旧票内容用于追溯，不是当前实施要求；下一阶段重新运行 to-tickets。
 
 ## What to build
 

@@ -1,290 +1,244 @@
-# Spec: Bridge skills（所有桥接 agent 共用的 skill 池 + 原子 bridge 工具）
+# Bridge plugins 与 automation 工具调用规格
 
-Status: ready-for-agent · Docs track: PR #51（branch `docs/bridge-skills`，本 PR，never merged）· Code track: branch `feat/bridge-skills`（from `origin/master`；one shared code PR，code only）
-Tickets: [`bridge-skills/tickets/`](bridge-skills/tickets/README.md)
-Baseline: `master@953e7bd`（PR #49 automations 已合入）。本文只写行为、决策、边界与验收；代码锚点（file:line，已对 `953e7bd` 核对）写在各 ticket。
-Method: [mattpocock/skills](https://github.com/mattpocock/skills) `to-spec` → `to-tickets`；模块设计用同仓库 `codebase-design`（deep module / interface / seam / adapter / leverage / locality、deletion test、design it twice）与 `improve-codebase-architecture`（按热点找 deepening 机会）；SKILL.md 写法遵循 `writing-for-agents`（含 `SKILL-MECHANICS.md`）。参考实现：Pi agent framework 的 skills（启动时只把 name / description / path 放进上下文，命中时模型自己读 `SKILL.md`）。
-Revision 2（2026-10-19）：上一版只覆盖 automations，读起来像 automations 的一个功能。本版把 bridge skill 做成独立模块，automations 是接入的第一个 skill。Revision 2.1（同日）：N1–N7 定稿并入 Decisions；catalog 改放在用户输入之前（N3）。对外说明见 [`bridge-skills/HANDOFF.md`](bridge-skills/HANDOFF.md)。
+Revision 3 · 2026-10-19 · Status: ready-for-agent（规格可进入 to-tickets）· 实施尚未授权
 
----
+文档载体：[PR #51](https://github.com/Rainnystone/larkent/pull/51)，分支 `docs/bridge-skills`。本 PR 保持文档专用，不合入主分支。代码核对基线：`master@953e7bdde3549b03bddb8d191d8856683d1dc4c5`，包含 PR49。
+
+本版依据 grill-with-docs 中确认的产品决定重写，替代 Revision 2.1。原 B01–B07 已标记 superseded，不能继续按旧票实施。下一阶段是 to-tickets；本轮只修订规格和交接材料。入口见 [HANDOFF](bridge-skills/HANDOFF.md)，旧票状态见 [tickets](bridge-skills/tickets/README.md)。
 
 ## Problem Statement
 
-bridge 往 agent prompt 里自动注入的「怎么做」的文字，散落在代码各处的硬编码字符串里，并且每个 bot、每一轮都整段注入：
+用户在飞书中用自然语言要求创建、调整或查看自动化。Larkent 已有调度、确认卡、任务持久化和 agent 执行能力，但 agent bot 未必知道正确用法；现有创建入口要求模型在最终回复中输出特殊提案，bridge 等模型结束后才校验。错误显示给了用户，却没有作为工具结果回到正在工作的模型。
 
-- **automations**：`AUTOMATION_PROPOSAL_INSTRUCTION`（约 1.5k 字）在 `automations.enabled` 时每轮追加。
-- **每轮 IM 指令**：`BRIDGE_AGENT_INSTRUCTIONS`（lark-cli bridge-bound 环境 4 行），和 system prompt 里的同一段内容重复。
-- **system prompt**（6 种 agent kind 共用：Grok 走 `--rules`，Claude 走 system prompt 文件，Cursor / Antigravity / Kimi / Codex 前置到每条 prompt）：除了 bridge 契约本身，还有交互卡片回调约定、lark-cli 身份规则、OAuth 授权流程这几段操作手册。自动化 run 还要再加一段「忽略上文身份规则和 OAuth 整节」来抵消它们。
-- **云文档评论 / 会议**：评论 prompt 里有读取命令和回复格式要求，会议 prompt 里有回答长度和格式要求，都写在各自的 prompt builder 里。
+真实使用中，同一条“今天、明天、后天，每天 9 点”的请求连续三次因模型构造的时间表达式不合法而失败；修正过程中还改变了用户的准确时间。后续确认卡的执行次数与用户要求不符，已确认任务又因旧的 bot-only 策略中断。这分别暴露了用法发现、调用反馈、意图与排期核对、身份实现四类问题，不能只靠增加提示词解决。
 
-后果：
-
-1. **不可管理**：同一条规则改一处漏一处（lark-cli 环境说明有两份）；新增一个 bridge 能力就得往 prompt 里再塞一段长句，看不出当前到底注入了什么。
-2. **不可门控**：bot 会看到它当前用不上的能力的说明。自动化 run 只能靠一段「忽略上文」去抵消；p2p 也会注入 automations 说明，然后提案被「仅支持群」拒绝。
-3. **没有渐进披露**：不管用不用，每轮都付全部 context load。
-4. **教学效果无法测试**：2026-10-19 线上证据（一个真实群，Grok Build profile）：
-   - 模型连续三次写 `every 1d ...`，三次都被 bridge 以 `invalid-schedule` 拒绝。`every` 只接受分钟 / 小时，说明里没有 `每天` / `每周` / `每个工作日` 的完整写法，也没有「被拒后怎么改」的映射；模型下一轮也拿不到机器可用的拒绝原因（resume 的会话转录里只有模型自己的输出）。
-   - 模型正文承诺「我给你发确认卡」，而同一条回复末尾 bridge 写的是「没有创建任务」。
+bridge 的操作知识还分散在提示词中。全部常驻上下文会随能力增长持续增加成本；直接依赖某一家 CLI 的原生插件体系又无法服务六种平等的 runtime。需要属于 Larkent 的插件层，集中管理 skills、资源和可执行能力，让模型逐层发现和调用。
 
 ## Solution
 
-在 bridge 里建一个独立的 **bridge skill 模块**：一个 **skill 池**，加上一组原子的 **bridge 工具**，所有被桥接的 agent bot（Grok Build、Antigravity CLI、Cursor CLI，以及 Claude / Codex / Kimi 和以后接入的）共用。
+Larkent 接纳由外部维护者安装的 bridge plugin。插件是一组 skills 及相关资源、脚本和命令的管理单元。首版默认只展示插件简短用途；模型需要时查看包内能力，再读取具体 skill。明确点名可以直达，不为此常驻全量 skill 索引。
 
-- **Skill** = 一个目录里的一份 `SKILL.md`（frontmatter `name` / `description`，正文写何时用、怎么组合工具、示例、出错怎么改）。只描述「何时适用、如何组合工具」，不含硬约束。可以搭配 bridge 工具（automations），也可以是纯指导（例如以后的 coding skill）。
-- **Bridge 工具** = 原子、机械、可组合的能力：一条命令、一个脚本、或 bridge 原生动作（提议 / 创建 / 删除定时任务、发 / 更新卡片、回复评论）。硬约束、权限、校验全部在工具 / bridge 代码里，从不依赖模型是否照做。
-- **每轮 catalog**：bridge 在用户输入**之前**放一个 **skill catalog**（紧接 system prompt，便于 prompt cache；决策 N3），每个当前可见的 skill 一到两行（触发条件 + `SKILL.md` 的绝对路径）。模型只在适用时用自己的读文件工具读全文（渐进披露），再自主决定调用哪些 bridge 工具。
-- **门控**：skill 声明它依赖的 bridge 工具；工具是否可用由代码按 profile 配置和本轮上下文判定。bot 永远看不到它缺工具的 skill。
-- **最小接口**：模块第一版只有两个入口：列出 catalog、读取某个 skill 全文。扩展点（更多 skill 根目录、给读不了路径的 agent 一个读 skill 的命令）留好 seam，不预先实现。
-- **automations 是第一个接入的 skill**：`AUTOMATION_PROPOSAL_INSTRUCTION` 迁移成 `automations` skill，顺带修好上面的线上问题（完整语法、按 reason code 的修正条目、下一轮的拒绝反馈、拒绝时不承诺确认卡）。之后把其余操作手册类注入（lark-cli、交互卡片、OAuth、评论、会议）逐个迁成 skill；最后 skill 系统之外只剩 bridge 契约和本轮事实（D7 清单）。
+第一个实装插件是 automation。模型理解自然语言、读取 skill、通过自身工具能力调用共用命令入口。bridge 校验结构化请求，调用已有 automation 业务逻辑，将实际结果返回本轮 runtime。模型据此修正参数或回复。已有人工确认流程继续承担任务生效前的确认，结果区分等待确认、已生效和已执行。
+
+产品支持 bot 和 user 两类操作身份。user 操作使用所属 profile 已接入的授权；任务创建者单独记录。组织决定账号、权限与使用风险，产品正确使用配置并如实反馈。账号变更后的迁移、恢复或重新接入由组织处理。
+
+### 领域词汇
+
+| 术语 | 含义 |
+| --- | --- |
+| Agent bot | 经 Larkent 接入飞书的 agent，覆盖六种 CLI 及本机、服务器等部署环境。 |
+| Bridge plugin | 由 Larkent 加载的扩展包，包含 skills、资源以及受支持的执行入口。 |
+| Agent-native plugin / skill | 各 CLI 自行管理的原生扩展；Larkent 不接管，也不自动继承其全局安装。 |
+| Plugin summary | 说明插件用途的简短发现入口，不是包内所有 skill 的索引。 |
+| Operation identity | 某次飞书操作使用的 bot 或 user 身份，与 agent bot 的接入身份区分。 |
+| Task creator | 提出并创建任务的人，不自动等于执行 user 操作的授权主体。 |
+| Profile / run / scope | 沿用项目领域模型，分别表示部署配置、一次 agent 运行及其会话归属。 |
+
+### 用户可见流程
+
+1. 组织或受委托的维护 agent 在部署主机安装兼容插件，默认所有 profile 可发现它。
+2. 用户发送自然语言需求，也可点名某个插件或 skill。
+3. agent 根据简介展开相关能力、读取 skill，以正常工具调用提交请求。
+4. 参数错误直接返回本轮模型；模型依据确定性错误修正，保持原始时间与任务意图。
+5. 有效请求产生准确的排期预览及既有确认卡；用户确认后任务生效。
+6. 到期运行复用原有调度和交付机制，使用该 profile 的现有授权；真实执行结果单独记录和报告。
 
 ## User Stories
 
-Skill 模块（通用）
-
-1. As a bot owner, I want every piece of how-to text the bridge injects to live in one `SKILL.md` per skill, so that I can see and edit what my bots are taught in one place.
-2. As a bot owner, I want my bot to see only skills whose bridge tools it actually has this turn, so that disabled features stay invisible and are never proposed.
-3. As a bot owner, I want unattended `auto:` / `meeting:` runs to see only the skills that apply to them, so that the system prompt no longer needs an "ignore the section above" addendum.
-4. As a bot owner, I want the per-turn overhead to be a short catalog (one or two lines per visible skill), so that every turn costs fewer tokens than today's full instructions.
-5. As a bot owner running Grok Build, I want skills to work without passing `--trust`, so that the bridge does not widen Grok's project trust.
-6. As a bot owner running Antigravity CLI or Cursor CLI, I want skills to work without any per-host skill install, so that a fresh host works after `start`.
-7. As a bot owner, I want skill docs to ship inside the deployed package and match the installed bridge version, so that docs and tool behaviour cannot drift.
-8. As a bot owner, I want the bridge's tool validation to stay authoritative whatever the model read, so that a model that skipped a skill can still never do something invalid.
-9. As a model, I want a compact catalog that tells me which skills exist this turn, when each applies, and where its full text is, so that I read a skill only when the request needs it.
-10. As a model, I want each skill to tell me when it applies and how to compose the bridge tools it pairs with, so that I can decide on my own which tool to call.
-11. As a model, I want catalog paths to be absolute, so that I can read them from the per-profile bridge workspace I run in.
-12. As a model, I want the catalog to tell me which of a skill's optional tools are off this turn (for example agent tasks), so that I do not propose something the bridge will refuse.
-13. As a maintainer, I want to add a pure-guidance skill by adding one directory with a `SKILL.md`, with no code change, so that the pool grows cheaply.
-14. As a maintainer, I want to add a tool-backed skill by adding the `SKILL.md` plus one bridge tool (its availability predicate and validation in code), so that the gate and the enforcement come from the same predicate.
-15. As a maintainer, I want a contract test that fails when a skill has bad frontmatter, names an unknown bridge tool, has a description over budget, or is missing from the built package, so that a broken skill cannot ship.
-16. As a maintainer, I want the module's interface to be just "list the catalog" and "read a skill", so that callers (IM turns, comment runs, meeting runs, rejection feedback, tests) all use one small surface.
-17. As a maintainer, I want one guard test that lists every prompt section the bridge injects and classifies it as contract, turn fact or skill catalog, so that new hard-coded how-to text cannot creep back.
-18. As a maintainer, I want the module to have a seam for extra skill roots and an agent-facing read command later, so that per-profile skills or agents that cannot read files can be added without changing callers.
-
-Automations（第一个 skill）
-
-19. As a group member, I want to say “每天 9 点提醒我写日报，到年底”, so that the bot proposes `每天 09:00 until <年底>` and I get a confirm card on the first try.
-20. As a group member, I want weekly and workday schedules (“每周一三五 10:00”, “工作日 9:00”) to be written correctly by the bot, so that I don't have to learn the grammar.
-21. As a group member, I want “每 2 小时” to become `every 2h`, and “每天” never to become `every 1d`, so that interval and daily schedules are not confused.
-22. As a group member, when a proposal is rejected, I want the bot's next try to fix the specific problem the bridge named, so that I don't watch the same mistake three times.
-23. As a group member, I want the bot's text to never promise a confirm card that then does not appear, and the bridge line to say plainly that no card was generated, so that I can trust the outcome.
-24. As a group member, I want rejection suggestions that match the kind of schedule I asked for, so that a daily request is not answered with only one-shot examples.
-25. As a bot owner, I want agent-task proposals taught as unavailable when `automations.agentTasks` is off, so that the bot proposes reminders instead of getting refused.
-26. As a bot owner, I want the automations skill to say scheduled agent tasks run with bot identity only (never `--as user`) and how to fix a `user-identity` pause, so that tasks do not get paused by policy-guard.
-27. As a bot owner, I want p2p chats not to see the automations skill, so that the bot never proposes something the bridge refuses in p2p.
-28. As a maintainer, I want a test that fails when the bridge can produce a rejection reason the skill has no recovery entry for, and a test that every schedule example in the skill parses, so that the skill stays complete and truthful.
-29. As a maintainer, I want rejection reason codes to be stable strings shared by logs, feedback and skill, so that one vocabulary serves humans, models and tests.
-30. As a group member, I want group task snapshots (`<group_automations>`) to keep working unchanged, so that delete / replace by id is unaffected.
+1. 作为飞书用户，我希望用日常语言安排自动化，以便不必学习命令语法。
+2. 作为飞书用户，我希望每天 9 点始终保持为 9 点，以便模型修错时不擅自改变业务意图。
+3. 作为飞书用户，我希望三天任务明确显示三次，以便确认实际排期符合要求。
+4. 作为飞书用户，我希望看到时区、起止边界及接下来的执行时间，以便识别日期误解。
+5. 作为飞书用户，我希望模型在本轮收到参数错误并修正，以便不必反复催它排查。
+6. 作为飞书用户，我希望回复区分等待确认、已生效和执行完成，以便知道当前状态。
+7. 作为飞书用户，我希望发卡或保存失败时得到真实反馈，以便不会误以为任务已经建立。
+8. 作为飞书用户，我希望能查看、创建、替换、暂停、恢复和删除任务，以便使用已有 automation 能力。
+9. 作为飞书用户，我希望重复请求或网络重试不会产生重复任务与确认卡，以便状态保持一致。
+10. 作为飞书用户，我希望不确定的操作结果可以查询，以便无需冒险重复写入。
+11. 作为飞书用户，我希望变更前核对目标当前状态，以便旧对话编号不会误操作其他任务。
+12. 作为飞书用户，我希望已授权的 user 操作能用于定时任务，以便覆盖 bot 无法完成的工作。
+13. 作为组织维护者，我希望 user 操作沿用 profile 接入的账号，以便集中决定提供什么授权。
+14. 作为组织维护者，我希望账号变更由自身运维处理，以便产品不额外引入迁移审批。
+15. 作为组织维护者，我希望通过本地包或 Git 在主机准备插件，以便沿用现有部署方式。
+16. 作为组织维护者，我希望一次安装默认供所有 profile 使用，以便无需逐个启用。
+17. 作为组织维护者，我希望飞书 agent bot 只消费已安装插件，以便安装和更新由外部维护完成。
+18. 作为组织维护者，我希望能识别生效版本与加载错误，以便定位实际使用的内容。
+19. 作为插件作者，我希望将 skills、参考资料和脚本一起分发，以便集中管理功能包。
+20. 作为插件作者，我希望脚本可为 agent 增加能力，以便普通扩展无需改 bridge 业务代码。
+21. 作为插件作者，我希望复用现有兼容包，以便不为 Larkent 重写全部操作知识。
+22. 作为插件作者，我希望不受支持的能力明确报告，以便不会出现功能被悄悄跳过。
+23. 作为 agent bot 使用者，我希望先只加载插件简介，以便更多 skills 不会挤占初始上下文。
+24. 作为 agent bot 使用者，我希望点名插件或 skill 后准确读取，以便省去多余发现步骤。
+25. 作为 agent bot 使用者，我希望同名能力不会互相覆盖，以便明确选择目标。
+26. 作为 agent bot 使用者，我希望续会话按当前可用能力工作，以便旧上下文不继续调用失效入口。
+27. 作为任一受支持 CLI 的使用者，我希望获得相同的 bridge plugin 能力，以便不依赖某一家原生协议。
+28. 作为原生 CLI 插件使用者，我希望两层扩展保持独立，以便原有环境继续按原方式运行。
+29. 作为维护者，我希望协议、排期校验与状态以代码为单一依据，以便 skill 文案不会成为业务判断程序。
+30. 作为维护者，我希望测试证明请求、反馈、确认和执行过程，以便不把“读过 skill”当成业务成功。
+31. 作为维护者，我希望旧回复提案退出执行路径，以便不长期维护两套自动化协议。
+32. 作为组织维护者，我希望普通插件故障有清楚诊断，以便正常聊天和其他能力不受无关内容拖累。
 
 ## Implementation Decisions
 
-### D1. 模块：一个 deep module，两个入口
+本节是基于已确认产品边界收敛的工程设计，规定应实现的契约，不表示当前代码已具备新能力。命令拼写、私有类型和传输细节在 tickets 中落实。
 
-术语（`codebase-design` 词汇，原样使用）：**module / interface / seam / adapter / depth / leverage / locality**。领域新词见 D10。
+### D1 — 模块职责与两层扩展
 
-**Bridge skill 模块** 的 interface 只有两个入口，调用方都传入同一个 **turn context**（profile 配置、scope 与 run 种类 `im` / `auto` / `meeting` / `comment`、chat 类型、触发者是人还是 bot）：
+- **Plugin catalog module** 负责包验证、描述规范化、名称解析、可用性和内容读取，隐藏目录布局与 manifest 差异。
+- **Bridge tool module** 负责本轮调用绑定、请求校验、结果和生命周期；automation 是首个业务接入。
+- **Automation module** 继续拥有调度、草稿、确认、持久化和运行状态。聊天命令、看板和新机器入口共用业务处理，不各自复制规则。
+- **CLI adapters** 负责启动 runtime、传递环境和收集事件；模型推理与工具循环留在各 runtime 内。
+- 导入兼容包是显式主机维护动作，不扫描并继承各 CLI 的全局插件安装。
 
-- **list catalog**：给定 turn context，返回本轮可见 skill 的条目（`name`、`description`、`SKILL.md` 绝对路径、该 skill 的可选工具里本轮不可用的那些）。条目按 name 稳定排序。
-- **read skill**：给定 turn context 和 name，返回该 skill 全文；skill 本轮不可见（被门控）时返回空。B02 的拒绝反馈按 reason code 取修正条目、测试、以及将来给 agent 用的读命令都走这个入口。
+### D2 — 插件包与兼容契约
 
-interface 里还包括这些调用方必须知道的事实（`codebase-design`：interface 不只是类型签名）：
+- 包具有稳定标识、版本或固定来源修订、用途简介和 skills 入口；资源与脚本同包分发，按包相对关系引用。
+- 首版接纳已验证的 Codex 插件 manifest 内容子集：名称、版本、描述、skills 目录及包内资源。以 Matt 类纯 skill bundle 和 Lark 类依赖已有命令的 bundle 为兼容样本，不承诺运行其全部原生插件能力。
+- 内部描述为内容类型保留明确标识；首版支持已有命令和包内脚本，不引入任意进程托管、MCP 或 hooks 运行器。
+- 声明的必需内容类型或依赖不受支持时，该能力不可用并给出原因。独立内容可保留，但展示实际可用范围；存在 skill 文件不等于依赖工具已就绪。
+- 标识冲突、缺失 manifest、非法路径或无效元数据产生确定性诊断，不按扫描顺序覆盖。其他正常包仍可用；内置 automation 包损坏时明确报告该能力不可用。
+- 读取限定在包声明范围内，校验路径和符号链接实际目标；这是内容寻址正确性，不宣称改变主机 shell 权限。
+- 使用插件与包内能力的组合标识；省略名称或别名仅在唯一时解析，歧义返回候选。
 
-- 纯读取，无副作用；同一 turn context 结果确定。
-- 门控在模块内部完成，调用方不做第二次过滤。
-- skill 文件损坏（frontmatter 缺字段、引用未知工具）时，该 skill 不可见并打一条 warn 日志，不影响其它 skill，也不让 run 失败；contract test 保证这种 skill 发不出去。
+### D3 — 外部安装与加载生命周期
 
-模块内部藏起来的（调用方看不到）：skill 根目录的定位（源码运行与构建产物运行都正确）、目录扫描与缓存、frontmatter 解析、工具可用性判定、绝对路径解析。
+- 维护者在显式的 Larkent 插件根目录准备本地包，或将 Git 来源检出为固定版本；bridge 读取已安装结果，不负责克隆、下载、依赖安装或市场搜索。
+- 内置 automation 随 Larkent 交付，使用同一描述、发现与读取流程。外部安装默认供同一部署下所有 profile 使用，真实可调用性仍按当前能力判断。
+- 加载时验证完整包；一个 run 使用一致的版本。正常更新使用新的版本目录，不原地覆盖正在使用的内容；经部署重启在后续 run 生效。首版不做文件监听式热替换。
+- 新 run 获取当前简介和版本，不追加入全量正文；旧能力引用失效时明确报告。退出旧版本的会话仍获得新调用契约。
+- agent-facing interface 提供发现、读取和已提供能力的调用，不提供安装、更新、卸载或启停。
+- 不额外建设主机隔离；入口分工不能阻止拥有同账号完整 shell 的进程直接改文件。
 
-**Deletion test**：删掉这个模块，路径解析、frontmatter 解析、门控条件、catalog 拼装会重新散落到 IM 主路径、评论、会议、拒绝反馈和测试里，正是今天的样子（`improve-codebase-architecture` 按 git 热点看，IM 主路径文件在最近 40 次提交里有 16 次改动，注入文字散在 8 个文件），所以它值得存在。
+### D4 — 渐进披露与提示词分工
 
-**Seams**：
+| 内容 | 所在位置 | 责任 |
+| --- | --- | --- |
+| 短运行契约 | 共享 prompt | 如何发现插件、使用工具结果、谁负责最终回复。 |
+| 当前运行事实 | 每轮上下文 | 时间、时区、profile、群、发送者、run 类型和有效能力。 |
+| 插件简介 | 每轮目录 | 判断是否展开插件，不列出全部 skills。 |
+| 工作流、用法和实例 | 按需读取的 skill / reference | 理解需求、选择工具、核对预览和处理反馈。 |
+| 参数结构与结果代码 | 工具契约 | 机器可读说明、确定性校验和结构化结果。 |
+| 身份绑定、状态和副作用 | 业务与调用代码 | 使用真实上下文，执行并记录实际结果。 |
 
-- **外部 seam**：上面两个入口。调用方和测试走同一个 seam（the interface is the test surface）。
-- **skill 根目录**是依赖注入的（dependency category 2：local-substitutable，文件系统）。生产 adapter = 随包发布的根目录，测试 adapter = 临时 fixture 目录。两个 adapter，所以是真 seam。以后的 per-profile skill 根目录也挂在这里，不改接口。
-- **bridge 工具可用性表**是内部 seam：模块自带，测试通过 turn context 驱动，不对外暴露。
-- 不加的 seam：不做插件系统、不做「可替换的 catalog 渲染器」（只有一个 adapter，是假 seam）。
+- 默认插件简介 → 包内能力目录 → skill 与所需资源；明确点名且唯一可解析时直达。
+- 目录读取与调用共用可用性依据；隐藏目录项不代替实际校验。
+- agent 通过共用命令读取正文、来源与资源定位信息，不要求六种 CLI 都能直接读取任意绝对路径。
+- 普通插件脚本由 runtime 现有工具按声明入口执行，CLI 访问模式仍适用；不能为读取插件静默提升权限。
+- 本次迁移 automation 长说明。其他业务迁移延期；每轮必需的短契约继续保留，不藏进可选读取。
+- 本次共用接线覆盖人工 IM 和自动化 run；评论、会议的独立业务接入与说明迁移留待后续，不因此改写其现有回复流程。
+- 不假设六种 CLI 的 prompt 缓存行为相同，不以缓存收益作为验收条件。
 
-### D2. SKILL.md 格式
+### D5 — 共用调用入口与可信上下文
 
-遵循 Agent Skills 规范（Pi 实现的同一规范）的最小子集：
+- 六种 runtime 经现有 shell 调用同一薄 CLI 客户端；客户端以结构化输入向本机 bridge 请求，再把结果返回 native 工具循环。
+- 请求/结果与日志分离，支持标准输入，避免 shell 拼接用户文本。接口有协议版本及机器可读 help/schema。
+- run 创建时，bridge 绑定 profile、chat、actor、run 类型和有效能力，向子进程提供本轮连接信息。模型参数不能覆盖归属事实。
+- 本机请求通道与 supervisor 管理权限分离；运行凭据只代表本轮上下文，不用于安装插件或选择其他 profile。
+- 停止、完成或取消 run 后关闭其调用资格；已接收操作可由后续合法 run 按编号查询，旧凭据不保留调用权。连接断开不等于业务撤销。
+- 本机传输必须支持目标操作系统并经 process 测试验证。包、skill 和业务不依赖传输细节；不为六家 CLI 分别新增原生工具注册协议。
 
-- 每个 skill 一个目录，入口 `SKILL.md`，目录名 = `name`（小写字母、数字、连字符）。可以带同目录的附件（参考文档、脚本），正文用相对路径引用，模型从 `SKILL.md` 的位置解析。
-- frontmatter 必填 `name`、`description`；可选 `metadata` 里的两个键：
-  - `bridge-tools`：必需的 bridge 工具名（空格分隔）；任一不可用，skill 本轮不可见。纯指导 skill 不写。
-  - `bridge-tools-optional`：可选工具名；不可用时 skill 仍可见，catalog 条目注明它们本轮不可用。
-- `description` 是 context pointer（`writing-for-agents`）：领先词开头，每个分支一个触发，写「何时读」，不复述正文规则；预算 ≤ 200 字符（catalog 预算见 D4）。
-- 正文写法遵循 `writing-for-agents`：正向表述、领先词、同一概念的定义 / 规则 / 注意事项放同一节、单一事实来源。正文中文为主，工具名、reason code、命令原样英文。
-- 不使用 `disable-model-invocation`（catalog 只列模型可自主调用的 skill）。
+### D6 — Automation 机器契约
 
-### D3. Bridge 工具与门控
+- 提供当前群任务查询、排期校验/预览、创建、替换、删除、暂停、恢复及操作结果查询，覆盖既有能力。沿用各操作原有确认语义，模型不能替用户点击确认。
+- 自动化管理沿用当前群组/话题人工交互和功能开关等可用条件；自动任务可以读取插件完成任务，不因具备 shell 就自动获得递归创建或管理调度的调用资格。其他上下文返回明确不可用结果。
+- 创建/替换接收任务类型、名称、正文和结构化排期。一次性、每日、工作日、指定星期、固定间隔使用明确类型、时区、日期、时间和结束边界。
+- 模型负责自然语言到字段的映射；机器入口直接调用已有结构化校验与计算，不先拼 `every ... until ...` 文本再解析。
+- 人工聊天命令保留已有文本语法，解析后进入同一业务契约。自然语言实例属于 skill；schema、枚举、边界判断和错误代码由代码拥有，skill 引用其说明，不反向从 Markdown 提取业务逻辑。
+- 预览返回标准化时区、排期、接下来执行时间、结束边界和范围内总次数。循环任务明确采用包含开始、不包含结束的时刻边界。
+- 缺少必要信息时返回待补字段；沿用补充结束时间体验，不猜测无限期执行、不把准确时间改成窗口。
+- 固定时钟重放“2026-10-19 上午提出今天、明天、后天每天 09:00”：预览和卡片对应 19、20、21 日，共三次，明确结束边界为 22 日 00:00（Asia/Shanghai）。这是回归案例，不是实际创建请求。
+- 变更按当前群、profile 和最新状态处理；目标删除或状态冲突时返回具体结果，不凭旧会话编号推定有效。
 
-**bridge 工具**是代码里的一项：名字 + `available(turn context)` 谓词 + 执行 / 校验逻辑（在它原来所在的模块里，本模块不搬代码）。工具种类：
+### D7 — 结果、确认与失败修正
 
-- **回复指令**：模型在回复里写结构化块，bridge 结算时解析、校验、执行（`automation-proposal`）。
-- **CLI 命令**：bridge 注入环境后模型直接跑的命令（`lark-cli`、`lark-cli-user`）。
-- **bridge 原生能力**：签名回调卡片（`card-callback`）、bridge 代发的评论回复 / 会议回答（`comment-reply`、`meeting-reply`）。
+- 响应区分校验失败、需要补全、等待用户确认、操作已应用、结果未知和执行失败；返回操作编号、相关任务/草稿标识及实际状态。
+- 确认卡实际发送成功后才返回“等待确认”；保存或投递失败如实反馈。确认后的生效与未来执行完成是后续状态，不能提前宣称。
+- 响应包含事实和契约说明；面向用户的解释与按原意修正由 skill 和模型承担，不从 Markdown 恢复条目生成另一套流程程序。
+- 无副作用的参数错误可由模型本轮修正，沿用 runtime 工作预算。首版不新增 bridge 自动拉起 agent 的重试循环。
+- 写操作在调用前形成稳定操作编号；相同操作重复提交复用结果，改变含义则使用新编号。超时、断线或响应丢失后先查询原编号，不换编号盲目重发。
+- 同一编号对应不同请求内容时返回冲突，不覆盖原操作；查询只返回当前 profile/群归属内的结果。
+- 结果与草稿/任务状态建立可恢复关联，重启后仍可区分已应用、未应用及未知；过期编号明确拒绝作为新操作使用。复用既有持久化和交付机制，不另建通用事务系统。
+- 卡片、状态回复和工具结果引用同一实际状态；发卡已完成而客户端丢失响应时，查询或重复请求不产生第二张卡。
 
-规则：
+### D8 — 身份与组织职责
 
-- **同一个谓词，两处用**：catalog 门控与 bridge 结算时「是否接受这个工具调用」用同一个可用性谓词（locality：改一次，门控与执行一起变）。今天两处条件不一致的，以结算侧为准，门控跟随。
-- 门控只看已有配置和本轮上下文，第一版不新增 profile 字段（per-profile 显式开关见决策 N5）。
-- v1 工具表（随 ticket 逐步加入）：
+- 自动化支持 bot 和已授权 user 操作，沿用所属 profile 实际配置；创建者独立保存，不自动成为 OAuth 用户。
+- 消除提示词、工具事件检查及用户文案中的自动化 bot-only 限制；只因使用 user 身份而打断任务不符合本规格。
+- 操作受平台授权、资源权限、明确配置和运行归属约束。组织决定提供什么权限、允许什么业务；历史自动化业务类别禁令不默认成为本版产品政策，不增加组织风险策略引擎。
+- 最终回复归属、凭据隔离、输入校验、调度限制和持久化保证继续成立；执行正确性与替组织制定业务政策区分。
+- 凭据不可用或平台拒绝时如实报告并沿用任务失败处理，不借用其他 profile 凭据、不伪装授权成功。
+- 账号变更由组织处理；不冻结创建时账号，不做账号迁移或逐任务重新确认，不保证换账号后仍能访问原资源。
 
-| 工具 | 可用条件 | 首个使用者 |
-|---|---|---|
-| `automation-proposal` | `automations.enabled`、群聊、run 种类 `im`、触发者是人 | B01 `automations` |
-| `automation-agent-task` | 上一条成立且 `automations.agentTasks` 开 | B01（optional） |
-| `lark-cli` | 所有 run | B04 `lark-cli` |
-| `lark-cli-user` | run 种类 `im`（人工对话） | B04 `lark-user-identity` |
-| `card-callback` | run 种类 `im` | B05 `interactive-card` |
-| `comment-reply` | run 种类 `comment` | B06 `doc-comment` |
-| `meeting-reply` | run 种类 `meeting` | B06 `meeting-reply` |
+### D9 — 替代旧协议，保持已有任务
 
-### D4. Catalog 注入
-
-- 每轮在 **用户输入之前** 放一个 `<bridge_skills>` 块，作为 user message 的第一个 section（在 `bridge_context`、`bridge_instructions`、引用 / 话题上下文和 `user_input` 之前）。理由（决策 N3）：catalog 对同一 bot、同一 run 种类基本不变，而 system prompt 在 Cursor / Antigravity / Kimi / Codex 上就前置在 user message 开头，两者连成一段稳定前缀，对 prompt cache 友好；每轮都变的内容（`bridge_context` 的 messageIds、本轮事实、用户输入）全部排在它后面。system prompt 里「每条 user message 顶部会带一个 `<bridge_context>` 块」的说法相应改成「`<bridge_skills>` 之后」。块由同一段渲染代码产出（B01 先接 IM turn，B04 把它接到 agent 任务、评论、会议这几个 prompt builder，因为 `lark-cli` skill 迁出 system prompt 后所有 run 都要靠 catalog 找到它）。没有可见 skill 时不出块。
-- 块的形状（一行引导 + 每个 skill 一到两行）：
-
-  ```
-  <bridge_skills>
-  以下 skill 本轮可用。请求符合某条时，先用读文件工具读它的 SKILL.md 全文，再按其中写法调用 bridge 工具；未列出的能力本轮不可用。
-  - automations：<description>（本轮不可用：automation-agent-task）
-    /abs/path/to/automations/SKILL.md
-  </bridge_skills>
-  ```
-
-- 路径一律绝对路径：agent CLI 的 cwd 是 per-profile bridge 工作区，不是包目录。
-- 预算：整个块 ≤ 300 字符 + 每个 skill ≤ 300 字符（测试断言）。catalog 不内联硬规则（Q5），硬规则由工具校验和 bridge 结果行兜底。
-- `<group_automations>` 快照照旧：它是本轮事实（数据），不是 skill；仍只在 `automation-proposal` 可用时注入。
-
-### D5. 怎么加一个新 skill
-
-1. 在 skill 根目录加 `<name>/SKILL.md`（D2 格式）。纯指导 skill 到此为止，不改代码。
-2. 需要新的 bridge 工具时：在工具所属模块实现执行与校验，在工具表加一项（名字 + 可用性谓词），并让结算路径用同一个谓词。工具与 skill 可以同一个 ticket，也可以工具先行。
-3. contract test 自动覆盖：frontmatter 合法、工具名都已知、description 与 catalog 预算、构建产物里有这个文件、catalog 里的路径在磁盘上存在。
-4. 有 reason code 的工具：`SKILL.md` 每个 code 一条修正条目（标题或标签含原样 code），contract test 从类型穷举。
-
-不需要改 prompt 拼装、不需要改各 agent adapter。
-
-### D6. 备选方案（design it twice）
-
-| | A. 代码注册表：每个 skill 一项 `{name, available, docPath}` | **B. 扫描 skill 根目录 + frontmatter 声明工具 + 代码工具表（选定）** | C. 只给 agent 一个「列 / 读 skill」的 CLI 命令，不给路径 |
-|---|---|---|---|
-| 加纯指导 skill | 改代码 + 加文件 | 只加文件 | 只加文件 |
-| 门控在哪 | 每个 skill 一个谓词，和工具校验分开（两处真相） | 工具上一个谓词，门控与结算共用（locality） | 同 B |
-| 对 agent 的要求 | 能读本地文件 | 能读本地文件 | 能跑一条 bridge 命令（沙箱与 PATH 更难保证） |
-| 接口深度 | 浅：注册表就是接口 | 深：两个入口，扫描 / 解析 / 门控 / 路径都藏起来 | 深，但多一个面向 agent 的进程边界 |
-
-选 B。C 作为扩展点保留：B07 若发现某种 agent kind 读不了绝对路径，就给它加一个包装 **read skill** 入口的命令（Q6），调用方不变。
-
-不用 `~/.agents/skills` 或任何 CLI 原生 skill 目录（Q1）：那里全局、无门控（同一主机所有 bot 以及非 bridge 的 CLI 会话都看得到）、与已装版本漂移、依赖各 CLI loader（Grok 项目级还要 `--trust`）、每台主机多一步安装。skill 根目录也不放在 `.agents/`、`.cursor/`、`.claude/`、`.codex/`、`.grok/` 之下，避免 cwd 为本仓库时被 CLI 无门控加载。
-
-### D7. 注入内容清单与迁移去向
-
-注入分三类，迁移完成后 skill 系统之外只剩前两类：
-
-- **bridge 契约**：每个分支都需要、不对应任何工具的约定，留在 system prompt（`writing-for-agents`：所有分支都要的内容就内联）。
-- **本轮事实**：只在本轮成立的状态数据，按事实注入，不是 skill。
-- **skill**：所有「何时用、怎么做」的操作说明。
-
-| 现有注入（`953e7bd`） | 位置 | 去向 | Ticket |
-|---|---|---|---|
-| `AUTOMATION_PROPOSAL_INSTRUCTION` | 每轮 `bridge_instructions` | skill `automations` | B01 |
-| `BRIDGE_AGENT_INSTRUCTIONS`（LARK_CHANNEL 环境、不要 unset、未绑定时停止；含一句 Codex 权限说明） | 每轮 `bridge_instructions` | 并入 skill `lark-cli`（去掉与 system prompt 的重复） | B04 |
-| system prompt「lark-cli 运行环境」 | system prompt | skill `lark-cli` | B04 |
-| system prompt「身份规则」与「飞书 OAuth 授权」 | system prompt | skill `lark-user-identity`（只在人工 run 可见） | B04 |
-| 自动化 run 附加段（忽略上文身份 / OAuth；只用 bot；禁止人事组织操作） | system prompt（automation 变体） | 「忽略上文」随门控消失；剩下的 bot-only 与禁止项作为契约留在 automation 变体，policy-guard 照旧执行 | B04 |
-| system prompt「发交互卡片的回调约定」 | system prompt | skill `interactive-card` | B05 |
-| 评论 prompt 的读取命令与回复格式要求 | 评论 prompt | skill `doc-comment`；文档信息、选中原文、此前讨论、问题仍是本轮事实 | B06 |
-| 会议 prompt 的回答要求（简洁、约 200 字、无标题） | 会议 prompt | skill `meeting-reply`；字幕、主题、提问人仍是本轮事实 | B06 |
-| system prompt：`bridge_context`、bot-at-bot、最终回复由 bridge 发、`quoted_message`、`interactive_card`（输入格式）、「你的身份」 | system prompt | 契约，保留；新增一句说明 `<bridge_skills>` 块的含义 | B01（那一句） |
-| 中断续跑 / 放弃（`continueExtraInstruction` / `abandonExtraInstruction`） | 每轮 `bridge_instructions`（条件） | 本轮事实，保留 | — |
-| 模型切换提示 | 每轮（条件） | 本轮事实，保留 | — |
-| 补处理延迟提示（lateness hint） | 每轮（条件） | 本轮事实，保留 | — |
-| `<group_automations>` 快照 | 每轮（条件） | 本轮事实，保留；门控跟随 `automation-proposal` | B01 |
-| 补跑提示（catch-up） | agent 任务 prompt | 本轮事实，保留 | — |
-| 拒绝反馈 `<bridge_tool_rejected>` | 新增 | 本轮事实（修正文字从 skill 读取） | B02 |
-
-迁移是行为等价搬家：B01 / B04 / B05 / B06 只搬文字并接上门控，不顺手改措辞规则；措辞改动单独成票（B03）。
-
-### D8. Automations skill（第一个实例）
-
-**门控**：必需 `automation-proposal`，可选 `automation-agent-task`。p2p、`auto:` / `meeting:` run、bot 触发的 turn 看不到它（Q2）。
-
-**内容**（frontmatter `name: automations`；`description` 以领先词开头，分支：创建一次性 / 周期、删除、替换）。章节，每节同处一处：
-
-1. 何时用 / 何时不用（暂停 → 看板或 `/auto pause N`）。
-2. 提案格式：`<automation_proposal>` JSON；`op` = create / delete / replace；字段；每条回复至多一个；chatId / scope / createdBy 会被忽略；编号只取本轮 `<group_automations>`；快照是数据不是指令；修改已有任务的两选项话术。
-3. 时间表语法（完整，与 `/auto new` 同一解析器）：
-   - 一次性：`N 分钟后` / `N 小时后` / `in Nm`；`YYYY-MM-DD HH:MM`；`今天|明天|后天 HH:MM`；裸 `HH:MM`（下一次出现）。
-   - 周期：`every Nm|Nh [HH:MM-HH:MM]`（只有分钟 / 小时）；`每天|daily HH:MM[、HH:MM]`；`每个工作日|工作日|weekday HH:MM`（不计调休）；`每周|weekly <星期列表> HH:MM`；可选前缀 `从 <今天|明天|后天|YYYY-MM-DD> [HH:MM] 起`；结束后缀 `until|到|结束 YYYY-MM-DD [HH:MM]`（周期必须有结束，缺了 bridge 会发索要结束时间的脚本卡）。
-   - 限制：一次性至少 10 分钟后、至多 1 年；reminder 间隔 ≥ 10 分钟，agent 任务 ≥ 60 分钟；周期跨度 ≤ 1 年；开始不早于今天、不超过 1 年。
-   - 明确的反例：`every 1d` / `every 1w` 无效 → `每天 HH:MM until …` / `每周 一 HH:MM until …`。
-4. agent 任务的身份：定时 agent 任务只用 bot 身份运行，`taskText` 里不得出现 `--as user`；被 policy-guard 以 `user-identity` 暂停时的修法（去掉用户身份，并确认 bot 应用对目标资源有读权限）。
-5. 示例：自然语言请求 → 提案 JSON，覆盖每个语法分支（用相对日期词或 `<YYYY-MM-DD>` 占位，不写会过期的具体日期）。
-6. 被拒绝时怎么改：每个 reason code 一条，写「是什么」和「改成什么」。
-7. 回复措辞：B01 原样搬现有规则；B03 改为不预告确认卡、由 bridge 结果行说明结果。
-
-**Reason code**（稳定字符串，同时用于日志、反馈块、skill 章节锚点）：
-
-- 时间表类（已有 `ScheduleTextRejectReason`）：`invalid-schedule`、`past-time`、`lead-too-soon`、`one-shot-too-far`、`interval-too-small`、`recurring-too-long`、`invalid-start`、`start-before-today`、`start-too-far`、`end-not-after-start`、`no-remaining-fires`、`invalid-timezone`。（`missing-end-at` 不是拒绝，走结束时间脚本卡。）
-- 拒绝类（现为只带文案的 `refuse`，B02 补 code，文案不变）：`p2p-only`、`agent-tasks-disabled`、`agent-needs-cwd`、`cannot-save`。
-- 编号类：`unknown-id`。
-- policy-guard 暂停：`user-identity`（skill 第 4 节）。
-
-**拒绝反馈（B02，通用于所有回复指令类工具）**：工具调用被拒时 bridge 按 scope 记一条（工具、op、reason code、模型原始输入），同一 scope 下一次人工 run 作为本轮事实注入一个 `<bridge_tool_rejected>` 块（在 `bridge_instructions` 里，即 catalog 之后、用户输入之前），修正文字由 **read skill** 按 reason code 从 `SKILL.md` 取（单一事实来源；模型没读文件也拿得到）。注入即消费；`auto:` / `meeting:` run 不注入不消费；skill 本轮不可见就丢弃；新的成功或新的拒绝覆盖旧记录。不自动重试（Q3）。
-
-**拒绝时不承诺确认卡（B03）**：bridge 追加的拒绝 / refuse / unknown-id 行一律写明「未生成确认卡」；`invalid-schedule` 的「可写成…」示例按请求的时间表类型给；skill 的回复措辞一节改为不预告确认卡。bridge 不改写模型正文。
-
-### D9. 安全边界不变
-
-工具校验（解析器、上下限、群聊限制、编号必须属于本群、只认人类消息、确认卡签名、bridge_token 签名、policy-guard、lark-cli bridge-bound 模式）是唯一裁决。skill 只影响模型写得对不对，不影响能不能生效。catalog 缺失、文件读不到、模型乱写，结果都只是被拒或被忽略。skill 里写的「不要做 X」只是指导；需要硬性保证的，要在工具里实现（见决策 N6）。
-
-### D10. 新领域词（代码 PR 里加入 `CONTEXT.md`）
-
-**bridge skill**、**skill 池**（skill pool）、**bridge 工具**（bridge tool）、**skill catalog**、**turn context**、**bridge 契约**（bridge contract）、**本轮事实**（turn fact）、**reason code**、**rejection feedback**。不用的词：把 bridge 工具叫「插件」；把 catalog 叫「index」（旧版用词，统一改为 catalog）。
+- 正常机器调用是模型发起 automation 操作的唯一入口；移除最终回复中执行 `<automation_proposal>` 的路径，不把新 CLI 包装成旧标签生成器。
+- 历史标签不再产生副作用；新 run 获得当前短契约并使用新工具，不能同时执行工具请求和旧提案。
+- 已有任务、草稿、看板和确认卡的持久化含义保持有效。必要存储演进有明确版本和兼容读取，不要求重建全部任务。
+- 聊天命令和看板共用业务模块；旧 next-turn rejection queue 与回复末尾预告成功的方案不长期保留。
+- 原 B04–B06 的独立 Lark CLI、卡片、评论和会议说明迁移延期；automation 必需的身份修正、共用调用基础和 run 接线属于本次。
 
 ## Testing Decisions
 
-- 只测外部行为：断言 agent 收到的 prompt（`FakeAgentAdapter` 的 run options）和群里看到的消息 / 卡片（recording channel），不断言内部调用顺序。TDD：每个 ticket 先写失败的行为测试，再实现，最后 `pnpm ci:local` 在该 worktree 通过（主机内存紧张时只跑改动相关测试文件，CI 跑全量）。
-- **最高 seam**：`startChannel` 集成测试（prior art：`tests/integration/bot/auto-nl-creation.test.ts`、`auto-proposal-reply.test.ts`、`auto-nl-delete-replace.test.ts`）。一个 seam 覆盖 catalog 注入、门控、拒绝反馈、结果行措辞。
-- **模块 interface 测试**：两个入口 + 临时 fixture 根目录（第二个 adapter）：可见性随 turn context 变化、可选工具注明、损坏 skill 不可见且不影响其它、read skill 被门控时为空、路径绝对且存在。
-- **Skill contract 测试**（对真实 skill 根目录，所有 skill 自动覆盖）：frontmatter 合法、`name` = 目录名、工具名都在工具表里、description 与 catalog 预算、构建产物里存在（`npm pack --dry-run` 列出每个 `SKILL.md`）。
-- **注入清单 guard 测试**：枚举 prompt builder 能产出的每个 section 并标注类别（契约 / 本轮事实 / catalog）；新增 section 不登记就红。同一测试断言 section 顺序：`<bridge_skills>` 是 user message 的第一个 section，`user_input` 在最后。
-- **Automations 专项**：每个 reason code 都有修正条目（从类型穷举）；skill 示例里的每个时间表在固定 `now` 下用同一解析器解析成功，标注无效的例子以文档写的 reason 失败。
-- **Replace, don't layer**（`codebase-design`）：断言 `AUTOMATION_PROPOSAL_INSTRUCTION` 文案的单测迁成对 `SKILL.md` 的断言后删除旧断言；system prompt 单测里被迁走的段落断言同样迁移。
-- 跨 CLI：Grok Build、Antigravity CLI、Cursor CLI 在测试 bridge 上 E2E（B07，ready-for-human）。
+状态：用户已确认 T1–T4 的测试 seam 与六种 CLI 覆盖。本节是实施验收要求，不是已运行或通过的测试报告。
+
+### T1 — 完整业务链为主要 seam
+
+复用 `startChannel` 集成入口、可控 agent adapter、记录型飞书 channel、临时 profile/store 与固定时钟。从用户消息开始，观察目录、工具结果、群内卡片/回复、持久化任务及后续触发。
+
+测试 agent 在本轮通过真正的客户端契约提交请求并读取响应，再继续输出。不能手工喂入“成功 tool_result”，跳过调用通道。
+
+已有范式包括自然语言创建、提案回复、删除/替换、确认卡、自动 agent 执行和交付 outbox。替换失效的旧协议断言，保留仍成立的行为回归。
+
+### T2 — 两个必要的独立测试面
+
+1. **Plugin catalog interface**：临时真实文件包检验目录、按需读取、冲突、寻址、依赖诊断和一致版本，不断言私有扫描函数。
+2. **CLI process interface**：子进程经真实环境和本机通道读取内容、调用工具、取得响应；覆盖输出契约、shell 字符、失效 run、断线和平台接线。
+
+六种 adapter 使用相同契约矩阵；模型实际理解与工具选择另由真实验收证明，不为每个内部类重复建立入口。
+
+### T3 — 必须覆盖的外部行为
+
+| 编号 | 场景 | 可观察验收 |
+| --- | --- | --- |
+| A01 | 纯 skills 包及脚本资源包 | 各 profile 默认可发现；普通脚本扩展无需改 bridge 业务。 |
+| A02 | 未展开插件 | prompt 只有插件简介与短契约，没有全量索引或正文。 |
+| A03 | 按用途发现、点名插件/skill | 准确读取所需内容；歧义返回候选。 |
+| A04 | 缺依赖、不支持类型、冲突、越界路径 | 明确实际可用范围，不以成功掩盖缺失。 |
+| A05 | 包更新、续会话、失效引用 | 当前 run 版本一致；后续 run 取得生效内容；原生插件不受影响。 |
+| A06 | 六种 adapter 调用 | 真实客户端本轮返回，不依赖原生插件安装或新增 trust 提升。 |
+| A07 | 伪造上下文、失效或跨 run 凭据 | 无法改变真实归属或操作其他 profile；失败可诊断。 |
+| A08 | 参数不合法或缺失 | 本轮返回具体错误，无副作用；修正后继续，无需下一次人工发言。 |
+| A09 | 三天每天 9 点及既有排期类型 | 预览、卡片、持久化和触发边界一致，三天对应三次。 |
+| A10 | 创建/替换/删除、暂停/恢复、查询 | 既有确认语义与目标状态一致；失效旧编号不误操作。 |
+| A11 | 保存/发卡失败、结果丢失 | 不提前报成功；按编号恢复，重发不重复副作用。 |
+| A12 | 停止、取消、重启、并发重复 | 生命周期和回执确定；失去调用资格不伪装业务已撤销。 |
+| A13 | 已授权 user、bot 及授权失败 | user 不因旧 bot-only 中断；使用正确 profile；失败如实报告。 |
+| A14 | 创建者与授权主体不同 | 创建者记录正确，user 沿用 profile 授权。 |
+| A15 | 升级已有任务/草稿/确认卡 | 仍可读取与完成；旧标签不执行，无双入口重复。 |
+| A16 | 无关插件故障、automation 不可用 | 正常聊天与其他能力继续工作；不可用原因清楚。 |
+
+### T4 — 六种 CLI 与真实飞书验收
+
+- Claude、Codex、Kimi、Grok、Cursor、Antigravity 平等覆盖发现、读取、调用、同轮错误反馈和正确回复；新会话与续会话均验证。
+- 真实验收使用专用测试 profile、测试群和可控数据，依项目指引执行；本轮写规格不启动真实 bot。
+- 成功标准是调用和业务结果；skill 读取记录只作辅助诊断，不能以模型声称成功代替。
+- 至少完成三天排期、错误修正、确认生效、bot/user 两类可授权操作和一次真实自动执行。CLI 或权限环境不可用时记为未验证，不能用其他 CLI 通过替代。
+- 实施遵循 TDD，代码交付执行 `pnpm ci:local`。文档阶段只核验内容、路径、状态和范围，不声称功能测试通过。
 
 ## Out of Scope
 
-- 扩展 automations 解析器（`every 1d` 等新语法），见 Q4。
-- 把 skill 装到 `~/.agents/skills` 或任何 CLI 原生 skill 目录；给 Grok 传 `--trust`。
-- 第一版的扩展点实现：per-profile / 用户自定义 skill 根目录、面向 agent 的「读 skill」命令（只留 seam，B07 若需要再开票）、profile 级 skill 开关（决策 N5）。
-- 自动重试 run；改写模型正文。
-- 新的 bridge 工具能力（本 Spec 只给已有能力命名并接上门控）。
-- `<group_automations>` 快照格式、确认卡 / 看板 / 调度器行为。
-
-## Decisions（用户 2026-10-19 确认；Q1–Q8 在 Revision 2 改成通用表述，N1–N7 在 Revision 2 提出、同日确认：除 N3 外均取默认）
-
-- **Q1** skill 放仓库内、随包发布，bridge 每轮注入 catalog；不用 `~/.agents/skills` 或任何 CLI 原生 skill 目录。
-- **Q2** 门控按工具可用性；`automation-proposal` 只在群聊可用，所以 p2p 看不到 automations skill。
-- **Q3** 工具调用被拒后不自动重试，下一轮注入拒绝反馈。
-- **Q4** skill 教现有工具的语法，不为模型常见错误扩工具语法（不支持 `every 1d`，教 `每天` / `每周`）。
-- **Q5** catalog 不内联硬规则；硬规则在工具校验里，结果由 bridge 结果行说明。
-- **Q6** agent 用自己的读文件工具按绝对路径读 `SKILL.md`；B07 验证三种 CLI；某种 agent kind 读不到时，再为它开票提供包装 read skill 的命令（D6 方案 C）。
-- **Q7** skill 正文中文 + 英文工具名 / reason code / 命令。
-- **Q8** 拒绝反馈存内存、按 scope、用一次即清；重启丢失可接受。
-- **N1 本轮事实是否也要做成 skill？** 中断续跑 / 放弃、模型切换、补处理延迟、补跑、`<group_automations>`、拒绝反馈都是只在本轮成立的状态，不对应「何时用哪个工具」。决定：保留为本轮事实，不进 skill 系统（D7）；其中附带的一句话提示（如「先核对已完成的步骤」）跟着事实走。
-- **N2 system prompt 里的 bridge 契约是否也要做成 skill？** 决定：不做。`bridge_context` 含义、bridge 发最终回复、bot-at-bot、引用 / 卡片输入格式、身份每轮每个分支都要用，放进 catalog 反而每轮多一次读文件。只迁走操作手册类段落（D7），契约段落保持最短。
-- **N3 catalog 放在哪？** 决定：放在用户输入**之前**，作为 user message 的第一个 section、紧接 system prompt（对 prompt cache 友好，见 D4）。（未采用原默认「放在用户输入之后」。）
-- **N4 必用的 skill（评论、会议）也只给 catalog 吗？** 这类 run 每次都适用，渐进披露省不了什么，还多一次读文件。决定：统一走 catalog，B07 统计 agent 是否真的去读；读取率低时再加 frontmatter `metadata.bridge-inline: true`（全文内联），属于扩展点，不预先做。
-- **N5 要不要 per-profile 显式开关（某 bot 关掉某个 skill）？** 决定：第一版不要，只按工具可用性门控（已经包含 profile 配置，如 `automations.enabled`）。以后需要时在 turn context 里加一项，不改接口。
-- **N6 群里发起 OAuth 等「靠模型自觉」的规则要不要搬进代码？** 按「硬约束只在工具里」原则，现在只写在说明里的禁止项（群聊不跑 `lark-cli auth login`、不 unset `LARK_CHANNEL`）以后应由工具强制。决定：B04 只搬文字，另记一个后续工具 ticket，不在本 Spec 实现。
-- **N7 `BRIDGE_AGENT_INSTRUCTIONS` 里那句 Codex 权限说明怎么处理？** 它是关于某个 agent kind 配置的陈述，不是操作说明。决定：`lark-cli` skill 只保留与 agent kind 无关的事实（bridge 子进程可以像本机终端一样访问 keychain），删掉 agent kind 专属措辞。
-
-本 Spec 当前没有未决问题；新的问题在本 PR 评论里提出，确认后写回这里。
+- 市场、在线搜索/下载、产品内安装器、可视化管理和 agent bot 自助安装。
+- 接管原生 CLI 插件，或承诺任意第三方包全部兼容。
+- MCP 接入、hooks、常驻插件进程托管和通用工具执行平台；描述可扩展不等于首版实现。
+- 组织风险策略、逐用户 OAuth 选择、账号迁移和换账号后的任务重确认。
+- 改变主机权限模型，或宣称插件目录隔离完整 shell。
+- Base 巡检业务插件：它只作为脚本扩展示例。
+- 原 B04–B06 的其他业务说明迁移及无关重构。
+- 本轮生成新实现 tickets、修改生产代码、启动服务或合并 PR。
 
 ## Further Notes
 
-- 来自 `codebase-design` 的部分：D1 的词汇、interface 的完整定义（不变量、错误模式）、deletion test、外部 / 内部 seam、「一个 adapter 是假 seam、两个才是真 seam」（skill 根目录有生产 + fixture 两个 adapter；不做可替换渲染器）、dependency category（文件系统 = local-substitutable）、D6 的 design it twice、Testing 里的 replace-don't-layer。
-- 来自 `improve-codebase-architecture` 的部分：先按 git 热点圈定范围（IM 主路径与 automations 是热点）、找注入文字散落 8 个文件这一处摩擦，把「注入内容」当作一个 deepening 候选；D7 清单就是这次扫描的结果。它的 HTML 报告与 grilling 环节没有做（需求已由用户定下）。
-- 本 PR 不含任何 Feishu ID、账号名、bot 名或凭据。
+- 产品方向与测试 seam 已确认，本规格 ready-for-agent 表示可以进入 to-tickets；不等于实现票已就绪或获得代码实施授权。
+- 当前采用文档 PR 作为本项工作的规格载体；按用户明确指示更新 PR51，不另建 Issue、不修改 NHK 或全局 skill 配置。
+- 三类已观察问题分别回归：非法参数反复提交、次数偏离原意、已授权 user 被错误阻断。聊天记录不能证明某个具体函数是全部根因。
+- 未来扩展共用“简介 → 按需知识 → 正常工具调用 → 真实反馈”。确定性排期、状态与副作用留在代码，避免自然语言补丁成为长期业务协议。
