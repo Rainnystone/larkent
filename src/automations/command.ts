@@ -27,7 +27,7 @@ import {
   type ScheduleRejectReason,
   type TaskType,
 } from './schedule';
-import { addLocalDays, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
+import { addLocalDays, addLocalMonths, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
 import { formatAutomationListLine } from './board-card';
 import {
   draftConfirmedStatus,
@@ -564,18 +564,6 @@ function parseWeekdayList(text: string): number[] | undefined {
   }
   days.sort((a, b) => a - b);
   return days;
-}
-
-function addLocalMonths(
-  timezone: string,
-  parts: { year: number; month: number; day: number; hour: number; minute: number },
-  months: number,
-): number {
-  const cursor = new Date(Date.UTC(parts.year, parts.month - 1 + months, 1));
-  const year = cursor.getUTCFullYear();
-  const month = cursor.getUTCMonth() + 1;
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return zonedLocalToUtc(timezone, year, month, Math.min(parts.day, lastDay), parts.hour, parts.minute);
 }
 
 export function rejectMessage(

@@ -1,5 +1,12 @@
 import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
-import { monthlyFireCount, nextFires, readSchedule, type Schedule } from './schedule';
+import {
+  countFiresAfter,
+  EXACT_FIRE_COUNT_CAP,
+  monthlyFireCount,
+  nextFires,
+  readSchedule,
+  type Schedule,
+} from './schedule';
 import { zonedParts } from './zoned-time';
 import { automationTargetRevision } from './store';
 import type { AutomationItem, AutomationTargetSnapshot, AutomationTaskType } from './store';
@@ -82,10 +89,6 @@ function describeStart(schedule: Schedule, timezone: string, now: number): strin
   }
 }
 
-const SHORT_HORIZON_MS = 30 * 24 * 60 * 60_000;
-/** Above a month of the 10-minute floor, so a horizon under 30 days is not truncated. */
-const SHORT_HORIZON_FIRE_CAP = 30 * 24 * 6 + 1;
-
 function frequencyLine(schedule: Schedule, now: number): string | undefined {
   switch (schedule.kind) {
     case 'one-shot':
@@ -93,11 +96,14 @@ function frequencyLine(schedule: Schedule, now: number): string | undefined {
     case 'daily':
     case 'weekday':
     case 'weekly':
-    case 'interval':
-      if (schedule.endAt - now < SHORT_HORIZON_MS) {
-        return `共 ${nextFires(schedule, now, SHORT_HORIZON_FIRE_CAP).length} 次`;
+    case 'interval': {
+      const origin = Math.max(now, schedule.startAt);
+      const counted = countFiresAfter(schedule, origin - 1, EXACT_FIRE_COUNT_CAP);
+      if (counted.capped) {
+        return `超过 ${EXACT_FIRE_COUNT_CAP} 次 · 约每月 ${monthlyFireCount(schedule, origin)} 次`;
       }
-      return `约每月 ${monthlyFireCount(schedule, now)} 次`;
+      return `共 ${counted.count} 次`;
+    }
     default: {
       const _exhaustive: never = schedule;
       return _exhaustive;

@@ -1,4 +1,4 @@
-import { addLocalDays, isValidTimeZone, zonedLocalToUtc, zonedParts } from './zoned-time';
+import { addLocalDays, addLocalMonths, isValidTimeZone, zonedLocalToUtc, zonedParts } from './zoned-time';
 
 export const REMINDER_MIN_INTERVAL_MS = 10 * 60_000;
 export const AGENT_MIN_INTERVAL_MS = 60 * 60_000;
@@ -485,16 +485,47 @@ export function readSchedule(value: unknown): Schedule | undefined {
   }
 }
 
-const MONTH_WINDOW_MS = 30 * 24 * 60 * 60_000;
+/** Year of the reminder 10-minute floor; valid schedules finish at or below this. */
+export const EXACT_FIRE_COUNT_CAP = ONE_YEAR_MS / REMINDER_MIN_INTERVAL_MS;
 
-export function monthlyFireCount(schedule: Schedule, fromMs: number): number {
-  const until = fromMs + MONTH_WINDOW_MS;
+export function countFiresAfter(
+  schedule: Schedule,
+  afterMs: number,
+  cap: number,
+): { count: number; capped: boolean } {
   let count = 0;
-  let cursor = fromMs;
+  let cursor = afterMs;
   for (;;) {
     const next = nextFireAfter(schedule, cursor);
-    if (next === 0 || next >= until) return count;
+    if (next === 0) return { count, capped: false };
     count += 1;
+    if (count >= cap) return { count, capped: nextFireAfter(schedule, next) !== 0 };
     cursor = next;
+  }
+}
+
+export function monthlyFireCount(schedule: Schedule, fromMs: number): number {
+  switch (schedule.kind) {
+    case 'one-shot':
+      return nextFireAfter(schedule, fromMs) === 0 ? 0 : 1;
+    case 'daily':
+    case 'weekday':
+    case 'weekly':
+    case 'interval': {
+      const origin = Math.max(fromMs, schedule.startAt);
+      const until = addLocalMonths(schedule.timezone, zonedParts(schedule.timezone, origin), 1);
+      let count = 0;
+      let cursor = origin - 1;
+      for (;;) {
+        const next = nextFireAfter(schedule, cursor);
+        if (next === 0 || next >= until) return count;
+        count += 1;
+        cursor = next;
+      }
+    }
+    default: {
+      const _exhaustive: never = schedule;
+      return _exhaustive;
+    }
   }
 }

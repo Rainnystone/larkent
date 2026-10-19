@@ -60,6 +60,29 @@ it('corrects invalid input in one real client turn, confirms as a human and fire
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { applied: true, executedCount: 3, lastExecution: 'ok', executionState: 'completed', lastDelivery: 'sent' } }); });
 }, 30000);
 
+it('prints 共 31 次 on the confirm card for a future daily month window', async () => {
+  const h = await harness();
+  const month = {
+    kind: 'daily',
+    timezone: 'Asia/Shanghai',
+    times: [{ hour: 9, minute: 0 }],
+    startAt: Date.UTC(2026, 9, 21, 16, 0, 0),
+    endAt: Date.UTC(2026, 10, 21, 16, 0, 0),
+  };
+  await h.turn(async call => {
+    expect(await call('automation.preview', { taskType: 'reminder', schedule: month })).toMatchObject({
+      category: 'ok',
+      data: { totalCount: 31 },
+    });
+    expect(await call('automation.create', { ...reminder, schedule: month })).toMatchObject({
+      category: 'waiting-confirmation',
+    });
+  });
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  expect(JSON.stringify(card)).toContain('共 31 次');
+  expect(JSON.stringify(card)).not.toContain('约每月');
+}, 30000);
+
 it('completes a missing end through the existing scripted card before human confirmation', async () => {
   const h = await harness(); let operationId = '';
   await h.turn(async call => {
