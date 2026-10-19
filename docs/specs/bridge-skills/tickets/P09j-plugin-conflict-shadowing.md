@@ -35,3 +35,10 @@
 - [ ] catalog 单测：两包同 id 时 list 列出两个候选并带 `plugin-conflict`；带 `reference` 的 read 返回对应包内容；不带选择器仍为 `skill-ambiguous`；过期 reference 返回 `stale-plugin-reference`。
 - [ ] `pnpm ci:local` 通过。
 - [ ] P09 场景 8 重跑：冲突配置下能通过歧义结果中的选择器读取 v1 的 greeting。
+
+## Addendum（P09 第 3 轮补充证据，不是新 bug）
+
+- Grok 续会话读 `greeting` 返回 `skill-ambiguous`，两个候选（同 canonical `p09-pure:greeting`，version 2.0.0 / 9.9.9）**各自带 reference**；但把候选里的 reference 回传仍无法选中其中一个。
+- 原因同上：`src/plugins/catalog.ts:136-149` `resolveRead` 先判断 `matches.length > 1`，再检查 reference，所以歧义结果给出的 reference 本身不可用来消歧。
+- 追加验收：
+  - [ ] 用 `skill-ambiguous` 结果中某个候选原样回传的 reference 调用 `plugins.read`，返回该候选的内容。

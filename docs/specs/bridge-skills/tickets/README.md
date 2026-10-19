@@ -36,6 +36,8 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09i](P09i-end-date-presets.md) | Bug P3：补全结束日期卡最短预设为一个月 | P09 发现 |
 | [P09j](P09j-plugin-conflict-shadowing.md) | Bug P3：同名冲突包遮蔽合法包，`skill-ambiguous` 无法用选择器消歧 | P09 发现 |
 | [P09k](P09k-missing-root-diagnostic.md) | Bug P3：插件目录不存在时返回未文档化的 `invalid-package` | P09 发现 |
+| [P09l](P09l-grok-tool-output-bytes.md) | Bug P3：Grok 工具进度卡把 Bash 输出显示为十进制字节数组 | P09 发现 |
+| [P09m](P09m-policy-guard-help-false-positive.md) | Bug P3：只读 `auth logout --help` 被误判 `auth-config` 并暂停任务；`auth-config` 不在工具结果中 | P09 发现 |
 | [P10](P10-uat-real-usage.md) | 生产 Grok bridge 真实使用 UAT：14 条自然语言句子覆盖提醒、文档、新闻摘要与五类排期及管理操作，核对 larkent-monitor | P09、#52 合并并部署 |
 
 P09 E2E 发现的 won't-fix（不建票）：
