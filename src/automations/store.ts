@@ -20,7 +20,7 @@ export const AUTOMATIONS_FIRE_HISTORY_MAX = 20;
 export const AUTOMATIONS_STARTED_KEY_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 export type AutomationTaskType = 'reminder' | 'agent';
-export type AutomationLastStatus = 'ok' | 'missed' | 'failed' | 'running';
+export type AutomationLastStatus = 'never' | 'ok' | 'missed' | 'failed' | 'running';
 export type AutomationTriggerSource = 'startup' | 'link-recovered' | 'wake' | 'timer' | 'confirm';
 export type AutomationLogResult = 'missed' | 'catch-up' | 'policy-guard' | 'skipped';
 export type AutomationPolicyGuardReason = PolicyGuardReason;
@@ -419,7 +419,7 @@ export class AutomationsStore {
       lastFireAt: 0,
       paused: input.paused === true,
       missed: 0,
-      lastStatus: 'ok',
+      lastStatus: 'never',
       fireHistory: [],
       chatId: input.chatId,
       createdBy: input.createdBy,
@@ -1320,7 +1320,7 @@ function parseStatusItem(raw: unknown): AutomationsStatusItem | undefined {
     paused: raw.paused === true,
     nextFireAt: raw.nextFireAt,
     lastFireAt: raw.lastFireAt,
-    lastStatus: raw.lastStatus,
+    lastStatus: lastStatusFromStored(raw.lastStatus, raw.lastFireAt),
     endAt: raw.endAt,
     missed: raw.missed,
   };
@@ -1337,6 +1337,7 @@ function parseItem(raw: unknown): AutomationItem | undefined {
   if (typeof raw.name !== 'string' || typeof raw.taskText !== 'string') return undefined;
   const cwd = typeof raw.cwd === 'string' && raw.cwd ? raw.cwd : undefined;
   if (raw.taskType === 'agent' && !cwd) return undefined;
+  const lastFireAt = isFiniteNumber(raw.lastFireAt) ? raw.lastFireAt : 0;
   return {
     id: raw.id,
     taskType: raw.taskType,
@@ -1345,10 +1346,10 @@ function parseItem(raw: unknown): AutomationItem | undefined {
     startAt: raw.startAt,
     endAt: isFiniteNumber(raw.endAt) ? raw.endAt : 0,
     nextFireAt: raw.nextFireAt,
-    lastFireAt: isFiniteNumber(raw.lastFireAt) ? raw.lastFireAt : 0,
+    lastFireAt,
     paused: raw.paused === true,
     missed: isFiniteNumber(raw.missed) ? raw.missed : 0,
-    lastStatus: isLastStatus(raw.lastStatus) ? raw.lastStatus : 'ok',
+    lastStatus: lastStatusFromStored(raw.lastStatus, lastFireAt),
     fireHistory: parseFireHistory(raw.fireHistory),
     chatId: raw.chatId,
     createdBy: raw.createdBy,
@@ -1537,7 +1538,13 @@ function parseFireHistory(raw: unknown): AutomationFireRecord[] {
 }
 
 function isLastStatus(value: unknown): value is AutomationLastStatus {
-  return value === 'ok' || value === 'missed' || value === 'failed' || value === 'running';
+  return value === 'never' || value === 'ok' || value === 'missed' || value === 'failed' || value === 'running';
+}
+
+function lastStatusFromStored(lastStatus: unknown, lastFireAt: number): AutomationLastStatus {
+  const status = isLastStatus(lastStatus) ? lastStatus : 'ok';
+  if (lastFireAt === 0 && status === 'ok') return 'never';
+  return status;
 }
 
 function isFiniteNumber(value: unknown): value is number {

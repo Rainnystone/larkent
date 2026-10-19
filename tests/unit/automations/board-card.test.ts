@@ -21,7 +21,7 @@ function item(overrides: Partial<AutomationItem> = {}): AutomationItem {
     lastFireAt: 0,
     paused: false,
     missed: 0,
-    lastStatus: 'ok',
+    lastStatus: 'never',
     fireHistory: [],
     chatId: 'oc_group',
     createdBy: 'ou_alice',
@@ -66,5 +66,20 @@ describe('automation board card', () => {
     expect(visible).not.toContain('"id"');
     expect(formatAutomationListLine(live)).toContain('#1 交周报');
     expect(formatAutomationListLine(live)).toContain('提醒');
+    expect(formatAutomationListLine(live)).toContain('尚未运行');
+    expect(visible).toContain('尚未运行');
+  });
+
+  it('labels a never-fired task 尚未运行 and a successful last run 待触发', () => {
+    const auth = new BoardActionAuth({ secret: 'board-secret', now: () => FIRE });
+    const neverFired = item({ lastStatus: 'never', lastFireAt: 0 });
+    const succeeded = item({ lastStatus: 'ok', lastFireAt: FIRE });
+    expect(formatAutomationListLine(neverFired)).toContain('尚未运行');
+    expect(formatAutomationListLine(neverFired)).not.toContain('待触发');
+    expect(formatAutomationListLine(succeeded)).toContain('待触发');
+    expect(formatAutomationListLine(succeeded)).not.toContain('尚未运行');
+    expect(simplifiedBoardRender(automationBoardCard({ items: [neverFired], auth }))).toContain('尚未运行');
+    expect(simplifiedBoardRender(automationBoardCard({ items: [succeeded], auth }))).toContain('待触发');
+    expect(formatAutomationListLine(item({ paused: true, lastStatus: 'never' }))).toContain('已暂停');
   });
 });

@@ -60,6 +60,7 @@ export function automationSchema(context: AutomationToolContext) {
     confirmation: { create: 'human-card-only', replace: 'human-card-only', delete: 'human-card-only', pause: 'immediate', resume: 'immediate' },
     operationIds: { submissionTtlMs: AUTOMATION_OPERATION_TTL_MS, scope: 'profile-chat', retention: 'durable', recovery: 'query-original-id-before-retry' },
     execution: { scope: 'task', dispatchedCount: 'integer-or-null', unknownCount: 'dispatchedCountLowerBound', history: 'retained-journal-evidence', executedCount: 'successful-runtime-outcome-or-reminder-delivery', failedCount: 'failed-or-interrupted', deliveredCount: 'sent-results-including-failure-notices', executionState: 'queued-running-or-runtime-outcome', lastDelivery: 'independent-outbox-state' },
+    lastStatus: { never: 'not-yet-fired', running: 'in-flight', ok: 'last-run-succeeded', failed: 'last-run-failed', missed: 'last-fire-missed' },
     categories: ['ok', 'validation-failed', 'needs-input', 'unavailable', 'unauthorized', 'execution-failed', 'waiting-confirmation', 'applied', 'unknown'],
   };
 }

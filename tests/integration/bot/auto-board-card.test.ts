@@ -56,6 +56,7 @@ describe('automation board card', () => {
     expect(board.text).toContain('提醒');
     expect(board.text).toContain('暂停');
     expect(board.text).toContain('删除');
+    expect(board.text).toContain('尚未运行');
     expect(board.text).not.toContain('提醒交周报');
     expectNoStatusBlock(board.text);
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([board.messageId]);
@@ -81,7 +82,7 @@ describe('automation board card', () => {
         paused: false,
         nextFireAt: FIRE_AT,
         lastFireAt: 0,
-        lastStatus: 'ok',
+        lastStatus: 'never',
         missed: 0,
       }),
     ]);
@@ -257,6 +258,7 @@ describe('automation board card', () => {
     await h.channel.handlers.message?.(mention('om_list', '/auto'));
     expect(lastMarkdown(h.channel)).toContain('#1 交周报');
     expect(lastMarkdown(h.channel)).toContain('提醒');
+    expect(lastMarkdown(h.channel)).toContain('尚未运行');
 
     await h.channel.handlers.message?.(mention('om_pause', '/auto pause 1'));
     expect(h.store.get(1)?.paused).toBe(true);
