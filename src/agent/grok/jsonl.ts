@@ -252,14 +252,44 @@ function isControlTokenOnly(value: string): boolean {
   return /^<\|[a-z_]+\|>$/.test(value.trim());
 }
 
+const UTF8_DECODER = new TextDecoder('utf-8');
+
 function serializeToolOutput(value: unknown): string {
   if (value === undefined || value === null) return '';
   if (typeof value === 'string') return value;
+  const decoded = decodeUtf8Bytes(value);
+  if (decoded !== undefined) return decoded;
+  if (isRecord(value) && !Array.isArray(value) && !(value instanceof Uint8Array)) {
+    const wrapped = decodeUtf8Bytes(value.output) ?? decodeUtf8Bytes(value.content);
+    if (wrapped !== undefined) return wrapped;
+  }
   try {
     return JSON.stringify(value);
   } catch {
     return String(value);
   }
+}
+
+function decodeUtf8Bytes(value: unknown): string | undefined {
+  const bytes = asUtf8Bytes(value);
+  if (!bytes) return undefined;
+  return UTF8_DECODER.decode(bytes);
+}
+
+function asUtf8Bytes(value: unknown): Uint8Array | undefined {
+  if (value instanceof Uint8Array) return value;
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const bytes = new Uint8Array(value.length);
+  for (let i = 0; i < value.length; i++) {
+    const n = value[i];
+    if (!isByteInt(n)) return undefined;
+    bytes[i] = n;
+  }
+  return bytes;
+}
+
+function isByteInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255;
 }
 
 function sameUsage(a: AgentEvent, b: AgentEvent | undefined): boolean {

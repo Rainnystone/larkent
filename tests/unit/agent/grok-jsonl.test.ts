@@ -9,6 +9,9 @@ const END = {
   sessionId: SESSION,
   usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 2 },
 };
+/** Worked example: UTF-8 of `中文{"ok":true}` as Grok sends it on the wire. */
+const BASH_UTF8_TEXT = '中文{"ok":true}';
+const BASH_UTF8_BYTES = [228, 184, 173, 230, 150, 135, 123, 34, 111, 107, 34, 58, 116, 114, 117, 101, 125];
 
 function collect(translator: GrokJsonlTranslator, lines: unknown[]): AgentEvent[] {
   return lines.flatMap((line) => translator.translate(line));
@@ -170,4 +173,68 @@ describe('GrokJsonlTranslator', () => {
       },
     ]);
   });
+
+  it('decodes a Bash wrapper whose output is utf-8 bytes of 中文+JSON', () => {
+    expect(toolResultOutput({ type: 'Bash', output: BASH_UTF8_BYTES })).toBe(BASH_UTF8_TEXT);
+    expect(toolResultOutput({ content: BASH_UTF8_BYTES })).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('decodes a utf-8 byte number array tool payload', () => {
+    expect(toolResultOutput(BASH_UTF8_BYTES)).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('decodes a Uint8Array tool payload as utf-8 text', () => {
+    expect(toolResultOutput(Uint8Array.from(BASH_UTF8_BYTES))).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('decodes a Buffer tool payload as utf-8 text', () => {
+    expect(toolResultOutput(Buffer.from(BASH_UTF8_BYTES))).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('leaves string tool output unchanged', () => {
+    expect(toolResultOutput(BASH_UTF8_TEXT)).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('keeps ordinary tool objects as JSON', () => {
+    expect(toolResultOutput({ lines: 3 })).toBe('{"lines":3}');
+    expect(toolResultOutput({ type: 'Bash', output: 'already text' })).toBe(
+      '{"type":"Bash","output":"already text"}',
+    );
+  });
+
+  it('replaces illegal utf-8 sequences instead of throwing', () => {
+    expect(toolResultOutput([0xff])).toBe('\uFFFD');
+  });
+
+  it('does not treat non-byte number arrays as utf-8', () => {
+    expect(toolResultOutput([256, 1])).toBe('[256,1]');
+    expect(toolResultOutput([-1, 0])).toBe('[-1,0]');
+    expect(toolResultOutput({ type: 'Bash', output: [256, 1] })).toBe(
+      '{"type":"Bash","output":[256,1]}',
+    );
+    expect(toolResultOutput({ type: 'Bash', output: [-1, 0] })).toBe(
+      '{"type":"Bash","output":[-1,0]}',
+    );
+  });
 });
+
+function toolResultOutput(rawOutput: unknown): string | undefined {
+  const t = new GrokJsonlTranslator();
+  const events = collect(t, [
+    {
+      type: 'tool_call',
+      toolCallId: 'call_1',
+      toolName: 'Bash',
+      status: 'in_progress',
+      rawInput: { command: 'bridge-tool' },
+    },
+    {
+      type: 'tool_call_update',
+      toolCallId: 'call_1',
+      status: 'completed',
+      rawOutput,
+    },
+  ]);
+  const result = events.find((event) => event.type === 'tool_result');
+  return result && result.type === 'tool_result' ? result.output : undefined;
+}
