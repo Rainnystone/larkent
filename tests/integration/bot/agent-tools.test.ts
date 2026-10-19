@@ -26,6 +26,11 @@ async function harness(chatMode: 'group' | 'topic' = 'group', agentTasks = true,
   return createAutomationToolHarness({ client, cleanup: cleanups, setChannel: channel => { sdk.channel = channel; }, initialNow: NOW, chatMode, agentTasks, journalMaxEntries, setup });
 }
 
+// Each effect may include the client's ten-second transport budget and actual child-process work.
+function waitForEffect(assertion: () => void | Promise<void>) {
+  return vi.waitFor(assertion, { timeout: 12000 });
+}
+
 it.each(['group', 'topic'] as const)('creates an agent task through the real client, deduplicates it, and binds its creator and cwd on confirmation (%s)', async mode => {
   const h = await harness(mode); let operationId = '';
   const task = { ...reminder, taskType: 'agent', name: 'Synthetic agent task', taskText: 'Read the automation skill and report its title' };
@@ -86,8 +91,8 @@ it('fires confirmed agent tasks with fresh credentials and on-demand plugin read
     return `Read plugin: ${inspected.data.skills[0].id}; ${read.data.content.includes('automation.preview')}`;
   });
   for (const fireAt of FIRES.slice(0, 2)) {
-    h.setNow(fireAt); await h.bridge.wakeAutomation(`1@${fireAt}`);
-    await vi.waitFor(() => expect(h.journal.get(`af:1@${fireAt}`)?.reply?.state).toBe('sent'), { timeout: 12000 });
+    await h.advanceConnectedTo(fireAt); await h.bridge.wakeAutomation(`1@${fireAt}`);
+    await waitForEffect(() => expect(h.journal.get(`af:1@${fireAt}`)?.reply?.state).toBe('sent'));
     h.checkFailure();
     expect(h.journal.get(`af:1@${fireAt}`)?.outcome?.kind).toBe('completed');
     expect(JSON.parse((await client.call({ version: 1, operation: 'plugins.list' }, automatic.at(-1)!)).stdout)).toMatchObject({ category: 'unavailable', code: 'run-connection-closed' });
@@ -112,8 +117,8 @@ it('keeps creation applied when a run fails and reports runtime failure separate
     expect((await call('plugins.read', { skill: 'automations' })).category).toBe('ok');
     return [{ type: 'error', message: 'synthetic authorization denied', terminationReason: 'failed' }];
   });
-  h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`); h.checkFailure();
-  await vi.waitFor(() => expect(h.journal.get(`af:1@${FIRES[0]}`)?.reply?.state).toBe('sent'));
+  await h.advanceConnectedTo(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`); h.checkFailure();
+  await waitForEffect(() => expect(h.journal.get(`af:1@${FIRES[0]}`)?.reply?.state).toBe('sent'));
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: {
       applied: true, dispatchedCount: 1, executedCount: 0, failedCount: 1, deliveredCount: 1, lastExecution: 'failed', lastDelivery: 'sent',
@@ -150,13 +155,13 @@ it('reports an empty successful run before delivery and recovers its staged resu
     expect((await call('plugins.list')).category).toBe('ok');
     return [{ type: 'done', terminationReason: 'normal' }];
   });
-  h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`); h.checkFailure();
-  await vi.waitFor(() => expect(h.journal.get(`af:1@${FIRES[0]}`)?.reply?.state).toBe('staged'));
+  await h.advanceConnectedTo(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`); h.checkFailure();
+  await waitForEffect(() => expect(h.journal.get(`af:1@${FIRES[0]}`)?.reply?.state).toBe('staged'));
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { executedCount: 1, failedCount: 0, deliveredCount: 0, lastExecution: 'ok', executionState: 'completed', lastDelivery: 'staged' } });
   });
   await h.restart();
-  await vi.waitFor(() => expect(h.channel.sent.some(row => JSON.stringify(row.content).includes('agent 没有给出文字结果'))).toBe(true));
+  await waitForEffect(() => expect(h.channel.sent.some(row => JSON.stringify(row.content).includes('agent 没有给出文字结果'))).toBe(true));
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { executedCount: 1, deliveredCount: 1, lastExecution: 'ok', lastDelivery: 'sent' } });
   });
@@ -177,8 +182,8 @@ it('exposes a running automatic task then revokes its client on stop and preserv
     expect(JSON.parse((await client.call({ version: 1, operation: 'plugins.list' }, automatic)).stdout)).toMatchObject({ category: 'unavailable', code: 'run-connection-closed' });
     return [{ type: 'done', terminationReason: 'interrupted' }];
   });
-  h.setNow(FIRES[0]!); const waking = h.bridge.wakeAutomation(`1@${FIRES[0]}`);
-  await vi.waitFor(() => expect(ready).toBe(true));
+  await h.advanceConnectedTo(FIRES[0]!); const waking = h.bridge.wakeAutomation(`1@${FIRES[0]}`);
+  await waitForEffect(() => expect(ready).toBe(true));
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { dispatchedCount: 1, executedCount: 0, executionState: 'running', lastExecution: 'pending', lastDelivery: 'pending' } });
   });
@@ -227,10 +232,10 @@ it('uses the deployment plugin snapshot for automatic fires and loads a new vers
     expect(JSON.parse(actual.stdout)).toEqual(expected);
     return `Automatic fixture value: ${JSON.parse(actual.stdout).result}`;
   });
-  runWithVersion('1.0.0', { result: 42, doubled: 84 }); h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`);
-  await vi.waitFor(() => expect(h.journal.get(`af:1@${FIRES[0]}`)?.reply?.state).toBe('sent')); h.checkFailure();
+  runWithVersion('1.0.0', { result: 42, doubled: 84 }); await h.advanceConnectedTo(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`);
+  await waitForEffect(() => expect(h.journal.get(`af:1@${FIRES[0]}`)?.reply?.state).toBe('sent')); h.checkFailure();
   expect(h.channel.sent.some(row => JSON.stringify(row.content).includes('Automatic fixture value: 42'))).toBe(true);
-  await h.restart(); runWithVersion('2.0.0', { result: 7, doubled: 14 }); h.setNow(FIRES[1]!); await h.bridge.wakeAutomation(`1@${FIRES[1]}`);
-  await vi.waitFor(() => expect(h.journal.get(`af:1@${FIRES[1]}`)?.reply?.state).toBe('sent')); h.checkFailure();
+  await h.restart(); runWithVersion('2.0.0', { result: 7, doubled: 14 }); await h.advanceConnectedTo(FIRES[1]!); await h.bridge.wakeAutomation(`1@${FIRES[1]}`);
+  await waitForEffect(() => expect(h.journal.get(`af:1@${FIRES[1]}`)?.reply?.state).toBe('sent')); h.checkFailure();
   expect(h.channel.sent.some(row => JSON.stringify(row.content).includes('Automatic fixture value: 7'))).toBe(true);
 }, 30000);

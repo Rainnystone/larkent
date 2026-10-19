@@ -74,6 +74,13 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
       await channel.handlers.message?.({ messageId: `om_command_${++message}`, content, chatId: 'oc_synthetic', chatType: 'group', senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
     },
     setNow: (value: number) => { now = value; },
+    /** A virtual clock jump must include the fresh socket evidence required after a tick gap. */
+    async advanceConnectedTo(value: number) {
+      now = value;
+      await bridge.tickLink();
+      bridge.noteLinkFrame();
+      await bridge.tickLink();
+    },
     async turn(next: typeof script, chatId = 'oc_synthetic', waitReply = true, chatType: 'group' | 'p2p' = 'group', replyTo?: string) {
       script = next; const count = runCount; failure = undefined;
       await channel.handlers.message?.({ messageId: `om_synthetic_${++message}`, content: '今天、明天、后天每天 09:00 提醒', chatId, chatType, ...(chatMode === 'topic' ? { threadId: 'omt_synthetic' } : {}), ...(replyTo ? { threadId: replyTo, rootId: replyTo, replyToMessageId: replyTo } : {}), senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
