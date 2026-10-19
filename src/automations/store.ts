@@ -1,6 +1,6 @@
 import { AUTOMATIONS_SCHEMA_VERSION, upgradeAutomationsDocument } from './migrations';
 import { automationOperationScope, readAutomationOperationId } from './operation-id';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
   cloneDraftCardBody,
@@ -81,6 +81,25 @@ export interface AutomationOperation {
 }
 export type RegisterAutomationOperationInput = Pick<AutomationOperation, 'operationId' | 'profile' | 'chatId' | 'fingerprint'>;
 
+export interface TaskMutationGuard {
+  chatId: string;
+  revision?: string;
+  operationId?: string;
+  operation?: RegisterAutomationOperationInput;
+}
+
+/** Management state only: firing a scheduled occurrence does not change the user's requested task. */
+export function automationTargetRevision(item: AutomationItem): string {
+  return createHash('sha256').update(JSON.stringify({ id: item.id, chatId: item.chatId, taskType: item.taskType, name: item.name,
+    taskText: item.taskText, schedule: item.schedule, timezone: item.timezone, startAt: item.startAt, endAt: item.endAt, paused: item.paused, cwd: item.cwd })).digest('hex');
+}
+
+export function taskMutationError(item: AutomationItem | undefined, guard: TaskMutationGuard): string | undefined {
+  if (!item || item.chatId !== guard.chatId) return 'target-not-found';
+  if (guard.revision && guard.revision !== automationTargetRevision(item)) return 'target-state-conflict';
+  return undefined;
+}
+
 export interface DraftDelivery {
   state: 'prepared' | 'sending' | 'sent' | 'rejected';
   deliveryId: string;
@@ -126,6 +145,7 @@ export interface AutomationDraftBase {
 
 /** Frozen at proposal time so a later delete still leaves the card body intact. */
 export interface AutomationTargetSnapshot {
+  revision?: string;
   id: number;
   name: string;
   taskType: AutomationTaskType;
@@ -149,7 +169,7 @@ export interface ReplaceAutomationDraft extends AutomationDraftBase, CreateAutom
   op: 'replace';
   targetId: number;
   target: AutomationTargetSnapshot;
-  scheduleText: string;
+  scheduleText?: string;
   pendingRecurring?: PendingRecurring;
 }
 
@@ -159,6 +179,8 @@ export type SaveAutomationDraftInput =
   | (CreateAutomationInput & { op?: 'create'; pendingRecurring?: PendingRecurring })
   | {
       op: 'delete';
+      operationId?: string;
+      cardReply?: DraftCardReply;
       chatId: string;
       createdBy: string;
       targetId: number;
@@ -168,7 +190,7 @@ export type SaveAutomationDraftInput =
       op: 'replace';
       targetId: number;
       target: AutomationTargetSnapshot;
-      scheduleText: string;
+      scheduleText?: string;
       pendingRecurring?: PendingRecurring;
     });
 
@@ -356,6 +378,22 @@ export class AutomationsStore {
   }
 
   async create(input: CreateAutomationInput): Promise<AutomationItem> {
+    const item = this.insertItem(input);
+    await this.persistNow();
+    return item;
+  }
+
+  async replace(draft: ReplaceAutomationDraft, input: CreateAutomationInput): Promise<AutomationItem | undefined> {
+    this.assertMutable();
+    const old = this.items.find(item => item.id === draft.targetId && item.chatId === draft.chatId);
+    if (taskMutationError(old, { chatId: draft.chatId, revision: draft.target.revision })) return undefined;
+    const created = this.insertItem({ ...input, ...(draft.operationId ? { operationId: draft.operationId } : {}) });
+    this.items = this.items.filter(item => item.id !== draft.targetId);
+    await this.persistNow();
+    return created;
+  }
+
+  private insertItem(input: CreateAutomationInput): AutomationItem {
     this.assertMutable();
     if (input.taskType === 'agent' && !(typeof input.cwd === 'string' && input.cwd.trim())) {
       throw new Error('agent task requires cwd captured at creation');
@@ -390,15 +428,15 @@ export class AutomationsStore {
       this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
     }
     this.items.push(item);
-    await this.persistNow();
     return cloneItem(item);
   }
 
-  async delete(id: number): Promise<boolean> {
+  async delete(id: number, guard?: TaskMutationGuard): Promise<boolean> {
     this.assertMutable();
     const index = this.items.findIndex((item) => item.id === id);
-    if (index < 0) return false;
+    if (index < 0 || (guard && taskMutationError(this.items[index], guard))) return false;
     this.items.splice(index, 1);
+    this.applyMutationOperation(id, guard);
     await this.persistNow();
     return true;
   }
@@ -502,9 +540,11 @@ export class AutomationsStore {
   ): Promise<CreateAutomationDraft>;
   async saveDraft(
     input: Extract<SaveAutomationDraftInput, { op: 'delete' }>,
+    operation?: RegisterAutomationOperationInput,
   ): Promise<DeleteAutomationDraft>;
   async saveDraft(
     input: Extract<SaveAutomationDraftInput, { op: 'replace' }>,
+    operation?: RegisterAutomationOperationInput,
   ): Promise<ReplaceAutomationDraft>;
   async saveDraft(input: SaveAutomationDraftInput, operation?: RegisterAutomationOperationInput): Promise<AutomationDraft> {
     this.assertMutable();
@@ -746,22 +786,52 @@ export class AutomationsStore {
     return changed;
   }
 
-  async pause(id: number, operation?: RegisterAutomationOperationInput): Promise<boolean> {
+  private applyMutationOperation(id: number, guard?: TaskMutationGuard): void {
+    if (guard?.operation) {
+      if (this.operations.some(entry => entry.operationId === guard.operation!.operationId || entry.aliases?.includes(guard.operation!.operationId))) throw new Error('operation already exists');
+      this.operations.push({ ...guard.operation, draftId: `operation:${guard.operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount: 0 });
+    }
+    if (guard?.operationId) {
+      const operation = this.operations.find(entry => entry.operationId === guard.operationId);
+      if (!operation || operation.state !== 'received') throw new Error('operation is not awaiting confirmation');
+      operation.state = 'applied'; operation.taskId = id;
+      this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
+    }
+  }
+
+  async recordOperationFailure(operation: RegisterAutomationOperationInput, code: string): Promise<void> {
+    this.assertMutable();
+    if (this.operations.some(entry => entry.operationId === operation.operationId || entry.aliases?.includes(operation.operationId))) throw new Error('operation already exists');
+    this.operations.push({ ...operation, draftId: `operation:${operation.operationId}`, createdAt: this.now(), state: 'not-applied', code, dispatchedCount: 0 });
+    await this.persistNow();
+  }
+
+  async rejectOperation(operationId: string, code: string): Promise<void> {
+    this.assertMutable();
+    const operation = this.operations.find(entry => entry.operationId === operationId);
+    if (!operation || operation.state !== 'received') return;
+    operation.state = 'not-applied'; operation.code = code;
+    this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
+    await this.persistNow();
+  }
+
+  async pause(id: number, guard?: TaskMutationGuard): Promise<boolean> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
-    if (!item) return false;
+    if (!item || (guard && taskMutationError(item, guard))) return false;
     item.paused = true;
-    if (operation) this.operations.push({ ...operation, draftId: `operation:${operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount: 0 });
+    this.applyMutationOperation(id, guard);
     await this.persistNow();
     return true;
   }
 
-  async resume(id: number, nextFireAt: number): Promise<boolean> {
+  async resume(id: number, nextFireAt: number, guard?: TaskMutationGuard): Promise<boolean> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
-    if (!item) return false;
+    if (!item || (guard && taskMutationError(item, guard))) return false;
     item.paused = false;
     item.nextFireAt = nextFireAt;
+    this.applyMutationOperation(id, guard);
     await this.persistNow();
     return true;
   }
@@ -1335,7 +1405,7 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
   if (op === 'replace') {
     const target = parseTargetSnapshot(raw.target);
     if (!isPositiveInt(raw.targetId) || !target || target.id !== raw.targetId) return undefined;
-    if (typeof raw.scheduleText !== 'string' || !raw.scheduleText.trim()) return undefined;
+    if (raw.scheduleText !== undefined && (typeof raw.scheduleText !== 'string' || !raw.scheduleText.trim())) return undefined;
     return {
       op: 'replace',
       ...schedulable,
@@ -1343,7 +1413,7 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
       createdAt: raw.createdAt,
       targetId: raw.targetId,
       target,
-      scheduleText: raw.scheduleText.trim(),
+      ...(typeof raw.scheduleText === 'string' ? { scheduleText: raw.scheduleText.trim() } : {}),
       ...card,
     };
   }
@@ -1390,6 +1460,7 @@ function parseTargetSnapshot(raw: unknown): AutomationTargetSnapshot | undefined
   if (typeof raw.nextFireLabel !== 'string' || !raw.nextFireLabel) return undefined;
   if (typeof raw.endLabel !== 'string' || !raw.endLabel) return undefined;
   return {
+    ...(typeof raw.revision === 'string' && /^[a-f0-9]{64}$/.test(raw.revision) ? { revision: raw.revision } : {}),
     id: raw.id,
     name: raw.name,
     taskType: raw.taskType,

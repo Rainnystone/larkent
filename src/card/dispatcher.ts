@@ -473,10 +473,10 @@ async function dispatchAutoAction(
     return actionToast('success', DRAFT_SETTLED_END_CHOSEN);
   }
 
-  if (registered.operationId && cmd === 'auto.confirm' && registered.op === 'create') {
+  if (registered.operationId && cmd === 'auto.confirm') {
     if (!deps.autoAuth.claimNonce(verified.payload.nonce)) return actionToast('error', AUTO_INVALID_HINT);
     try {
-      const result = await confirmAutomationDraft({ automations: deps.automations, onAutomationConfirmed: deps.onAutomationConfirmed, now: deps.now }, registered);
+      const result = await confirmAutomationDraft({ automations: deps.automations, automationsScheduler: deps.automationsScheduler, onAutomationConfirmed: deps.onAutomationConfirmed, now: deps.now }, registered);
       if (result.ok) deps.autoAuth.consume(verified.payload.nonce);
       scheduleDraftCardSettle(deps.channel, registered, result.status);
       return actionToast(result.ok ? 'success' : 'error', result.toast);

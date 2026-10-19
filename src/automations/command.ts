@@ -40,6 +40,7 @@ import {
   draftTargetGoneStatus,
   DRAFT_SETTLED_CANCELLED,
 } from './draft-card';
+import { taskMutationError } from './store';
 import type {
   AutomationDraft,
   AutomationItem,
@@ -1388,6 +1389,14 @@ export async function confirmAutomationDraft(
   },
   draft: AutomationDraft,
 ): Promise<AutomationConfirmOutcome> {
+  if (draft.op !== 'create' && ctx.automations) {
+    const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision });
+    if (code) {
+      if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code);
+      const status = code === 'target-not-found' ? draftTargetGoneStatus(draft.targetId) : `#${draft.targetId} 状态已变化，请重新查询。`;
+      return { ok: false, status, toast: status };
+    }
+  }
   switch (draft.op) {
     case 'create':
       return confirmCreateDraft(ctx, draft);
@@ -1437,7 +1446,7 @@ async function confirmDeleteDraft(
     const status = draftTargetGoneStatus(draft.targetId);
     return { ok: false, status, toast: status };
   }
-  const ok = await ctx.automationsScheduler.delete(draft.targetId);
+  const ok = await ctx.automationsScheduler.delete(draft.targetId, { chatId: draft.chatId, revision: draft.target.revision, operationId: draft.operationId });
   if (!ok) {
     const status = draftTargetGoneStatus(draft.targetId);
     return { ok: false, status, toast: status };
@@ -1465,12 +1474,12 @@ async function confirmReplaceDraft(
         : AUTO_INVALID_HINT;
     return { ok: false, status: message, toast: message };
   }
-  let created: AutomationItem;
+  let created: AutomationItem | undefined;
   try {
     const nextFireAt = nextFireAfter(blocked.schedule, now);
     const startAt = scheduleStartAt(blocked.schedule, now);
     const endAt = scheduleEndAt(blocked.schedule);
-    created = await ctx.automations.create({
+    created = await ctx.automations.replace(draft, {
       taskType: draft.taskType,
       schedule: blocked.schedule,
       timezone: draft.timezone,
@@ -1488,18 +1497,12 @@ async function confirmReplaceDraft(
     const status = `没有替换 #${draft.targetId}：新任务未创建`;
     return { ok: false, status, toast: status };
   }
+  if (!created) {
+    if (draft.operationId) await ctx.automations.takeDraft(draft.draftId);
+    const status = draftTargetGoneStatus(draft.targetId);
+    return { ok: false, status, toast: status };
+  }
   await ctx.onAutomationConfirmed?.(created);
-  log.info('auto', 'confirmed', { id: created.id, taskType: created.taskType, chatId: created.chatId });
-  const old = ctx.automations.get(draft.targetId);
-  if (!old || old.chatId !== draft.chatId) {
-    const status = `已确认 #${created.id}（${draftTargetGoneStatus(draft.targetId)}）`;
-    return { ok: true, status, toast: status };
-  }
-  const deleted = await ctx.automationsScheduler.delete(draft.targetId);
-  if (!deleted) {
-    const status = `已确认 #${created.id}（${draftTargetGoneStatus(draft.targetId)}）`;
-    return { ok: true, status, toast: status };
-  }
   log.info('auto', 'replaced', { oldId: draft.targetId, newId: created.id });
   const status = draftReplacedStatus(draft.targetId, created.id);
   return { ok: true, status, toast: status };
@@ -1513,6 +1516,7 @@ function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): Automa
   if (draft.taskType === 'agent' && !(draft.cwd && draft.cwd.trim())) {
     return { outcome: 'refuse', message: AUTO_AGENT_NEEDS_CWD };
   }
+  if (draft.scheduleText) {
   const textVerdict = assessAutomationProposal({
     taskType: draft.taskType,
     scheduleText: draft.scheduleText,
@@ -1522,6 +1526,7 @@ function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): Automa
   });
   if (textVerdict.outcome === 'reject' && textVerdict.reason === 'past-time') return textVerdict;
   if (textVerdict.outcome === 'refuse') return textVerdict;
+  }
   const stored = readSchedule(draft.schedule);
   if (!stored) return { outcome: 'reject', reason: 'invalid-schedule' };
   if (stored.kind === 'one-shot' && stored.fireAt <= now) {

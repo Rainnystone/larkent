@@ -17,7 +17,7 @@ import {
   type AutomationTaskType,
   type AutomationTriggerSource,
   type AutomationsStore,
-  type RegisterAutomationOperationInput,
+  type TaskMutationGuard,
 } from './store';
 import { createStatusPusher, type StatusPusher } from './status-pusher';
 import { consumeWakeRequests, watchWakeDir, type WakeWatch } from './wake-file';
@@ -92,9 +92,9 @@ export interface AutomationScheduler {
   notifyChanged(): Promise<void>;
   /** Re-arm after an in-process create/confirm so new nextFireAt / endAt take effect. */
   nudge(): Promise<void>;
-  pause(id: number, operation?: RegisterAutomationOperationInput): Promise<boolean>;
-  resume(id: number): Promise<boolean>;
-  delete(id: number): Promise<boolean>;
+  pause(id: number, guard?: TaskMutationGuard): Promise<boolean>;
+  resume(id: number, guard?: TaskMutationGuard): Promise<boolean>;
+  delete(id: number, guard?: TaskMutationGuard): Promise<boolean>;
   removeFromChat(chatId: string): Promise<boolean>;
 }
 
@@ -221,34 +221,35 @@ class Scheduler implements AutomationScheduler {
     });
   }
 
-  pause(id: number, operation?: RegisterAutomationOperationInput): Promise<boolean> {
+  pause(id: number, guard?: TaskMutationGuard): Promise<boolean> {
     return this.enqueue(async () => {
       const item = this.store.get(id);
-      if (!item || (operation && item.chatId !== operation.chatId)) return false;
-      const ok = await this.store.pause(id, operation);
+      if (!item || (guard && item.chatId !== guard.chatId)) return false;
+      const ok = await this.store.pause(id, guard);
       if (ok) await this.writeStatus();
       this.armTimer();
       return ok;
     });
   }
 
-  resume(id: number): Promise<boolean> {
+  resume(id: number, guard?: TaskMutationGuard): Promise<boolean> {
     return this.enqueue(async () => {
       const item = this.store.get(id);
-      if (!item) return false;
+      if (!item || (guard && item.chatId !== guard.chatId)) return false;
       const schedule = readSchedule(item.schedule);
-    const next = schedule ? nextFireAfter(schedule, this.now()) : 0;
-    const ok = await this.store.resume(id, next);
-    if (ok && next === 0) await this.store.delete(id);
+      const next = schedule ? nextFireAfter(schedule, this.now()) : 0;
+      if (guard?.operation && !next) return false;
+      const ok = await this.store.resume(id, next, guard);
+      if (ok && next === 0) await this.store.delete(id);
       if (ok) await this.writeStatus();
       this.armTimer();
       return ok;
     });
   }
 
-  delete(id: number): Promise<boolean> {
+  delete(id: number, guard?: TaskMutationGuard): Promise<boolean> {
     return this.enqueue(async () => {
-      const ok = await this.store.delete(id);
+      const ok = await this.store.delete(id, guard);
       if (ok) await this.writeStatus();
       this.armTimer();
       return ok;

@@ -1843,6 +1843,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     runType: scope.startsWith('auto:') ? 'automation' : 'im', store: automations,
     timezone: controls.profileConfig.automations.timezone, agentTasks: controls.profileConfig.automations.agentTasks,
     cardReply: { replyTo: lastMsg.messageId, ...(mode === 'topic' && threadId ? { replyInThread: true, threadId } : {}) },
+    cwd: workspaces.cwdFor(scope) ?? controls.profileConfig.workspaces.default,
     now, journal, drafts: { channel, automations, autoAuth, automationsScheduler, now, isLinkDown: () => Boolean(link?.isDown()), botAppId: controls.profileConfig.accounts.app.id },
     availability: () => !catalog.inspect('automation') ? 'automation-plugin-unavailable'
       : !controls.profileConfig.automations.enabled ? 'automations-disabled'

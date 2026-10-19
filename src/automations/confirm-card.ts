@@ -1,6 +1,7 @@
 import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
 import { monthlyFireCount, nextFires, readSchedule, type Schedule } from './schedule';
 import { zonedParts } from './zoned-time';
+import { automationTargetRevision } from './store';
 import type { AutomationItem, AutomationTargetSnapshot, AutomationTaskType } from './store';
 
 function escapeMd(s: string): string {
@@ -200,6 +201,7 @@ export function automationTargetSnapshot(item: AutomationItem): AutomationTarget
     ? describeEnd(schedule, item.timezone)
     : (item.endAt > 0 ? formatZonedDateTime(item.timezone, item.endAt) : '无');
   return {
+    revision: automationTargetRevision(item),
     id: item.id,
     name: item.name,
     taskType: item.taskType,

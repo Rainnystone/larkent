@@ -1,10 +1,11 @@
 import { manageAutomationOperation } from './manage-operation';
 import { AUTOMATION_OPERATION_TTL_MS } from './operation-id';
 import type { TurnJournal } from '../bot/turn-journal';
-import { createReminderOperation, getReminderOperation } from './reminder-operation';
+import { createReminderOperation, getReminderOperation, serializeAutomationWrite } from './reminder-operation';
 import type { DraftFlushContext } from './command';
 import { formatZonedDateTime } from './confirm-card';
 import { nextFireAfter, nextFires, REMINDER_MIN_INTERVAL_MS, AGENT_MIN_INTERVAL_MS, ONE_YEAR_MS } from './schedule';
+import { automationTargetRevision } from './store';
 import type { AutomationsStore, DraftCardReply } from './store';
 import { normalizeAutomationSchedule, scheduleSchema } from './schedule-input';
 import { record, toolResult, type ToolResult } from '../bridge-tools/protocol';
@@ -22,6 +23,7 @@ export interface AutomationToolContext {
   cardReply?: DraftCardReply;
   timezone: string;
   agentTasks: boolean;
+  cwd?: string;
   now?: () => number;
 }
 
@@ -47,13 +49,13 @@ export function automationSchema(context: AutomationToolContext) {
       ['automation.preview', { available: !reason, ...(reason ? { reason } : {}), params: AUTOMATION_PREVIEW_SCHEMA }],
       ['automation.create', { available: !createReason, ...(createReason ? { reason: createReason } : {}), params: { type: 'object', additionalProperties: false, required: ['taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, taskType: { const: 'reminder' }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string', description: 'Client assigns before submission; retain for queries and retries' } } } }],
       ['automation.operation.get', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['operationId'], properties: { operationId: { type: 'string' } } } }],
-      ['automation.pause', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'integer', minimum: 1 }, operationId: { type: 'string' } } } }],
-      ...['replace', 'delete', 'resume'].map(name => [`automation.${name}`, { available: false, reason: 'not-implemented' }]),
+      ...['pause', 'resume', 'delete'].map(name => [`automation.${name}`, { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'integer', minimum: 1 }, revision: { type: 'string', description: 'Expected management revision from automation.list; stale state is rejected' }, operationId: { type: 'string' } } } }]),
+      ['automation.replace', { available: !createReason, ...(createReason ? { reason: createReason } : {}), params: { type: 'object', additionalProperties: false, required: ['id', 'taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, id: { type: 'integer', minimum: 1 }, revision: { type: 'string' }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string' } } } }],
     ]),
     defaults: { timezone: context.timezone }, agentTasks: context.agentTasks,
     limits: { reminderMinIntervalMs: REMINDER_MIN_INTERVAL_MS, agentMinIntervalMs: AGENT_MIN_INTERVAL_MS, maxHorizonMs: ONE_YEAR_MS },
     boundary: 'start-inclusive-end-exclusive', timestampUnit: 'UTC epoch milliseconds',
-    confirmation: 'human-card-only',
+    confirmation: { create: 'human-card-only', replace: 'human-card-only', delete: 'human-card-only', pause: 'immediate', resume: 'immediate' },
     operationIds: { submissionTtlMs: AUTOMATION_OPERATION_TTL_MS, scope: 'profile-chat', retention: 'durable', recovery: 'query-original-id-before-retry' },
     categories: ['ok', 'validation-failed', 'needs-input', 'unavailable', 'unauthorized', 'execution-failed', 'waiting-confirmation', 'applied', 'unknown'],
   };
@@ -68,13 +70,13 @@ export async function callAutomationTool(operation: string, params: Record<strin
   if (operation === 'automation.list') {
     if (Object.keys(params).length) return toolResult('validation-failed', 'unknown-field');
     return toolResult('ok', 'tasks', { tasks: context.store!.list().filter(item => item.chatId === context.chatId).map(item => ({
-      id: item.id, taskType: item.taskType, name: item.name, taskText: item.taskText, schedule: item.schedule,
+      id: item.id, revision: automationTargetRevision(item), taskType: item.taskType, name: item.name, taskText: item.taskText, schedule: item.schedule,
       timezone: item.timezone, startAt: item.startAt, endAt: item.endAt, nextFireAt: item.nextFireAt,
       paused: item.paused, lastStatus: item.lastStatus,
     })) });
   }
-  if (operation === 'automation.pause') return manageAutomationOperation(operation, params, context);
-  if (operation === 'automation.create') return createReminderOperation(params, context);
+  if ((operation === 'automation.pause' || operation === 'automation.resume' || operation === 'automation.delete' || operation === 'automation.replace')) return serializeAutomationWrite(context.store!, () => manageAutomationOperation(operation, params, context));
+  if (operation === 'automation.create') return serializeAutomationWrite(context.store!, () => createReminderOperation(params, context));
   if (operation === 'automation.operation.get') {
     if (Object.keys(params).some(key => key !== 'operationId')) return toolResult('validation-failed', 'unknown-field');
     return getReminderOperation(params.operationId, context);

@@ -9,6 +9,13 @@ import type { AutomationToolContext } from './tools';
 
 // The durable receipt is authoritative. This only serializes overlapping calls until it is written.
 const claims = new WeakMap<AutomationsStore, Map<string, Promise<ToolResult>>>();
+const writeTails = new WeakMap<AutomationsStore, Promise<unknown>>();
+export async function serializeAutomationWrite(store: AutomationsStore, submit: () => Promise<ToolResult>): Promise<ToolResult> {
+  const previous = writeTails.get(store) ?? Promise.resolve();
+  const current = previous.catch(() => {}).then(submit);
+  writeTails.set(store, current);
+  try { return await current; } finally { if (writeTails.get(store) === current) writeTails.delete(store); }
+}
 export interface ReminderOperationContext extends AutomationToolContext { drafts?: DraftFlushContext }
 
 export async function getReminderOperation(operationId: unknown, context: ReminderOperationContext): Promise<ToolResult> {

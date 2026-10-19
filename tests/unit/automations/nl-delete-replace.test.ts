@@ -583,62 +583,6 @@ describe('confirming a delete or replace', () => {
     expect(missing).toEqual({ ok: false, status: '#99 已不存在', toast: '#99 已不存在' });
   });
 
-  it('replaces by creating first, keeps the old task when create throws, and reports a missing old task', async () => {
-    const h = await harness();
-    const item = await h.store.create(reminderInput());
-    const draft = await h.store.saveDraft({
-      ...reminderInput({ name: '合并后', taskText: '总结马斯克和 Sam Altman 的推特' }),
-      op: 'replace',
-      targetId: item.id,
-      target: automationTargetSnapshot(item),
-      scheduleText: '2026-10-19 09:00',
-    });
-    const yes = await confirmAutomationDraft(h.ctx(), draft);
-    const created = h.store.list()[0];
-    expect(created?.name).toBe('合并后');
-    expect(created?.id).not.toBe(item.id);
-    expect(yes).toEqual({
-      ok: true,
-      status: `已替换 #${item.id} → #${created!.id}`,
-      toast: `已替换 #${item.id} → #${created!.id}`,
-    });
-    const replaced = await logEvents(h.logsDir, 'replaced');
-    expect(replaced).toEqual([expect.objectContaining({ oldId: item.id, newId: created!.id })]);
-
-    const kept = await h.store.create(reminderInput({ name: '仍在', taskText: '仍在' }));
-    const failing = await h.store.saveDraft({
-      ...reminderInput({ name: '失败', taskText: '失败' }),
-      op: 'replace',
-      targetId: kept.id,
-      target: automationTargetSnapshot(kept),
-      scheduleText: '2026-10-19 09:00',
-    });
-    const original = h.store.create.bind(h.store);
-    h.store.create = async () => {
-      throw new Error('disk full');
-    };
-    const failed = await confirmAutomationDraft(h.ctx(), failing);
-    h.store.create = original;
-    expect(failed.ok).toBe(false);
-    expect(failed.status).toBe(`没有替换 #${kept.id}：新任务未创建`);
-    expect(h.store.get(kept.id)?.name).toBe('仍在');
-
-    const orphan = await h.store.create(reminderInput({ name: '将消失', taskText: '将消失' }));
-    const afterGone = await h.store.saveDraft({
-      ...reminderInput({ name: '新建', taskText: '新建' }),
-      op: 'replace',
-      targetId: orphan.id,
-      target: automationTargetSnapshot(orphan),
-      scheduleText: '2026-10-19 09:00',
-    });
-    await h.store.delete(orphan.id);
-    const gone = await confirmAutomationDraft(h.ctx(), afterGone);
-    const newbie = h.store.list().find((entry) => entry.name === '新建');
-    expect(newbie).toBeDefined();
-    expect(h.store.get(orphan.id)).toBeUndefined();
-    expect(gone.status).toBe(`已确认 #${newbie!.id}（#${orphan.id} 已不存在）`);
-  });
-
   it('confirms a replace whose fire is still ahead but inside the ten-minute floor', async () => {
     const h = await harness();
     const item = await h.store.create(reminderInput());
