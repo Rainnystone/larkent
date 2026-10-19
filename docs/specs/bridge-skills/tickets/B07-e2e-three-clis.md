@@ -28,5 +28,5 @@ Migrated skills
 
 - [ ] Scenarios 1–10 pass on all three agent kinds (10 where meeting is available); results recorded in this PR as a comment (no Feishu IDs; redact to last 4).
 - [ ] Grok Build without `--trust` can read every catalog path at its absolute location outside its working directory (the per-profile bridge workspace); record the evidence.
-- [ ] Record, per agent kind and skill, whether the agent actually read the `SKILL.md` when it applied (input for Open question N4).
+- [ ] Record, per agent kind and skill, whether the agent actually read the `SKILL.md` when it applied (input for Decision N4's follow-up: inline only if read rates are low).
 - [ ] If a CLI cannot read the absolute path under its access mode or sandbox, record it and open a new ticket for that agent kind (Q6: an agent-facing command wrapping **read skill**) instead of patching here.

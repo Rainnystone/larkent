@@ -10,7 +10,7 @@ The last hard-coded how-to text lives inside the doc-comment and meeting prompt 
 2. **Skill `doc-comment`** (`bridge-tools: comment-reply lark-cli`): how to read the target by file type (docs v2 fetch for doc / docx, the sheet path, the file path; do not loop on the same incompatible-argument error), the bridge posts the comment reply (do not call comment / reply / reaction APIs), plain-text reply rules (no markdown, no code blocks, no internal reasoning or tool logs; explain only user-visible grounds). The `file_token` placeholder in the read command becomes a reference to the turn fact.
 3. **Skill `meeting-reply`** (`bridge-tools: meeting-reply`): answer from the meeting context, concise (about 200 characters), no markdown headings.
 4. **Builders.** Comment prompt keeps: doc link, `file_token`, type, comment range, selected text, prior thread, the question. Meeting prompt keeps: the "you are in a meeting" fact, topic, transcript, who asked, the question. Both already carry the catalog from B04.
-5. **Description wording.** Because these skills apply to every run of their kind, their descriptions start with the run kind as the leading word (for example 「云文档评论 run：回复前先读」). Open question N4 default: no inline full text; B07 records whether agents read them.
+5. **Description wording.** Because these skills apply to every run of their kind, their descriptions start with the run kind as the leading word (for example 「云文档评论 run：回复前先读」). Decision N4: no inline full text; B07 records whether agents read them.
 
 ## Source (953e7bd)
 

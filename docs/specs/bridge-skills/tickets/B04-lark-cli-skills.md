@@ -8,11 +8,11 @@ Today the lark-cli environment rules are injected twice (system prompt section a
 
 1. **Tools.** Add `lark-cli` (available on every run) and `lark-cli-user` (available on run kind `im` only) to the module's tool table.
 2. **Skills (behaviour-equivalent move, no wording changes beyond de-duplication).**
-   - `lark-cli` (`bridge-tools: lark-cli`): bridge-bound environment variables, never unset `LARK_CHANNEL*` / `LARKSUITE_CLI_CONFIG_DIR` or use `env -u`, "context detected but not bound" → stop and ask for restart / doctor / preflight, never read keys from `config.json`, multi-profile config, speaking in Feishu is always bot identity. Merge `BRIDGE_AGENT_INSTRUCTIONS` into it; keep only agent-kind-neutral facts (Open question N7 default: drop the Codex-specific sentence, keep "the bridge subprocess can reach the keychain like a local terminal").
+   - `lark-cli` (`bridge-tools: lark-cli`): bridge-bound environment variables, never unset `LARK_CHANNEL*` / `LARKSUITE_CLI_CONFIG_DIR` or use `env -u`, "context detected but not bound" → stop and ask for restart / doctor / preflight, never read keys from `config.json`, multi-profile config, speaking in Feishu is always bot identity. Merge `BRIDGE_AGENT_INSTRUCTIONS` into it; keep only agent-kind-neutral facts (Decision N7: drop the Codex-specific sentence, keep "the bridge subprocess can reach the keychain like a local terminal").
    - `lark-user-identity` (`bridge-tools: lark-cli-user`): when reads / asset operations may use `--as user`, the 230027 fallback, the full OAuth device flow (p2p only, never in the background, two-phase `--no-wait` then `--device-code`, strict-mode / default-as convergence kept internal, queueing and `/stop`).
 3. **System prompt.** Remove those three sections from the shared system prompt (all six agent kinds). The automation variant's addendum drops "ignore the identity and OAuth sections above" (the skill is simply not in an `auto:` catalog) and keeps only its contract lines: bot identity only, no personnel / org operations, what is allowed. Policy-guard is unchanged.
 4. **Per-turn instructions.** Delete `BRIDGE_AGENT_INSTRUCTIONS`; the IM `bridge_instructions` section then carries only turn facts.
-5. **Catalog on every run kind.** Build a turn context and render the same `<bridge_skills>` section in the agent-task fire prompt (`auto`), the doc-comment prompt (`comment`) and the meeting prompt (`meeting`). Each gets the skills its tools allow (at least `lark-cli`).
+5. **Catalog on every run kind.** Build a turn context and render the same `<bridge_skills>` section, first in the user message as on IM turns, in the agent-task fire prompt (`auto`), the doc-comment prompt (`comment`) and the meeting prompt (`meeting`). Each gets the skills its tools allow (at least `lark-cli`).
 6. **Guard.** Extend B01's prompt-section guard to these builders.
 
 ## Source (953e7bd)
@@ -36,4 +36,4 @@ Today the lark-cli environment rules are injected twice (system prompt section a
 
 ## Out of scope
 
-Enforcing in code what these skills only describe (group OAuth, unsetting env), Open question N6. Card callback rules (B05). Comment / meeting reply rules (B06).
+Enforcing in code what these skills only describe (group OAuth, unsetting env), Decision N6 (a later tool ticket). Card callback rules (B05). Comment / meeting reply rules (B06).

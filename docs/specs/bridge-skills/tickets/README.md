@@ -1,6 +1,6 @@
 # Bridge skills tickets
 
-Spec: [../../bridge-skills.md](../../bridge-skills.md). Mattpocock-style tracer-bullet vertical slices ([to-tickets](https://github.com/mattpocock/skills)), **one ticket per session**. Each code ticket starts with a failing behaviour test at the `startChannel` seam or the skill module's interface (or a skill contract test), and ends with `pnpm ci:local` passing in that worktree. Tickets are claimed read-only from this docs PR; code is pushed only to `feat/bridge-skills`. File:line anchors were checked against `master@953e7bd`.
+Spec: [../../bridge-skills.md](../../bridge-skills.md). Handoff for outside readers: [../HANDOFF.md](../HANDOFF.md). Mattpocock-style tracer-bullet vertical slices ([to-tickets](https://github.com/mattpocock/skills)), **one ticket per session**. Each code ticket starts with a failing behaviour test at the `startChannel` seam or the skill module's interface (or a skill contract test), and ends with `pnpm ci:local` passing in that worktree. Tickets are claimed read-only from this docs PR; code is pushed only to `feat/bridge-skills`. File:line anchors were checked against `master@953e7bd`.
 
 | Ticket | Title | Blocked by | Status |
 |---|---|---|---|

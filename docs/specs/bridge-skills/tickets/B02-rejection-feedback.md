@@ -8,7 +8,7 @@ When the bridge rejects an automation proposal, the model learns exactly why on 
 
 1. **Reason codes everywhere.** Every non-success verdict carries a stable reason code (Spec D5): schedule reasons already do; `refuse` gains a code (`p2p-only`, `agent-tasks-disabled`, `agent-needs-cwd`, `cannot-save`) with unchanged user-facing text; `unknown-id` keeps its code. `auto.rejected` logs use the same code set (keep the existing `rejectLogReason` grouping only if a log consumer depends on it; otherwise log the code).
 2. **Record.** On a rejected proposal (reject, refuse, unknown-id), record per scope: tool `automation-proposal`, `op`, reason code, the model's schedule text or id. Memory only (Q8 default). A newer rejection overwrites; a successful proposal clears it.
-3. **Inject once.** On the next human-triggered run in that scope, after the skill catalog, inject one structured block, for example:
+3. **Inject once.** On the next human-triggered run in that scope, inject one structured block as a turn fact in `bridge_instructions` (so after the catalog and before `user_input`), for example:
 
    ```
    <bridge_tool_rejected tool="automation-proposal" skill="automations" op="create" reason="invalid-schedule">
