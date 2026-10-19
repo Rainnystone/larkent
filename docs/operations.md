@@ -48,7 +48,7 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 
 Agent 任务（`automations.agentTasks`）沿用当前 profile 已授权的 bot/user 身份；任务正文、适用 skill 和操作需要决定选择。`--as user` 等已有身份选择不会触发策略中断，历史建群、成员、通讯录、人事等业务类别限制已退出。平台权限、profile 的明确配置和最终回复归属仍适用。任务的 `createdBy` 保留创建者，不据此切换 OAuth 用户。
 
-无人值守时，登录、登出、绑定/初始化/移除配置、设置 strict-mode 或 default-as 等认证/身份配置变更仍触发 `policy-guard`：中断、暂停任务、群内通知和脱敏审计（`auth-config`）。读取 `auth status`、`config show` 或无参数的 strict-mode/default-as 是状态查询。工具事件检查覆盖常见 argv、命令字符串、包装命令和工具名称，但事件可能在命令执行后才出现；agent 仍有完整 shell，这不是主机权限隔离或完整 shell 拦截器。
+无人值守时，登录、登出、绑定/初始化/移除配置、设置 strict-mode/default-as/risk-control、tenant-access-token 写入/移除、keychain-downgrade 等认证/身份配置变更仍触发 `policy-guard`：中断、暂停任务、群内通知和脱敏审计（`auth-config`）。读取 `auth status`、`config show` 或无参数的 strict-mode/default-as 是状态查询。工具事件检查覆盖常见 argv、命令字符串、包装命令和工具名称，但事件可能在命令执行后才出现；agent 仍有完整 shell，这不是主机权限隔离或完整 shell 拦截器。
 
 Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
 
@@ -85,7 +85,7 @@ Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并�
 - `LARK_CHANNEL_CONFIG`：`<data-root>/profiles/<profile>/lark-cli-source/config.json`。
 - `LARKSUITE_CLI_CONFIG_DIR`：`<data-root>/profiles/<profile>/lark-cli`。人工与自动 run 共用此目录；不能以 bridge tool 的连接环境覆盖这些身份环境。
 
-Token 刷新、并发锁和写回校验由 lark-cli 负责；bridge 不复制 token、不另建凭据存储、不自行刷新。配置目录须由同一部署用户持有并可写，CLI 自身使用的凭据存储须对该用户可用。授权缺失/过期、平台拒绝或显式 strict-mode 限制沿用任务失败处理；无人值守时不登录、不改配置、不借其他 profile 授权。维护者处理依赖、授权或账号变更后再恢复任务。
+profile-local lark-cli directory 即当前 profile 的 lark-cli 目录；凭据存储由 CLI 管理。Token 刷新、并发锁和写回校验由 lark-cli 负责；bridge 不复制 token、不另建凭据存储、不自行刷新。配置目录须由同一部署用户持有并可写，CLI 自身使用的凭据存储须对该用户可用。授权缺失/过期、平台拒绝或显式 strict-mode 限制沿用任务失败处理；无人值守时不登录、不改配置、不借其他 profile 授权。维护者处理依赖、授权或账号变更后再恢复任务。
 
 ### 自动任务的 lark-cli 依赖核验
 
