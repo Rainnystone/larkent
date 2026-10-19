@@ -126,7 +126,7 @@ function upcomingSection(schedule: Schedule, timezone: string, now: number): str
 export function describeIdentity(taskType: AutomationTaskType, cwd?: string): string {
   if (taskType === 'reminder') return '本 bot 发送提醒（不跑 agent）';
   const cwdNote = cwd ? '；已快照工作目录' : '';
-  return `本 profile 的 agent，仅 bot 身份${cwdNote}；默认自动批准工具；agent 有完整 shell，这是纵深防御不是安全边界`;
+  return `本 profile 的 agent，沿用 profile 已授权的 bot/user 身份${cwdNote}；默认自动批准工具；agent 有完整 shell，这是纵深防御不是安全边界`;
 }
 
 export interface AutomationConfirmBodyInput {

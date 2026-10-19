@@ -1354,6 +1354,7 @@ function parseLogEntry(raw: unknown): AutomationsLogEntry | undefined {
 
 function parsePolicyGuardReason(value: unknown): AutomationPolicyGuardReason | undefined {
   switch (value) {
+    case 'auth-config':
     case 'members':
     case 'chat-create':
     case 'leave':

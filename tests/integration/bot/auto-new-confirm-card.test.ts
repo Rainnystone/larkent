@@ -121,6 +121,8 @@ describe('/auto new confirm card', () => {
     await h.channel.handlers.message?.(mention('om_agent', '/auto new agent in 1h | 汇总 | 跑 issue'));
     const card = confirmCard(h);
     expect(card).toContain('agent 任务');
+    expect(card).toContain('沿用 profile 已授权的 bot/user 身份');
+    expect(card).not.toContain('仅 bot 身份');
     expect(card).toContain('已快照工作目录');
     await h.channel.handlers.cardAction?.(
       cardClick(MATE, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!),

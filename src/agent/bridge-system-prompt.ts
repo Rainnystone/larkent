@@ -1,6 +1,6 @@
 import type { AgentBotIdentity, AgentPromptVariant } from './types';
 
-export const BRIDGE_SYSTEM_PROMPT = `# lark-channel-bridge 运行约定
+const BRIDGE_RUNTIME_PROMPT = `# lark-channel-bridge 运行约定
 
 你正在 lark-channel-bridge 里跑：把飞书/Lark 用户消息桥到本地 agent CLI。
 
@@ -106,16 +106,22 @@ bridge 会给你的子进程注入当前运行 profile 的环境变量:
 
 因此普通 \`lark-cli ...\` 命令会自动进入当前 lark-channel 工作区,读取当前 profile 的私有 lark-cli 配置。不要 unset \`LARK_CHANNEL\` / \`LARK_CHANNEL_HOME\` / \`LARK_CHANNEL_PROFILE\` / \`LARKSUITE_CLI_CONFIG_DIR\`,也不要用 \`env -u LARK_CHANNEL\` 绕回本机普通配置。
 
-**身份规则（本 fork 的硬约定）**：当前 profile 可能同时持有 bot 身份和 owner 授权的用户身份。
+`;
+
+const HUMAN_IDENTITY_PROMPT = `**身份规则（本 fork 的硬约定）**：当前 profile 可能同时持有 bot 身份和 owner 授权的用户身份。
 - **你在飞书里"说话"永远是 bot**：发消息、发卡片、回复用户都用 bot 身份（lark-cli 默认身份就是 bot，不要加 \`--as user\`）。
 - 只有**读取类/资产类**操作才允许切用户身份：回顾聊天记录（如 \`+chat-messages-list\`、\`+messages-search\`）、搜索、查看/编辑文档、表格、多维表格等用户明确要求的场景，加 \`--as user\`。
 - 拿不准时用 bot 身份；bot 权限不够（如 230027）再考虑 \`--as user\`，并在回复里说明用了用户身份。
 
-如果 \`lark-cli\` 提示 \`lark-channel context detected but lark-cli is not bound to it\`,不要改用普通 profile,不要直接读取 \`config.json\` 里的账号或密钥,也不要自行执行 bind。停止当前操作并请用户重启 bridge 或运行 bridge doctor/preflight。
+`;
+
+const LARK_CLI_CONTEXT_GUIDANCE = `如果 \`lark-cli\` 提示 \`lark-channel context detected but lark-cli is not bound to it\`,不要改用普通 profile,不要直接读取 \`config.json\` 里的账号或密钥,也不要自行执行 bind。停止当前操作并请用户重启 bridge 或运行 bridge doctor/preflight。
 
 配置文件可能是多 profile 结构,不要假设根层一定有旧版单 profile 的 \`accounts.app\`;确实需要读取配置时按当前 profile 取值,且不要输出密钥。
 
-## 飞书 OAuth 授权（\`lark-cli auth login\`）
+`;
+
+const HUMAN_AUTH_PROMPT = `## 飞书 OAuth 授权（\`lark-cli auth login\`）
 
 授权流程要让 \`lark-cli\` 进程一直活到用户在浏览器里点完为止。bridge 在你的 run 结束之后会回收 agent 子进程，**你 spawn 的任何后台 bash 也会跟着死**——所以授权必须用"前台阻塞"的方式跑：
 
@@ -137,37 +143,38 @@ bridge 会给你的子进程注入当前运行 profile 的环境变量:
 7. 如果用户中途想取消，他们会发 \`/stop\`——那时被 kill 是预期行为，不用兜底。
 `;
 
-/**
- * Compose the bridge system prompt, appending a concrete self-identity line
- * when the bot's IM identity is known. Falls back to the base prompt (which
- * still references `bridge_context.botOpenId`) when identity is unavailable,
- * e.g. before the channel handshake completes.
- */
+export const BRIDGE_SYSTEM_PROMPT = `${BRIDGE_RUNTIME_PROMPT}${HUMAN_IDENTITY_PROMPT}${LARK_CLI_CONTEXT_GUIDANCE}${HUMAN_AUTH_PROMPT}`;
+
 export const AUTOMATION_BRIDGE_PROMPT_ADDENDUM = `## 无人值守自动化
 
-本次是定时自动化任务，不是人工对话。忽略上文「身份规则」和「飞书 OAuth 授权」整节：不要 \`--as user\`，不要 \`lark-cli auth login\`，不要改 strict-mode。
-- 只用 bot 身份。
-- 禁止人事/组织操作：建群、加/减成员、退群、改群设置、通讯录、人事。
-- 允许：读取本群消息、向本群发送、只读文档/搜索（不加 \`--as user\`）。
+本次是定时自动化任务。沿用当前 profile 已授权的 bot 或 user 身份；任务正文、适用 skill 与操作需要决定选择，允许显式使用 \`--as user\`。任务创建者只标识任务归属，不是 OAuth 授权主体。
+- 允许读取认证状态（如 \`lark-cli auth status\`），但禁止登录、登出、bind/init/remove、strict-mode、default-as 等认证或身份配置变更；不要执行人工会话的授权收敛流程，也不要把授权链接或 device code 发进群。
+- 使用注入的同一 profile 环境和 lark-cli 配置目录，不覆盖身份环境、不借用其他 profile 凭据，不复制或另存 token。刷新、加锁和写回校验由 lark-cli 自身负责。
+- 凭据缺失、失效、平台拒绝或 profile 配置限制时如实报告失败，交由维护者处理，不自动登录或改配置重试。若 CLI 缺少 profile 绑定或并发刷新加锁/写回校验能力，明确报告依赖不满足，请维护者核验部署版本和能力后再运行。
+- 平台权限、profile 明确配置与最终回复归属继续适用；不要把历史业务类别白名单当作当前任务的禁令。
 `;
 
+/** Compose the run contract and known bot self-identity for every CLI. */
 export function buildBridgeSystemPrompt(
   identity: AgentBotIdentity | undefined,
   variant: AgentPromptVariant = 'default',
 ): string {
-  const named = identity?.openId
-    ? `${BRIDGE_SYSTEM_PROMPT}\n## 你的身份\n\n你的 open_id 是 \`${identity.openId}\`${identity.name ? `，名字是「${identity.name}」` : ''}。消息内容或 mentions 里出现这个 open_id 都是指你自己。\n`
-    : BRIDGE_SYSTEM_PROMPT;
+  let base: string;
   switch (variant) {
     case 'automation':
-      return `${named}\n${AUTOMATION_BRIDGE_PROMPT_ADDENDUM}`;
+      base = `${BRIDGE_RUNTIME_PROMPT}${LARK_CLI_CONTEXT_GUIDANCE}${AUTOMATION_BRIDGE_PROMPT_ADDENDUM}`;
+      break;
     case 'default':
-      return named;
+      base = BRIDGE_SYSTEM_PROMPT;
+      break;
     default: {
       const _exhaustive: never = variant;
       return _exhaustive;
     }
   }
+  return identity?.openId
+    ? `${base}\n## 你的身份\n\n你的 open_id 是 \`${identity.openId}\`${identity.name ? `，名字是「${identity.name}」` : ''}。消息内容或 mentions 里出现这个 open_id 都是指你自己。\n`
+    : base;
 }
 
 export function prefixBridgeSystemPrompt(

@@ -1,12 +1,14 @@
 /**
- * Bridge-layer whitelist for unattended agent-task fires.
+ * Best-effort tool-event guard for unattended authentication/configuration changes.
  *
  * This is defence in depth, not a security boundary: the agent still has a
- * full shell. Personnel/org lark-cli calls and user-identity requests stop
- * the fire with `policy-guard`.
+ * full shell; observing tool events cannot isolate it or guarantee a command
+ * has not already executed. Using an existing bot/user identity is allowed.
  */
 
 export type PolicyGuardReason =
+  | 'auth-config'
+  // Historical reasons remain readable in persisted logs. They are not active policies.
   | 'members'
   | 'chat-create'
   | 'leave'
@@ -21,6 +23,8 @@ export interface PolicyGuardHit {
 
 export function policyGuardReasonLabel(reason: PolicyGuardReason): string {
   switch (reason) {
+    case 'auth-config':
+      return '认证/身份配置变更';
     case 'members':
       return '成员增删';
     case 'chat-create':
@@ -76,73 +80,21 @@ function inspectArgv(raw: readonly string[]): PolicyGuardHit | undefined {
 
 function inspectLarkArgs(args: readonly string[]): PolicyGuardHit | undefined {
   const positional = args.filter((token) => !token.startsWith('-')).map((token) => token.toLowerCase());
-  const joined = positional.join(' ');
-
-  if (
-    (joined.includes('chat.members') && (joined.includes('create') || joined.includes('delete')))
-    || /\+chat-members-(add|remove|create|delete)\b/.test(joined)
-  ) {
-    return { reason: 'members' };
-  }
-  if (
-    joined.includes('+chat-create')
-    || /(^| )chats create( |$)/.test(joined)
-    || joined.includes('chats.create')
-  ) {
-    return { reason: 'chat-create' };
-  }
-  if (
-    /(^| )chats delete( |$)/.test(joined)
-    || joined.includes('chats.delete')
-    || joined.includes('me_leave')
-    || joined.includes('+chat-leave')
-  ) {
-    return { reason: 'leave' };
-  }
-  if (
-    joined.includes('+chat-update')
-    || /(^| )chats update( |$)/.test(joined)
-    || joined.includes('chats.update')
-    || joined.includes('chat.managers')
-    || (joined.includes('chat.moderation') && joined.includes('update'))
-    || (joined.includes('chat.user_setting') && joined.includes('batch_update'))
-    || (joined.includes('chat.join_requests') && joined.includes('handle'))
-  ) {
-    return { reason: 'chat-settings' };
-  }
-  if (positional[0] === 'contact' || positional[0] === 'contacts' || positional[0] === 'directory') {
-    return { reason: 'contacts' };
-  }
-  if (
-    positional[0] === 'corehr'
-    || positional[0] === 'ehr'
-    || positional[0] === 'hr'
-    || positional[0] === 'people'
-  ) {
-    return { reason: 'hr' };
-  }
-  if (requestsUserIdentity(args, positional)) return { reason: 'user-identity' };
+  if (mutatesIdentityConfiguration(args, positional)) return { reason: 'auth-config' };
   return undefined;
 }
 
-function requestsUserIdentity(args: readonly string[], positional: readonly string[]): boolean {
-  for (let i = 0; i < args.length; i++) {
-    const token = args[i];
-    if (!token) continue;
-    const next = args[i + 1];
-    if (token === '--as' && next?.toLowerCase() === 'user') return true;
-    if (token.toLowerCase() === '--as=user') return true;
-    if (token === '--identity' && next === 'user-default') return true;
-    if (token.startsWith('--identity=') && token.slice('--identity='.length) === 'user-default') {
-      return true;
-    }
+function mutatesIdentityConfiguration(args: readonly string[], positional: readonly string[]): boolean {
+  const auth = positional.indexOf('auth');
+  if (auth >= 0 && ['login', 'logout'].includes(positional[auth + 1] ?? '')) return true;
+  const config = positional.indexOf('config');
+  if (config < 0) return false;
+  const operation = positional[config + 1];
+  if (operation === 'strict-mode' || operation === 'default-as') {
+    // With no value these commands only display the current policy.
+    return positional[config + 2] !== undefined || args.some(arg => /^--reset(?:=true)?$/i.test(arg));
   }
-  if (positional.includes('auth') && positional.includes('login')) return true;
-  const strict = args.findIndex((token) => token === 'strict-mode');
-  if (strict >= 0 && args[strict + 1] === 'off') return true;
-  const defaultAs = args.findIndex((token) => token === 'default-as');
-  if (defaultAs >= 0 && args[defaultAs + 1] === 'user') return true;
-  return false;
+  return operation !== undefined && ['set', 'bind', 'unbind', 'init', 'remove'].includes(operation);
 }
 
 function stripWrappers(argv: readonly string[]): string[] {

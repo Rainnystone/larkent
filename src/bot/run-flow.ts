@@ -46,7 +46,7 @@ export interface StartRunFlowInput {
   cwdOverride?: string;
   /** Automation fires skip the process pool and reconnect pause (ADR-011). */
   bypassPool?: boolean;
-  /** Automation fires use the unattended bot-only system-prompt variant. */
+  /** Automation fires use the unattended system-prompt variant. */
   promptVariant?: AgentPromptVariant;
   observability?: {
     profile: string;

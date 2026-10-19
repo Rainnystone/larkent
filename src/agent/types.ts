@@ -2,7 +2,7 @@ import type { AgentAvailability } from './preflight';
 
 export type EffectiveAccess = 'read-only' | 'workspace' | 'full';
 
-/** Default is the human-chat prompt. Automation fires use the bot-only variant. */
+/** Default is the human-chat prompt. Automation fires use the unattended variant. */
 export type AgentPromptVariant = 'default' | 'automation';
 
 export interface AgentOptionsSchema {
@@ -43,7 +43,7 @@ export interface AgentRunOptions {
   permissionMode?: string;
   /** Opaque connection for this run only; adapters pass it through the child environment. */
   toolEnv?: NodeJS.ProcessEnv;
-  /** Automation fires request the unattended bot-only system-prompt variant. */
+  /** Automation fires request the unattended system-prompt variant. */
   promptVariant?: AgentPromptVariant;
   /**
    * Grace period (ms) between SIGTERM and SIGKILL when stop() is called on
