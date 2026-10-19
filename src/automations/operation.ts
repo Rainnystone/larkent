@@ -96,7 +96,7 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   const base = {
     operationId: current.operationId, draftId: current.draftId, received: true,
     ...(current.taskId ? { taskId: current.taskId } : {}),
-    dispatchedCount: current.dispatchedCount, executedCount: delivered.length,
+    executionScope: 'task', dispatchedCount: current.dispatchedCount, executedCount: delivered.length,
     executionHistoryComplete: executions.length === current.dispatchedCount,
     ...(last ? { lastExecution: last.reply?.state === 'sent' ? 'ok' : last.reply?.state === 'rejected' ? 'failed' : 'pending' } : {}),
   };

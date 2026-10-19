@@ -1497,6 +1497,7 @@ async function confirmReplaceDraft(
       ...(draft.cwd ? { cwd: draft.cwd } : {}),
     });
   } catch (error) {
+    if (draft.operationId) throw error;
     log.fail('auto', error, { event: 'replace', oldId: draft.targetId });
     const status = `没有替换 #${draft.targetId}：新任务未创建`;
     return { ok: false, status, toast: status };

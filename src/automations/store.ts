@@ -427,12 +427,7 @@ export class AutomationsStore {
       missedInstants: [],
       skippedInstants: [],
     };
-    if (input.operationId) {
-      const operation = this.operations.find(entry => entry.operationId === input.operationId);
-      if (!operation || operation.state !== 'received') throw new Error('operation is not awaiting confirmation');
-      operation.state = 'applied'; operation.taskId = item.id;
-      this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
-    }
+    if (input.operationId) this.settleAppliedOperation(input.operationId, item.id, 0);
     this.items.push(item);
     return cloneItem(item);
   }
@@ -441,8 +436,8 @@ export class AutomationsStore {
     this.assertMutable();
     const index = this.items.findIndex((item) => item.id === id);
     if (index < 0 || (guard && taskMutationError(this.items[index], guard))) return false;
-    this.items.splice(index, 1);
     this.applyMutationOperation(id, guard);
+    this.items.splice(index, 1);
     await this.persistNow();
     return true;
   }
@@ -762,8 +757,9 @@ export class AutomationsStore {
       if (item) {
         item.lastFireAt = parsed.fireAt;
         item.lastStatus = 'running';
-        const operation = this.operations.find(entry => entry.taskId === item.id);
-        if (operation) { operation.dispatchedCount++; }
+        for (const operation of this.operations) {
+          if (operation.state === 'applied' && operation.taskId === item.id) operation.dispatchedCount++;
+        }
         item.fireHistory = [
           ...item.fireHistory,
           { fireAt: parsed.fireAt, startedAt: this.now() },
@@ -792,17 +788,23 @@ export class AutomationsStore {
     return changed;
   }
 
+  private settleAppliedOperation(operationId: string, taskId: number, dispatchedCount: number): void {
+    const operation = this.operations.find(entry => entry.operationId === operationId);
+    if (!operation || operation.state !== 'received') throw new Error('operation is not awaiting confirmation');
+    operation.state = 'applied'; operation.taskId = taskId; operation.dispatchedCount = dispatchedCount;
+    this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
+  }
+
   private applyMutationOperation(id: number, guard?: TaskMutationGuard): void {
+    // Receipt execution facts describe the linked task's lifetime, including fires before this mutation.
+    const dispatchedCount = this.operations.reduce((count, entry) => entry.state === 'applied' && entry.taskId === id ? Math.max(count, entry.dispatchedCount) : count,
+      this.items.find(item => item.id === id)?.fireHistory.length ?? 0);
     if (guard?.operation) {
-      if (this.operations.some(entry => entry.operationId === guard.operation!.operationId || entry.aliases?.includes(guard.operation!.operationId))) throw new Error('operation already exists');
-      this.operations.push({ ...guard.operation, draftId: `operation:${guard.operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount: 0 });
+      const operation = guard.operation;
+      if (this.operations.some(entry => entry.operationId === operation.operationId || entry.aliases?.includes(operation.operationId))) throw new Error('operation already exists');
+      this.operations.push({ ...operation, draftId: `operation:${operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount });
     }
-    if (guard?.operationId) {
-      const operation = this.operations.find(entry => entry.operationId === guard.operationId);
-      if (!operation || operation.state !== 'received') throw new Error('operation is not awaiting confirmation');
-      operation.state = 'applied'; operation.taskId = id;
-      this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
-    }
+    if (guard?.operationId) this.settleAppliedOperation(guard.operationId, id, dispatchedCount);
   }
 
   async recordOperationFailure(operation: RegisterAutomationOperationInput, code: string): Promise<void> {
@@ -825,8 +827,8 @@ export class AutomationsStore {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
     if (!item || (guard && taskMutationError(item, guard))) return false;
-    item.paused = true;
     this.applyMutationOperation(id, guard);
+    item.paused = true;
     await this.persistNow();
     return true;
   }
@@ -835,9 +837,9 @@ export class AutomationsStore {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
     if (!item || (guard && taskMutationError(item, guard))) return false;
+    this.applyMutationOperation(id, guard);
     item.paused = false;
     item.nextFireAt = nextFireAt;
-    this.applyMutationOperation(id, guard);
     await this.persistNow();
     return true;
   }
@@ -1461,6 +1463,7 @@ function parseSchedulableDraftFields(raw: Record<string, unknown>): CreateAutoma
 
 function parseTargetSnapshot(raw: unknown): AutomationTargetSnapshot | undefined {
   if (!isObject(raw)) return undefined;
+  if (raw.revision !== undefined && (typeof raw.revision !== 'string' || !/^[a-f0-9]{64}$/.test(raw.revision))) return undefined;
   if (!isPositiveInt(raw.id)) return undefined;
   if (raw.taskType !== 'reminder' && raw.taskType !== 'agent') return undefined;
   if (typeof raw.name !== 'string' || !raw.name) return undefined;

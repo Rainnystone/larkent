@@ -651,7 +651,7 @@ it.each(['delete', 'replace'] as const)('keeps %s not-applied when the original 
 it.each(['pause', 'resume', 'delete', 'replace'] as const)('does not claim %s applied when the atomic mutation write fails and recovers the original task on restart', async operation => {
   const h = await harness();
   await h.store.create({ ...reminder, taskType: 'reminder', timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate', paused: operation === 'resume' });
-  let operationId = '';
+  let operationId = ''; let originalDraft: ReturnType<typeof h.store.listDrafts>[number] | undefined; let originalCard: unknown;
   if (operation === 'delete' || operation === 'replace') {
     await h.turn(async call => { const result = await call(`automation.${operation}`, { ...(operation === 'replace' ? reminder : {}), id: 1 }); operationId = result.data.operationId; expect(result.category).toBe('waiting-confirmation'); });
   }
@@ -660,11 +660,13 @@ it.each(['pause', 'resume', 'delete', 'replace'] as const)('does not claim %s ap
   if (operation === 'delete' || operation === 'replace') {
     const draft = h.store.listDrafts()[0]!;
     const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+    originalDraft = draft; originalCard = card;
     try { await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm'))); } catch {}
     await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'unknown', data: { applied: null } }); });
   } else {
     await h.turn(async call => { const result = await call(`automation.${operation}`, { id: 1 }); operationId = result.data.operationId; expect(result).toMatchObject({ category: 'unknown', data: { applied: null } }); });
   }
+  expect(h.channel.updatedCards.some(item => JSON.stringify(item.card).includes('新任务未创建'))).toBe(false);
   await rm(path, { recursive: true }); await rename(backup, path);
   expect(await h.restart()).toBeDefined();
   await h.turn(async call => {
@@ -673,6 +675,10 @@ it.each(['pause', 'resume', 'delete', 'replace'] as const)('does not claim %s ap
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, paused: operation === 'resume', name: reminder.name }]);
   });
   expect(h.store.list()).toHaveLength(1);
+  if (originalDraft) {
+    expect(await h.channel.handlers.cardAction?.(click(originalDraft.cardMessageId!, button(originalCard, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+    await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: operation === 'replace' ? 2 : 1 } }); });
+  }
 }, 30000);
 
 it('manages existing agent tasks without agent creation, preserves captured cwd, and delivers a replacement fire', async () => {
@@ -845,4 +851,32 @@ it('closes a replacement whose scheduled instant has passed before confirmation 
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'execution-failed', code: 'past-time', data: { applied: false } });
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, name: reminder.name }]);
   });
+}, 30000);
+
+it('reports the same actual dispatch and delivery history through create, pause and resume receipts for an existing task', async () => {
+  const h = await harness(); let creationId = ''; let pauseId = ''; let resumeId = '';
+  await h.turn(async call => { creationId = (await call('automation.create', reminder)).data.operationId; });
+  const draft = h.store.listDrafts()[0]!;
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`);
+  h.setNow(FIRES[0]! + 1000);
+  await h.turn(async call => {
+    pauseId = (await call('automation.pause', { id: 1 })).data.operationId;
+    resumeId = (await call('automation.resume', { id: 1 })).data.operationId;
+  });
+  h.setNow(FIRES[1]!); await h.bridge.wakeAutomation(`1@${FIRES[1]}`);
+  await h.turn(async call => {
+    for (const operationId of [creationId, pauseId, resumeId]) expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { dispatchedCount: 2, executedCount: 2, executionHistoryComplete: true, lastExecution: 'ok' } });
+  });
+}, 30000);
+
+it('rejects a malformed persisted target revision without silently dropping its stale-state guard', async () => {
+  const h = await harness();
+  await h.store.create({ ...reminder, taskType: 'reminder', timezone: 'Asia/Shanghai', startAt: NOW, endAt: END, nextFireAt: FIRES[0]!, chatId: 'oc_synthetic', createdBy: 'ou_mate' });
+  await h.turn(async call => { expect(await call('automation.replace', { ...reminder, id: 1 })).toMatchObject({ category: 'waiting-confirmation' }); });
+  const document = JSON.parse(await readFile(h.store.getFilePath(), 'utf8')); document.drafts[0].target.revision = 'invalid';
+  const corrupted = JSON.stringify(document); await writeFile(h.store.getFilePath(), corrupted);
+  await expect(h.restart()).rejects.toThrow(/Invalid automation/);
+  expect(await readFile(h.store.getFilePath(), 'utf8')).toBe(corrupted);
 }, 30000);
