@@ -183,7 +183,7 @@ it.each([
   expect(h.store.list()).toEqual([]); expect(h.store.listDrafts()).toEqual([]);
 });
 
-it('gives deterministic errors for malformed, oversize and unsupported input and cannot invoke mutations', async () => {
+it('gives deterministic errors for malformed, oversize and unsupported input and cannot create without the confirmation boundary', async () => {
   const h = await harness();
   for (const [input, code] of [ ['{', 'invalid-json'], ['x'.repeat(256 * 1024 + 1), 'request-too-large'] ]) {
     const child = await client.call(input, h.run.env);
@@ -192,7 +192,7 @@ it('gives deterministic errors for malformed, oversize and unsupported input and
   }
   const invalidVersion = await client.call({ version: 99, operation: 'plugins.list' }, h.run.env);
   expect(JSON.parse(invalidVersion.stdout).code).toBe('unsupported-version');
-  expect(await h.call('automation.create', {})).toMatchObject({ category: 'unavailable', code: 'not-implemented' });
+  expect(await h.call('automation.create', {})).toMatchObject({ category: 'unavailable', code: 'automation-confirmation-unavailable' });
   expect(await h.call('automation.preview', { taskType: 'reminder', schedule: { kind: 'daily', timezone: 'Mars/Synthetic', times: [{ hour: 9, minute: 0 }], startAt: NOW, endAt: NOW + 86400000 } }))
     .toMatchObject({ category: 'validation-failed', code: 'invalid-timezone' });
   const schema = await client.call('', {}, ['--schema']);

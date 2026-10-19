@@ -508,6 +508,15 @@ export class AutomationsStore {
     return operation ? { ...operation } : undefined;
   }
 
+  findPendingOperation(profile: string, chatId: string, fingerprint: string): AutomationOperation | undefined {
+    this.assertMutable();
+    const operation = this.operations.find(entry => entry.profile === profile && entry.chatId === chatId && entry.fingerprint === fingerprint
+      && entry.state === 'received' && this.drafts.some(draft => draft.draftId === entry.draftId
+        && draft.delivery?.state !== 'rejected'
+        && (draft.delivery?.state === 'sending' || draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS > this.now())));
+    return operation ? { ...operation } : undefined;
+  }
+
   async setDraftDelivery(draftId: string, delivery: DraftDelivery): Promise<void> {
     this.assertMutable();
     const draft = this.drafts.find(entry => entry.draftId === draftId);
@@ -814,7 +823,7 @@ export class AutomationsStore {
     const cutoff = this.now() - AUTOMATIONS_DRAFT_TTL_MS;
     const before = this.drafts.length;
     this.drafts = this.drafts.filter((draft) =>
-      draft.createdAt > cutoff || Boolean(draft.cardMessageId),
+      draft.createdAt > cutoff || Boolean(draft.cardMessageId) || draft.delivery?.state === 'sending',
     );
     return this.drafts.length !== before;
   }

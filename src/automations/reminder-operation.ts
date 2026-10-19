@@ -72,6 +72,11 @@ export async function createReminderOperation(params: Record<string, unknown>, c
         if (previous.fingerprint !== fingerprint) return toolResult('validation-failed', 'operation-conflict', { operationId });
         return getReminderOperation(operationId, context);
       }
+      const pendingOperation = context.store!.findPendingOperation(context.profile, context.chatId, fingerprint);
+      if (pendingOperation) {
+        const result = await getReminderOperation(pendingOperation.operationId, context);
+        return result.category === 'unknown' ? { ...result, code: 'prior-operation-unknown' } : result;
+      }
       const nextFireAt = needsEnd ? 0 : nextFireAfter(normalized, at);
       if (!needsEnd && !nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
       const draft = await context.store!.saveDraft({
@@ -101,12 +106,12 @@ function operationResult(operation: AutomationOperation, context: ReminderOperat
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });
   const draft = context.store!.getDraft(current.draftId);
+  if (draft?.delivery?.state === 'sending') return unknown(current.operationId, 'card-delivery-unknown', base);
   if (!draft || draft.createdAt + AUTOMATION_OPERATION_TTL_MS <= (context.now ?? Date.now)()) return toolResult('execution-failed', 'draft-expired', { ...base, state: 'not-applied', applied: false });
   if (draft.cardMessageId) return toolResult(draft.op !== 'delete' && draft.pendingRecurring ? 'needs-input' : 'waiting-confirmation', draft.op !== 'delete' && draft.pendingRecurring ? 'missing-end-at' : 'waiting-confirmation', {
     ...base, state: draft.op !== 'delete' && draft.pendingRecurring ? 'needs-input' : 'waiting-confirmation', applied: false, cardMessageId: draft.cardMessageId,
     ...(draft.op !== 'delete' && draft.pendingRecurring ? { fields: ['schedule.endAt'] } : {}),
   });
-  if (draft.delivery?.state === 'sending') return unknown(current.operationId, 'card-delivery-unknown', base);
   return toolResult('execution-failed', draft.delivery?.state === 'rejected' ? 'card-send-failed' : 'card-not-sent', { ...base, state: 'not-applied', applied: false });
 }
 function checkId(value: unknown, context: AutomationToolContext): ToolResult | undefined {

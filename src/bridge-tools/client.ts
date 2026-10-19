@@ -8,7 +8,7 @@ export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv =
     input = { ...request, params: { ...params, operationId: params.operationId ?? newAutomationOperationId(env.LARK_BRIDGE_TOOL_SCOPE ?? '', Number(env.LARK_BRIDGE_TOOL_ISSUED_AT) || Date.now()) } };
   }
   const operationId = record(record(input)?.params)?.operationId;
-  const failed = (category: 'unavailable' | 'unknown', code: string) => toolResult(operationId ? 'unknown' : category, code, operationId ? { operationId, state: 'unknown', applied: null } : undefined);
+  const failed = (category: 'unavailable' | 'unknown' | 'execution-failed', code: string) => toolResult(operationId ? 'unknown' : category, code, operationId ? { operationId, state: 'unknown', applied: null } : undefined);
   const endpoint = env.LARK_BRIDGE_TOOL_ENDPOINT;
   const credential = env.LARK_BRIDGE_TOOL_TOKEN;
   if (!endpoint || !credential) return failed('unavailable', 'no-active-run');
@@ -20,10 +20,10 @@ export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv =
     const response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(10_000) });
     const text = await response.text();
     // The request bound protects untrusted input; legitimate stored task lists can be larger.
-    if (!response.ok) return toolResult('execution-failed', 'invalid-tool-response');
+    if (!response.ok) return failed('execution-failed', 'invalid-tool-response');
     const result = record(JSON.parse(text));
     return result?.version === 1 && typeof result.category === 'string' && typeof result.code === 'string'
-      ? result as unknown as ToolResult : toolResult('execution-failed', 'invalid-tool-response');
+      ? result as unknown as ToolResult : failed('execution-failed', 'invalid-tool-response');
   } catch { return failed('unavailable', 'run-connection-closed'); }
 }
 

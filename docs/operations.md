@@ -213,3 +213,12 @@ ANTIGRAVITY_REAL_SMOKE=1 pnpm exec vitest run tests/process/antigravity-real.smo
 ```
 
 测试文件路径相对 repo 根。真实 smoke 会调用已登录的 CLI；它验证适配器，不替代飞书主流程验收。Antigravity 的真实 smoke 使用 `claude-sonnet-4-6`，避免部分网络下 Gemini 返回 `User location is not supported`；profile 默认仍跟随 `agy` 的 settings，不强制该模型。
+
+
+### Reminder operation recovery
+
+The bridge tool creates reminders through the existing draft, end-completion and human confirmation cards. `automation.schema` reports the available operations; agent-task creation and task management remain unavailable until their own delivery slices. A model cannot confirm a task.
+
+Retain the `operationId` returned by the client, including after timeouts or transport failures. Query `automation.operation.get` in a later legitimate run in the same profile/chat before retrying. IDs can be submitted for 24 hours; expired IDs are never fresh writes. Same-ID content changes conflict. Durable receipts remain in `automations.json` v2, with atomic reading/upgrading of v1 tasks, drafts and original confirmation cards. Follow the existing matching-data-backup rule for code rollback.
+
+`waiting-confirmation` requires an actual card receipt. `applied` means the human-confirmed task was saved; it does not mean a future reminder has already fired or been delivered. Dispatch counts and observed journal delivery counts are reported separately, with execution-history completeness. A known rejected send reports not-applied. An uncertain send remains unknown even after a restart or the submission deadline: recovery only binds a message found by its exact signed callback and bot sender. A missing history match is not proof of non-delivery. Do not resend or recreate an unknown operation under a new ID; preserve the original receipt for operator reconciliation. No live Feishu or model acceptance is established by the automated fixture tests.
