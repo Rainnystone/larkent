@@ -27,7 +27,30 @@ export function isSelfSender(input: SelfSenderInput): boolean {
 export function senderTypeFromRaw(raw: unknown): string | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const sender = (raw as { sender?: { sender_type?: unknown } }).sender;
-  return typeof sender?.sender_type === 'string' ? sender.sender_type : undefined;
+  return typeof sender?.sender_type === 'string' && sender.sender_type.length > 0
+    ? sender.sender_type
+    : undefined;
+}
+
+/** Live (includeRawEvent) and backfill (includeRaw) both expose sender_type this way. */
+export function senderTypeFromMessage(msg: { raw?: unknown; senderType?: string }): string | undefined {
+  return senderTypeFromRaw(msg.raw)
+    ?? (typeof msg.senderType === 'string' && msg.senderType.length > 0 ? msg.senderType : undefined);
+}
+
+/**
+ * IM automation is only available to a human (`user`) sender.
+ * App/bot/other present types require a human. A missing type is not treated
+ * as non-human: callers should log and surface a distinct unavailable code.
+ */
+export function automationUnavailableForSender(msg: {
+  raw?: unknown;
+  senderType?: string;
+}): string | undefined {
+  const senderType = senderTypeFromMessage(msg);
+  if (senderType === 'user') return undefined;
+  if (senderType === undefined) return 'automation-sender-type-missing';
+  return 'automation-requires-human';
 }
 
 export class OutboundMessageIds {

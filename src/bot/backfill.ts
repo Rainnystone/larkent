@@ -454,18 +454,27 @@ async function normalizeHistoryItem(
       ...(item.parent_id ? { parent_id: item.parent_id } : {}),
     },
   };
+  if (!item.sender?.sender_type) {
+    log.info('backfill', 'sender-type-missing', {
+      msgId: item.message_id,
+      chatId,
+    });
+  }
   const fetchRaw = channel.fetchRawMessage?.bind(channel);
   const fetchSubMessages = fetchRaw
     ? createMergeForwardFetch({ fetchRawMessage: fetchRaw })
     : async () => [];
-  return normalize(raw, {
+  const msg = await normalize(raw, {
     botIdentity: {
       openId: botOpenId,
       name: channel.botIdentity?.name ?? '',
     },
     stripBotMentions: true,
     fetchSubMessages,
+    includeRaw: true,
   });
+  msg.raw ??= raw;
+  return msg;
 }
 
 async function listChatHistory(

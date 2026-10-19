@@ -2,15 +2,41 @@ import { describe, expect, it } from 'vitest';
 import {
   CliSelfSendTracker,
   OutboundMessageIds,
+  automationUnavailableForSender,
   isSelfSender,
   noteInboundSkipSelf,
   outboundMessageId,
+  senderTypeFromMessage,
 } from '../../../src/bot/self-message';
 import { shouldSkipFinalReply, seedRunState, reduce } from '../../../src/card/run-state';
 
 const CHAT = 'oc_trigger';
 const BOT_OPEN = 'ou_bot';
 const BOT_APP = 'cli_app';
+
+describe('automationUnavailableForSender', () => {
+  it('treats user as available, app and bot as requiring a human, and missing as distinct', () => {
+    expect(automationUnavailableForSender({ raw: { sender: { sender_type: 'user' } } })).toBeUndefined();
+    expect(automationUnavailableForSender({ senderType: 'user' })).toBeUndefined();
+    expect(automationUnavailableForSender({ raw: { sender: { sender_type: 'app' } } }))
+      .toBe('automation-requires-human');
+    expect(automationUnavailableForSender({ senderType: 'bot' })).toBe('automation-requires-human');
+    expect(automationUnavailableForSender({ raw: { sender: { sender_type: 'system' } } }))
+      .toBe('automation-requires-human');
+    expect(automationUnavailableForSender({})).toBe('automation-sender-type-missing');
+    expect(automationUnavailableForSender({ raw: {} })).toBe('automation-sender-type-missing');
+    expect(automationUnavailableForSender({ raw: { sender: { sender_type: '' } } }))
+      .toBe('automation-sender-type-missing');
+    expect(automationUnavailableForSender({ senderType: '' })).toBe('automation-sender-type-missing');
+  });
+
+  it('prefers the raw sender_type over a conflicting first-class field', () => {
+    expect(senderTypeFromMessage({
+      raw: { sender: { sender_type: 'user' } },
+      senderType: 'app',
+    })).toBe('user');
+  });
+});
 
 describe('isSelfSender (backfill skip-self)', () => {
   it('matches the bot open id, the bot app id, or a p2p app sender', () => {

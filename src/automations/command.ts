@@ -1,8 +1,7 @@
-import type { NormalizedMessage } from '@larksuite/channel';
 import { reconcileDraftCard, sendAutomationDraftCard } from './draft-delivery';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
-import { senderTypeFromRaw } from '../bot/self-message';
+import { senderTypeFromMessage } from '../bot/self-message';
 import { classify, isNotInChat } from '../bot/feishu-error';
 import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
@@ -1492,7 +1491,7 @@ function scheduleEndAt(schedule: Schedule): number | undefined {
 }
 
 function isIgnoredAutoSender(ctx: Pick<CommandContext, 'msg' | 'channel'>): boolean {
-  const senderType = senderTypeFromRaw((ctx.msg as NormalizedMessage & { raw?: unknown }).raw);
+  const senderType = senderTypeFromMessage(ctx.msg);
   if (senderType === 'app' || senderType === 'bot') return true;
   const botOpenId = ctx.channel.botIdentity?.openId;
   return Boolean(botOpenId) && ctx.msg.senderId === botOpenId;

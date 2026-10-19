@@ -44,10 +44,11 @@ import {
   CliSelfSendTracker,
   OutboundMessageIds,
   OUTBOUND_REQUEST_TIMEOUT_MS,
+  automationUnavailableForSender,
   isSelfSender,
   noteInboundSkipSelf,
   outboundMessageId,
-  senderTypeFromRaw,
+  senderTypeFromMessage,
   withOutboundTimeout,
 } from './self-message';
 import {
@@ -1826,6 +1827,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   applyTakenInstruction(taken, extraInstructions);
   const catalog = deps.pluginCatalog;
   const automationPluginAvailable = await catalog.isAvailable('automation');
+  const groupIm = firstMsg.chatType !== 'p2p' && mode !== 'p2p' && !scope.startsWith('meeting:');
+  const senderUnavailable = automationUnavailableForSender(lastMsg);
   const toolContext: ToolRunContext = {
     catalog, profile: controls.profile, chatId, actorId: lastMsg.senderId,
     runType: 'im', store: automations,
@@ -1835,8 +1838,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     now, journal, drafts: { channel, automations, autoAuth, automationsScheduler, now, isLinkDown: () => Boolean(link?.isDown()), botAppId: controls.profileConfig.accounts.app.id },
     availability: () => !automationPluginAvailable ? 'automation-plugin-unavailable'
       : !controls.profileConfig.automations.enabled ? 'automations-disabled'
-      : firstMsg.chatType === 'p2p' || mode === 'p2p' || scope.startsWith('meeting:') ? 'automation-requires-group'
-      : senderTypeFromRaw((lastMsg as { raw?: unknown }).raw) !== 'user' ? 'automation-requires-human' : undefined,
+      : groupIm ? senderUnavailable : 'automation-requires-group',
   };
   extraInstructions.push(...await bridgeToolInstructions(toolContext));
   if (modelSwitched) {
@@ -3575,12 +3577,6 @@ function buildPrompt(
   });
 }
 
-/**
- * Classify the sender as human or bot from the raw Feishu event
- * (`sender.sender_type`: 'user' = human, 'app' = bot). The normalizer drops
- * this field, so read it off `msg.raw` (`includeRawEvent: true` above).
- * Unknown / missing values return undefined — omit rather than guess.
- */
 function dropInboundSelfMessage(input: {
   msg: NormalizedMessage;
   botOpenId?: string;
@@ -3595,7 +3591,7 @@ function dropInboundSelfMessage(input: {
     threadId: input.msg.threadId,
     isSelf: isSelfSender({
       senderId: input.msg.senderId,
-      senderType: senderTypeFromRaw((input.msg as { raw?: unknown }).raw),
+      senderType: senderTypeFromMessage(input.msg),
       chatType: input.msg.chatType,
       botOpenId: input.botOpenId,
       botAppId: input.botAppId,
@@ -3618,9 +3614,15 @@ function dropInboundSelfMessage(input: {
   return true;
 }
 
+/**
+ * Classify the sender as human or bot from the raw Feishu event
+ * (`sender.sender_type`: 'user' = human, 'app' = bot). Live events keep this
+ * on `msg.raw` (`includeRawEvent: true`); backfill keeps the same field via
+ * `includeRaw: true`. Unknown / missing values return undefined — omit rather
+ * than guess.
+ */
 function senderTypeOf(msg: NormalizedMessage): 'user' | 'bot' | undefined {
-  const raw = msg.raw as { sender?: { sender_type?: unknown } } | undefined;
-  const senderType = raw?.sender?.sender_type;
+  const senderType = senderTypeFromMessage(msg);
   if (senderType === 'user') return 'user';
   if (senderType === 'app' || senderType === 'bot') return 'bot';
   return undefined;

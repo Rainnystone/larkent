@@ -13,6 +13,10 @@ import {
   type BackfillChannel,
   type RunBackfillDeps,
 } from '../../../src/bot/backfill';
+import {
+  automationUnavailableForSender,
+  senderTypeFromRaw,
+} from '../../../src/bot/self-message';
 import { DEFAULT_BACKFILL_PREFERENCES, type BackfillPreferences } from '../../../src/config/schema';
 import * as logger from '../../../src/core/logger';
 
@@ -1496,6 +1500,62 @@ describe('createBackfillRun coalescing mutex', () => {
     expect(events(info, 'backfill').filter((row) => row.event === 'coalesced')).toEqual([]);
     release();
     await Promise.all([first, second]);
+  });
+});
+
+describe('backfill sender type for automation', () => {
+  it('keeps sender_type=user on a backfilled mention so automation is available', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_human', CHAT_A, '列出本群自动化', NOW - 10_000)] },
+    });
+    await runBackfill(await deps(h));
+    expect(h.intake).toHaveLength(1);
+    const msg = h.intake[0]!;
+    expect(senderTypeFromRaw(msg.raw)).toBe('user');
+    expect(automationUnavailableForSender(msg)).toBeUndefined();
+  });
+
+  it('keeps sender_type=app on a backfilled other-app mention so automation requires a human', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          mentionItem('om_app', CHAT_A, '列出本群自动化', NOW - 20_000, {
+            senderId: OTHER_APP,
+            senderType: 'app',
+          }),
+          mentionItem('om_self', CHAT_A, '列出本群自动化', NOW - 10_000, {
+            senderId: APP_ID,
+            senderType: 'app',
+          }),
+        ],
+      },
+    });
+    await runBackfill(await deps({ ...h, botAppId: APP_ID }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_app']);
+    const msg = h.intake[0]!;
+    expect(senderTypeFromRaw(msg.raw)).toBe('app');
+    expect(automationUnavailableForSender(msg)).toBe('automation-requires-human');
+  });
+
+  it('does not label a backfilled mention with missing sender_type as automation-requires-human', async () => {
+    const item = mentionItem('om_unknown', CHAT_A, '列出本群自动化', NOW - 10_000);
+    const sender = item.sender as Record<string, unknown>;
+    delete sender.sender_type;
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [item] },
+    });
+    const info = spyInfo();
+    await runBackfill(await deps(h));
+    expect(h.intake).toHaveLength(1);
+    const msg = h.intake[0]!;
+    expect(senderTypeFromRaw(msg.raw)).toBeUndefined();
+    expect(automationUnavailableForSender(msg)).toBe('automation-sender-type-missing');
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'sender-type-missing', msgId: 'om_unknown' }),
+    );
   });
 });
 

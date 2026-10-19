@@ -241,6 +241,7 @@ function liveMention(
     createTime,
     mentions: [{ key: '@_user_1', openId: BOT, name: 'Bot', isBot: true }],
     mentionAll: false,
+    raw: { sender: { sender_type: 'user', sender_id: { open_id: USER } } },
     ...(threadId ? { threadId } : {}),
   } as unknown as NormalizedMessage;
 }
