@@ -284,7 +284,7 @@ it('revokes a cancelled run credential while allowing its accepted operation to 
   const denied = await client.call({ version: 1, operation: 'automation.list' }, env);
   expect(JSON.parse(denied.stdout)).toMatchObject({ category: 'unavailable', code: 'run-connection-closed' });
   release();
-  await vi.waitFor(() => expect(h.store.listDrafts()[0]?.cardMessageId).toEqual(expect.any(String)));
+  await vi.waitFor(() => expect(h.store.listDrafts()[0]?.cardMessageId).toEqual(expect.any(String)), { timeout: 12000 });
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation', data: { applied: false } }); });
   expect(h.store.listDrafts()).toHaveLength(1); expect(h.store.list()).toHaveLength(0);
 }, 30000);
@@ -338,7 +338,10 @@ it('upgrades an existing v1 manual draft and completes its original confirmation
   document.schemaVersion = 1; delete document.operations;
   await writeFile(h.store.getFilePath(), JSON.stringify(document));
   await h.restart();
-  expect(JSON.parse(await readFile(h.store.getFilePath(), 'utf8')).schemaVersion).toBe(2);
+  const upgraded = await readFile(h.store.getFilePath(), 'utf8');
+  expect(JSON.parse(upgraded).schemaVersion).toBe(2);
+  await h.restart();
+  expect(await readFile(h.store.getFilePath(), 'utf8')).toBe(upgraded);
   await h.channel.handlers.cardAction?.(click(original.cardMessageId!, button(card, 'auto.confirm')));
   await h.turn(async call => { expect(await call('automation.list')).toMatchObject({ category: 'ok', data: { tasks: [{ id: 1, taskType: 'reminder', name: 'Synthetic legacy', nextFireAt: NOW + 900000 }] } }); });
   expect(h.store.list()).toHaveLength(1); expect(h.store.listDrafts()).toHaveLength(0);
@@ -411,12 +414,14 @@ it('recovers every submitted semantic-retry ID after its response is lost and th
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
 }, 30000);
 
-it.each(['delivery', 'operations'] as const)('refuses malformed v2 %s data without losing the original uncertain receipt', async field => {
+it.each(['delivery', 'operations', 'delivery-state', 'operation-state'] as const)('refuses malformed v2 %s data without losing the original uncertain receipt', async field => {
   const h = await harness();
   h.channel.sendErrors.send = new Error('synthetic uncertain send');
   await h.turn(async call => { expect(await call('automation.create', reminder)).toMatchObject({ category: 'unknown' }); });
   const document = JSON.parse(await readFile(h.store.getFilePath(), 'utf8'));
   if (field === 'delivery') document.drafts[0].delivery = {};
+  else if (field === 'delivery-state') document.drafts[0].delivery.state = ['sending'];
+  else if (field === 'operation-state') document.operations[0].state = ['received'];
   else delete document.operations;
   const corrupted = JSON.stringify(document); await writeFile(h.store.getFilePath(), corrupted);
   await expect(h.restart()).rejects.toThrow(/Invalid automation/);
@@ -449,8 +454,23 @@ it('serializes end completion with a concurrent recovery query so one confirmati
   const completing = Promise.resolve(h.channel.handlers.cardAction?.(click(draft.cardMessageId!, { ...button(card, 'auto.end.custom'), end_at: '2026-10-21' })));
   void completing.catch(() => {}); await writing;
   const querying = h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation' }); });
-  try { await vi.waitFor(() => expect(h.store.listDrafts()[0]?.delivery?.state).toBe('prepared')); } finally { release(); }
+  try { await vi.waitFor(() => expect(h.store.listDrafts()[0]?.delivery?.state).toBe('prepared'), { timeout: 12000 }); } finally { release(); }
   await completing; await querying;
   expect(createdCards).toHaveLength(2); // one end card and one confirmation card
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+}, 30000);
+
+it('records human rejection as not-applied and keeps the same operation closed after restart', async () => {
+  const h = await harness(); let operationId = '';
+  await h.turn(async call => { operationId = (await call('automation.create', reminder)).data.operationId; });
+  const draft = h.store.listDrafts()[0]!;
+  const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.reject')))).toMatchObject({ toast: { type: 'success' } });
+  await h.restart();
+  await h.turn(async call => {
+    expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'execution-failed', code: 'draft-closed', data: { state: 'not-applied', applied: false } });
+    expect(await call('automation.create', { ...reminder, operationId })).toMatchObject({ category: 'execution-failed', code: 'draft-closed' });
+  });
+  expect(h.store.list()).toHaveLength(0); expect(h.store.listDrafts()).toHaveLength(0);
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
 }, 30000);

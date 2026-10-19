@@ -1050,7 +1050,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     || typeof raw.chatId !== 'string' || !raw.chatId || typeof raw.fingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(raw.fingerprint)
     || typeof raw.draftId !== 'string' || !raw.draftId || !isFiniteNumber(raw.createdAt)
     || !Number.isSafeInteger(raw.dispatchedCount) || (raw.dispatchedCount as number) < 0
-    || !['received', 'applied', 'not-applied'].includes(String(raw.state))
+    || typeof raw.state !== 'string' || !['received', 'applied', 'not-applied'].includes(raw.state)
     || (raw.state === 'applied' && !isPositiveInt(raw.taskId))
     || (raw.taskId !== undefined && !isPositiveInt(raw.taskId))
     || (raw.code !== undefined && typeof raw.code !== 'string')
@@ -1076,7 +1076,7 @@ function parseDraftCardReply(raw: unknown): DraftCardReply {
 }
 
 function parseDraftDelivery(raw: unknown): DraftDelivery {
-  if (!isObject(raw) || !['prepared', 'sending', 'sent', 'rejected'].includes(String(raw.state))
+  if (!isObject(raw) || typeof raw.state !== 'string' || !['prepared', 'sending', 'sent', 'rejected'].includes(raw.state)
     || typeof raw.deliveryId !== 'string' || !/^[a-f0-9]{32}$/.test(raw.deliveryId) || !isObject(raw.card)
     || (raw.cardId !== undefined && (typeof raw.cardId !== 'string' || !raw.cardId))
     || ((raw.state === 'sending' || raw.state === 'sent') && !raw.cardId)) throw new Error('Invalid automation draft delivery');

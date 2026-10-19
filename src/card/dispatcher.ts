@@ -488,6 +488,7 @@ async function dispatchAutoAction(
   }
   switch (cmd) {
     case 'auto.reject':
+      if (taken.operationId) deps.autoAuth.consume(verified.payload.nonce);
       log.info('auto', 'rejected', {
         draftId: taken.draftId,
         chatId: taken.chatId,
