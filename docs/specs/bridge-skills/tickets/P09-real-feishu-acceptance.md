@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | E2E Tester | 执行脚本化场景的测试者 | 按场景步骤操作，记录输入、输出与状态；不临场改脚本，不代替确认 |
 | Test Bot | 真实 CLI 本身 | 以被测 CLI 的真实进程运行，**不对其做监控或注入**；它的工具调用与回复是被观察的对象，不是被操控的对象 |
-| 指定测试机器人账号 | 飞书侧的机器人账号 | 确认卡片只能由该账号点击。点击前先在测试群验证该账号确实拥有点击权限；未验证权限不得点击，也不由任何模型或个人账号代点 |
+| 指定测试机器人账号 | 飞书侧的机器人账号 | 确认卡片只能由该账号点击。点击前先在测试群验证该账号确实拥有点击权限；未验证权限不得点击，也不由任何模型或个人账号代点。实际点击由人类测试者在该账号已登录的会话中经 computer use 操作完成 |
 
 需要人类确认的既有动作保持为人类动作。Test Bot 返回的 operationId 只用于后续查询，不构成确认。
 
@@ -92,7 +92,7 @@
 本场景使用两个独立的 git worktree，只供测试 bridge 运行。线上 bridge 及其 checkout、服务和数据根始终不碰、不拉取、不构建、不重启。
 
 - **旧版本 worktree：** 当前 `master` 的 `953e7bd`（#52 之前交付的版本，automation 存储为 schema v1，也是固定夹具 `pre-tools-v1.json` 的导出来源）。`git worktree add --detach <test-dir>/p09-old 953e7bdde3549b03bddb8d191d8856683d1dc4c5`
-- **新版本 worktree：** PR 分支 `feat/bridge-skills`，固定到候选 SHA（当前 `08102d4`；评审修复推进 HEAD 后重新固定）。`git worktree add --detach <test-dir>/p09-new <candidate-sha>`
+- **新版本 worktree：** PR 分支 `feat/bridge-skills`，固定到候选 SHA（当前 `0b55865`，完整 `0b55865667d72eb959b96a39383319fd688bce0b`；评审修复推进 HEAD 后重新固定）。`git worktree add --detach <test-dir>/p09-new <candidate-sha>`
 - 两个 worktree 各自安装并构建（`pnpm install --frozen-lockfile && pnpm build`），分别记录 `git rev-parse HEAD`。
 - **启动前隔离检查：** 选专用测试数据根与测试 profile，每条命令带相同的 `LARK_CHANNEL_HOME=<test-root>` 和 `--profile <test-profile>`。用 `ps` 与 `status` 确认没有线上 profile 使用该数据根，且该测试 profile 没有从其他 checkout 或系统服务运行。使用前台 `run` 而不是 `start`，避免安装或改写 per-profile 服务。
 - **阶段 A（旧版本）：** 在 `p09-old` 运行 `LARK_CHANNEL_HOME=<test-root> node bin/lark-channel-bridge.mjs run --profile <test-profile>`。记录运行来源：worktree 路径、SHA、pid 与启动时间。在测试群经旧的 `/auto` 流程造出真实 v1 数据：一条已保存提醒、一条已保存 agent 任务；未点击的创建、删除、替换确认卡片各一张；一份未填写结束日期的未完成周期性草稿；看板；一张已点击卡片以留下已吊销 nonce。条件允许时再留一条已暂存到 outbox 的回复更正。确认该 profile 的 `automations.json` 为 schema v1。
