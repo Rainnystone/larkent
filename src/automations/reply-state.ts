@@ -5,14 +5,16 @@ import type { AutomationToolContext } from './tools';
 
 /** Only receipts actually returned as waiting in this run can qualify its reply. */
 export function trackAutomationReply(context: Pick<AutomationToolContext, 'store' | 'profile' | 'chatId' | 'now'>) {
+  const created = new Set<string>();
   const waiting = new Map<string, AutomationDraft>();
   return {
     noteResult(result: ToolResult): void {
-      if (result.category !== 'waiting-confirmation') return;
       const data = record(result.data);
       if (typeof data?.operationId !== 'string') return;
       const operation = context.store?.getOperation(data.operationId);
       if (!operation || operation.profile !== context.profile || operation.chatId !== context.chatId) return;
+      created.add(operation.operationId);
+      if (result.category !== 'waiting-confirmation') return;
       const draft = context.store!.getOperationDraft(operation.draftId);
       if (draft) waiting.set(operation.operationId, draft);
     },
@@ -21,7 +23,9 @@ export function trackAutomationReply(context: Pick<AutomationToolContext, 'store
       for (const [operationId, draft] of waiting) {
         const operation = context.store?.getOperation(operationId);
         if (operation?.code === 'draft-superseded') {
-          lines.push(`（回复生成期间已失效：${DRAFT_SETTLED_SUPERSEDED}）`);
+          if (!supersededByThisTurn(context, created, operationId)) {
+            lines.push(`（回复生成期间已失效：${DRAFT_SETTLED_SUPERSEDED}）`);
+          }
           continue;
         }
         if (operation?.state === 'not-applied' && operation.code === 'draft-closed') {
@@ -44,4 +48,20 @@ export function trackAutomationReply(context: Pick<AutomationToolContext, 'store
       return lines.length ? lines.join('\n') : undefined;
     },
   };
+}
+
+function supersededByThisTurn(
+  context: Pick<AutomationToolContext, 'store'>,
+  created: Set<string>,
+  operationId: string,
+): boolean {
+  for (const createdId of created) {
+    const createdOp = context.store?.getOperation(createdId);
+    const target = createdOp?.supersedesOperationId;
+    if (!target) continue;
+    if (target === operationId) return true;
+    const resolved = context.store?.getOperation(target);
+    if (resolved?.operationId === operationId) return true;
+  }
+  return false;
 }

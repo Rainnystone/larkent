@@ -285,7 +285,7 @@ it('checks confirmation after the progress-stream receipt is persisted and befor
   h.checkFailure();
 }, 30000);
 
-it('informs the user when a pending draft was superseded while composing the reply', async () => {
+it('does not treat a same-turn revision as an external invalidation', async () => {
   const h = await harness();
   h.setScript(async call => {
     const old = await call('automation.create', reminder);
@@ -294,7 +294,7 @@ it('informs the user when a pending draft was superseded while composing the rep
     return BODY;
   });
   await h.command('Revise the pending reminder');
-  expect(await h.sent).toBe(`${BODY}\n\n（回复生成期间已失效：已被新卡取代）`);
+  expect(await h.sent).toBe(BODY);
   h.checkFailure();
 }, 30000);
 
