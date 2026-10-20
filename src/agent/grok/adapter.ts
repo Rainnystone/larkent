@@ -12,6 +12,7 @@ import type {
 } from '../types';
 import { buildGrokArgs } from './argv';
 import { GrokJsonlTranslator } from './jsonl';
+import { toGrokPermissionMode, toGrokSandbox } from './options';
 
 export interface GrokAdapterOptions {
   binary?: string;
@@ -69,6 +70,8 @@ export class GrokAdapter implements AgentAdapter {
       throw new Error('cwd is required for GrokAdapter.run');
     }
 
+    const permissionMode = toGrokPermissionMode(opts.permissionMode);
+    const sandbox = toGrokSandbox(opts.sandbox);
     return runJsonlCli({
       runId: opts.runId,
       binaryPath: this.binary,
@@ -77,6 +80,8 @@ export class GrokAdapter implements AgentAdapter {
         rules: buildBridgeSystemPrompt(this.botIdentity, opts.promptVariant),
         ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(sandbox ? { sandbox } : {}),
       }),
       cwd: opts.cwd,
       env: agentSpawnEnv(process.env, {

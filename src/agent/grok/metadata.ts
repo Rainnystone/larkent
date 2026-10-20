@@ -5,7 +5,7 @@ import {
   FOLLOW_DEFAULT,
   type CapabilityShape,
 } from '../definition';
-import { grokAgentOptionsSchema, grokPolicyInputs, mapGrokEffectiveAccess } from './options';
+import { grokAccessStatus, grokAgentOptionsSchema, grokPolicyInputs, mapGrokEffectiveAccess } from './options';
 
 export function grokCapability(
   profile?: Pick<ProfileConfig, 'permissions'>,
@@ -48,8 +48,8 @@ export const grokMetadata = defineMetadata({
   policyInputs: grokPolicyInputs,
   mapEffectiveAccess: mapGrokEffectiveAccess,
   capability: (profile) => grokCapability(profile),
-  runtimeAccess: () => ({
+  runtimeAccess: (profile) => ({
     label: 'permission',
-    value: 'bypassPermissions (grok --always-approve)',
+    value: grokAccessStatus(profile.permissions.defaultAccess),
   }),
 });
