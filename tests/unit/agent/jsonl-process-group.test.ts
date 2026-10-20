@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -35,8 +36,12 @@ describe('jsonl stop signals the process group', () => {
 
   afterEach(() => {
     for (const pid of groups.splice(0)) {
-      try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
-      try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      if (process.platform === 'win32') {
+        spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      } else {
+        try { process.kill(-pid, 'SIGKILL'); } catch { /* already gone */ }
+        try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
     }
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });

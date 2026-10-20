@@ -2,6 +2,7 @@ import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { log } from '../../core/logger';
 import { RunCleanupFailed } from '../../runtime/errors';
+import { signalProcessTree } from '../../platform/process-tree';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import { readProcessStartMs } from '../../platform/process-info';
 import type { AgentEvent, AgentRun } from '../types';
@@ -80,6 +81,7 @@ export function wrapParsedTranslator(
 
 export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const stopGraceMs = input.stopGraceMs ?? 5000;
+  const detached = true;
   const child = spawnProcess(input.binaryPath, [...input.argv], {
     cwd: input.cwd,
     env: input.env,
@@ -209,7 +211,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
         log.info('agent', 'stop-sigterm', { pid: child.pid, graceMs: stopGraceMs });
         let signalled = false;
         try {
-          signalled = signalChild(child, 'SIGTERM');
+          signalled = signalChild(child, 'SIGTERM', detached);
         } catch (error) {
           signalError = error;
         }
@@ -219,7 +221,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
             pid: child.pid, graceMs: stopGraceMs, reason: 'sigterm-did-not-exit',
           });
           try {
-            signalChild(child, 'SIGKILL');
+            signalChild(child, 'SIGKILL', detached);
           } catch (error) {
             signalError = error;
           }
@@ -605,17 +607,9 @@ async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T | false
   }
 }
 
-/** Signal the whole process group, then the pid if this child is not a group leader. */
-function signalChild(child: CliChild, signal: NodeJS.Signals): boolean {
-  if (child.pid && process.platform !== 'win32') {
-    try {
-      process.kill(-child.pid, signal);
-      return true;
-    } catch {
-      // ESRCH: not a group leader, or already gone. Fall back to the single pid.
-    }
-  }
-  return child.kill(signal);
+/** Signal the detached process group, falling back to the single pid on ESRCH. */
+function signalChild(child: CliChild, signal: NodeJS.Signals, detached: boolean): boolean {
+  return signalProcessTree(child, signal, detached);
 }
 
 function isExternalInterruptSignal(signal: NodeJS.Signals | string | null | undefined): boolean {
