@@ -4,6 +4,7 @@
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G8，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20
+**Follow-up:** [P09bb](P09bb-meeting-idle-budget-without-controls.md)（共享/非 Grok 代码影响评估，2026-10-20）
 **Blocked by:** None
 
 ## Root cause

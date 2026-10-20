@@ -75,6 +75,12 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09av](P09av-store-same-name-timestamp.md) | Deferred P3（owner: Codex，合并后跟进）：同名时间戳取自暂停/恢复等管理回执 | #52 Codex 定向 review（`7514c1e`） |
 | [P09aw](P09aw-reply-state-guard-notice-reads.md) | Deferred P3（owner: Codex，合并后跟进）：`notice()`/`supersededByThisTurn()` 回执读取未防护 | #52 Codex 定向 review（`7514c1e`） |
 | [P09ax](P09ax-grok-remove-statusless-branch.md) | Chore P3（owner: local Grok Build，#52 合并后）：删除 jsonl.ts 旧版 statusless 完成分支 | P09ao 分诊 |
+| [P09ay](P09ay-run-outcome-final-text-gate-narrow.md) | Bug P1（owner: Codex，#52，blocked-by P09aq）：停止后 final_text 共享闸门对所有 CLI/停止原因放行，policy-guard 停止可能发出被拦截文本 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
+| [P09az](P09az-spawn-env-revert-allowlist.md) | Bug P1（owner: Codex，#52，blocked-by P09aq）：回退 spawn 环境 allowlist（静默剥离各 CLI 必需变量），保留 APP_SECRET 不透传 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
+| [P09ba](P09ba-spawn-env-hardening-redesign.md) | Chore P3（owner: Codex，#52 合并后独立 PR）：重新设计环境加固 + 按 adapter 环境契约测试 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
+| [P09bb](P09bb-meeting-idle-budget-without-controls.md) | Test P2（owner: Codex，#52，blocked-by P09aq）：controls.cfg 缺失时会议仍须有 idle 预算 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
+| [P09bc](P09bc-process-tree-sigkill-spared.md) | Test/Bug P2（owner: Codex，#52，blocked-by P09aq）：SIGKILL 升级跳过持有 stdout 的进程，run 可能不结束 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
+| [P09bd](P09bd-jsonl-line-cap-bytes.md) | Bug P3（owner: Codex，#52，blocked-by P09aq）：JSONL 8MB 上限按字符索引比较字节（纳入 P09au） | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 
 > **分诊原则：** 票据按第一性原理、面向未来判断；不为过时的 CLI 版本做兼容工作（做减法，不打补丁）。
 
@@ -100,6 +106,14 @@ P09d（`src/card/tool-render.ts`）与 P09l（`src/agent/grok/jsonl.ts`）都影
 - #52 只接受 automation / plugin 范围内的问题；其他通用发现一律建为 #52 合并后的跟进票。
 - 修复票的回归测试必须覆盖受影响的调用方，不能只测辅助函数。
 - P3 票是合并后跟进，不在 #52 中修。本轮 #52 只修 P09aq（已并入 P09ar、P09ap）。
+
+共享代码影响评估复盘（2026-10-20，确定性检查）：
+
+- 每个 adapter 一条测试，断言其 parser 是否会发出 `final_text`（文档与代码一致）。
+- 每个 adapter 一条环境契约测试（必需透传 / 必须拒绝）。
+- 以某厂商为范围的改动若触及 `src/platform/*` 或 `src/bot/run-outcome.ts`，必须附跨 adapter 测试。
+- 停止后的进程泄漏测试（进程组无残留）。
+- P09ay–P09bd 由代码阅读得出，未 live 验证；除 P09ba 外均在 P09aq 绿后一批交给 Codex。
 
 P09 E2E 发现的 won't-fix（不建票）：
 
