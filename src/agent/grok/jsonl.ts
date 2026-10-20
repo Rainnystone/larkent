@@ -1,5 +1,6 @@
 import { stripVTControlCharacters } from 'node:util';
 import type { AgentEvent } from '../types';
+import { stripNodeNoColorWarning } from '../terminal-text';
 import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
 
@@ -300,7 +301,9 @@ function serializeToolOutput(value: unknown): string {
 }
 
 function stripAnsi(value: string): string {
-  return stripVTControlCharacters(value);
+  // Grok's tool process sets FORCE_COLOR and NO_COLOR itself. Parent env
+  // cannot stop Node's two-line warning, so drop those lines here.
+  return stripNodeNoColorWarning(stripVTControlCharacters(value));
 }
 
 function decodeUtf8Bytes(value: unknown): string | undefined {
