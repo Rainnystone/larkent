@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../types';
+import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
 
 export type CursorFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
@@ -268,10 +269,9 @@ function toolResultFields(
     };
   }
   if (isRecord(result.success)) {
-    const shell = /^(?:Bash|Shell|command_execution|run_terminal_cmd)$/i.test(name);
     const failedExit = [result.success.exitCode, result.success.exit_code]
       .some(code => typeof code === 'number' && Number.isInteger(code) && code !== 0);
-    return { output: stringifyToolOutput(result.success), isError: shell && failedExit };
+    return { output: stringifyToolOutput(result.success), isError: isShellTool(name) && failedExit };
   }
   if (result.success !== undefined) {
     return { output: stringifyToolOutput(result.success), isError: false };

@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../types';
+import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
 
 export type GrokFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
@@ -30,7 +31,7 @@ export class GrokJsonlTranslator {
   private sessionId: string | undefined;
   private terminal = false;
   private pendingText = '';
-  private readonly startedToolCalls = new Set<string>();
+  private readonly startedToolCalls = new Map<string, string>();
   private lastUsage: AgentEvent | undefined;
   private drift: ProtocolDriftState = {
     unknownEvents: 0,
@@ -116,7 +117,7 @@ export class GrokJsonlTranslator {
     }
     const events: AgentEvent[] = [];
     if (!this.startedToolCalls.has(id)) {
-      this.startedToolCalls.add(id);
+      this.startedToolCalls.set(id, name);
       events.push({
         type: 'tool_use',
         id,
@@ -151,10 +152,13 @@ export class GrokJsonlTranslator {
     raw: Record<string, unknown>,
     isError: boolean,
   ): AgentEvent[] {
+    const name = this.startedToolCalls.get(id);
     this.startedToolCalls.delete(id);
     const output = raw.rawOutput ?? raw.content ?? raw.output;
     // "completed" describes the tool lifecycle; a shell process may still fail.
-    const exitCode = isRecord(output) ? numberValue(output.exitCode) ?? numberValue(output.exit_code) : undefined;
+    const exitCode = isShellTool(name) && isRecord(output)
+      ? numberValue(output.exitCode) ?? numberValue(output.exit_code)
+      : undefined;
     return [
       {
         type: 'tool_result',

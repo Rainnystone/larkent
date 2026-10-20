@@ -122,6 +122,71 @@ describe('GrokJsonlTranslator', () => {
     ]);
   });
 
+  it.each(['exitCode', 'exit_code'])('keeps completed non-shell %s output successful', (field) => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call', toolCallId: 'plugin', toolName: 'mcp_process_report',
+        status: 'in_progress', rawInput: {},
+      },
+      {
+        type: 'tool_call_update', toolCallId: 'plugin', status: 'completed',
+        rawOutput: { [field]: 2 },
+      },
+    ]);
+    expect(events.at(-1)).toEqual({
+      type: 'tool_result', id: 'plugin', output: `{"${field}":2}`, isError: false,
+    });
+  });
+
+  it.each(['Bash', 'Shell', 'command_execution', 'run_terminal_cmd'])(
+    'uses native exit status for %s results', (toolName) => {
+      for (const field of ['exitCode', 'exit_code']) {
+        for (const [exitCode, isError] of [[2, true], [0, false]] as const) {
+          const t = new GrokJsonlTranslator();
+          const events = collect(t, [
+            { type: 'tool_call', toolCallId: 'shell', toolName, status: 'in_progress' },
+            {
+              type: 'tool_call_update', toolCallId: 'shell', status: 'completed',
+              rawOutput: { [field]: exitCode },
+            },
+          ]);
+          expect(events.at(-1)).toMatchObject({ type: 'tool_result', id: 'shell', isError });
+        }
+      }
+    },
+  );
+
+  it.each(['Bash', 'mcp_process_report'])('uses %s status when the initial call is already completed', (toolName) => {
+    const t = new GrokJsonlTranslator();
+    expect(t.translate({
+      type: 'tool_call', toolCallId: 'inline', toolName, status: 'completed', rawOutput: { exitCode: 2 },
+    }).at(-1)).toMatchObject({ type: 'tool_result', id: 'inline', isError: toolName === 'Bash' });
+  });
+
+  it('keeps interleaved shell and plugin result status tied to each call', () => {
+    const t = new GrokJsonlTranslator();
+    const results = collect(t, [
+      { type: 'tool_call', toolCallId: 'shell', toolName: 'Bash', status: 'in_progress' },
+      { type: 'tool_call', toolCallId: 'plugin', toolName: 'mcp_process_report', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'shell', status: 'completed', rawOutput: { exitCode: 2 } },
+      { type: 'tool_call_update', toolCallId: 'plugin', status: 'completed', rawOutput: { exitCode: 2 } },
+    ]).filter((event) => event.type === 'tool_result');
+    expect(results).toEqual([
+      { type: 'tool_result', id: 'shell', output: '{"exitCode":2}', isError: true },
+      { type: 'tool_result', id: 'plugin', output: '{"exitCode":2}', isError: false },
+    ]);
+  });
+
+  it.each(['failed', 'error'])('preserves non-shell lifecycle %s with a zero exit field', (status) => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      { type: 'tool_call', toolCallId: 'plugin', toolName: 'mcp_process_report', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'plugin', status, rawOutput: { exitCode: 0 } },
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: 'tool_result', id: 'plugin', isError: true });
+  });
+
   it('treats a failed tool_call_update as isError', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [
