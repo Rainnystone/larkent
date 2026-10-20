@@ -43,6 +43,14 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09p](P09p-superseded-draft-card-still-live.md) | Bug P3：草稿修订后旧确认卡仍有效，点「是」重复建任务 | `b4d67c6` 全量回归 |
 | [P09q](P09q-multi-draft-reply-leaks-fields.md) | Bug P3：多草稿状态回复泄漏 `applied` 字段与完整卡片 / 草稿 ID | `b4d67c6` 全量回归 |
 | [P09r](P09r-tool-card-ansi-escapes.md) | Bug P3：工具卡出现 ANSI 颜色码（与 NO_COLOR/FORCE_COLOR 警告同修） | `b4d67c6` 全量回归 |
+| [P09s](P09s-grok-statusless-update-as-result.md) | Bug P2（owner: local Grok Build）：Grok 无 status 的 tool_call_update 被当作结果，shell 退出码被忽略（重开 P09o） | `6dd0e44` live 回归 |
+| [P09t](P09t-grok-ansi-raw-string-bytes.md) | Bug P2（owner: local Grok Build）：Grok 原始字符串 / 字节数组 rawOutput 未剥离 ANSI（Codex review #2） | `6dd0e44` live 回归 |
+| [P09u](P09u-grok-force-color-no-color-warning.md) | Bug P2/P3（owner: local Grok Build）：Grok shell 自设 FORCE_COLOR，与 NO_COLOR 冲突产生 Node 警告（重开 P09r） | `6dd0e44` live 回归 |
+| [P09v](P09v-draft-revision-without-supersede.md) | Bug P2（owner: Cursor Project）：修订草稿时模型未传 supersedesOperationId，旧卡仍有效，live 产生重复任务 #18/#19 | `6dd0e44` live 回归 |
+| [P09w](P09w-same-turn-supersede-label.md) | Bug P3（owner: Cursor Project）：同轮取代的草稿被标为「回复生成期间已失效」 | `6dd0e44` live 回归 |
+| [P09x](P09x-reply-count-and-status-codes.md) | Bug P3（owner: Cursor Project）：回复次数（31）与卡片（30）不一致，并泄漏 needs-input / waiting-confirmation | `6dd0e44` live 回归 |
+| [P09y](P09y-confirm-success-without-feedback.md) | Bug P3（owner: Cursor Project）：确认已成功（#19）但按钮复原、无 toast | `6dd0e44` live 回归 |
+| [P09z](P09z-deferred-review-findings-1-3.md) | Deferred P3（owner: Cursor Project）：Codex review #1 setImmediate 结算窗口、#3 指纹不含 actor；证据表明均不产生重复 | `6dd0e44` live 回归 |
 
 ### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
 

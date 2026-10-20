@@ -78,9 +78,18 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09p | P3 | 草稿修订后旧确认卡仍有效，点「是」重复建任务（见 [P09p](tickets/P09p-superseded-draft-card-still-live.md)） |
 | P09q | P3 | 多草稿状态回复泄漏 `applied` 字段与完整 ID（见 [P09q](tickets/P09q-multi-draft-reply-leaks-fields.md)） |
 | P09r | P3 | 工具卡出现 ANSI 颜色码，与 NO_COLOR 警告同修（见 [P09r](tickets/P09r-tool-card-ansi-escapes.md)） |
+| P09s | P2 | Grok shell 失败（exit 2）显示 ✅（见 [P09s](tickets/P09s-grok-statusless-update-as-result.md)） |
+| P09t | P2 | 详细 CoT 出现 ANSI 颜色码（见 [P09t](tickets/P09t-grok-ansi-raw-string-bytes.md)） |
+| P09u | P2/P3 | Grok 每张工具卡带 NO_COLOR 警告（见 [P09u](tickets/P09u-grok-force-color-no-color-warning.md)） |
+| P09v | P2 | 修订后旧卡仍可确认，产生同名重复任务（见 [P09v](tickets/P09v-draft-revision-without-supersede.md)） |
+| P09w | P3 | 回复误称草稿在生成期间被外部取消（见 [P09w](tickets/P09w-same-turn-supersede-label.md)） |
+| P09x | P3 | 回复次数与卡不符、出现状态码（见 [P09x](tickets/P09x-reply-count-and-status-codes.md)） |
+| P09y | P3 | 用户看不到确认成功，易重复操作（见 [P09y](tickets/P09y-confirm-success-without-feedback.md)） |
+| P09z | P3 deferred | 无（风险记录）（见 [P09z](tickets/P09z-deferred-review-findings-1-3.md)） |
 
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
 - **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。
+- **`6dd0e44` live 回归（2026-10-20）：** 新增 P09s–P09z。分工：P09s/P09t/P09u 由 local Grok Build 修（代码分支 `feat/bridge-skills`）；P09v/P09w/P09x/P09y 由 Cursor Project 修（同一分支，先 `git pull --rebase`）；P09z 为 deferred。STEP 1 结论：09:00 确认创建了 #19，与 #18（08:45）同名重复；09:00 确认无 toast 但实际成功（P09y），非错误、非 skip-auto-unregistered、非守卫拒绝；#18 为用户本人点击确认。
 - **Won't-fix：** B3 暂停→恢复后 revision 回到原值（ABA），内容相同、无副作用。
 - **实测（live）验证：** 场景 1–8 主要路径；F4（拦截成立，见 P09m 误报）；F5；F7 结果为 fail（P09c，已修）。
 - **仅代码审阅、未实测：** F6；已授权 user 身份路径（测试 profile 无 user token，bot 身份已实测）。
