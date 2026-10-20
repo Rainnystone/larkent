@@ -31,7 +31,7 @@ it('auto-supersedes a same-name pending create without supersedesOperationId', a
     supersedesOperationId: nine.operationId,
   });
   expect(store.listDrafts()).toEqual([expect.objectContaining({ draftId: revised.draftId })]);
-  expect(store.listDrafts()[0]!.name.trim()).toBe('Daily regression');
+  expect(createDraftName(store.listDrafts()[0])).toBe('Daily regression');
 });
 
 it('does not supersede another actor, chat, or different name', async () => {
@@ -57,8 +57,8 @@ it('does not supersede another actor, chat, or different name', async () => {
 it('rejects confirming a leftover same-name twin after the later draft was applied', async () => {
   const store = await leftoverTwins();
   const [first, second] = store.listDrafts();
-  expect(first?.name).toBe('Daily regression');
-  expect(second?.name).toBe('Daily regression');
+  expect(createDraftName(first)).toBe('Daily regression');
+  expect(createDraftName(second)).toBe('Daily regression');
   const applied = await confirmAutomationDraft({ automations: store }, second!);
   expect(applied).toMatchObject({ ok: true, toast: '已确认 #1' });
   const rejected = await confirmAutomationDraft({ automations: store }, first!);
@@ -97,6 +97,10 @@ it('lets a later independent same-name draft coexist after the first task is alr
   expect(await confirmAutomationDraft({ automations: store }, later)).toMatchObject({ ok: true, toast: '已确认 #2' });
   expect(store.list().map(item => item.id)).toEqual([1, 2]);
 });
+
+function createDraftName(draft: ReturnType<AutomationsStore['listDrafts']>[number] | undefined): string | undefined {
+  return draft && draft.op !== 'delete' ? draft.name.trim() : undefined;
+}
 
 function operationId(issuedAt: number, chatId = CHAT): string {
   return newAutomationOperationId(automationOperationScope(PROFILE, chatId), issuedAt);
