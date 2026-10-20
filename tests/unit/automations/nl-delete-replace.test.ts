@@ -85,7 +85,9 @@ describe('delete and replace cards', () => {
     const replacedJson = JSON.stringify(replaced);
     assertCardSchema2(replaced);
     expect(replacedJson).toContain('确认替换 #12');
-    expect(replacedJson).toContain('将删除：#12 总结马斯克推特 · 一次性 2026-10-19 09:00');
+    expect(replacedJson).toContain('替换：#12 总结马斯克推特 · 一次性 2026-10-19 09:00 → 新设置如下');
+    expect(replacedJson).toContain('确认后原 #12 将由新编号取代');
+    expect(replacedJson).not.toContain('将删除');
     expect(replacedJson).toContain('总结马斯克和 Sam Altman 的推特');
     expect(replacedJson).toContain('触发时间：2026-10-19 09:00（共 1 次）');
     expect(replacedJson.match(/"cmd":"auto.confirm"/g)).toHaveLength(1);
@@ -233,7 +235,7 @@ describe('delete and replace drafts', () => {
     expect(recovered.cardMessageId).toBeTruthy();
     expect(recovered.cardMessageId).not.toBe(endMessageId);
     const cards = h.channel.sent.map((entry) => JSON.stringify(entry.content));
-    expect(cards.some((body) => body.includes('确认替换 #') && body.includes('将删除：'))).toBe(true);
+    expect(cards.some((body) => body.includes('确认替换 #') && body.includes('确认后原 #1 将由新编号取代'))).toBe(true);
     expect(h.store.get(item.id)?.name).toBe('总结马斯克推特');
   });
 
@@ -263,7 +265,7 @@ describe('delete and replace drafts', () => {
     });
     const cards = h.channel.sent.map((item) => JSON.stringify(item.content));
     expect(cards.some((body) => body.includes('确认删除 #') && body.includes('总结马斯克推特'))).toBe(true);
-    expect(cards.some((body) => body.includes('确认替换 #') && body.includes('将删除：'))).toBe(true);
+    expect(cards.some((body) => body.includes('确认替换 #') && body.includes('确认后原 #1 将由新编号取代'))).toBe(true);
     expect(cards.filter((body) => body.includes('确认自动化'))).toHaveLength(0);
     expect(h.store.list()).toHaveLength(1);
   });

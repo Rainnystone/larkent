@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   automationConfirmCard,
+  automationReplaceCard,
   describeEnd,
   describeIdentity,
   describeSchedule,
@@ -13,6 +14,42 @@ const NOW = Date.UTC(2026, 9, 17, 3, 0, 0);
 const END = NOW + 30 * 24 * 60 * 60 * 1000;
 
 describe('confirm card copy', () => {
+  it('explains replacement, the original schedule, and the number change on confirmation', () => {
+    const card = automationReplaceCard({
+      target: {
+        id: 1,
+        name: '原提醒',
+        taskType: 'reminder',
+        scheduleLabel: '每天 10:00',
+        nextFireLabel: '2026-10-18 10:00',
+        endLabel: '2026-11-16 11:00',
+      },
+      taskType: 'reminder',
+      name: '新提醒',
+      taskText: '提醒检查进度',
+      timezone: TZ,
+      schedule: {
+        kind: 'daily',
+        timezone: TZ,
+        times: [{ hour: 11, minute: 0 }],
+        startAt: NOW,
+        endAt: END,
+      },
+      now: NOW,
+      confirmToken: 'auto_cb.v1.confirm',
+      rejectToken: 'auto_cb.v1.reject',
+    });
+    const body = JSON.stringify((card as { body: object }).body);
+    expect(body).not.toContain('将删除');
+    expect(body).toContain('替换：#1 原提醒 · 每天 10:00 → 新设置如下');
+    expect(body).toContain('确认后原 #1 将由新编号取代');
+    expect(body).toContain('每天 11:00');
+    expect(card).toMatchObject({
+      header: { title: { content: '确认替换 #1' } },
+      config: { summary: { content: '确认替换 #1' } },
+    });
+  });
+
   it('describes every schedule kind for reuse by later tickets', () => {
     expect(describeSchedule({ kind: 'one-shot', fireAt: NOW + 15 * 60_000 }, TZ))
       .toBe('一次性 2026-10-17 11:15');

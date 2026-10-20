@@ -245,13 +245,14 @@ export function automationReplaceCard(input: AutomationConfirmBodyInput & {
   confirmToken: string;
   rejectToken: string;
 }): object {
-  const removed = `将删除：#${input.target.id} ${escapeMd(input.target.name)} · ${escapeMd(input.target.scheduleLabel)}`;
+  const replacement = `替换：#${input.target.id} ${escapeMd(input.target.name)} · ${escapeMd(input.target.scheduleLabel)} → 新设置如下`;
+  const numberChange = `确认后原 #${input.target.id} 将由新编号取代`;
   const title = `确认替换 #${input.target.id}`;
   return card2({
     title,
     summary: title,
     elements: [
-      md(`${removed}\n\n${automationConfirmBody(input)}`),
+      md(`${replacement}\n\n${numberChange}\n\n${automationConfirmBody(input)}`),
       hr,
       confirmButtons(input.confirmToken, input.rejectToken),
     ],
