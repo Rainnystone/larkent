@@ -92,7 +92,7 @@ describe('GrokJsonlTranslator', () => {
     });
   });
 
-  it('drops thoughts and pre-tool commentary, holding only the post-tool answer', () => {
+  it('keeps pre-tool commentary in the final answer and still drops thoughts', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [
       { type: 'thought', data: 'looking' },
@@ -117,7 +117,7 @@ describe('GrokJsonlTranslator', () => {
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
       { type: 'tool_result', id: 'call_1', output: '{"lines":3}', isError: false },
       { type: 'system', resumeHandle: SESSION },
-      { type: 'final_text', content: 'Done.' },
+      { type: 'final_text', content: 'Let me check.\n\nDone.' },
       { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
   });

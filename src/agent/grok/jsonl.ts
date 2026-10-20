@@ -25,8 +25,8 @@ export interface ProtocolDriftState {
  * `text` lines are incremental chunks of the same answer, not complete
  * messages. They are concatenated and held back as `final_text` on `end`
  * (same hold-back as kimi/codex, so showToolCalls:false sends one reply).
- * Pre-tool commentary and `thought` lines are dropped rather than streamed,
- * so Feishu only gets the final answer unless the operator turns tools on.
+ * Text that arrived before a tool call is kept and separated from the later
+ * answer. `thought` lines are not part of that answer.
  */
 export class GrokJsonlTranslator {
   private sessionId: string | undefined;
@@ -52,7 +52,7 @@ export class GrokJsonlTranslator {
       case 'text':
         return this.queueText(stringValue(raw.data) ?? stringValue(raw.text));
       case 'tool_call':
-        this.pendingText = '';
+        this.keepPendingBeforeTool();
         return this.translateToolCall(raw);
       case 'tool_call_update':
         return this.translateToolCallUpdate(raw);
@@ -107,6 +107,12 @@ export class GrokJsonlTranslator {
     if (!message) return [];
     this.pendingText += message;
     return [];
+  }
+
+  /** Keep commentary that arrived before a tool instead of dropping it. */
+  private keepPendingBeforeTool(): void {
+    if (!this.pendingText) return;
+    if (!/\n\s*$/.test(this.pendingText)) this.pendingText += '\n\n';
   }
 
   private translateToolCall(raw: Record<string, unknown>): AgentEvent[] {
