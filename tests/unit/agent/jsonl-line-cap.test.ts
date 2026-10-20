@@ -27,27 +27,31 @@ describe('jsonl line cap', () => {
     });
   });
 
-  it.each([
-    ['ASCII below', 'x', 8_388_582],
-    ['ASCII exactly at', 'x', 8_388_583],
-    ['Chinese below', '中', 2_796_194],
-    ['Chinese exactly at', '中', 2_796_194],
-  ] as const)('accepts %s the default byte cap across newline/chunk boundaries', async (label, char, count) => {
-    const content = char.repeat(count) + (label === 'Chinese exactly at' ? 'x' : '');
-    const line = Buffer.from(`{"type":"text","data":"${content}"}`);
-    expect(line.length).toBe(label.endsWith('below') ? 8_388_607 : 8_388_608);
-    for (const chunks of [
-      [Buffer.concat([line, Buffer.from('\n')])],
-      [line, Buffer.from('\n')],
-      [line], // EOF also completes an unterminated JSONL record.
-      // Byte 23 is inside the first Chinese character; the decoder must retain it.
-      [line.subarray(0, 23), line.subarray(23, line.length - 3), line.subarray(line.length - 3), Buffer.from('\n')],
-    ]) {
+  describe.each([
+    ['ASCII below', 'x', 8_388_582, '', 8_388_607],
+    ['ASCII exactly at', 'x', 8_388_583, '', 8_388_608],
+    ['Chinese below', '中', 2_796_194, '', 8_388_607],
+    ['Chinese exactly at', '中', 2_796_194, 'x', 8_388_608],
+  ] as const)('%s the default byte cap', (_label, char, count, suffix, bytes) => {
+    it.each(['LF in same chunk', 'LF in next chunk', 'EOF', 'split UTF-8'] as const)('accepts %s', async framing => {
+      const content = char.repeat(count) + suffix;
+      const line = Buffer.from(`{"type":"text","data":"${content}"}`);
+      expect(line.length).toBe(bytes);
+      let chunks: Buffer[];
+      switch (framing) {
+        case 'LF in same chunk': chunks = [Buffer.concat([line, Buffer.from('\n')])]; break;
+        case 'LF in next chunk': chunks = [line, Buffer.from('\n')]; break;
+        case 'EOF': chunks = [line]; break;
+        case 'split UTF-8':
+          // Byte 23 is inside the first Chinese character.
+          chunks = [line.subarray(0, 23), line.subarray(23, line.length - 3), line.subarray(line.length - 3), Buffer.from('\n')];
+          break;
+      }
       const events = await runChunks(chunks);
       expect(events.map(event => event.type)).toEqual(['final_text', 'done']);
       expect(events[0]).toEqual({ type: 'final_text', content });
       expect(events[1]).toMatchObject({ terminationReason: 'normal' });
-    }
+    });
   });
 
   it.each([
