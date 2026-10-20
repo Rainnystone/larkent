@@ -65,15 +65,15 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09al](P09al-grok-strip-cr-bel-text.md) | Bug P3（owner: local Grok Build）：ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离 | Grok CLI 只读审计 |
 | [P09am](P09am-grok-prompt-on-argv.md) | Bug P3（owner: local Grok Build）：完整 prompt 与 rules 位于 argv（ps 可见） | Grok CLI 只读审计 |
 | [P09an](P09an-grok-error-drops-usage.md) | Bug P2（owner: local Grok Build）：失败终态（translateError/fail）丢失已缓存 usage | #52 Codex 定向 review（`7514c1e`） |
-| [P09ao](P09ao-grok-null-rawoutput-statusless.md) | Bug P2（owner: local Grok Build）：statusless 完成更新中 `rawOutput: null` 未产生 tool_result | #52 Codex 定向 review（`7514c1e`） |
-| [P09ap](P09ap-grok-404-signature-scope.md) | Bug P2（owner: local Grok Build）：404 签名误匹配任意 `404 Not Found` | #52 Codex 定向 review（`7514c1e`） |
+| [P09ao](P09ao-grok-null-rawoutput-statusless.md) | Bug P3 deferred（owner: local Grok Build）：statusless 完成更新中 `rawOutput: null` 未产生 tool_result | #52 Codex 定向 review（`7514c1e`） |
+| [P09ap](P09ap-grok-404-signature-scope.md) | Bug P3 deferred（owner: local Grok Build）：404 签名误匹配任意 `404 Not Found` | #52 Codex 定向 review（`7514c1e`） |
 | [P09aq](P09aq-grok-unknown-model-terminal-message.md) | Bug P2（owner: local Grok Build）：stderr 为空串时 unknown-model 未用终态消息分类 | #52 Codex 定向 review（`7514c1e`） |
 | [P09ar](P09ar-terminal-text-crlf.md) | Bug P1（owner: local Grok Build）：CRLF 被当作回车覆盖，Windows 输出变空行 | #52 Codex 定向 review（`7514c1e`） |
 | [P09as](P09as-spawn-credential-allowlist-per-adapter.md) | Bug P1（owner: Codex（CLI 无关，邮件交接））：凭据透传 allowlist 未按 adapter 区分 | #52 Codex 定向 review（`7514c1e`） |
 | [P09at](P09at-process-tree-terminate-spared.md) | Bug P1（owner: Codex（CLI 无关，邮件交接））：继承 stdout 的后代进程在 drain 后未被终止 | #52 Codex 定向 review（`7514c1e`） |
-| [P09au](P09au-jsonl-line-bytes.md) | Bug P2（owner: Codex（CLI 无关，邮件交接））：完整 JSONL 行按 UTF-16 长度而非字节数检查 | #52 Codex 定向 review（`7514c1e`） |
-| [P09av](P09av-store-same-name-timestamp.md) | Bug P2（owner: Codex（CLI 无关，邮件交接））：同名时间戳取自暂停/恢复等管理回执 | #52 Codex 定向 review（`7514c1e`） |
-| [P09aw](P09aw-reply-state-guard-notice-reads.md) | Bug P2（owner: Codex（CLI 无关，邮件交接））：`notice()`/`supersededByThisTurn()` 回执读取未防护 | #52 Codex 定向 review（`7514c1e`） |
+| [P09au](P09au-jsonl-line-bytes.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：完整 JSONL 行按 UTF-16 长度而非字节数检查 | #52 Codex 定向 review（`7514c1e`） |
+| [P09av](P09av-store-same-name-timestamp.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：同名时间戳取自暂停/恢复等管理回执 | #52 Codex 定向 review（`7514c1e`） |
+| [P09aw](P09aw-reply-state-guard-notice-reads.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：`notice()`/`supersededByThisTurn()` 回执读取未防护 | #52 Codex 定向 review（`7514c1e`） |
 
 ### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
 

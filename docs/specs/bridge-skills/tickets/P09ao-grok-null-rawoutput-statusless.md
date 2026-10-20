@@ -1,10 +1,11 @@
 # Task 9ao — P09ao statusless 完成更新中 `rawOutput: null` 未产生 tool_result
 
-**Status:** todo · bug · P2
+**Status:** deferred · bug · P3
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20
 **Blocked by:** None
+**Deferred reason:** 仅旧版 Grok（省略 status）触发；box 上 Grok 为当前版本。（2026-10-20 实测分诊，本轮不修）
 
 ## Codex finding (verbatim)
 

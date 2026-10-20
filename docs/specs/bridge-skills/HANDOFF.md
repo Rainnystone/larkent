@@ -100,15 +100,15 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09al | P3 | ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离（见 [P09al](tickets/P09al-grok-strip-cr-bel-text.md)） |
 | P09am | P3 | 完整 prompt 与 rules 位于 argv（ps 可见）（见 [P09am](tickets/P09am-grok-prompt-on-argv.md)） |
 | P09an | P2 | 失败终态丢失已缓存 usage（见 [P09an](tickets/P09an-grok-error-drops-usage.md)） |
-| P09ao | P2 | statusless 完成更新中 `rawOutput: null` 未产生 tool_result（见 [P09ao](tickets/P09ao-grok-null-rawoutput-statusless.md)） |
-| P09ap | P2 | 404 签名误匹配任意 `404 Not Found`（见 [P09ap](tickets/P09ap-grok-404-signature-scope.md)） |
+| P09ao | P3 deferred | statusless 完成更新中 `rawOutput: null` 未产生 tool_result（见 [P09ao](tickets/P09ao-grok-null-rawoutput-statusless.md)） |
+| P09ap | P3 deferred | 404 签名误匹配任意 `404 Not Found`（见 [P09ap](tickets/P09ap-grok-404-signature-scope.md)） |
 | P09aq | P2 | stderr 为空串时 unknown-model 未用终态消息分类（见 [P09aq](tickets/P09aq-grok-unknown-model-terminal-message.md)） |
 | P09ar | P1 | CRLF 被当作回车覆盖，Windows 输出变空行（见 [P09ar](tickets/P09ar-terminal-text-crlf.md)） |
 | P09as | P1 | 凭据透传 allowlist 未按 adapter 区分（见 [P09as](tickets/P09as-spawn-credential-allowlist-per-adapter.md)） |
 | P09at | P1 | 继承 stdout 的后代进程在 drain 后未被终止（见 [P09at](tickets/P09at-process-tree-terminate-spared.md)） |
-| P09au | P2 | 完整 JSONL 行按 UTF-16 长度而非字节数检查（见 [P09au](tickets/P09au-jsonl-line-bytes.md)） |
-| P09av | P2 | 同名时间戳取自暂停/恢复等管理回执（见 [P09av](tickets/P09av-store-same-name-timestamp.md)） |
-| P09aw | P2 | `notice()`/`supersededByThisTurn()` 回执读取未防护（见 [P09aw](tickets/P09aw-reply-state-guard-notice-reads.md)） |
+| P09au | P3 deferred | 完整 JSONL 行按 UTF-16 长度而非字节数检查（见 [P09au](tickets/P09au-jsonl-line-bytes.md)） |
+| P09av | P3 deferred | 同名时间戳取自暂停/恢复等管理回执（见 [P09av](tickets/P09av-store-same-name-timestamp.md)） |
+| P09aw | P3 deferred | `notice()`/`supersededByThisTurn()` 回执读取未防护（见 [P09aw](tickets/P09aw-reply-state-guard-notice-reads.md)） |
 
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
 - **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。
