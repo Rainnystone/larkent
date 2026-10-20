@@ -1,6 +1,7 @@
 # Task 9au — P09au 完整 JSONL 行按 UTF-16 长度而非字节数检查
 
 **Status:** superseded → [P09bd](P09bd-jsonl-line-cap-bytes.md)
+**本轮范围（用户 2026-10-21）：** 不单独处理，随 P09bd 一并解决。白话：长度上限按字符而非字节计算；随 P09bd 一并解决，无需单独处理。
 **Owner:** Codex（CLI 无关，邮件交接）
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20

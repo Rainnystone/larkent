@@ -1,6 +1,7 @@
 # Task 9z — P09z（deferred）Codex review #1 setImmediate 结算窗口 与 #3 去重指纹不含 actor
 
 **Status:** deferred · P3
+**本轮范围（用户 2026-10-21）：** 低优先级，不在 #52 本轮，不交给 Codex；#52 合并后再评估。白话：Codex 早期审查留下的两个理论边缘情况（点卡极短时间窗口；去重不区分点击者）。
 **Owner:** Cursor Project
 **Delivers:** 记录两条 review 发现的风险评估；本轮不修。
 **Found in:** #52 Codex review，2026-10-20 live 证据评估

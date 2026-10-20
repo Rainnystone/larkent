@@ -1,6 +1,7 @@
 # Task 9n — P09n 最终渲染后、回复记账期间确认卡结算，结算提示只写入 journal、未补到已流式消息
 
 **Status:** deferred · bug · P3（不进 #52）
+**本轮范围（用户 2026-10-21）：** 低优先级，不在 #52 本轮，不交给 Codex；#52 合并后再评估。白话：回复发完后才点确认卡时，“已确认”提示只进内部日志，没补到群消息上。
 **Delivers:** 确认卡在流式最终渲染之后、`deliverFinalReply` 最终检查之前结算时，结算提示行同样补到已发出的流式消息上，使 journal 文本与屏幕一致。
 **Found in:** #52 Codex review 第 3 轮 P2（`src/bot/channel.ts:2623`），triage 为 P3 deferred
 **Worker class:** mechanical

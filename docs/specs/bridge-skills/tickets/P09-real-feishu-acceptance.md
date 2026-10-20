@@ -1,6 +1,7 @@
 # Task 9 — P09 真实飞书端到端验收（E2E，无 UAT）
 
 **Status:** ready-for-agent · 待实施及相应真实测试授权
+**本轮范围（用户 2026-10-21）：** 不是修复票，是整轮验收清单；由 2026-10-21 夜间端到端测试执行，见 HANDOFF。
 **Delivers:** 对同一候选版本给出真实飞书端到端证据：脚本化场景全部通过，可用的真实 CLI 各自留下业务证据，并准确列出未验证项。
 **Blocked by:** [P08](P08-cutover-and-upgrade.md)
 **Worker class:** judgment
