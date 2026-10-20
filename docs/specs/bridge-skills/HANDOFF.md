@@ -112,13 +112,13 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09ax | P3（合并后） | 删除 jsonl.ts 旧版 statusless 完成分支（见 [P09ax](tickets/P09ax-grok-remove-statusless-branch.md)） |
 | P09ay | P1 | 停止后 final_text 共享闸门对所有 CLI/停止原因放行，policy-guard 停止可能发出被拦截文本（见 [P09ay](tickets/P09ay-run-outcome-final-text-gate-narrow.md)） |
 | P09az | P1 | 回退 spawn 环境 allowlist（静默剥离各 CLI 必需变量），保留 APP_SECRET 不透传（见 [P09az](tickets/P09az-spawn-env-revert-allowlist.md)） |
-| P09ba | P3（合并后） | 重新设计环境加固 + 按 adapter 环境契约测试（见 [P09ba](tickets/P09ba-spawn-env-hardening-redesign.md)） |
+| P09ba | — | 不做（用户 2026-10-21） |
 | P09bb | P2 | controls.cfg 缺失时会议仍须有 idle 预算（见 [P09bb](tickets/P09bb-meeting-idle-budget-without-controls.md)） |
 | P09bc | P2 | SIGKILL 升级跳过持有 stdout 的进程，run 可能不结束（见 [P09bc](tickets/P09bc-process-tree-sigkill-spared.md)） |
 | P09bd | P3 | JSONL 8MB 上限按字符索引比较字节（纳入 P09au）（见 [P09bd](tickets/P09bd-jsonl-line-cap-bytes.md)） |
 
 - **#52 Codex 定向 review（`7514c1e`）分诊（2026-10-20）：** 本轮 #52 只修 P09aq（Codex，CLI 无关；并入 P09ar、P09ap）。P09an/at/au/av/aw 为 P3 合并后跟进；P09as、P09ao wontfix；P09ax 合并后删除遗留分支。复盘规则见 tickets/README.md。
-- **共享/非 Grok 代码影响评估（2026-10-20，代码阅读，未 live 验证）：** P09aa/ad 修复改动了所有 CLI 共用代码，新增 P09ay（收窄 final_text 闸门）、P09az（回退 env allowlist）；P09ah/ai/aj 修复保留并补测试：P09bb、P09bc、P09bd。均 owner Codex、blocked-by P09aq，P09aq 绿后一批交接；P09ba 为合并后独立 PR。
+- **共享/非 Grok 代码影响评估（2026-10-20，代码阅读，未 live 验证）：** P09aa/ad 修复改动了所有 CLI 共用代码，新增 P09ay（收窄 final_text 闸门）、P09az（回退 env allowlist）；P09ah/ai/aj 修复保留并补测试：P09bb、P09bc、P09bd。均 owner Codex、blocked-by P09aq，P09aq 绿后一批交接。P09ba 不做。
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
 - **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。
 - **`6dd0e44` live 回归（2026-10-20）：** 新增 P09s–P09z。分工：P09s/P09t/P09u 由 local Grok Build 修（代码分支 `feat/bridge-skills`）；P09v/P09w/P09x/P09y 由 Cursor Project 修（同一分支，先 `git pull --rebase`）；P09z 为 deferred。STEP 1 结论：09:00 确认创建了 #19，与 #18（08:45）同名重复；09:00 确认无 toast 但实际成功（P09y），非错误、非 skip-auto-unregistered、非守卫拒绝；#18 为用户本人点击确认。

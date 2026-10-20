@@ -93,7 +93,7 @@ Status at 2026-10-19: ready-for-agent（拆票完成，当时的代码实施尚�
 | [P09ax](P09ax-grok-remove-statusless-branch.md) | Chore P3（owner: local Grok Build，#52 合并后）：删除 jsonl.ts 旧版 statusless 完成分支 | P09ao 分诊 |
 | [P09ay](P09ay-run-outcome-final-text-gate-narrow.md) | Bug P1（owner: Codex，#52，blocked-by P09aq）：停止后 final_text 共享闸门对所有 CLI/停止原因放行，policy-guard 停止可能发出被拦截文本 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 | [P09az](P09az-spawn-env-revert-allowlist.md) | Bug P1（owner: Codex，#52，blocked-by P09aq）：回退 spawn 环境 allowlist（静默剥离各 CLI 必需变量），保留 APP_SECRET 不透传 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
-| [P09ba](P09ba-spawn-env-hardening-redesign.md) | **wontfix**（用户 2026-10-21）：不重新设计，P09az 的全量继承 + 仅拒绝 bridge 自身密钥即为终态 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
+| [P09ba](P09ba-spawn-env-hardening-redesign.md) | **不做**（用户 2026-10-21） | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 | [P09bb](P09bb-meeting-idle-budget-without-controls.md) | Test P2（owner: Codex，#52，blocked-by P09aq）：controls.cfg 缺失时会议仍须有 idle 预算 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 | [P09bc](P09bc-process-tree-sigkill-spared.md) | Test/Bug P2（owner: Codex，#52，blocked-by P09aq）：SIGKILL 升级跳过持有 stdout 的进程，run 可能不结束 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 | [P09bd](P09bd-jsonl-line-cap-bytes.md) | Bug P3（owner: Codex，#52，blocked-by P09aq）：JSONL 8MB 上限按字符索引比较字节（纳入 P09au） | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
@@ -131,7 +131,7 @@ P09d（`src/card/tool-render.ts`）与 P09l（`src/agent/grok/jsonl.ts`）都影
 - 每个 adapter 一条环境契约测试（必需透传 / 必须拒绝）。
 - 以某厂商为范围的改动若触及 `src/platform/*` 或 `src/bot/run-outcome.ts`，必须附跨 adapter 测试。
 - 停止后的进程泄漏测试（进程组无残留）。
-- P09ay–P09bd 由代码阅读得出，未 live 验证；除 P09ba 外均在 P09aq 绿后一批交给 Codex。
+- P09ay–P09bd 由代码阅读得出，未 live 验证；均在 P09aq 绿后一批交给 Codex。
 
 P09 E2E 发现的 won't-fix（不建票）：
 

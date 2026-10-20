@@ -16,7 +16,7 @@
 
 ## Fix
 
-从 #52 回退 allowlist 与通用拒绝正则，恢复先前环境行为；**保留** APP_SECRET 不传入子进程的保证及其断言（最小拒绝 bridge 自身密钥名，如 APP_SECRET 与 bridge webhook 密钥）。完整加固另见 [P09ba](P09ba-spawn-env-hardening-redesign.md)。
+从 #52 回退 allowlist 与通用拒绝正则，恢复先前环境行为；**保留** APP_SECRET 不传入子进程的保证及其断言（最小拒绝 bridge 自身密钥名，如 APP_SECRET 与 bridge webhook 密钥）。这就是终态，不再重新设计（P09ba 不做）。
 
 ## Acceptance criteria
 

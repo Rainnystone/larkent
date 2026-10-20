@@ -4,7 +4,7 @@
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G4，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20
-**Follow-up:** [P09az](P09az-spawn-env-revert-allowlist.md)、[P09ba](P09ba-spawn-env-hardening-redesign.md)（共享/非 Grok 代码影响评估，2026-10-20）
+**Follow-up:** [P09az](P09az-spawn-env-revert-allowlist.md)（P09ba 不做）
 **Blocked by:** None
 
 ## Root cause
