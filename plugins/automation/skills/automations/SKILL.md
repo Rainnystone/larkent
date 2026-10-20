@@ -46,7 +46,7 @@ description: 查询与管理任务、预览排期，创建需人工确认的提�
 
 反例：「两份草稿 applied 都为 false，cardMessageId: om_…，draftId: draft-…」。也不能在自然语言说明后追加原始回执、逐项字段清单或完整 ID。
 
-操作编号通常省略。仅在排查问题需要时简短提及操作编号末尾，例如「操作编号末 6 位：a1b2c3」；工具查询仍使用完整编号。
+操作编号通常省略。仅在排查问题需要时简短提及 operationId，例如「操作编号末 6 位：a1b2c3」；工具查询仍使用完整编号。
 
 - 等待确认：正例：「已发确认卡，点「是」后生效；现在尚未生效。」反例：「waiting-confirmation，applied: false，operationId: op1.…」。
 - 已生效但尚未运行：正例：「任务已保存，将按排期运行。」反例：「applied: true，任务已执行并送达。」。
