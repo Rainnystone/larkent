@@ -11,10 +11,16 @@ const FIXTURE = new URL('../../fixtures/grok/group-leader.mjs', import.meta.url)
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    return true;
   } catch {
     return false;
   }
+  if (process.platform === 'win32') return true;
+  // kill(pid, 0) also succeeds for an exited child awaiting the OS reaper.
+  const result = spawnSync('ps', ['-o', 'stat=', '-p', String(pid)], { encoding: 'utf8' });
+  if (result.error) throw result.error;
+  if (result.status !== 0 && result.status !== 1) throw new Error('could not inspect process state');
+  const state = result.stdout.trim();
+  return state !== '' && !state.startsWith('Z');
 }
 
 async function waitForPid(path: string): Promise<number> {

@@ -1,8 +1,10 @@
 import { EventEmitter } from 'node:events';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { PassThrough, type Readable } from 'node:stream';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import * as spawn from '../../src/platform/spawn';
 import { runJsonlCli, wrapParsedTranslator } from '../../src/agent/runner/jsonl-cli-runner';
@@ -44,6 +46,93 @@ const translator = () => wrapParsedTranslator({
   translate: parsed => [parsed as AgentEvent],
   finish: reason => [{ type: 'done', terminationReason: reason === 'interrupted' ? 'interrupted' : 'normal' }],
 }, 'inherited-stdout');
+
+it('user stop kills a SIGTERM-resistant stdout-holding grandchild within the kill grace and isolates other runs', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'runner-sigkill-'));
+  const pidFile = join(dir, 'tree.json');
+  const stopGraceMs = 400;
+  const raw = runJsonlCli({
+    runId: 'sigkill-tree', binaryPath: process.execPath,
+    argv: [fileURLToPath(new URL('../fixtures/process-tree-sigkill.mjs', import.meta.url)), 'leader', pidFile],
+    cwd: dir, env: { PATH: process.env.PATH }, spawnName: 'sigkill-tree',
+    stopGraceMs, translator: translator(),
+  });
+  const other = runJsonlCli({
+    runId: 'other-group', binaryPath: process.execPath,
+    argv: ['-e', `console.log('{"type":"text","delta":"ready"}'); setInterval(() => {}, 1000);`],
+    cwd: dir, env: { PATH: process.env.PATH }, spawnName: 'other-group', translator: translator(),
+  });
+  const { execution, activeRuns, pool } = await execute(raw);
+  const iterator = execution.subscribe()[Symbol.asyncIterator]();
+  const otherIterator = other.events[Symbol.asyncIterator]();
+  let pids: number[] = [];
+  let remaining: Promise<AgentEvent[]> | undefined;
+  try {
+    const ready = await beforeDeadline(Promise.all([iterator.next(), otherIterator.next()]), 5000);
+    for (const event of ready) {
+      expect(event).toMatchObject({ value: { type: 'text', delta: 'ready' } });
+    }
+    pids = JSON.parse(await readFile(pidFile, 'utf8')) as number[];
+    expect(pids).toHaveLength(3);
+    expect(liveTreeMembers(raw.pid!, pids).sort()).toEqual([...pids].sort());
+    remaining = collect({ [Symbol.asyncIterator]: () => iterator });
+    // This is the same stop entry used by the Feishu /stop command.
+    expect(activeRuns.interrupt('s', { type: 'user-stop' })).toBe(true);
+    await beforeDeadline(Promise.all([execution.finished, remaining]), stopGraceMs + 5000);
+    expect(liveTreeMembers(raw.pid!, pids)).toEqual([]);
+    expect(await raw.waitForExit(1)).toBe(true);
+    expect(activeRuns.get('s')).toBeUndefined();
+    expect(pool.snapshot().active).toBe(0);
+    expect(await remaining).toEqual([
+      // Windows taskkill terminates abruptly; POSIX drains signal-handler output.
+      ...(process.platform === 'win32' ? [] : [{ type: 'text', delta: 'graceful tail' }]),
+      { type: 'done', terminationReason: 'interrupted' },
+    ]);
+    expect(() => process.kill(other.pid!, 0)).not.toThrow();
+    expect(other.exit).toBeUndefined();
+  } finally {
+    // Cleanup is independent of the code under test, including on a red run.
+    if (process.platform === 'win32') {
+      for (const pid of [raw.pid, ...pids]) {
+        if (pid) spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      }
+    } else if (raw.pid) {
+      try { process.kill(-raw.pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+    await Promise.allSettled([raw.stop(), other.stop(), execution.finished, remaining]);
+    await otherIterator.return?.();
+    expect(liveTreeMembers(raw.pid!, pids)).toEqual([]);
+    await rm(dir, { recursive: true, force: true });
+  }
+}, 15000);
+
+function liveTreeMembers(group: number, knownPids: number[]): number[] {
+  if (process.platform === 'win32') {
+    return knownPids.filter(pid => {
+      try { process.kill(pid, 0); return true; } catch { return false; }
+    });
+  }
+  // Zombies have exited and cannot hold descriptors; the OS reaper owns them.
+  return execFileSync('ps', ['-axo', 'pid=,pgid=,stat='], { encoding: 'utf8' })
+    .trim().split('\n').flatMap(line => {
+      const [pid, pgid, state] = line.trim().split(/\s+/);
+      return Number(pgid) === group && state !== undefined && !state.startsWith('Z') ? [Number(pid)] : [];
+    });
+}
+
+async function beforeDeadline<T>(work: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('run exceeded stop and kill grace')), timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 function controlled(options: { cleanup?: () => void | Promise<void> } = {}) {
   const child = Object.assign(new EventEmitter(), {

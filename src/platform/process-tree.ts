@@ -9,8 +9,8 @@ export interface SignalableChild {
 
 /**
  * Signal a detached CLI and the processes it spawned.
- * Descendants that inherited the CLI stdout pipe are left alive: a group
- * signal would reap them and close the pipe before the runner drains it.
+ * Descendants that inherited the CLI stdout pipe are spared graceful signals
+ * so the runner can drain it. SIGKILL covers the entire group after the grace.
  * ESRCH from a group or member signal means that target is already gone.
  * Windows has no negative-pid process groups; `taskkill /T` is the tree.
  */
@@ -29,7 +29,7 @@ export function signalProcessTree(
   }
   if (!detached) return child.kill(signal);
 
-  const spared = stdoutInheritors(pid);
+  const spared = signal === 'SIGKILL' ? new Set<number>() : stdoutInheritors(pid);
   if (spared.size === 0) {
     try {
       process.kill(-pid, signal);
