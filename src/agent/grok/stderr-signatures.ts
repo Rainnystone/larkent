@@ -15,4 +15,16 @@ export const grokStderrSignatures: readonly CliSignature[] = Object.freeze([
     classify: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: true },
     userMessage: '未知模型（unknown model id）。请改用 grok models 列出的模型。',
   },
+  {
+    pattern: /session get failed:\s*404|404 Not Found/i,
+    cliVersion: 'grok 1.0.41',
+    classify: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: true },
+    userMessage: '会话不存在（session get failed: 404）。请新开一轮，不要继续旧 session。',
+  },
+  {
+    pattern: /No session found for current directory/i,
+    cliVersion: 'grok 1.0.41',
+    classify: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: true },
+    userMessage: '当前目录没有会话（No session found for current directory）。请新开一轮。',
+  },
 ]);
