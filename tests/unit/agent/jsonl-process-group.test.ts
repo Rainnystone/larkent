@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { runJsonlCli, wrapParsedTranslator } from '../../../src/agent/runner/jsonl-cli-runner';
 
@@ -53,7 +54,7 @@ describe('jsonl stop signals the process group', () => {
     const run = runJsonlCli({
       runId: 'group',
       binaryPath: process.execPath,
-      argv: [FIXTURE.pathname, pidFile],
+      argv: [fileURLToPath(FIXTURE), pidFile],
       cwd: dir,
       env: { PATH: process.env.PATH ?? '/usr/bin:/bin', HOME: '/tmp' },
       spawnName: 'fixture',
