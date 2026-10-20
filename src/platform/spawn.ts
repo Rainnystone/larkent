@@ -22,9 +22,8 @@ export function spawnProcess(
   args: readonly string[] = [],
   options: SpawnOptions = {},
 ): ChildProcess {
-  if (missingWindowsPathSkipsCmdWrap(command, options.shell)) {
-    return nodeSpawn(command, [...args], options);
-  }
+  const direct = windowsDirectNodeSpawn(command, args, options.shell);
+  if (direct) return nodeSpawn(direct.command, direct.args, options);
   return crossSpawn(command, [...args], options);
 }
 
@@ -33,10 +32,20 @@ export function spawnProcessSync(
   args: readonly string[] = [],
   options: SpawnSyncOptions = {},
 ) {
-  if (missingWindowsPathSkipsCmdWrap(command, options.shell)) {
-    return nodeSpawnSync(command, [...args], options);
-  }
+  const direct = windowsDirectNodeSpawn(command, args, options.shell);
+  if (direct) return nodeSpawnSync(direct.command, direct.args, options);
   return crossSpawn.sync(command, [...args], options);
+}
+
+function windowsDirectNodeSpawn(
+  command: string,
+  args: readonly string[],
+  shell: boolean | string | undefined,
+): { command: string; args: string[] } | undefined {
+  if (missingWindowsPathSkipsCmdWrap(command, shell)) {
+    return { command, args: [...args] };
+  }
+  return windowsExistingMjsUsesNode(command, args, shell);
 }
 
 /**
@@ -55,6 +64,27 @@ function missingWindowsPathSkipsCmdWrap(command: string, shell: boolean | string
   } catch {
     return false;
   }
+}
+
+/**
+ * cross-spawn still cmd-wraps an *existing* `.mjs` file (not `.exe`).
+ * That wrap plus Codex argv (`-c approval_policy="never"`, `-C` cwd with `&`)
+ * can swallow stdin so a controlled runtime never reaches `report.json`.
+ * Invoke the current Node on the script instead.
+ */
+function windowsExistingMjsUsesNode(
+  command: string,
+  args: readonly string[],
+  shell: boolean | string | undefined,
+): { command: string; args: string[] } | undefined {
+  if (process.platform !== 'win32' || shell) return undefined;
+  if (!/\.mjs$/i.test(command)) return undefined;
+  try {
+    if (!existsSync(command)) return undefined;
+  } catch {
+    return undefined;
+  }
+  return { command: process.execPath, args: [command, ...args] };
 }
 
 export function mergeProcessEnv(

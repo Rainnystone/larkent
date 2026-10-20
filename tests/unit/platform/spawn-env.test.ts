@@ -1,6 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { once } from 'node:events';
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { mergeProcessEnv } from '../../../src/platform/spawn.js';
+import { mergeProcessEnv, spawnProcess } from '../../../src/platform/spawn.js';
 
 describe('platform spawn env', () => {
   it('overrides env keys case-insensitively for Windows-compatible CODEX_HOME handling', () => {
@@ -52,5 +55,47 @@ describe('platform spawn env', () => {
     expect(source).toContain('missingWindowsPathSkipsCmdWrap');
     expect(source).toContain("from 'node:child_process'");
     expect(source).toContain('cmd.exe');
+  });
+
+  it('invokes an existing Windows .mjs stub through node instead of cmd.exe', async () => {
+    const source = await readFile(new URL('../../../src/platform/spawn.ts', import.meta.url), 'utf8');
+    expect(source).toContain('windowsExistingMjsUsesNode');
+    expect(source).toContain('process.execPath');
+  });
+
+  it('preserves stdin and quoted argv when the .mjs stub path contains &', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'js spawn & '));
+    const cwd = join(root, 'work & dir');
+    const script = join(root, 'runtime & stub.mjs');
+    const seen = join(root, 'seen.json');
+    await mkdir(cwd);
+    await writeFile(
+      script,
+      `#!${process.execPath}
+import { writeFileSync } from 'node:fs';
+let stdin = '';
+for await (const chunk of process.stdin) stdin += chunk;
+writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd(), stdin }));
+`,
+    );
+    await chmod(script, 0o755);
+    try {
+      const argv = ['exec', '-c', 'approval_policy="never"', '-C', cwd, '-'];
+      const child = spawnProcess(script, argv, {
+        cwd,
+        stdio: ['pipe', 'pipe', 'pipe'],
+        detached: true,
+      });
+      child.stdin!.end('prompt-body', 'utf8');
+      const [code, signal] = await once(child, 'exit');
+      expect({ code, signal }).toEqual({ code: 0, signal: null });
+      expect(JSON.parse(await readFile(seen, 'utf8'))).toEqual({
+        argv,
+        cwd,
+        stdin: 'prompt-body',
+      });
+    } finally {
+      await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
+    }
   });
 });
