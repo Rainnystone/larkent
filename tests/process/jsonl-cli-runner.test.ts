@@ -1980,8 +1980,9 @@ describe('GrokAdapter process contract', () => {
     expect(await realpath(record.cwd)).toBe(await realpath(fake.dir));
     expect(record.env.LARK_CHANNEL).toBe('1');
     expect(record.env.GROK_DISABLE_AUTOUPDATER).toBe('1');
-    expect(record.argv[0]).toBe('-p');
-    expect(record.argv[1]).toBe('hello');
+    expect(record.argv[0]).toBe('--prompt-file');
+    expect(record.argv).not.toContain('-p');
+    expect(record.argv).not.toContain('hello');
     expect(record.argv.slice(2, 4)).toEqual(['--output-format', 'streaming-json']);
     const rules = record.argv[record.argv.indexOf('--rules') + 1];
     expect(rules).toContain('lark-channel-bridge 运行约定');

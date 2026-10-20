@@ -1,10 +1,9 @@
 export interface BuildGrokArgsInput {
   /**
-   * User / bridge prompt. Grok `-p` does not read stdin
-   * (headless docs: piped stdin is ignored), so this travels via argv
-   * until the adapter switches to `--prompt-file`.
+   * Path to the prompt. `--prompt-file` starts headless the same way `-p`
+   * does, without putting the prompt text on the process argv.
    */
-  prompt: string;
+  promptFile: string;
   /**
    * Extra system-prompt rules (`--rules`). Used for the bridge identity
    * prompt. Do not use `--system-prompt-override`: that replaces Grok's
@@ -29,8 +28,8 @@ export interface BuildGrokArgsInput {
 
 export function buildGrokArgs(input: BuildGrokArgsInput): string[] {
   const args = [
-    '-p',
-    input.prompt,
+    '--prompt-file',
+    input.promptFile,
     '--output-format',
     'streaming-json',
     '--rules',

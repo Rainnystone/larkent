@@ -3,9 +3,9 @@ import { buildGrokArgs } from '../../../src/agent/grok/argv';
 
 describe('buildGrokArgs', () => {
   it('builds a fresh headless invocation with streaming-json and unattended flags', () => {
-    expect(buildGrokArgs({ prompt: 'hello', rules: 'be the bot' })).toEqual([
-      '-p',
-      'hello',
+    expect(buildGrokArgs({ promptFile: '/tmp/prompt.txt', rules: 'be the bot' })).toEqual([
+      '--prompt-file',
+      '/tmp/prompt.txt',
       '--output-format',
       'streaming-json',
       '--rules',
@@ -17,14 +17,14 @@ describe('buildGrokArgs', () => {
 
   it('resumes with -r and never uses -s', () => {
     const args = buildGrokArgs({
-      prompt: 'continue',
+      promptFile: '/tmp/prompt.txt',
       rules: 'rules',
       sessionId: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
       model: 'grok-build',
     });
     expect(args).toEqual([
-      '-p',
-      'continue',
+      '--prompt-file',
+      '/tmp/prompt.txt',
       '--output-format',
       'streaming-json',
       '--rules',
@@ -40,11 +40,12 @@ describe('buildGrokArgs', () => {
     expect(args).not.toContain('--session-id');
   });
 
-  it('keeps the prompt and rules as single argv elements', () => {
-    const prompt = '<bridge_context>{"chatId":"oc_1"}</bridge_context>\n\nhello > world';
+  it('keeps rules as one argv element and does not put the prompt text on argv', () => {
+    const prompt = 'bridge context hello > world';
     const rules = 'rule one\nrule two';
-    const args = buildGrokArgs({ prompt, rules });
-    expect(args[1]).toBe(prompt);
+    const args = buildGrokArgs({ promptFile: '/tmp/prompt.txt', rules });
+    expect(args).not.toContain(prompt);
+    expect(args).not.toContain('-p');
     expect(args[args.indexOf('--rules') + 1]).toBe(rules);
   });
 });
