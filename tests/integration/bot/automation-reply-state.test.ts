@@ -297,3 +297,39 @@ it('informs the user when a pending draft was superseded while composing the rep
   expect(await h.sent).toBe(`${BODY}\n\n（回复生成期间已失效：已被新卡取代）`);
   h.checkFailure();
 }, 30000);
+
+// Controlled runtime: verifies delivered multi-result handling and skill availability,
+// not whether an independent language model follows the skill in live Feishu.
+it('delivers a multi-draft status reply with natural latest-state notices and no receipt IDs', async () => {
+  const h = await createAutomationToolHarness({ client, cleanup, initialNow: NOW, setChannel: channel => { sdk.channel = channel; } });
+  const body = '早间提醒和晚间提醒的确认卡都已发出，目前尚未生效，请分别在对应卡片上确认。';
+  const delivered = observeTextReply(h.channel, body, h.checkFailure);
+  const waiting = deferred<void>(); const reply = deferred<void>();
+  const receipts: any[] = [];
+  h.setScript(async call => {
+    const skill = await call('plugins.read', { skill: 'automations' });
+    expect(skill.category).toBe('ok');
+    expect(JSON.stringify(skill.data)).toContain('多份草稿与多项结果');
+    for (const [name, offset] of [['早间提醒', 2], ['晚间提醒', 10]] as const) {
+      const created = await call('automation.create', { ...reminder, name, schedule: { kind: 'one-shot', fireAt: NOW + offset * 3600000 } });
+      expect(created.category).toBe('waiting-confirmation');
+      receipts.push(await call('automation.operation.get', { operationId: created.data.operationId }));
+    }
+    waiting.resolve(); await reply.promise;
+    return body;
+  });
+  await h.command('Report both pending reminders');
+  // Propagate a failed skill assertion without waiting on an unresolved gate.
+  await vi.waitFor(() => { h.checkFailure(); expect(receipts).toHaveLength(2); }, { timeout: 10000 });
+  await waiting.promise;
+  const first = h.store.listDrafts().find(draft => draft.op === 'create' && draft.name === '早间提醒')!;
+  const firstCard = h.channel.sent.find(item => JSON.stringify(item.content).includes('早间提醒') && JSON.stringify(item.content).includes('auto.confirm'))!.content;
+  try {
+    expect(await h.channel.handlers.cardAction?.(automationClick(first.cardMessageId!, automationButton(firstCard, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+  } finally { reply.resolve(); }
+  const text = await delivered;
+  expect(text).toBe(`${body}\n\n（回复生成期间已确认：已确认 #1）`);
+  expect(text).not.toMatch(/applied|waiting-confirmation|operationId|draftId|cardMessageId|\b(?:true|false)\b/);
+  for (const result of receipts) for (const key of ['operationId', 'draftId', 'cardMessageId']) expect(text).not.toContain(result.data[key]);
+  h.checkFailure();
+}, 30000);
