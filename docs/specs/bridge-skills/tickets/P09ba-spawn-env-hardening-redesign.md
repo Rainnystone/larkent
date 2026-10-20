@@ -1,6 +1,6 @@
 # Task 09ba — P09ba 重新设计子进程环境加固（含按 adapter 的环境契约测试）
 
-**Status:** todo · chore · P3（#52 合并后，独立 PR）
+**Status:** wontfix（用户 2026-10-21 决定：不重新设计；P09az 已恢复改动前的全量继承，仅额外拒绝 bridge 自身飞书密钥，足够）
 **Owner:** Codex
 **Follow-up of:** [P09ad](P09ad-grok-env-inherits-bridge-secrets.md)、[P09az](P09az-spawn-env-revert-allowlist.md)
 **Blocked by:** #52 合并
