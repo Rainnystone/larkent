@@ -10,6 +10,7 @@ import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { startRunFlow } from '../bot/run-flow';
 import { createIdleWatchdog } from '../bot/idle-watchdog';
+import { shouldDeliverAgentEvent } from '../bot/run-outcome';
 import { getRunIdleTimeoutMs } from '../config/schema';
 import { evaluateAccess, isAccessFenceEnabled } from '../policy/access';
 import { describeMeetingError } from './manager';
@@ -402,6 +403,7 @@ async function runMeetingAgent(
   let answer = '';
   try {
     for await (const event of result.execution.subscribe()) {
+      if (handle && !shouldDeliverAgentEvent(handle, event)) continue;
       watchdog?.noteDelivered(event);
       const chunk = textOf(event);
       if (chunk) answer += chunk;

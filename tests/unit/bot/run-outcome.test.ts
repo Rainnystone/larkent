@@ -391,6 +391,18 @@ describe('deriveRunOutcome', () => {
 });
 
 describe('shouldDeliverAgentEvent', () => {
+  it.each(STOP_REQUESTS)('admits final text only after user-stop: %j', stopRequest => {
+    expect(shouldDeliverAgentEvent({ interrupted: true, stopRequest }, {
+      type: 'final_text', content: 'held answer',
+    })).toBe(stopRequest.type === 'user-stop');
+  });
+
+  it('suppresses final text for an interrupted handle without an explicit reason', () => {
+    expect(shouldDeliverAgentEvent({ interrupted: true }, {
+      type: 'final_text', content: 'held answer',
+    })).toBe(false);
+  });
+
   it('still delivers a terminal event after stop', () => {
     const handle = { interrupted: true, stopRequest: { type: 'user-stop' as const } };
     expect(shouldDeliverAgentEvent(handle, { type: 'done', terminationReason: 'normal' })).toBe(true);

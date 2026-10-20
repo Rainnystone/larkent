@@ -83,11 +83,10 @@ export function noteTerminalStop(handle: StoppableHandle, event: AgentEvent): bo
 }
 
 /**
- * System events always pass. A real terminal still lands after stop.
- * `final_text` also passes: Grok holds the answer until `finish('interrupted')`,
- * so dropping it throws away the only copy. Claude and Codex already streamed
- * their answer as `text` deltas; those stay suppressed so a stop does not post
- * the same words again.
+ * System and terminal events still land after stop. Only an explicit user stop
+ * admits a buffered final answer. Grok and Codex can hold that answer until
+ * interruption; other stop reasons must not publish it. Later text deltas stay
+ * suppressed for every stop reason.
  */
 export function shouldDeliverAgentEvent(
   handle: StoppableHandle,
@@ -95,7 +94,7 @@ export function shouldDeliverAgentEvent(
 ): boolean {
   if (event.type === 'system') return true;
   if (!handle.interrupted) return true;
-  if (event.type === 'final_text') return true;
+  if (event.type === 'final_text') return handle.stopRequest?.type === 'user-stop';
   return event.type === 'done' || event.type === 'error';
 }
 

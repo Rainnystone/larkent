@@ -65,9 +65,16 @@ export class CodexJsonlTranslator {
         },
       ]);
     }
-    return this.prependPendingText([
-      { type: 'done', resumeHandle: this.threadId, terminationReason: reason },
-    ]);
+    const terminal: AgentEvent = { type: 'done', resumeHandle: this.threadId, terminationReason: reason };
+    if (reason === 'timeout') return this.prependPendingText([terminal]);
+    // The last agent message is the buffered final answer, including when a
+    // stop ends the stream. The caller decides which stop reasons may post it.
+    const events: AgentEvent[] = this.pendingAgentMessage
+      ? [{ type: 'final_text', content: this.pendingAgentMessage }]
+      : [];
+    this.pendingAgentMessage = undefined;
+    events.push(terminal);
+    return events;
   }
 
   fail(message: string): AgentEvent[] {

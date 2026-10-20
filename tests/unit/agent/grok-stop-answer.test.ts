@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { CodexJsonlTranslator } from '../../../src/agent/codex/jsonl';
 import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import { finalReplyFor } from '../../../src/bot/cot';
 import { requestStop, shouldDeliverAgentEvent, type StopRequest } from '../../../src/bot/run-outcome';
@@ -24,11 +25,27 @@ function stoppedAnswer(chunks: string[], stop: StopRequest): string {
   return JSON.stringify(renderCard(state));
 }
 
-describe('Grok answer survives stop', () => {
-  it('delivers held text as the card answer after an idle-watchdog stop', () => {
-    const card = stoppedAnswer(['answer ', 'before stop'], { type: 'bridge-idle-watchdog' });
-    expect(card).toContain('answer before stop');
-  });
+const stops: StopRequest[] = [
+  { type: 'user-stop' },
+  ...(['new', 'cd', 'ws', 'resume'] as const).map(by => ({ type: 'superseded' as const, by })),
+  { type: 'reconnect-command' }, { type: 'account-restart' }, { type: 'shutdown-signal' },
+  { type: 'exit-command' }, { type: 'bridge-idle-watchdog' }, { type: 'runner-timeout' },
+  { type: 'meeting' }, { type: 'subscriber-abandoned' }, { type: 'external-signal' },
+  { type: 'policy-guard', code: 'auth-config' },
+];
+
+describe('buffered answers after stop', () => {
+  it.each(stops.flatMap(stop => (['grok', 'codex'] as const).map(cli => ({ cli, stop }))))(
+    '$cli delivers a buffered answer only for explicit user stop: $stop', ({ cli, stop }) => {
+      const translator = cli === 'grok' ? new GrokJsonlTranslator() : new CodexJsonlTranslator();
+      translator.translate(cli === 'grok'
+        ? { type: 'text', data: 'BUFFERED_ANSWER' }
+        : { type: 'item.completed', item: { type: 'agent_message', text: 'BUFFERED_ANSWER' } });
+      const events = [...translator.finish('interrupted'), ...translator.finish('interrupted')];
+      const card = JSON.stringify(renderCard(cardAfterStop(events, stop)));
+      expect(card.split('BUFFERED_ANSWER').length - 1).toBe(stop.type === 'user-stop' ? 1 : 0);
+    },
+  );
 
   it('delivers held text as the card answer after a user stop', () => {
     const card = stoppedAnswer(['answer ', 'before stop'], { type: 'user-stop' });
@@ -53,7 +70,7 @@ describe('Grok answer survives stop', () => {
     expect(final).toEqual({ type: 'final_text', content: 'before the tool\n\nafter' });
   });
 
-  it('does not deliver Claude/Codex text deltas that were already streamed', () => {
+  it('suppresses text deltas after a user stop while retaining the buffered final answer', () => {
     const handle = { interrupted: true, stopRequest: { type: 'user-stop' as const } };
     expect(shouldDeliverAgentEvent(handle, { type: 'text', delta: 'already shown' })).toBe(false);
     expect(shouldDeliverAgentEvent(handle, { type: 'final_text', content: 'held answer' })).toBe(true);
