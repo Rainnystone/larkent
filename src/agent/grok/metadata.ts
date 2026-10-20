@@ -32,7 +32,8 @@ export const grokMetadata = defineMetadata({
   envBinVar: 'LARK_CHANNEL_GROK_BIN',
   models: [
     FOLLOW_DEFAULT,
-    { value: 'grok-build', label: 'Grok Build' },
+    { value: 'grok-4.7', label: 'Grok 4.7' },
+    { value: 'grok-4.7-build-fast', label: 'Grok 4.7 Build Fast' },
     { value: 'grok-4.6', label: 'Grok 4.6' },
     { value: 'grok-4.5', label: 'Grok 4.5' },
   ],
