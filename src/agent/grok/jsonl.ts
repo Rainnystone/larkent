@@ -27,7 +27,8 @@ export interface ProtocolDriftState {
  * messages. They are concatenated and held back as `final_text` on `end`
  * (same hold-back as kimi/codex, so showToolCalls:false sends one reply).
  * Text that arrived before a tool call is kept and separated from the later
- * answer. `thought` lines are not part of that answer.
+ * answer. `thought` lines become `thinking` deltas and are not part of that
+ * answer.
  */
 export class GrokJsonlTranslator {
   private sessionId: string | undefined;
@@ -48,8 +49,11 @@ export class GrokJsonlTranslator {
     }
 
     switch (raw.type) {
-      case 'thought':
-        return [];
+      case 'thought': {
+        const delta = stringValue(raw.data) ?? stringValue(raw.text);
+        if (!delta) return [];
+        return [{ type: 'thinking', delta }];
+      }
       case 'text':
         return this.queueText(stringValue(raw.data) ?? stringValue(raw.text));
       case 'tool_call':

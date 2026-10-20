@@ -1,0 +1,5 @@
+{"type":"thought","data":"Running the exact command"}
+{"type":"thought","data":" `node /tmp/probe.mjs`"}
+{"type":"thought","data":" now."}
+{"type":"text","data":"OK"}
+{"type":"end","stopReason":"end_turn","sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}

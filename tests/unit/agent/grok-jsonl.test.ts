@@ -92,7 +92,7 @@ describe('GrokJsonlTranslator', () => {
     });
   });
 
-  it('keeps pre-tool commentary in the final answer and still drops thoughts', () => {
+  it('keeps pre-tool commentary in the final answer and maps thoughts to thinking', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [
       { type: 'thought', data: 'looking' },
@@ -114,6 +114,7 @@ describe('GrokJsonlTranslator', () => {
       { type: 'end', sessionId: SESSION },
     ]);
     expect(events).toEqual([
+      { type: 'thinking', delta: 'looking' },
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
       { type: 'tool_result', id: 'call_1', output: '{"lines":3}', isError: false },
       { type: 'system', resumeHandle: SESSION },
