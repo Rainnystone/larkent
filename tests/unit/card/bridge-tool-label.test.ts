@@ -127,6 +127,8 @@ describe('bridge tool progress-card labels', () => {
     'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing',
     String.raw`node /synthetic/lark-channel-\bridge.mjs tool ; ls /missing`,
     "node /synthetic/lark-'channel'-bridge.mjs tool ; ls /missing",
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool > /tmp/synthetic-output',
+    '! node "$LARK_BRIDGE_TOOL_CLIENT" tool',
   ])('retains compound details when other tool calls are summarized: %s', (command) => {
     const events: AgentEvent[] = [];
     for (const id of ['one', 'two', 'three']) {
@@ -143,7 +145,7 @@ describe('bridge tool progress-card labels', () => {
     const card = JSON.stringify(renderCard(stateFrom(events)));
 
     expect(card).toContain('3 个工具调用');
-    expect(card).toContain('tool ; ls /missing');
+    expect(card).toContain(JSON.stringify(command).slice(1, -1));
     expect(card).toContain('ls: synthetic missing path');
     expect(card).toContain('❌');
   });

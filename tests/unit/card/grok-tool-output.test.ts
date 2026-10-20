@@ -10,6 +10,27 @@ const BASH_UTF8_BYTES = [228, 184, 173, 230, 150, 135, 123, 34, 111, 107, 34, 58
 const WIRE_BYTES_JSON = '[228,184,173,230,150,135,123,34,111,107,34,58,116,114,117,101,125]';
 
 describe('Grok tool progress card', () => {
+  it.each(['exitCode', 'exit_code'])('does not mistake successful JSON stdout for %s metadata', (field) => {
+    const translator = new GrokJsonlTranslator();
+    const output = JSON.stringify({ [field]: 2 });
+    const events = [
+      ...translator.translate({
+        type: 'tool_call', toolCallId: 'json_stdout', toolName: 'Bash', status: 'in_progress',
+        rawInput: { command: `printf '%s' '${output}'` },
+      }),
+      ...translator.translate({
+        type: 'tool_call_update', toolCallId: 'json_stdout', status: 'completed',
+        rawOutput: { type: 'Bash', output: [...Buffer.from(output)], exitCode: 0 },
+      }),
+    ];
+    const card = renderCard(events.reduce((state, event) => reduce(state, event), initialState));
+    const text = markdownContents(card).join('\n');
+
+    expect(text).toContain('✅');
+    expect(text).not.toContain('❌');
+    expect(text).toContain(output);
+  });
+
   it.each([
     'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /nonexistent-synthetic-card-path',
     'node "$LARK_BRIDGE_TOOL_CLIENT" tool',

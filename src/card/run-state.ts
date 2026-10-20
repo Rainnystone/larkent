@@ -142,7 +142,7 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
           ...b,
           tool: {
             ...b.tool,
-            status: evt.isError || hasNonzeroShellExit(b.tool.name, evt.output) ? ('error' as const) : ('done' as const),
+            status: evt.isError ? ('error' as const) : ('done' as const),
             output: evt.output,
           },
         };
@@ -173,19 +173,6 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
 
     default:
       return state;
-  }
-}
-
-/** Some runtimes report completion separately from the shell's numeric exit. */
-function hasNonzeroShellExit(name: string, output: string): boolean {
-  if (!['bash', 'shell', 'command_execution', 'run_terminal_cmd'].includes(name.toLowerCase())) return false;
-  try {
-    const result: unknown = JSON.parse(output);
-    if (!result || typeof result !== 'object' || Array.isArray(result)) return false;
-    const rec = result as Record<string, unknown>;
-    return [rec.exitCode, rec.exit_code].some(code => typeof code === 'number' && Number.isInteger(code) && code !== 0);
-  } catch {
-    return false;
   }
 }
 

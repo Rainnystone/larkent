@@ -30,7 +30,7 @@ export class KimiJsonlTranslator {
   private version: string | undefined;
   private terminal = false;
   private pendingAssistantText: string | undefined;
-  private readonly startedToolCalls = new Set<string>();
+  private readonly startedToolCalls = new Map<string, string>();
   private drift: ProtocolDriftState = {
     unknownEvents: 0,
     anomalies: 0,
@@ -142,7 +142,7 @@ export class KimiJsonlTranslator {
         this.drift.anomalies++;
         continue;
       }
-      this.startedToolCalls.add(id);
+      this.startedToolCalls.set(id, name);
       events.push({
         type: 'tool_use',
         id,
@@ -162,15 +162,18 @@ export class KimiJsonlTranslator {
     if (!this.startedToolCalls.has(id)) {
       this.drift.anomalies++;
     }
+    const name = this.startedToolCalls.get(id);
     this.startedToolCalls.delete(id);
-    // kimi's tool line carries no error flag; surface every result as
-    // non-error and let the agent's own follow-up text describe failures.
+    const output = toolOutputText(raw.content);
+    // Kimi's shell status is the leading system part (0.38 and current
+    // soul/message.py), separate from the command's arbitrary stdout data.
+    const failedExit = /^<system>(?:ERROR: )?Command failed with exit code: (-?\d+)\.<\/system>/.exec(output);
     return [
       {
         type: 'tool_result',
         id,
-        output: stringValue(raw.content) ?? '',
-        isError: false,
+        output,
+        isError: /^(?:Bash|Shell)$/i.test(name ?? '') && failedExit !== null && Number(failedExit[1]) !== 0,
       },
     ];
   }
@@ -192,6 +195,12 @@ export class KimiJsonlTranslator {
     this.pendingAssistantText = undefined;
     return [{ type: 'text', delta: `${pending}\n\n` }, ...events];
   }
+}
+
+function toolOutputText(content: unknown): string {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return '';
+  return content.flatMap(part => isRecord(part) && part.type === 'text' && typeof part.text === 'string' ? [part.text] : []).join('\n');
 }
 
 function parseToolArguments(value: unknown): unknown {

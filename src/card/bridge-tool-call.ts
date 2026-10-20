@@ -157,7 +157,7 @@ function shellTokens(command: string): ShellToken[] | undefined {
       if (char === '<') i++;
       continue;
     }
-    if (!quote && /[;&<>(){}#*?\[\]]/.test(char)) return undefined;
+    if (!quote && /[!;&<>(){}#*?\[\]]/.test(char)) return undefined;
     word ??= { value: '', expanded: false, quoted: false };
     if (char === quote) { quote = undefined; continue; }
     if (!quote && (char === "'" || char === '"')) { quote = char; word.quoted = true; continue; }
