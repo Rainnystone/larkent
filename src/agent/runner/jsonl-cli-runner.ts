@@ -5,6 +5,7 @@ import { RunCleanupFailed } from '../../runtime/errors';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import { readProcessStartMs } from '../../platform/process-info';
 import type { AgentEvent, AgentRun } from '../types';
+import { stripTerminalText } from '../terminal-text';
 import { BoundedStderr } from './bounded-stderr';
 
 export type JsonlFinishReason = 'normal' | 'interrupted' | 'timeout';
@@ -562,7 +563,7 @@ async function* iterateEvents(input: {
     }
     if (exitCode !== 0 && exitCode !== null) {
       if (!terminal || input.failNonzeroAfterTerminal) {
-        const stderrText = input.stderr.snapshot().trim();
+        const stderrText = stripTerminalText(input.stderr.snapshot()).trim();
         const detail = stderrText ? `: ${stderrText.slice(0, 500)}` : '';
         yield* emit(input.translator.fail(`${input.spawnName} exited with code ${exitCode}${detail}`));
       }

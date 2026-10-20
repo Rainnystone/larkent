@@ -1,6 +1,5 @@
-import { stripVTControlCharacters } from 'node:util';
 import type { AgentEvent } from '../types';
-import { stripNodeNoColorWarning } from '../terminal-text';
+import { stripTerminalText } from '../terminal-text';
 import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
 
@@ -263,7 +262,7 @@ export class GrokJsonlTranslator {
   }
 
   private finalTextEvents(): AgentEvent[] {
-    const content = this.pendingText;
+    const content = stripTerminalText(this.pendingText);
     this.pendingText = '';
     if (!content || isControlTokenOnly(content)) return [];
     return [{ type: 'final_text', content }];
@@ -279,7 +278,7 @@ export class GrokJsonlTranslator {
 
   private flushPendingText(events: AgentEvent[]): AgentEvent[] {
     if (events.length === 0 || !this.pendingText) return events;
-    const pending = this.pendingText;
+    const pending = stripTerminalText(this.pendingText);
     this.pendingText = '';
     if (isControlTokenOnly(pending)) return events;
     return [{ type: 'text', delta: pending.endsWith('\n') ? pending : `${pending}\n\n` }, ...events];
@@ -314,9 +313,9 @@ function serializeToolOutput(value: unknown): string {
 }
 
 function stripAnsi(value: string): string {
-  // Grok's tool process sets FORCE_COLOR and NO_COLOR itself. Parent env
-  // cannot stop Node's two-line warning, so drop those lines here.
-  return stripNodeNoColorWarning(stripVTControlCharacters(value));
+  // Tool text, including the Node NO_COLOR warning Grok injects itself,
+  // plus ANSI, BEL, and `\r` progress overwrites.
+  return stripTerminalText(value);
 }
 
 function decodeUtf8Bytes(value: unknown): string | undefined {
