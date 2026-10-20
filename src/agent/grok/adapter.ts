@@ -81,6 +81,9 @@ export class GrokAdapter implements AgentAdapter {
       cwd: opts.cwd,
       env: mergeProcessEnv(process.env, {
         ...buildLarkChannelEnv(this.larkChannel, opts.toolEnv),
+        // Grok's own shell sets FORCE_COLOR. Keeping NO_COLOR makes Node warn
+        // on every tool card. Color is removed from tool output instead.
+        NO_COLOR: undefined,
         GROK_DISABLE_AUTOUPDATER: '1',
       }),
       translator: wrapParsedTranslator(new GrokJsonlTranslator(), 'grok'),
