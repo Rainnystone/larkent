@@ -7,7 +7,7 @@ import {
   type RunState,
   type ToolEntry,
 } from './run-state';
-import { toolBodyMd, toolHeaderText } from './tool-render';
+import { toolBodyMd, toolHeaderText, visibleBridgeLabel } from './tool-render';
 
 const REASONING_MAX = 1500;
 const COLLAPSE_TOOL_THRESHOLD = 3;
@@ -111,11 +111,12 @@ function reasoningPanel(content: string, active: boolean): object {
 }
 
 function toolPanel(tool: ToolEntry, expanded: boolean): object {
+  const body = toolBodyMd(tool);
   return collapsiblePanel({
     title: toolHeaderText(tool),
     expanded,
     border: tool.status === 'error' ? 'red' : 'grey',
-    body: toolBodyMd(tool) || '_无输出_',
+    body: body || (visibleBridgeLabel(tool) ? '' : '_无输出_'),
   });
 }
 

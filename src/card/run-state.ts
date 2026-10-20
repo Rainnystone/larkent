@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../agent/types';
+import { bridgeToolLabel } from './bridge-tool-call';
 import {
   confirmDirectImSend,
   rememberDirectImSend,
@@ -13,6 +14,8 @@ export interface ToolEntry {
   input: unknown;
   status: ToolStatus;
   output?: string;
+  /** Friendly progress-card label when this is an internal bridge-tool call. */
+  bridgeLabel?: string;
 }
 
 export type Block =
@@ -115,11 +118,13 @@ export function reduce(state: RunState, evt: AgentEvent): RunState {
     }
 
     case 'tool_use': {
+      const bridgeLabel = bridgeToolLabel(evt.input);
       const tool: ToolEntry = {
         id: evt.id,
         name: evt.name,
         input: evt.input,
         status: 'running',
+        ...(bridgeLabel ? { bridgeLabel } : {}),
       };
       return {
         ...state,

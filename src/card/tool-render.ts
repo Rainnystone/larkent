@@ -1,3 +1,4 @@
+import { bridgeToolLabel } from './bridge-tool-call';
 import type { ToolEntry } from './run-state';
 
 const HEADER_SUMMARY_MAX = 80;
@@ -12,13 +13,20 @@ const OUTPUT_MAX = 1200;
  */
 const BODY_TOTAL_MAX = 2500;
 
+export function visibleBridgeLabel(tool: ToolEntry): string | undefined {
+  return tool.bridgeLabel ?? bridgeToolLabel(tool.input);
+}
+
 export function toolHeaderText(tool: ToolEntry): string {
   const icon = tool.status === 'done' ? '✅' : tool.status === 'error' ? '❌' : '⏳';
+  const bridge = visibleBridgeLabel(tool);
+  if (bridge) return `${icon} **${bridge}**`;
   const summary = summarizeInput(tool.name, tool.input);
   return summary ? `${icon} **${tool.name}** — ${summary}` : `${icon} **${tool.name}**`;
 }
 
 export function toolBodyMd(tool: ToolEntry): string {
+  if (visibleBridgeLabel(tool)) return '';
   const parts: string[] = [];
   const inputMd = renderInput(tool);
   if (inputMd) parts.push(inputMd);
