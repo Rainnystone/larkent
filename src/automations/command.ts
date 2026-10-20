@@ -34,6 +34,7 @@ import {
   draftDeletedStatus,
   draftReplacedStatus,
   draftTargetGoneStatus,
+  draftTargetChangedStatus,
   DRAFT_SETTLED_CANCELLED,
 } from './draft-card';
 import { mutateAutomationTask, taskMutationLabels } from './task-mutation';
@@ -996,8 +997,8 @@ export async function confirmAutomationDraft(
   if (draft.op !== 'create' && ctx.automations) {
     const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision });
     if (code) {
-      if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code);
-      const status = code === 'target-not-found' ? draftTargetGoneStatus(draft.targetId) : `#${draft.targetId} 状态已变化，请重新查询。`;
+      const status = code === 'target-not-found' ? draftTargetGoneStatus(draft.targetId) : draftTargetChangedStatus(draft.targetId);
+      if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code, status);
       return { ok: false, status, toast: status };
     }
   }
@@ -1053,8 +1054,8 @@ async function confirmDeleteDraft(
   const ok = await ctx.automationsScheduler.delete(draft.targetId, { chatId: draft.chatId, revision: draft.target.revision, operationId: draft.operationId });
   if (!ok) {
     const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision }) ?? 'target-not-found';
-    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code);
-    const status = code === 'target-state-conflict' ? `#${draft.targetId} 状态已变化，请重新查询。` : draftTargetGoneStatus(draft.targetId);
+    const status = code === 'target-state-conflict' ? draftTargetChangedStatus(draft.targetId) : draftTargetGoneStatus(draft.targetId);
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code, status);
     return { ok: false, status, toast: status };
   }
   log.info('auto', 'deleted', { id: draft.targetId, source: 'confirmation' });
@@ -1072,13 +1073,13 @@ async function confirmReplaceDraft(
   const now = (ctx.now ?? Date.now)();
   const blocked = replaceConfirmBlock(draft, now);
   if (blocked.outcome !== 'confirm') {
-    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, blocked.outcome === 'reject' ? blocked.reason : 'confirmation-invalid');
     if (blocked.outcome === 'reject') noteAutomationRejected(blocked.reason, 'confirmation');
     const message = blocked.outcome === 'reject'
       ? rejectMessage(blocked.reason, blocked)
       : blocked.outcome === 'refuse'
         ? blocked.message
         : AUTO_INVALID_HINT;
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, blocked.outcome === 'reject' ? blocked.reason : 'confirmation-invalid', message);
     return { ok: false, status: message, toast: message };
   }
   let created: AutomationItem | undefined;

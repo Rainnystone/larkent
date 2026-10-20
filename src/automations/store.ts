@@ -76,6 +76,8 @@ export interface AutomationOperation {
   createdAt: number;
   state: 'received' | 'applied' | 'not-applied';
   code?: string;
+  /** Exact resolved confirmation-card title when confirmation was rejected. */
+  cardStatus?: string;
   taskId?: number;
   dispatchedCount: number;
   /** false means the retained count is a lower bound for an existing task. */
@@ -647,14 +649,14 @@ export class AutomationsStore {
       .map((draft) => cloneDraft(draft));
   }
 
-  async takeDraft(draftId: string): Promise<AutomationDraft | undefined> {
+  async takeDraft(draftId: string, code = 'draft-closed'): Promise<AutomationDraft | undefined> {
     this.assertMutable();
     this.pruneDrafts();
     const index = this.drafts.findIndex((entry) => entry.draftId === draftId);
     if (index < 0) return undefined;
     const [draft] = this.drafts.splice(index, 1);
     const operation = this.operations.find(entry => entry.draftId === draftId);
-    if (operation && operation.state === 'received') { operation.state = 'not-applied'; operation.code = 'draft-closed'; }
+    if (operation && operation.state === 'received') { operation.state = 'not-applied'; operation.code = code; }
     if (!draft) return undefined;
     await this.persistNow();
     return cloneDraft(draft);
@@ -820,11 +822,12 @@ export class AutomationsStore {
     await this.persistNow();
   }
 
-  async rejectOperation(operationId: string, code: string): Promise<void> {
+  async rejectOperation(operationId: string, code: string, cardStatus?: string): Promise<void> {
     this.assertMutable();
     const operation = this.operations.find(entry => entry.operationId === operationId);
     if (!operation || operation.state !== 'received') return;
     operation.state = 'not-applied'; operation.code = code;
+    if (cardStatus) operation.cardStatus = cardStatus;
     this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
     await this.persistNow();
   }
@@ -1142,6 +1145,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     || (raw.state === 'applied' && !isPositiveInt(raw.taskId))
     || (raw.taskId !== undefined && !isPositiveInt(raw.taskId))
     || (raw.code !== undefined && typeof raw.code !== 'string')
+    || (raw.cardStatus !== undefined && typeof raw.cardStatus !== 'string')
     || (raw.aliases !== undefined && !Array.isArray(raw.aliases))) throw new Error('Invalid automation operation receipt');
   const aliases = raw.aliases as unknown[] | undefined;
   for (const id of [raw.operationId, ...(aliases ?? [])]) {
@@ -1153,6 +1157,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     createdAt: raw.createdAt, state: raw.state as AutomationOperation['state'], dispatchedCount: raw.dispatchedCount as number,
     ...(raw.dispatchedCountKnown === false ? { dispatchedCountKnown: false } : {}),
     ...(aliases ? { aliases: aliases as string[] } : {}), ...(raw.taskId ? { taskId: raw.taskId as number } : {}), ...(raw.code ? { code: raw.code as string } : {}),
+    ...(raw.cardStatus ? { cardStatus: raw.cardStatus as string } : {}),
   };
 }
 

@@ -1,4 +1,5 @@
 import { bridgeToolInstructions } from '../bridge-tools/prompt';
+import { trackAutomationReply } from '../automations/reply-state';
 import type {
   LarkChannel,
   LarkChannelOptions,
@@ -1829,7 +1830,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const automationPluginAvailable = await catalog.isAvailable('automation');
   const groupIm = firstMsg.chatType !== 'p2p' && mode !== 'p2p' && !scope.startsWith('meeting:');
   const senderUnavailable = automationUnavailableForSender(lastMsg);
+  const automationReply = trackAutomationReply({ store: automations, profile: controls.profile, chatId, now });
   const toolContext: ToolRunContext = {
+    onResult: automationReply.noteResult,
     catalog, profile: controls.profile, chatId, actorId: lastMsg.senderId,
     runType: 'im', store: automations,
     timezone: controls.profileConfig.automations.timezone, agentTasks: controls.profileConfig.automations.agentTasks,
@@ -2054,6 +2057,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       : { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
     return stripLegacyAutomationTagsFromState(withoutTools);
   };
+  const streamedReplyState = (state: RunState): RunState => !finalAnswerOnly && state.terminal !== 'running'
+    ? appendOutcomeNotice(state, automationReply.notice()) : state;
   const cardRenderOptions = callbackAuth
     ? {
         signCallback: (action: string) =>
@@ -2126,6 +2131,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           chatId,
           scope,
           state: finalAnswerOnlyState(finalState),
+          automationNotice: automationReply.notice,
           skipFrom: finalState,
           replyMode,
           sendOpts,
@@ -2164,7 +2170,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
                 if (progress.abandoned()) return;
                 cardCtrl = ctrl;
                 const visible = filterForPrefs(latestState);
-                await ctrl.update(renderCard(visible, cardRenderOptions));
+                await ctrl.update(renderCard(streamedReplyState(visible), cardRenderOptions));
                 producerRendered = true;
                 await renderDone;
               },
@@ -2185,7 +2191,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (cardCtrl) {
             try {
               const visible = filterForPrefs(state);
-              await cardCtrl.update(renderCard(visible, cardRenderOptions));
+              await cardCtrl.update(renderCard(streamedReplyState(visible), cardRenderOptions));
             } catch (err) {
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
@@ -2212,6 +2218,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         chatId,
         scope,
         state: terminalState,
+        automationNotice: automationReply.notice,
         skipFrom: latestState,
         stream,
         dedicatedFinal: finalAnswerOnly,
@@ -2243,7 +2250,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               if (progress.abandoned()) return;
               markdownCtrl = ctrl;
               const visible = filterForPrefs(latestState);
-              await ctrl.setContent(renderText(visible));
+              await ctrl.setContent(renderText(streamedReplyState(visible)));
               producerRendered = true;
               await renderDone;
             },
@@ -2263,7 +2270,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (markdownCtrl) {
             try {
               const visible = filterForPrefs(state);
-              await markdownCtrl.setContent(renderText(visible));
+              await markdownCtrl.setContent(renderText(streamedReplyState(visible)));
             } catch (err) {
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
@@ -2290,6 +2297,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         chatId,
         scope,
         state: terminalState,
+        automationNotice: automationReply.notice,
         skipFrom: latestState,
         stream,
         dedicatedFinal: finalAnswerOnly,
@@ -2328,6 +2336,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           replyMode: finalAnswerOnly ? 'final-answer' : 'stream-deltas',
           streamed: false,
         }),
+        automationNotice: automationReply.notice,
         skipFrom: finalState,
         replyMode,
         sendOpts,
@@ -2523,6 +2532,7 @@ async function deliverFinalReply(input: {
   chatId: string;
   scope: string;
   state: RunState;
+  automationNotice?: () => string | undefined;
   skipFrom?: RunState;
   stream?: StreamDelivery;
   dedicatedFinal?: boolean;
@@ -2550,12 +2560,14 @@ async function deliverFinalReply(input: {
   const state = stripLegacyAutomationTagsFromState(input.state);
   const skipFrom = input.skipFrom ? stripLegacyAutomationTagsFromState(input.skipFrom) : undefined;
   const unaugmented = renderText(state);
-  const replyState = unaugmented.trim() ? state : (skipFrom ?? state);
-  const visibleBody = renderText(replyState);
+  const baseReplyState = unaugmented.trim() ? state : (skipFrom ?? state);
+  let automationNotice = input.automationNotice?.();
+  let replyState = appendOutcomeNotice(baseReplyState, automationNotice);
+  let visibleBody = renderText(replyState);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
     && (input.skipFrom ?? input.state).terminal === 'done';
   const skipCli = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent;
-  const skip = skipCli || !visibleBody.trim();
+  const skip = skipCli || !renderText(baseReplyState).trim();
   if (input.journal && input.turnId && skipCli) {
     input.journal.noteCliAlreadySent(input.turnId);
   }
@@ -2597,7 +2609,22 @@ async function deliverFinalReply(input: {
   // in-memory delivery mark so a slow fsync cannot leave readers on
   // `completed-undelivered` for the whole write.
   const deferJournalFlush = stream.kind === 'confirmed' && !dedicatedFinal;
+  // Cards may settle during persistence or receipt bookkeeping. Persist each
+  // updated intent, then invoke the outbound attempt without another await.
+  const withCurrentReply = async <T,>(deliver: () => Promise<T>): Promise<T> => {
+    for (;;) {
+      const latestNotice = input.automationNotice?.();
+      if (skip || latestNotice === automationNotice) return deliver();
+      automationNotice = latestNotice;
+      replyState = appendOutcomeNotice(baseReplyState, automationNotice);
+      visibleBody = renderText(replyState);
+      reply.markdown = visibleBody;
+      if (input.journal && input.turnId) input.journal.stageReply(input.turnId, reply);
+      if (input.journal && !deferJournalFlush) await input.journal.flush();
+    }
+  };
   if (input.journal && !deferJournalFlush) await input.journal.flush();
+  await withCurrentReply(async () => {});
   if (skipCli) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
@@ -2616,18 +2643,18 @@ async function deliverFinalReply(input: {
         stream,
         channel: input.channel,
         body: visibleBody,
-        send: () => sendFinalReply({
+        send: () => withCurrentReply(() => sendFinalReply({
           ...input,
           deliveryId,
           state: replyState,
-        }),
-        fallback: () => sendPlainTextReply({
+        })),
+        fallback: () => withCurrentReply(() => sendPlainTextReply({
           channel: input.channel,
           chatId: input.chatId,
           body: visibleBody,
           sendOpts: input.sendOpts,
           deliveryId,
-        }),
+        })),
         journal: input.journal,
         turnId: input.turnId,
         replyMode: input.replyMode,

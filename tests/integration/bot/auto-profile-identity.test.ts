@@ -1,4 +1,5 @@
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
+import { once } from 'node:events';
 import { delimiter, join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +13,7 @@ import { WorkspaceStore } from '../../../src/workspace/store';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import { installProfileIdentityCli, type IdentityPlan } from '../../helpers/profile-identity-cli';
 import { createTmpProfile } from '../../helpers/tmp-profile';
+import { waitForFile } from '../../helpers/wait-for-file';
 
 const sdk = vi.hoisted(() => ({ channel: undefined as ReturnType<typeof createRecordingLarkChannel> | undefined }));
 vi.mock('@larksuite/channel', async original => ({
@@ -32,6 +34,23 @@ afterEach(async () => {
 });
 
 describe('profile identity in existing automatic tasks', { timeout: 20000 }, () => {
+it('waits for real automatic settlement when a healthy subprocess outlasts the old polling budget', async () => {
+  const h = await harness({ args: ['docs', '+fetch', '--as', 'user'], hold: true });
+  await h.fire();
+  await h.waitForFile(join(h.cli.directory, 'automatic.ready'));
+  const outcome = h.settled().then(() => undefined, error => error);
+  // Exercise the former ten-second fixture deadline while the real child is
+  // deliberately held, then release it and observe its successful completion.
+  await once(AbortSignal.timeout(10_000), 'abort');
+  expect(h.store.get(1)?.lastStatus).toBe('running');
+  await writeFile(join(h.cli.directory, 'automatic.release'), 'release');
+  await h.waitForFile(h.store.getFilePath(), content => JSON.parse(content).items[0]?.lastStatus === 'ok');
+  expect(await outcome).toBeUndefined();
+  expect(h.store.get(1)).toMatchObject({ lastStatus: 'ok', paused: false, createdBy: CREATOR });
+  expect(h.bodies()).toContain(`identity-result:{"identity":"user","subject":"${SUBJECT}","generation":1}`);
+  await h.configUnchanged();
+});
+
 it('runs an existing automatic task with the profile user authorization and preserves its separate creator', async () => {
   const h = await harness({ args: ['docs', '+fetch', '--as', 'user'] });
   await h.fire();
@@ -325,14 +344,23 @@ async function harness(plan: IdentityPlan, options: { strictMode?: string; failu
     controls: { profile: 'synthetic', profileConfig: cfg, cfg, botOwnerId: CREATOR, ownerRefreshState: 'ok', async refreshOwner() {}, async restart() {}, async exit() {}, configPath: join(tmp.root, 'config.json'), processId: 'synthetic-identity' },
   });
   cleanup.push(() => bridge.disconnect());
+  const waits = new AbortController();
+  cleanup.push(async () => waits.abort());
   const bodies = () => channel.sent.map(row => {
     const content = row.content as { text?: string; markdown?: string };
     return content.text ?? content.markdown ?? JSON.stringify(content);
   }).join('\n');
   return {
     tmp, cli, cfg, store, journal, bridge, channel, configDir, env, bodies,
+    waitForFile: (path: string, accepts?: (content: string) => boolean) => waitForFile(path, accepts, waits.signal),
     fire: async () => { now = NOW + HOUR; await bridge.wakeAutomation(formatFireKey(1, now)); },
-    settled: () => vi.waitFor(() => expect(store.get(1)?.lastStatus).toMatch(/^(ok|failed)$/), { timeout: 10000 }),
+    settled: async () => {
+      await waitForFile(store.getFilePath(), content => {
+        const item = JSON.parse(content).items.find((row: { id: number }) => row.id === 1);
+        return /^(ok|failed)$/.test(item?.lastStatus);
+      }, waits.signal);
+      expect(store.get(1)?.lastStatus).toMatch(/^(ok|failed)$/);
+    },
     calls: () => jsonLines<{ args: string[]; env: typeof env }>(join(cli.directory, 'calls.jsonl')),
     runs: () => jsonLines<{ id: string; systemPrompt: string; prompt: string; resumed: boolean; hasToolConnection: boolean }>(join(cli.directory, 'runs.jsonl')),
     message: (id: string, reply?: string) => channel.handlers.message?.({

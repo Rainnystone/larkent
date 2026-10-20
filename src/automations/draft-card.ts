@@ -30,6 +30,10 @@ export function draftTargetGoneStatus(id: number): string {
   return `#${id} 已不存在`;
 }
 
+export function draftTargetChangedStatus(id: number): string {
+  return `#${id} 状态已变化，请重新查询。`;
+}
+
 export function automationSettledCard(status: string): object {
   return card2({
     title: status,
@@ -71,11 +75,11 @@ export async function expireDueDraftCards(input: {
     } catch (error) {
       logDraftCardFail(draft.draftId, error);
       if (isPermanentDraftCardError(error)) {
-        await input.store.takeDraft(draft.draftId);
+        await input.store.takeDraft(draft.draftId, 'draft-expired');
       }
       continue;
     }
-    await input.store.takeDraft(draft.draftId);
+    await input.store.takeDraft(draft.draftId, 'draft-expired');
   }
 }
 

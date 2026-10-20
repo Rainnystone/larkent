@@ -8,7 +8,10 @@ import type { PluginCatalog } from '../plugins/catalog';
 import { bridgePackageRoot } from '../platform/package-root';
 import { record, TOOL_MAX_BYTES, TOOL_OPERATIONS, toolResult, type ToolResult } from './protocol';
 
-export interface ToolRunContext extends AutomationToolContext { catalog: PluginCatalog }
+export interface ToolRunContext extends AutomationToolContext {
+  catalog: PluginCatalog;
+  onResult?(result: ToolResult): void;
+}
 export interface ToolRun {
   env: NodeJS.ProcessEnv;
   close(): Promise<void>;
@@ -41,7 +44,9 @@ export async function openToolRun(context: ToolRunContext): Promise<ToolRun> {
       let value: unknown;
       try { value = JSON.parse(Buffer.concat(chunks).toString('utf8')); }
       catch { reply(toolResult('validation-failed', 'invalid-json')); return; }
-      reply(await dispatch(value, context));
+      const result = await dispatch(value, context);
+      context.onResult?.(result);
+      reply(result);
     } catch { reply(toolResult('execution-failed', 'tool-failed')); }
   });
   server.requestTimeout = 10_000;
