@@ -1,6 +1,6 @@
 # Task 9o — P09o Grok shell 失败被渲染为成功（shell 判定漏了 `run_terminal_command`）
 
-**Status:** in progress · bug · 修复已于 2026-10-20 交给 Codex（`feat/bridge-skills`）
+**Status:** done · fixed in #52 by 96cc1fd; live FX-o/FX-s PASS @b4cda3f（2026-10-20） · bug
 **Delivers:** Grok Build 的 shell 调用退出码非 0 时，卡片显示失败状态，并保留命令与输出；退出码推断只作用于真正的 shell 工具。
 **Found in:** 真实飞书测试 bridge，代码 head `b4d67c6`（#52）live 复验
 **Worker class:** mechanical

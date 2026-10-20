@@ -1,6 +1,6 @@
 # Task 9q — P09q 多草稿状态回复泄漏 `applied` 字段与完整 ID
 
-**Status:** todo · bug · P3
+**Status:** done · fixed in #52 by 7188161, 6dd0e44（2026-10-20） · bug · P3
 **Delivers:** bot 汇报多份草稿状态时只用用户语言，不出现内部字段、布尔值或完整卡片 / 草稿 ID。
 **Found in:** 真实飞书测试 bridge，代码 head `b4d67c6`（#52）全量回归
 **Worker class:** mechanical

@@ -1,6 +1,6 @@
 # Task 9k — P09k 插件目录不存在时返回笼统的 invalid-package
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by 3f2e11f（2026-10-19） · bug · P3
 **Delivers:** 配置指向不存在的插件目录时，诊断给出具体、已文档化的代码（如 `missing-root`），并带出问题 root。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 场景 8，候选版本 `0b55865`（Kimi）
 **Worker class:** mechanical

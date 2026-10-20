@@ -1,6 +1,6 @@
 # Task 9y — P09y 确认成功但卡片转圈后复原、无 toast
 
-**Status:** todo · bug · P3 (UX)
+**Status:** done · fixed in #52 by 6129cbf（2026-10-20） · bug · P3 (UX)
 **Owner:** Cursor Project
 **Delivers:** 确认卡点「是」后，用户一定能看到结果（toast 或卡片状态更新）。
 **Found in:** 真实飞书测试 bridge，代码 head `6dd0e44`（#52），2026-10-20 live 回归

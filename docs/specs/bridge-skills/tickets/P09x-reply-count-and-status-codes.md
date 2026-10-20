@@ -1,6 +1,6 @@
 # Task 9x — P09x 回复次数与卡片不一致，且泄漏 needs-input / waiting-confirmation
 
-**Status:** todo · bug · P3 · related P09f/P09q
+**Status:** done · fixed in #52 by 8d06360（2026-10-20） · bug · P3
 **Owner:** Cursor Project
 **Delivers:** 回复中的触发次数与确认卡一致；不出现协议状态码。
 **Found in:** 真实飞书测试 bridge，代码 head `6dd0e44`（#52），2026-10-20 live 回归

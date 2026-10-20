@@ -1,6 +1,6 @@
 # Task 9ag — P09ag Grok 恢复失败/未知模型被归为通用可重试失败
 
-**Status:** todo · bug · P2
+**Status:** done · fixed in #52 by a2169ce（2026-10-20） · bug · P2
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G7，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

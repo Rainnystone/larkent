@@ -1,6 +1,6 @@
 # Task 9i — P09i 补全结束日期卡缺少短于一个月的选项
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by 7c24dc2（2026-10-19） · bug · P3
 **Delivers:** 补全结束时间卡提供短于一个月的预设，常见“一周/两周”无需改用自然语言。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 场景 7，候选版本 `0b55865`（[P09a](P09a-recurring-count-copy.md) Non-goals 中记为另行处理）
 **Worker class:** mechanical

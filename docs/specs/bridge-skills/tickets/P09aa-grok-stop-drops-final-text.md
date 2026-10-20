@@ -1,6 +1,6 @@
 # Task 9aa — P09aa 停止/空闲超时时 Grok 的暂存答案被丢弃
 
-**Status:** todo · bug · P1
+**Status:** done · fixed in #52 by 4556ad8, 0b7009f, gate narrowed by 48874d4; live FX-aa PASS @b4cda3f（2026-10-20） · bug · P1
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G1，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

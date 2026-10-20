@@ -1,6 +1,6 @@
 # Task 9ad — P09ad Grok 及其 shell 继承 bridge 全部进程环境（含凭据类变量）
 
-**Status:** todo · bug · P1
+**Status:** done · fixed in #52 by 4aca859, f5e14c1, revised by b4cda3f (P09az); live FX-az PASS @b4cda3f（2026-10-20） · bug · P1
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G4，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

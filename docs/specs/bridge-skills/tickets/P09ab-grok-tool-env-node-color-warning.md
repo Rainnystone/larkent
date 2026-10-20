@@ -1,6 +1,6 @@
 # Task 9ab — P09ab P09u 不完整：Grok 工具进程自设 NO_COLOR+FORCE_COLOR，Node 警告仍进工具卡
 
-**Status:** todo · bug · P1
+**Status:** done · fixed in #52 by 738e145; live FX-ab PASS @b4cda3f（2026-10-20） · bug · P1
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G2，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

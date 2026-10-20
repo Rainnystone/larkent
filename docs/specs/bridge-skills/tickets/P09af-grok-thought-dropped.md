@@ -1,6 +1,6 @@
 # Task 9af — P09af Grok `thought` 被丢弃：CoT 为空，idle 计时视为静默
 
-**Status:** todo · bug · P2
+**Status:** done · fixed in #52 by 1c4114b; live FX-af PASS @b4cda3f（2026-10-20） · bug · P2
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G6，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

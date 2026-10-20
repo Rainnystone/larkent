@@ -1,6 +1,6 @@
 # Task 9ac — P09ac Profile 模型列表含不存在的 `grok-build`，错误被泛化
 
-**Status:** todo · bug · P2
+**Status:** done · fixed in #52 by 3dd6658; live FX-ac PASS @b4cda3f（2026-10-20） · bug · P2
 **Owner:** local Grok Build
 **Audit verdict:** PARTIAL（Grok Build 只读审计 G3，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

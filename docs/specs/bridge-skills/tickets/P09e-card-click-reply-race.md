@@ -1,6 +1,6 @@
 # Task 9e — P09e 点卡早于最终回复时，回复仍写“待确认”
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by 5f4385b, e31a84e（2026-10-20） · bug · P3
 **Delivers:** 用户在模型最后一次工具调用之后、最终回复发出之前点击确认卡时，最终回复不再与卡片的实际状态矛盾。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 真实飞书 E2E，候选版本 `0b55865`（Cursor、Kimi 各一次）
 **Worker class:** mechanical

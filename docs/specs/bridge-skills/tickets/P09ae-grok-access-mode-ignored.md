@@ -1,6 +1,6 @@
 # Task 9ae — P09ae Profile 访问模式不映射到 grok argv（read-only 仍 --always-approve）
 
-**Status:** todo · bug · P2
+**Status:** done · fixed in #52 by 915c6f6（2026-10-20） · bug · P2
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G5，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

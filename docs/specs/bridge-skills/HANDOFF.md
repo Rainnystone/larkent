@@ -61,60 +61,60 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 
 | 票 | 级别 | 影响 |
 | --- | --- | --- |
-| P09a ✅ | P2 | 周期确认卡次数与实际不符 |
-| P09b ✅ | P2 | 重启/断线后补发的真人消息被判为非人工 |
-| P09c ✅ | P2 | 发卡结果未知时回读对账绑不上卡 |
-| P09d ✅ | P3 | 工具卡暴露内部 bridge tool 命令与协议 JSON |
-| P09e | P3 | 最终回复发出前用户已点卡，回复仍写“待确认”，与卡片矛盾 |
-| P09f | P3 | 回复原样搬运 `waiting-confirmation`、`applied` 等机器字段 |
-| P09g | P3 | 替换卡正文“将删除：#N”让人以为任务会被删掉 |
-| P09h ✅ | P3 | 从未触发的任务显示“上次运行成功” |
-| P09i ✅ | P3 | 结束日期卡最短预设一个月 |
-| P09j | P3 | 同名冲突包让合法包消失，歧义结果给出的 reference 也无法用来选择 |
-| P09k ✅ | P3 | 插件目录不存在时只给未文档化的 `invalid-package` |
-| P09l ✅ | P3 | Grok 工具卡把输出显示成字节数组 |
-| P09m | P3 | 只读 `auth logout --help` 被误判为认证变更，任务被暂停；`auth-config` 码 agent 看不到 |
-| P09o | P2 | Grok shell 退出码非 0 仍显示成功（见 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)） |
-| P09p | P3 | 草稿修订后旧确认卡仍有效，点「是」重复建任务（见 [P09p](tickets/P09p-superseded-draft-card-still-live.md)） |
-| P09q | P3 | 多草稿状态回复泄漏 `applied` 字段与完整 ID（见 [P09q](tickets/P09q-multi-draft-reply-leaks-fields.md)） |
-| P09r | P3 | 工具卡出现 ANSI 颜色码，与 NO_COLOR 警告同修（见 [P09r](tickets/P09r-tool-card-ansi-escapes.md)） |
-| P09s | P2 | Grok shell 失败（exit 2）显示 ✅（见 [P09s](tickets/P09s-grok-statusless-update-as-result.md)） |
-| P09t | P2 | 详细 CoT 出现 ANSI 颜色码（见 [P09t](tickets/P09t-grok-ansi-raw-string-bytes.md)） |
-| P09u | P2/P3 | Grok 每张工具卡带 NO_COLOR 警告（见 [P09u](tickets/P09u-grok-force-color-no-color-warning.md)） |
-| P09v | P2 | 修订后旧卡仍可确认，产生同名重复任务（见 [P09v](tickets/P09v-draft-revision-without-supersede.md)） |
-| P09w | P3 | 回复误称草稿在生成期间被外部取消（见 [P09w](tickets/P09w-same-turn-supersede-label.md)） |
-| P09x | P3 | 回复次数与卡不符、出现状态码（见 [P09x](tickets/P09x-reply-count-and-status-codes.md)） |
-| P09y | P3 | 用户看不到确认成功，易重复操作（见 [P09y](tickets/P09y-confirm-success-without-feedback.md)） |
+| P09a | **done**（`6ea64b9, b42504f`） · P2 | 周期确认卡次数与实际不符 |
+| P09b | **done**（`d661277`） · P2 | 重启/断线后补发的真人消息被判为非人工 |
+| P09c | **done**（`3930464`） · P2 | 发卡结果未知时回读对账绑不上卡 |
+| P09d | **done**（`d24d781, c832d21, 65f2c19, 982b01d`） · P3 | 工具卡暴露内部 bridge tool 命令与协议 JSON |
+| P09e | **done**（`5f4385b, e31a84e`） · P3 | 最终回复发出前用户已点卡，回复仍写“待确认”，与卡片矛盾 |
+| P09f | **done**（`c18b168`） · P3 | 回复原样搬运 `waiting-confirmation`、`applied` 等机器字段 |
+| P09g | **done**（`b79a9fc`） · P3 | 替换卡正文“将删除：#N”让人以为任务会被删掉 |
+| P09h | **done**（`672b5fa`） · P3 | 从未触发的任务显示“上次运行成功” |
+| P09i | **done**（`7c24dc2`） · P3 | 结束日期卡最短预设一个月 |
+| P09j | **done**（`14eb356, 5e266e3`） · P3 | 同名冲突包让合法包消失，歧义结果给出的 reference 也无法用来选择 |
+| P09k | **done**（`3f2e11f`） · P3 | 插件目录不存在时只给未文档化的 `invalid-package` |
+| P09l | **done**（`5b398a2`） · P3 | Grok 工具卡把输出显示成字节数组 |
+| P09m | **done**（`0494223, d3425b7, 2daa863`） · P3 | 只读 `auth logout --help` 被误判为认证变更，任务被暂停；`auth-config` 码 agent 看不到 |
+| P09o | **done**（`96cc1fd`） · P2 | Grok shell 退出码非 0 仍显示成功（见 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)） |
+| P09p | **done**（`0ccc762`） · P3 | 草稿修订后旧确认卡仍有效，点「是」重复建任务（见 [P09p](tickets/P09p-superseded-draft-card-still-live.md)） |
+| P09q | **done**（`7188161, 6dd0e44`） · P3 | 多草稿状态回复泄漏 `applied` 字段与完整 ID（见 [P09q](tickets/P09q-multi-draft-reply-leaks-fields.md)） |
+| P09r | **done**（`ce25d90`） · P3 | 工具卡出现 ANSI 颜色码，与 NO_COLOR 警告同修（见 [P09r](tickets/P09r-tool-card-ansi-escapes.md)） |
+| P09s | **done**（`e4459f1`） · P2 | Grok shell 失败（exit 2）显示 ✅（见 [P09s](tickets/P09s-grok-statusless-update-as-result.md)） |
+| P09t | **done**（`567fe36`） · P2 | 详细 CoT 出现 ANSI 颜色码（见 [P09t](tickets/P09t-grok-ansi-raw-string-bytes.md)） |
+| P09u | **done**（`77c62b3`） · P2/P3 | Grok 每张工具卡带 NO_COLOR 警告（见 [P09u](tickets/P09u-grok-force-color-no-color-warning.md)） |
+| P09v | **done**（`93a6c75, 9d38691`） · P2 | 修订后旧卡仍可确认，产生同名重复任务（见 [P09v](tickets/P09v-draft-revision-without-supersede.md)） |
+| P09w | **done**（`5c9f145, 7b94bdc`） · P3 | 回复误称草稿在生成期间被外部取消（见 [P09w](tickets/P09w-same-turn-supersede-label.md)） |
+| P09x | **done**（`8d06360`） · P3 | 回复次数与卡不符、出现状态码（见 [P09x](tickets/P09x-reply-count-and-status-codes.md)） |
+| P09y | **done**（`6129cbf`） · P3 | 用户看不到确认成功，易重复操作（见 [P09y](tickets/P09y-confirm-success-without-feedback.md)） |
 | P09z | P3 deferred | 无（风险记录）（见 [P09z](tickets/P09z-deferred-review-findings-1-3.md)） |
-| P09aa | P1 | 停止/空闲超时时 Grok 的暂存答案被丢弃（见 [P09aa](tickets/P09aa-grok-stop-drops-final-text.md)） |
-| P09ab | P1 | P09u 不完整：Grok 工具进程自设 NO_COLOR+FORCE_COLOR，Node 警告仍进工具卡（见 [P09ab](tickets/P09ab-grok-tool-env-node-color-warning.md)） |
-| P09ac | P2 | Profile 模型列表含不存在的 `grok-build`，错误被泛化（见 [P09ac](tickets/P09ac-grok-model-list-invalid.md)） |
-| P09ad | P1 | Grok 及其 shell 继承 bridge 全部进程环境（含凭据类变量）（见 [P09ad](tickets/P09ad-grok-env-inherits-bridge-secrets.md)） |
-| P09ae | P2 | Profile 访问模式不映射到 grok argv（read-only 仍 --always-approve）（见 [P09ae](tickets/P09ae-grok-access-mode-ignored.md)） |
-| P09af | P2 | Grok `thought` 被丢弃：CoT 为空，idle 计时视为静默（见 [P09af](tickets/P09af-grok-thought-dropped.md)） |
-| P09ag | P2 | Grok 恢复失败/未知模型被归为通用可重试失败（见 [P09ag](tickets/P09ag-grok-failure-signatures.md)） |
-| P09ah | P2 | 会议运行无 idle watchdog，挂起的 grok 无限期存活（见 [P09ah](tickets/P09ah-meeting-no-idle-watchdog.md)） |
+| P09aa | **done**（`4556ad8, 0b7009f, gate narrowed by 48874d4`） · P1 | 停止/空闲超时时 Grok 的暂存答案被丢弃（见 [P09aa](tickets/P09aa-grok-stop-drops-final-text.md)） |
+| P09ab | **done**（`738e145`） · P1 | P09u 不完整：Grok 工具进程自设 NO_COLOR+FORCE_COLOR，Node 警告仍进工具卡（见 [P09ab](tickets/P09ab-grok-tool-env-node-color-warning.md)） |
+| P09ac | **done**（`3dd6658`） · P2 | Profile 模型列表含不存在的 `grok-build`，错误被泛化（见 [P09ac](tickets/P09ac-grok-model-list-invalid.md)） |
+| P09ad | **done**（`4aca859, f5e14c1, revised by b4cda3f (P09az)`） · P1 | Grok 及其 shell 继承 bridge 全部进程环境（含凭据类变量）（见 [P09ad](tickets/P09ad-grok-env-inherits-bridge-secrets.md)） |
+| P09ae | **done**（`915c6f6`） · P2 | Profile 访问模式不映射到 grok argv（read-only 仍 --always-approve）（见 [P09ae](tickets/P09ae-grok-access-mode-ignored.md)） |
+| P09af | **done**（`1c4114b`） · P2 | Grok `thought` 被丢弃：CoT 为空，idle 计时视为静默（见 [P09af](tickets/P09af-grok-thought-dropped.md)） |
+| P09ag | **done**（`a2169ce`） · P2 | Grok 恢复失败/未知模型被归为通用可重试失败（见 [P09ag](tickets/P09ag-grok-failure-signatures.md)） |
+| P09ah | **done**（`74f31ec, follow-up 8949a2d (P09bb)`） · P2 | 会议运行无 idle watchdog，挂起的 grok 无限期存活（见 [P09ah](tickets/P09ah-meeting-no-idle-watchdog.md)） |
 | P09ai | P2 | 停止只信号 grok pid，孙进程（shell 工具）存活（见 [P09ai](tickets/P09ai-stop-leaves-grandchildren.md)） |
-| P09aj | P3 | 单行 JSONL 无大小上限地缓冲（见 [P09aj](tickets/P09aj-jsonl-line-unbounded.md)） |
-| P09ak | P3 | `read_file` 工具卡显示 JSON 原文；usage 事件发三次（见 [P09ak](tickets/P09ak-grok-readfile-blob-usage-dup.md)） |
-| P09al | P3 | ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离（见 [P09al](tickets/P09al-grok-strip-cr-bel-text.md)） |
-| P09am | P3 | 完整 prompt 与 rules 位于 argv（ps 可见）（见 [P09am](tickets/P09am-grok-prompt-on-argv.md)） |
+| P09aj | **done**（`abf36e5`） · P3 | 单行 JSONL 无大小上限地缓冲（见 [P09aj](tickets/P09aj-jsonl-line-unbounded.md)） |
+| P09ak | **done**（`c4443bc`） · P3 | `read_file` 工具卡显示 JSON 原文；usage 事件发三次（见 [P09ak](tickets/P09ak-grok-readfile-blob-usage-dup.md)） |
+| P09al | **done**（`123fff1`） · P3 | ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离（见 [P09al](tickets/P09al-grok-strip-cr-bel-text.md)） |
+| P09am | **done**（`2aa235d, dabb632`） · P3 | 完整 prompt 与 rules 位于 argv（ps 可见）（见 [P09am](tickets/P09am-grok-prompt-on-argv.md)） |
 | P09an | P3 deferred（合并后） | 失败终态丢失已缓存 usage，仅 usage 遥测（见 [P09an](tickets/P09an-grok-error-drops-usage.md)） |
 | P09ao | wontfix | statusless 完成更新中 `rawOutput: null` 未产生 tool_result（见 [P09ao](tickets/P09ao-grok-null-rawoutput-statusless.md)） |
-| P09ap | merged → P09aq | 404 签名误匹配任意 `404 Not Found`（见 [P09ap](tickets/P09ap-grok-404-signature-scope.md)） |
-| P09aq | P2 · 本轮唯一修复（Codex） | 失败分类输入错误：stderr `""` 不回退终态消息（CLI 无关，含 CRLF 与 404 收窄）（见 [P09aq](tickets/P09aq-grok-unknown-model-terminal-message.md)） |
-| P09ar | merged → P09aq | CRLF 被当作回车覆盖，Windows 输出变空行（见 [P09ar](tickets/P09ar-terminal-text-crlf.md)） |
+| P09ap | **done**（`9bd87b2, af33ded`） · merged → P09aq | 404 签名误匹配任意 `404 Not Found`（见 [P09ap](tickets/P09ap-grok-404-signature-scope.md)） |
+| P09aq | **done**（`9bd87b2, af33ded`） · P2 · 本轮唯一修复（Codex） | 失败分类输入错误：stderr `""` 不回退终态消息（CLI 无关，含 CRLF 与 404 收窄）（见 [P09aq](tickets/P09aq-grok-unknown-model-terminal-message.md)） |
+| P09ar | **done**（`9bd87b2, af33ded`） · merged → P09aq | CRLF 被当作回车覆盖，Windows 输出变空行（见 [P09ar](tickets/P09ar-terminal-text-crlf.md)） |
 | P09as | wontfix | 凭据透传 allowlist 未按 adapter 区分（见 [P09as](tickets/P09as-spawn-credential-allowlist-per-adapter.md)） |
-| P09at | superseded → P09bc | 继承 stdout 的后代进程在 drain 后未被终止（见 [P09at](tickets/P09at-process-tree-terminate-spared.md)） |
+| P09at | **fixed in code**（`2e64fa0, 0aea2d7`） · superseded → P09bc | 继承 stdout 的后代进程在 drain 后未被终止（见 [P09at](tickets/P09at-process-tree-terminate-spared.md)） |
 | P09au | superseded → P09bd | 完整 JSONL 行按 UTF-16 长度而非字节数检查（见 [P09au](tickets/P09au-jsonl-line-bytes.md)） |
 | P09av | P3 deferred（合并后） | 同名时间戳取自暂停/恢复等管理回执（见 [P09av](tickets/P09av-store-same-name-timestamp.md)） |
 | P09aw | P3 deferred（合并后） | `notice()`/`supersededByThisTurn()` 回执读取未防护（见 [P09aw](tickets/P09aw-reply-state-guard-notice-reads.md)） |
 | P09ax | P3（合并后） | 删除 jsonl.ts 旧版 statusless 完成分支（见 [P09ax](tickets/P09ax-grok-remove-statusless-branch.md)） |
-| P09ay | P1 | 停止后 final_text 共享闸门对所有 CLI/停止原因放行，policy-guard 停止可能发出被拦截文本（见 [P09ay](tickets/P09ay-run-outcome-final-text-gate-narrow.md)） |
-| P09az | P1 | 回退 spawn 环境 allowlist（静默剥离各 CLI 必需变量），保留 APP_SECRET 不透传（见 [P09az](tickets/P09az-spawn-env-revert-allowlist.md)） |
+| P09ay | **done**（`48874d4`） · P1 | 停止后 final_text 共享闸门对所有 CLI/停止原因放行，policy-guard 停止可能发出被拦截文本（见 [P09ay](tickets/P09ay-run-outcome-final-text-gate-narrow.md)） |
+| P09az | **done**（`b4cda3f`） · P1 | 回退 spawn 环境 allowlist（静默剥离各 CLI 必需变量），保留 APP_SECRET 不透传（见 [P09az](tickets/P09az-spawn-env-revert-allowlist.md)） |
 | P09ba | — | 不做（用户 2026-10-21） |
-| P09bb | P2 | controls.cfg 缺失时会议仍须有 idle 预算（见 [P09bb](tickets/P09bb-meeting-idle-budget-without-controls.md)） |
-| P09bc | P2 | SIGKILL 升级跳过持有 stdout 的进程，run 可能不结束（见 [P09bc](tickets/P09bc-process-tree-sigkill-spared.md)） |
+| P09bb | **done**（`8949a2d`） · P2 | controls.cfg 缺失时会议仍须有 idle 预算（见 [P09bb](tickets/P09bb-meeting-idle-budget-without-controls.md)） |
+| P09bc | **fixed in code**（`2e64fa0, 0aea2d7`） · P2 | SIGKILL 升级跳过持有 stdout 的进程，run 可能不结束（见 [P09bc](tickets/P09bc-process-tree-sigkill-spared.md)） |
 | P09bd | P3 | JSONL 8MB 上限按字符索引比较字节（纳入 P09au）（见 [P09bd](tickets/P09bd-jsonl-line-cap-bytes.md)） |
 
 - **#52 Codex 定向 review（`7514c1e`）分诊（2026-10-20）：** 本轮 #52 只修 P09aq（Codex，CLI 无关；并入 P09ar、P09ap）。P09an/at/au/av/aw 为 P3 合并后跟进；P09as、P09ao wontfix；P09ax 合并后删除遗留分支。复盘规则见 tickets/README.md。

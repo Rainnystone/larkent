@@ -1,6 +1,6 @@
 # Task 9aj — P09aj 单行 JSONL 无大小上限地缓冲
 
-**Status:** todo · bug · P3
+**Status:** done · fixed in #52 by abf36e5（2026-10-20） · bug · P3
 **Owner:** local Grok Build
 **Audit verdict:** PARTIAL（Grok Build 只读审计 G10，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

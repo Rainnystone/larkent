@@ -1,6 +1,6 @@
 # Task 9v — P09v 模型修订未确认草稿时未传 supersedesOperationId，旧卡仍有效并产生重复任务
 
-**Status:** todo · bug · P2 · follows P09p
+**Status:** done · fixed in #52 by 93a6c75, 9d38691（2026-10-20） · bug · P2
 **Owner:** Cursor Project
 **Delivers:** 修订未确认草稿时，即使模型忘记传 `supersedesOperationId`，旧草稿也会失效，不会产生重复任务。
 **Found in:** 真实飞书测试 bridge，代码 head `6dd0e44`（#52），2026-10-20 live 回归

@@ -1,6 +1,6 @@
 # Task 9p — P09p 草稿修订后旧确认卡仍有效，点「是」会重复建任务
 
-**Status:** todo · bug · P3
+**Status:** done · fixed in #52 by 0ccc762（2026-10-20） · bug · P3
 **Delivers:** 未确认的 automation 草稿被修订后，旧草稿作废，旧确认卡点击被拒绝或显示已被取代，不会产生重复任务。
 **Found in:** 真实飞书测试 bridge，代码 head `b4d67c6`（#52）全量回归，2026-10-20 live 复验
 **Worker class:** judgment

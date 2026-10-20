@@ -1,6 +1,6 @@
 # Task 09bb — P09bb 会议在缺少 controls.cfg 时仍须有 idle 预算
 
-**Status:** todo · test · P2（#52，保留修复）
+**Status:** done · fixed in #52 by 8949a2d（2026-10-20） · test
 **Owner:** Codex
 **Follow-up of:** [P09ah](P09ah-meeting-no-idle-watchdog.md)（修复提交 `74f31ec`）
 **Blocked by:** P09aq（同文件；待 P09aq 绿后一批交接）

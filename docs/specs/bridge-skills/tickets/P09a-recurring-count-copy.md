@@ -1,6 +1,6 @@
 # Task 9a — P09a 周期任务确认卡次数文案错误
 
-**Status:** ready-for-agent · bug · P2
+**Status:** done · fixed in #52 by 6ea64b9, b42504f（2026-10-19） · bug · P2
 **Delivers:** 周期 automation 确认卡展示的触发次数与实际排期一致；有结束时间时显示精确的“共 N 次”。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 真实飞书 E2E，候选版本 `0b55865`
 **Worker class:** mechanical

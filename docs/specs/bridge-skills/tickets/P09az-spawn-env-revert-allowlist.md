@@ -1,6 +1,6 @@
 # Task 09az — P09az #52 回退 spawn 环境 allowlist，只保留 bridge 自身密钥拒绝
 
-**Status:** todo · bug · P1（#52）
+**Status:** done · fixed in #52 by b4cda3f; live FX-az PASS @b4cda3f（2026-10-20） · bug · P1
 **Owner:** Codex
 **Follow-up of:** [P09ad](P09ad-grok-env-inherits-bridge-secrets.md)（修复提交 `f5e14c1`、`4aca859`）
 **Blocked by:** P09aq（同文件；待 P09aq 绿后一批交接）

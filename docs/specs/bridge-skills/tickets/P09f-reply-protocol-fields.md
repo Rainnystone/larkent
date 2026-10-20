@@ -1,6 +1,6 @@
 # Task 9f — P09f 最终回复原样搬运协议字段
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by c18b168（2026-10-20） · bug · P3
 **Delivers:** 自动化相关回复用用户语言说明状态（如“已发确认卡，点「是」后生效”），不原样输出 `waiting-confirmation`、`applied: false` 等机器字段。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 场景 3，候选版本 `0b55865`（Grok，其他 CLI 类似）
 **Worker class:** mechanical（skill 文案）

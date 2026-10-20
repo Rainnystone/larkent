@@ -1,6 +1,6 @@
 # Task 9g — P09g 替换确认卡“将删除”文案易误解
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by b79a9fc（2026-10-20） · bug · P3
 **Delivers:** 替换确认卡明确表达“用新设置替换 #N（确认后编号变为新号）”，不让用户以为任务将被删掉。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 续会话替换，候选版本 `0b55865`（Antigravity、Cursor、Kimi 均出现）
 **Worker class:** mechanical

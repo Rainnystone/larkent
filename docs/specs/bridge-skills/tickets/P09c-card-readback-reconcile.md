@@ -1,6 +1,6 @@
 # Task 9c — P09c 发卡结果未知时，回读对账永远绑不上卡片
 
-**Status:** ready-for-agent · bug · P2
+**Status:** done · fixed in #52 by 3930464（2026-10-19） · bug · P2
 **Delivers:** 确认卡发送结果未知（`sending`）后，bridge 能用飞书回读找到已送达的卡并绑定草稿；该卡点击可正常确认，operation 不再永久停在 unknown。
 **Found in:** [P09](P09-real-feishu-acceptance.md) F7，候选版本 `0b55865`（F7 结果：fail）
 **Worker class:** implementation（飞书行为已经实测确认，下文足够实现，不需要飞书访问权限）

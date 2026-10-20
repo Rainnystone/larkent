@@ -1,6 +1,6 @@
 # Task 9d — P09d showToolCalls 原样展示内部 bridge tool 调用
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by d24d781, c832d21, 65f2c19, 982b01d（2026-10-20） · bug · P3
 **Delivers:** `showToolCalls` 开启时，bridge tool（`lark-channel-bridge tool`）调用在工具进度卡中折叠为友好标签（如“自动化：list”“自动化：create”），不展示 shell 命令、客户端路径和协议 JSON。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 真实飞书 E2E，候选版本 `0b55865`（Cursor、Kimi、Grok）
 **Worker class:** mechanical

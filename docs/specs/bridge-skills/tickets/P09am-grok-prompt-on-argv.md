@@ -1,6 +1,6 @@
 # Task 9am — P09am 完整 prompt 与 rules 位于 argv（ps 可见）
 
-**Status:** todo · bug · P3
+**Status:** done · fixed in #52 by 2aa235d, dabb632（2026-10-20） · bug · P3
 **Owner:** local Grok Build
 **Audit verdict:** PARTIAL（Grok Build 只读审计 G13，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

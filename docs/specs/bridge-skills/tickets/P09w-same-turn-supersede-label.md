@@ -1,6 +1,6 @@
 # Task 9w — P09w 同一轮内被取代的草稿被标为「回复生成期间已失效」
 
-**Status:** todo · bug · P3
+**Status:** done · fixed in #52 by 5c9f145, 7b94bdc（2026-10-20） · bug · P3
 **Owner:** Cursor Project
 **Delivers:** 同一轮回复中由模型自己取代的草稿不再显示“回复生成期间已失效”提示。
 **Found in:** 真实飞书测试 bridge，代码 head `6dd0e44`（#52），2026-10-20 live 回归

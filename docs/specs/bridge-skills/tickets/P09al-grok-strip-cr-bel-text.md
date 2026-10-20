@@ -1,6 +1,6 @@
 # Task 9al — P09al ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离
 
-**Status:** todo · bug · P3
+**Status:** done · fixed in #52 by 123fff1（2026-10-20） · bug · P3
 **Owner:** local Grok Build
 **Audit verdict:** PARTIAL（Grok Build 只读审计 G12，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

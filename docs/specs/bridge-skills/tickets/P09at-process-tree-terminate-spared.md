@@ -1,6 +1,6 @@
 # Task 9at — P09at 继承 stdout 的后代进程在 drain 后未被终止
 
-**Status:** superseded → [P09bc](P09bc-process-tree-sigkill-spared.md)
+**Status:** fixed in code · fixed in #52 by 2e64fa0, 0aea2d7（superseded → P09bc）；CI green @0aea2d7，live FX-bc re-verify pending（2026-10-21）
 **Deferred reason:** spared PID 仅出现在 Linux；读端关闭后写入者会收到 SIGPIPE 退出。（2026-10-20 用户确认）
 **Owner:** Codex（CLI 无关，邮件交接）
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）

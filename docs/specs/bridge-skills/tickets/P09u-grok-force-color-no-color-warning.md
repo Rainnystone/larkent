@@ -1,6 +1,6 @@
 # Task 9u — P09u Grok shell 自带 FORCE_COLOR，与 bridge 的 NO_COLOR 冲突，Node 警告进入工具卡
 
-**Status:** todo · bug · P2/P3 · reopens P09r
+**Status:** done · fixed in #52 by 77c62b3; live FX-u PASS @b4cda3f（2026-10-20） · bug · P2/P3
 **Owner:** local Grok Build
 **Delivers:** Grok 工具卡不再出现 `The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set` 警告。
 **Found in:** 真实飞书测试 bridge，代码 head `6dd0e44`（#52），2026-10-20 live 回归

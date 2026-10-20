@@ -1,6 +1,6 @@
 # Task 9t — P09t Grok 原始字符串 / 字节数组 rawOutput 未剥离 ANSI
 
-**Status:** todo · bug · P2
+**Status:** done · fixed in #52 by 567fe36; live FX-t PASS @b4cda3f（2026-10-20） · bug · P2
 **Owner:** local Grok Build
 **Delivers:** 详细 CoT 与工具卡中 Grok 工具输出不含 ANSI 转义序列。
 **Found in:** 真实飞书测试 bridge，代码 head `6dd0e44`（#52），2026-10-20 live 回归

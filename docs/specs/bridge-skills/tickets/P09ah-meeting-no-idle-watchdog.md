@@ -1,6 +1,6 @@
 # Task 9ah — P09ah 会议运行无 idle watchdog，挂起的 grok 无限期存活
 
-**Status:** todo · bug · P2
+**Status:** done · fixed in #52 by 74f31ec, follow-up 8949a2d (P09bb)（2026-10-20） · bug · P2
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（Grok Build 只读审计 G8，复核于 `93a6c75`（#52））
 **Found in:** Grok CLI 只读审计（grok 1.0.41），2026-10-20

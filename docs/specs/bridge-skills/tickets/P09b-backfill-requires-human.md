@@ -1,6 +1,6 @@
 # Task 9b — P09b 重连补发的人工消息被判为非人工，automation 全部不可用
 
-**Status:** ready-for-agent · bug · P2
+**Status:** done · fixed in #52 by d661277（2026-10-19） · bug · P2
 **Delivers:** 桥重连/重启后通过 backfill 补发的真人消息，与实时到达的同一消息一样按人工 IM run 处理，automation.* 可用。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 真实飞书 E2E，候选版本 `0b55865`（kimi、grok 两个 profile 均复现）
 **Worker class:** mechanical

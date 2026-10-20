@@ -1,6 +1,6 @@
 # Task 09bc — P09bc SIGKILL 升级跳过持有 stdout 的进程，run 可能永不结束
 
-**Status:** todo · test/bug · P2（#52，保留修复）
+**Status:** fixed in code · fixed in #52 by 2e64fa0, 0aea2d7；CI green @0aea2d7，live FX-bc re-verify pending（2026-10-21） · test/bug
 **Owner:** Codex
 **Follow-up of:** [P09ai](P09ai-stop-leaves-grandchildren.md)（修复提交 `820d0af`、`527fc2d`、`7514c1e`）；关联 [P09at](P09at-process-tree-terminate-spared.md)
 **Blocked by:** P09aq（同文件；待 P09aq 绿后一批交接）

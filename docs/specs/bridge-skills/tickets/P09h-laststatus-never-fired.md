@@ -1,6 +1,6 @@
 # Task 9h — P09h 从未触发的任务 lastStatus 显示为 ok
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by 672b5fa（2026-10-19） · bug · P3
 **Delivers:** 新建、从未触发的任务在 `automation.list` 与看板中显示“尚未运行”，不再显示为上次运行成功。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 列出本群自动化，候选版本 `0b55865`（Antigravity、Kimi 回复中出现）
 **Worker class:** mechanical

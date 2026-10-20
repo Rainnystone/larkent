@@ -1,6 +1,6 @@
 # Task 9l — P09l Grok 工具进度卡把 Bash 输出显示为十进制字节数组
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by 5b398a2（2026-10-19） · bug · P3
 **Delivers:** Grok 适配器的工具结果（含 `{type, output: number[]}`、Uint8Array、Buffer 形态）在工具进度卡中显示为可读 UTF-8 文本。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 第 3 轮（场景 8、场景 1 续会话），候选版本 `0b55865`（Grok Build）
 **Worker class:** mechanical

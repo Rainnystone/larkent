@@ -1,6 +1,6 @@
 # Task 9aq — P09aq 失败分类输入错误：stderr 为空串时不回退终态消息（CLI 无关）
 
-**Status:** todo · bug · P2 · 本轮 #52 唯一修复
+**Status:** done · fixed in #52 by 9bd87b2, af33ded（2026-10-20） · bug · P2
 **Owner:** Codex（CLI 无关）
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20

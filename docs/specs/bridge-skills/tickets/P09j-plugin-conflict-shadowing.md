@@ -1,6 +1,6 @@
 # Task 9j — P09j 同名冲突包遮蔽合法包且无法消歧
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by 14eb356, 5e266e3（2026-10-20） · bug · P3
 **Delivers:** 同名插件包冲突时，用户/模型仍能通过明确的选择器（version 或 reference）选中目标包；冲突包不让合法包整体消失。
 **Found in:** [P09](P09-real-feishu-acceptance.md) 场景 8，候选版本 `0b55865`（Kimi）
 **Worker class:** judgment（选择器形态需与 D2/D3 一致）

@@ -1,6 +1,6 @@
 # Task 9s — P09s Grok 无 status 的 tool_call_update 被当作工具结果，shell 退出码被忽略
 
-**Status:** todo · bug · P2 · reopens P09o
+**Status:** done · fixed in #52 by e4459f1; live FX-s PASS @b4cda3f（2026-10-20） · bug · P2
 **Owner:** local Grok Build
 **Delivers:** Grok shell 非 0 退出码在工具卡显示为失败；无 status 的中间更新不再结束工具调用。
 **Found in:** 真实飞书测试 bridge，代码 head `6dd0e44`（#52），2026-10-20 live 回归

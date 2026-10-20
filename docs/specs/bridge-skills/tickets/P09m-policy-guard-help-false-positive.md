@@ -1,6 +1,6 @@
 # Task 9m — P09m 只读 `lark-cli auth logout --help` 被误判为 auth-config，任务被暂停
 
-**Status:** ready-for-agent · bug · P3
+**Status:** done · fixed in #52 by 0494223, d3425b7, 2daa863（2026-10-20） · bug · P3
 **Delivers:** 自动 run 策略守卫不把 `--help`/`-h` 等只读帮助调用判为认证/身份配置变更；守卫命中时 `auth-config` 代码对 agent 可见，而不仅在日志中。
 **Found in:** [P09](P09-real-feishu-acceptance.md) F4 补测，候选版本 `0b55865`（Grok Build）
 **Worker class:** mechanical

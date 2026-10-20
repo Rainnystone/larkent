@@ -1,6 +1,6 @@
 # Task 09ay — P09ay 收窄停止后 final_text 放行（共享闸门过宽）
 
-**Status:** todo · bug · P1（#52）
+**Status:** done · fixed in #52 by 48874d4; live FX-ay1 PASS @b4cda3f（2026-10-20） · bug · P1
 **Owner:** Codex
 **Follow-up of:** [P09aa](P09aa-grok-stop-drops-final-text.md)（修复提交 `4556ad8`、`0b7009f`）
 **Blocked by:** P09aq（同文件；待 P09aq 绿后一批交接）

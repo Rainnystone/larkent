@@ -1,6 +1,6 @@
 # Task 9r — P09r 工具卡出现 ANSI 颜色转义码
 
-**Status:** todo · bug · P3
+**Status:** done · fixed in #52 by ce25d90（2026-10-20） · bug · P3
 **Delivers:** 工具卡输出不含 ANSI 转义序列，也不出现 Node 的 `NO_COLOR` 警告。
 **Found in:** 真实飞书测试 bridge，代码 head `b4d67c6`（#52）全量回归
 **Worker class:** mechanical
