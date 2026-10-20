@@ -69,7 +69,7 @@ export interface AutomationItem {
 export interface AutomationOperation {
   operationId: string;
   aliases?: string[];
-  /** Explicit revision of one pending create operation; never inferred from chat/name. */
+  /** Pending create this receipt closed. Explicit selector, or same-name auto-supersede. */
   supersedesOperationId?: string;
   profile: string;
   chatId: string;
@@ -81,6 +81,8 @@ export interface AutomationOperation {
   /** Exact resolved confirmation-card title when confirmation was rejected. */
   cardStatus?: string;
   taskId?: number;
+  /** Wall time when the receipt became applied; used to tell leftovers from later independent creates. */
+  appliedAt?: number;
   dispatchedCount: number;
   /** false means the retained count is a lower bound for an existing task. */
   dispatchedCountKnown?: boolean;
@@ -563,22 +565,58 @@ export class AutomationsStore {
     const draftId = `draft-${this.now()}-${randomBytes(4).toString('hex')}`;
     const createdAt = this.now();
     const draft = draftFromInput(input, draftId, createdAt);
+    const closed: AutomationOperation[] = [];
     if (operation?.supersedesOperationId) {
       // No await between checking the live target and closing it. A concurrent
       // human confirmation either wins first, or sees the invalidated receipt.
       const prior = this.operations.find(entry => entry.operationId === operation.supersedesOperationId || entry.aliases?.includes(operation.supersedesOperationId!));
       const oldDraft = this.drafts.find(entry => entry.draftId === prior?.draftId);
-      if (!prior || prior.state !== 'received' || prior.profile !== operation.profile || prior.chatId !== operation.chatId
-        || !oldDraft || oldDraft.op !== 'create' || draft.op !== 'create' || oldDraft.createdBy !== draft.createdBy
-        || oldDraft.chatId !== draft.chatId || oldDraft.createdAt + AUTOMATIONS_DRAFT_TTL_MS <= createdAt
-        || oldDraft.delivery?.state === 'sending') throw new DraftSupersessionConflict();
-      prior.state = 'not-applied'; prior.code = 'draft-superseded';
-      this.drafts = this.drafts.filter(entry => entry.draftId !== oldDraft.draftId);
+      if (!canCloseCreateDraft(prior, oldDraft, draft, operation, createdAt)) throw new DraftSupersessionConflict();
+      this.closeSupersededDraft(prior!, oldDraft!);
+      closed.push(prior!);
     }
-    if (operation) this.operations.push({ ...operation, draftId, createdAt, state: 'received', dispatchedCount: 0 });
+    if (draft.op === 'create' && operation) {
+      const name = draft.name.trim();
+      for (const prior of this.operations) {
+        if (closed.includes(prior)) continue;
+        const oldDraft = this.drafts.find(entry => entry.draftId === prior.draftId);
+        if (!oldDraft || oldDraft.op !== 'create' || oldDraft.name.trim() !== name) continue;
+        if (prior.profile !== operation.profile || prior.chatId !== operation.chatId) continue;
+        if (oldDraft.createdBy !== draft.createdBy || oldDraft.chatId !== draft.chatId) continue;
+        if (oldDraft.createdAt + AUTOMATIONS_DRAFT_TTL_MS <= createdAt) continue;
+        if (oldDraft.delivery?.state === 'sending' || prior.state !== 'received') throw new DraftSupersessionConflict();
+        this.closeSupersededDraft(prior, oldDraft);
+        closed.push(prior);
+      }
+    }
+    const recordedSupersede = operation?.supersedesOperationId ?? closed.at(-1)?.operationId;
+    if (operation) {
+      this.operations.push({
+        ...operation,
+        ...(recordedSupersede ? { supersedesOperationId: recordedSupersede } : {}),
+        draftId,
+        createdAt,
+        state: 'received',
+        dispatchedCount: 0,
+      });
+    }
     this.drafts.push(draft);
     await this.persistNow();
     return cloneDraft(draft);
+  }
+
+  private closeSupersededDraft(prior: AutomationOperation, oldDraft: AutomationDraft): void {
+    prior.state = 'not-applied';
+    prior.code = 'draft-superseded';
+    this.drafts = this.drafts.filter(entry => entry.draftId !== oldDraft.draftId);
+  }
+
+  appliedOperationAppliedAt(taskId: number): number | undefined {
+    this.assertMutable();
+    const applied = this.operations
+      .filter(entry => entry.state === 'applied' && entry.taskId === taskId)
+      .map(entry => entry.appliedAt ?? entry.createdAt);
+    return applied.length ? Math.min(...applied) : undefined;
   }
 
   getOperation(operationId: string): AutomationOperation | undefined {
@@ -813,7 +851,7 @@ export class AutomationsStore {
   private settleAppliedOperation(operationId: string, taskId: number, dispatchedCount: number, dispatchedCountKnown = true): void {
     const operation = this.operations.find(entry => entry.operationId === operationId);
     if (!operation || operation.state !== 'received') throw new Error('operation is not awaiting confirmation');
-    operation.state = 'applied'; operation.taskId = taskId; operation.dispatchedCount = dispatchedCount;
+    operation.state = 'applied'; operation.taskId = taskId; operation.appliedAt = this.now(); operation.dispatchedCount = dispatchedCount;
     if (!dispatchedCountKnown) operation.dispatchedCountKnown = false;
     else delete operation.dispatchedCountKnown;
     this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
@@ -1175,6 +1213,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     operationId: raw.operationId, profile: raw.profile, chatId: raw.chatId, fingerprint: raw.fingerprint, draftId: raw.draftId,
     ...(raw.supersedesOperationId ? { supersedesOperationId: raw.supersedesOperationId as string } : {}),
     createdAt: raw.createdAt, state: raw.state as AutomationOperation['state'], dispatchedCount: raw.dispatchedCount as number,
+    ...(isFiniteNumber(raw.appliedAt) ? { appliedAt: raw.appliedAt as number } : {}),
     ...(raw.dispatchedCountKnown === false ? { dispatchedCountKnown: false } : {}),
     ...(aliases ? { aliases: aliases as string[] } : {}), ...(raw.taskId ? { taskId: raw.taskId as number } : {}), ...(raw.code ? { code: raw.code as string } : {}),
     ...(raw.cardStatus ? { cardStatus: raw.cardStatus as string } : {}),
@@ -1513,6 +1552,19 @@ function parseTargetSnapshot(raw: unknown): AutomationTargetSnapshot | undefined
     nextFireLabel: raw.nextFireLabel,
     endLabel: raw.endLabel,
   };
+}
+
+function canCloseCreateDraft(
+  prior: AutomationOperation | undefined,
+  oldDraft: AutomationDraft | undefined,
+  draft: AutomationDraft,
+  operation: RegisterAutomationOperationInput,
+  createdAt: number,
+): boolean {
+  return Boolean(prior && prior.state === 'received' && prior.profile === operation.profile && prior.chatId === operation.chatId
+    && oldDraft && oldDraft.op === 'create' && draft.op === 'create' && oldDraft.createdBy === draft.createdBy
+    && oldDraft.chatId === draft.chatId && oldDraft.createdAt + AUTOMATIONS_DRAFT_TTL_MS > createdAt
+    && oldDraft.delivery?.state !== 'sending');
 }
 
 function draftFromInput(input: SaveAutomationDraftInput, draftId: string, createdAt: number): AutomationDraft {

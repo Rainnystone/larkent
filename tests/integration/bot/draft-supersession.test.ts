@@ -23,6 +23,26 @@ function lastConfirmation(h: Awaited<ReturnType<typeof harness>>) {
   return { messageId: h.store.listDrafts().at(-1)!.cardMessageId!, value: automationButton(sent.content, 'auto.confirm') };
 }
 
+it('auto-supersedes a same-name revision that omits supersedesOperationId and rejects the old card', async () => {
+  const h = await harness(); let originalId = ''; let revisionId = '';
+  await h.turn(async call => { originalId = (await call('automation.create', reminder)).data.operationId; });
+  const old = lastConfirmation(h);
+  await h.turn(async call => {
+    const result = await call('automation.create', revised);
+    expect(result).toMatchObject({ category: 'waiting-confirmation' }); revisionId = result.data.operationId;
+    expect(result.data.supersedesOperationId).toBe(originalId);
+    expect(await call('automation.operation.get', { operationId: originalId })).toMatchObject({ category: 'execution-failed', code: 'draft-superseded', data: { applied: false } });
+  });
+  const next = lastConfirmation(h);
+  await vi.waitFor(() => expect(h.channel.updatedCards.some(item => item.messageId === old.messageId && JSON.stringify(item.card).includes('已被新卡取代'))).toBe(true));
+  expect(await h.channel.handlers.cardAction?.(automationClick(old.messageId, old.value))).toMatchObject({ toast: { type: 'error', content: '此确认已失效。' } });
+  expect(await h.channel.handlers.cardAction?.(automationClick(next.messageId, next.value))).toMatchObject({ toast: { type: 'success' } });
+  await h.turn(async call => {
+    expect((await call('automation.list')).data.tasks).toEqual([expect.objectContaining({ name: reminder.name, schedule: revised.schedule })]);
+    expect(await call('automation.operation.get', { operationId: revisionId })).toMatchObject({ category: 'applied' });
+  });
+}, 30000);
+
 it('revises a pending draft, invalidates its old card and confirms only the new schedule after restart', async () => {
   const h = await harness(); let originalId = ''; let revisionId = '';
   await h.turn(async call => { originalId = (await call('automation.create', reminder)).data.operationId; });
@@ -46,11 +66,12 @@ it('revises a pending draft, invalidates its old card and confirms only the new 
 }, 30000);
 
 
-it('preserves independent same-name drafts and refuses another actor, chat or profile', async () => {
+it('preserves different-name drafts and refuses another actor, chat or profile', async () => {
   const h = await harness(); let originalId = ''; let independentId = '';
+  const independent = { ...revised, name: 'Evening reminder' };
   await h.turn(async call => {
     originalId = (await call('automation.create', reminder)).data.operationId;
-    independentId = (await call('automation.create', revised)).data.operationId;
+    independentId = (await call('automation.create', independent)).data.operationId;
   });
   await h.turn(async call => {
     expect(await call('automation.create', { ...reminder, taskText: 'Another actor', supersedesOperationId: originalId })).toMatchObject({ category: 'validation-failed', code: 'draft-supersession-conflict' });

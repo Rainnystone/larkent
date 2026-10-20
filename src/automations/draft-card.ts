@@ -19,6 +19,10 @@ export function draftConfirmedStatus(id: number): string {
   return `已确认 #${id}`;
 }
 
+export function draftSameNameExistsStatus(id: number): string {
+  return `已有同名任务 #${id}，此确认已失效`;
+}
+
 export function draftDeletedStatus(id: number): string {
   return `已删除 #${id}`;
 }

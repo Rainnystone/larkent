@@ -33,6 +33,7 @@ import {
   draftConfirmedStatus,
   draftDeletedStatus,
   draftReplacedStatus,
+  draftSameNameExistsStatus,
   draftTargetGoneStatus,
   draftTargetChangedStatus,
   DRAFT_SETTLED_CANCELLED,
@@ -1021,6 +1022,12 @@ async function confirmCreateDraft(
   draft: Exclude<AutomationDraft, DeleteAutomationDraft | ReplaceAutomationDraft>,
 ): Promise<AutomationConfirmOutcome> {
   if (!ctx.automations || draft.pendingRecurring) return confirmInvalid();
+  const conflict = findSameNameCreateConflict(ctx.automations, draft);
+  if (conflict) {
+    const status = draftSameNameExistsStatus(conflict.id);
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, 'same-name-confirmed', status);
+    return { ok: false, status, toast: status };
+  }
   const item = await ctx.automations.create({
     ...(draft.operationId ? { operationId: draft.operationId } : {}),
     taskType: draft.taskType,
@@ -1119,6 +1126,15 @@ async function confirmReplaceDraft(
 
 function confirmInvalid(): AutomationConfirmOutcome {
   return { ok: false, status: DRAFT_SETTLED_CANCELLED, toast: AUTO_INVALID_HINT };
+}
+
+function findSameNameCreateConflict(
+  store: AutomationsStore,
+  draft: Exclude<AutomationDraft, DeleteAutomationDraft | ReplaceAutomationDraft>,
+): AutomationItem | undefined {
+  const name = draft.name.trim();
+  return store.list().find(item => item.chatId === draft.chatId && item.createdBy === draft.createdBy
+    && item.name.trim() === name && (store.appliedOperationAppliedAt(item.id) ?? 0) >= draft.createdAt);
 }
 
 function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): AutomationScheduleVerdict {

@@ -85,17 +85,26 @@ export async function createAutomationOperation(params: Record<string, unknown>,
       }
       const nextFireAt = schedule ? nextFireAfter(schedule, at) : 0;
       if (schedule && !nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
+      const name = (params.name as string).trim();
+      const staleDrafts = new Map(context.store!.listDrafts()
+        .filter(entry => entry.op === 'create' && entry.createdBy === context.actorId && entry.chatId === context.chatId && entry.name.trim() === name)
+        .map(entry => [entry.draftId, entry]));
       const superseded = typeof params.supersedesOperationId === 'string' ? context.store!.getOperation(params.supersedesOperationId) : undefined;
-      const oldDraft = superseded ? context.store!.getOperationDraft(superseded.draftId) : undefined;
+      const explicitOld = superseded ? context.store!.getOperationDraft(superseded.draftId) : undefined;
+      if (explicitOld) staleDrafts.set(explicitOld.draftId, explicitOld);
       const draft = await context.store!.saveDraft({
         taskType: params.taskType, ...(cwd ? { cwd } : {}), operationId: operationId as string, cardReply: context.cardReply, schedule: pending ?? schedule!, timezone,
         startAt,
         ...(pending ? { pendingRecurring: pending } : { endAt }),
-        nextFireAt, name: params.name.trim(), taskText: params.taskText.trim(), chatId: context.chatId, createdBy: context.actorId,
+        nextFireAt, name, taskText: params.taskText.trim(), chatId: context.chatId, createdBy: context.actorId,
       }, { operationId: operationId as string, profile: context.profile, chatId: context.chatId, fingerprint,
         ...(typeof params.supersedesOperationId === 'string' ? { supersedesOperationId: params.supersedesOperationId } : {}),
       });
-      if (oldDraft) scheduleDraftCardSettle(context.drafts!.channel, oldDraft, DRAFT_SETTLED_SUPERSEDED);
+      for (const oldDraft of staleDrafts.values()) {
+        if (oldDraft.cardMessageId && !context.store!.getDraft(oldDraft.draftId)) {
+          scheduleDraftCardSettle(context.drafts!.channel, oldDraft, DRAFT_SETTLED_SUPERSEDED);
+        }
+      }
       await flushDraftCardOnce(context.drafts!, draft.draftId, at);
       return automationOperationResult(context.store!.getOperation(operationId as string)!, context);
     } catch (error) {
