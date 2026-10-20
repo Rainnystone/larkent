@@ -19,7 +19,7 @@ import {
 } from '../agent/prompt';
 import {
   cardUserMessage,
-  cliFailureText,
+  cliFailureInput,
   matchCliSignature,
   NETWORK_TRANSIENT_SIGNATURES,
   noteUnclassifiedStderr,
@@ -3159,13 +3159,12 @@ async function processAgentStream(
       const prevFooter = state.footer;
       state = reduce(state, evt);
       if (evt.type === 'error' && state.terminal === 'error') {
-        const stderrTail = cliFailureText(handle.run.stderrSnapshot, evt.message);
-        const matched = matchCliSignature(stderrTail, signatures);
+        const failure = cliFailureInput(handle.run.stderrSnapshot, evt.message, signatures);
+        const matched = matchCliSignature(failure.stderrTail, failure.signatures);
         const early = deriveRunOutcome({
           stopRequest: handle.stopRequest,
           terminalEvent: evt,
-          stderrTail,
-          signatures,
+          ...failure,
           exit: handle.run.exit,
           signal: handle.run.signal,
           outageOverlapped: reliability.outageOverlapped?.(),
@@ -3190,21 +3189,20 @@ async function processAgentStream(
   // watchdog or interrupt could land, don't clobber it — that real terminal
   // wins. This avoids "claude finished but flush was slow → timer fired
   // mid-flush → user sees 'idle_timeout' on a successful run".
-  const stderrTail = cliFailureText(handle.run.stderrSnapshot,
-    lastTerminal?.type === 'error' ? lastTerminal.message : undefined);
-  const matched = matchCliSignature(stderrTail, signatures);
+  const failure = cliFailureInput(handle.run.stderrSnapshot,
+    lastTerminal?.type === 'error' ? lastTerminal.message : undefined, signatures);
+  const matched = matchCliSignature(failure.stderrTail, failure.signatures);
   const outcome = deriveRunOutcome({
     stopRequest: handle.stopRequest,
     terminalEvent: lastTerminal,
-    stderrTail,
-    signatures,
+    ...failure,
     exit: handle.run.exit,
     signal: handle.run.signal,
     outageOverlapped: reliability.outageOverlapped?.(),
   });
   noteUnclassifiedStderr({
     outcome,
-    stderrTail,
+    stderrTail: failure.stderrTail,
     signature: matched,
     agent: reliability.agent,
   });

@@ -58,11 +58,17 @@ export const NETWORK_TRANSIENT_SIGNATURES: readonly CliSignature[] = Object.free
   },
 ]);
 
-/** Failure signatures may arrive on stderr or in a terminal protocol event. */
-export function cliFailureText(stderrSnapshot?: string, terminalMessage?: string): string {
-  return [stderrSnapshot, terminalMessage]
+/** Combine both failure sources without changing an existing stderr match. */
+export function cliFailureInput(
+  stderrSnapshot: string | undefined,
+  terminalMessage: string | undefined,
+  signatures: readonly CliSignature[] | undefined,
+): { stderrTail: string; signatures: readonly CliSignature[] | undefined } {
+  const stderrTail = [stderrSnapshot, terminalMessage]
     .filter((text): text is string => Boolean(text?.trim()))
     .join('\n');
+  const existing = matchCliSignature(stderrSnapshot, signatures);
+  return { stderrTail, signatures: existing ? [existing] : signatures };
 }
 
 export function matchCliSignature(

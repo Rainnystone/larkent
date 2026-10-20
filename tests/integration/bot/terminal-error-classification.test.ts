@@ -40,6 +40,8 @@ const CASES: readonly { name: string; kind: 'grok' | 'cursor'; stderr: string; m
     copy: 'CLI 登录已失效，需要重新登录后再试', outcome: 'failed:auth-required' },
   { name: 'nonempty stderr retains its authentication classification', kind: 'cursor', stderr: CURSOR_ERROR, message: 'Synthetic terminal failure', snapshotReady: true,
     copy: 'CLI 登录已失效，需要重新登录后再试', outcome: 'failed:auth-required' },
+  { name: 'existing stderr authentication wins over a conflicting terminal signature', kind: 'cursor', stderr: CURSOR_ERROR, message: 'RetriableError: Connection stalled repeatedly', snapshotReady: true,
+    copy: 'CLI 登录已失效，需要重新登录后再试', outcome: 'failed:auth-required' },
 ];
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => {

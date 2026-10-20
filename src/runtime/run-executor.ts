@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { cliFailureText, type CliSignature } from '../agent/cli-signatures';
+import { cliFailureInput, type CliSignature } from '../agent/cli-signatures';
 import { descriptorFor, isAgentKind } from '../agent/registry';
 import {
   mergeAgentOptions,
@@ -343,12 +343,11 @@ function observeRunEvents(
         if (event.type === 'error') {
           const stopRequest = opts.handle().stopRequest ?? stopRequestFromTerminal(event);
           const signatures = opts.stderrSignatures?.();
-          const stderrTail = cliFailureText(opts.handle().run.stderrSnapshot, event.message);
+          const failure = cliFailureInput(opts.handle().run.stderrSnapshot, event.message, signatures);
           const outcome = deriveRunOutcome({
             stopRequest: opts.handle().stopRequest,
             terminalEvent: event,
-            stderrTail,
-            signatures,
+            ...failure,
             exit: opts.handle().run.exit,
             signal: opts.handle().run.signal,
           });
