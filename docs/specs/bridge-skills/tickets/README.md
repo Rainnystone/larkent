@@ -65,7 +65,7 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09al](P09al-grok-strip-cr-bel-text.md) | Bug P3（owner: local Grok Build）：ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离 | Grok CLI 只读审计 |
 | [P09am](P09am-grok-prompt-on-argv.md) | Bug P3（owner: local Grok Build）：完整 prompt 与 rules 位于 argv（ps 可见） | Grok CLI 只读审计 |
 | [P09an](P09an-grok-error-drops-usage.md) | Bug P2（owner: local Grok Build）：失败终态（translateError/fail）丢失已缓存 usage | #52 Codex 定向 review（`7514c1e`） |
-| [P09ao](P09ao-grok-null-rawoutput-statusless.md) | Bug P3 deferred（owner: local Grok Build）：statusless 完成更新中 `rawOutput: null` 未产生 tool_result | #52 Codex 定向 review（`7514c1e`） |
+| [P09ao](P09ao-grok-null-rawoutput-statusless.md) | Wontfix（owner: local Grok Build）：statusless 完成更新中 `rawOutput: null` 未产生 tool_result | #52 Codex 定向 review（`7514c1e`） |
 | [P09ap](P09ap-grok-404-signature-scope.md) | Bug P3 deferred（owner: local Grok Build）：404 签名误匹配任意 `404 Not Found` | #52 Codex 定向 review（`7514c1e`） |
 | [P09aq](P09aq-grok-unknown-model-terminal-message.md) | Bug P2（owner: local Grok Build）：stderr 为空串时 unknown-model 未用终态消息分类 | #52 Codex 定向 review（`7514c1e`） |
 | [P09ar](P09ar-terminal-text-crlf.md) | Bug P1（owner: local Grok Build）：CRLF 被当作回车覆盖，Windows 输出变空行 | #52 Codex 定向 review（`7514c1e`） |
@@ -74,6 +74,9 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09au](P09au-jsonl-line-bytes.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：完整 JSONL 行按 UTF-16 长度而非字节数检查 | #52 Codex 定向 review（`7514c1e`） |
 | [P09av](P09av-store-same-name-timestamp.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：同名时间戳取自暂停/恢复等管理回执 | #52 Codex 定向 review（`7514c1e`） |
 | [P09aw](P09aw-reply-state-guard-notice-reads.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：`notice()`/`supersededByThisTurn()` 回执读取未防护 | #52 Codex 定向 review（`7514c1e`） |
+| [P09ax](P09ax-grok-remove-statusless-branch.md) | Chore P3（owner: local Grok Build，#52 合并后）：删除 jsonl.ts 旧版 statusless 完成分支 | P09ao 分诊 |
+
+> **分诊原则：** 票据按第一性原理、面向未来判断；不为过时的 CLI 版本做兼容工作（做减法，不打补丁）。
 
 ### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
 
