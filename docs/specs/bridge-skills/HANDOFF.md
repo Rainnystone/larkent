@@ -86,10 +86,24 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09x | P3 | 回复次数与卡不符、出现状态码（见 [P09x](tickets/P09x-reply-count-and-status-codes.md)） |
 | P09y | P3 | 用户看不到确认成功，易重复操作（见 [P09y](tickets/P09y-confirm-success-without-feedback.md)） |
 | P09z | P3 deferred | 无（风险记录）（见 [P09z](tickets/P09z-deferred-review-findings-1-3.md)） |
+| P09aa | P1 | 停止/空闲超时时 Grok 的暂存答案被丢弃（见 [P09aa](tickets/P09aa-grok-stop-drops-final-text.md)） |
+| P09ab | P1 | P09u 不完整：Grok 工具进程自设 NO_COLOR+FORCE_COLOR，Node 警告仍进工具卡（见 [P09ab](tickets/P09ab-grok-tool-env-node-color-warning.md)） |
+| P09ac | P2 | Profile 模型列表含不存在的 `grok-build`，错误被泛化（见 [P09ac](tickets/P09ac-grok-model-list-invalid.md)） |
+| P09ad | P1 | Grok 及其 shell 继承 bridge 全部进程环境（含凭据类变量）（见 [P09ad](tickets/P09ad-grok-env-inherits-bridge-secrets.md)） |
+| P09ae | P2 | Profile 访问模式不映射到 grok argv（read-only 仍 --always-approve）（见 [P09ae](tickets/P09ae-grok-access-mode-ignored.md)） |
+| P09af | P2 | Grok `thought` 被丢弃：CoT 为空，idle 计时视为静默（见 [P09af](tickets/P09af-grok-thought-dropped.md)） |
+| P09ag | P2 | Grok 恢复失败/未知模型被归为通用可重试失败（见 [P09ag](tickets/P09ag-grok-failure-signatures.md)） |
+| P09ah | P2 | 会议运行无 idle watchdog，挂起的 grok 无限期存活（见 [P09ah](tickets/P09ah-meeting-no-idle-watchdog.md)） |
+| P09ai | P2 | 停止只信号 grok pid，孙进程（shell 工具）存活（见 [P09ai](tickets/P09ai-stop-leaves-grandchildren.md)） |
+| P09aj | P3 | 单行 JSONL 无大小上限地缓冲（见 [P09aj](tickets/P09aj-jsonl-line-unbounded.md)） |
+| P09ak | P3 | `read_file` 工具卡显示 JSON 原文；usage 事件发三次（见 [P09ak](tickets/P09ak-grok-readfile-blob-usage-dup.md)） |
+| P09al | P3 | ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离（见 [P09al](tickets/P09al-grok-strip-cr-bel-text.md)） |
+| P09am | P3 | 完整 prompt 与 rules 位于 argv（ps 可见）（见 [P09am](tickets/P09am-grok-prompt-on-argv.md)） |
 
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
 - **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。
 - **`6dd0e44` live 回归（2026-10-20）：** 新增 P09s–P09z。分工：P09s/P09t/P09u 由 local Grok Build 修（代码分支 `feat/bridge-skills`）；P09v/P09w/P09x/P09y 由 Cursor Project 修（同一分支，先 `git pull --rebase`）；P09z 为 deferred。STEP 1 结论：09:00 确认创建了 #19，与 #18（08:45）同名重复；09:00 确认无 toast 但实际成功（P09y），非错误、非 skip-auto-unregistered、非守卫拒绝；#18 为用户本人点击确认。
+- **Grok CLI 只读审计（grok 1.0.41，复核于 `93a6c75`，2026-10-20）：** 新增 P09aa–P09am（编号沿用 P09 后缀，P10 已被 UAT 占用），全部 owner 为 local Grok Build。13 项均复核为 CONFIRMED 或 PARTIAL（P09ac/aj/al/am 为 PARTIAL），**无 REJECTED**。合并 #52 前必须修：P09ad（bridge 进程环境中的凭据类变量经 `--always-approve` shell 可读）、P09aa、P09ab。生产与 p09-grok profile 均未配置 Grok 模型（走 CLI 默认），故 P09ac 目前不触发。
 - **Won't-fix：** B3 暂停→恢复后 revision 回到原值（ABA），内容相同、无副作用。
 - **实测（live）验证：** 场景 1–8 主要路径；F4（拦截成立，见 P09m 误报）；F5；F7 结果为 fail（P09c，已修）。
 - **仅代码审阅、未实测：** F6；已授权 user 身份路径（测试 profile 无 user token，bot 身份已实测）。

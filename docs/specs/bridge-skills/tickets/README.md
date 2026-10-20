@@ -51,6 +51,19 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09x](P09x-reply-count-and-status-codes.md) | Bug P3（owner: Cursor Project）：回复次数（31）与卡片（30）不一致，并泄漏 needs-input / waiting-confirmation | `6dd0e44` live 回归 |
 | [P09y](P09y-confirm-success-without-feedback.md) | Bug P3（owner: Cursor Project）：确认已成功（#19）但按钮复原、无 toast | `6dd0e44` live 回归 |
 | [P09z](P09z-deferred-review-findings-1-3.md) | Deferred P3（owner: Cursor Project）：Codex review #1 setImmediate 结算窗口、#3 指纹不含 actor；证据表明均不产生重复 | `6dd0e44` live 回归 |
+| [P09aa](P09aa-grok-stop-drops-final-text.md) | Bug P1（owner: local Grok Build）：停止/空闲超时时 Grok 的暂存答案被丢弃 | Grok CLI 只读审计 |
+| [P09ab](P09ab-grok-tool-env-node-color-warning.md) | Bug P1（owner: local Grok Build）：P09u 不完整：Grok 工具进程自设 NO_COLOR+FORCE_COLOR，Node 警告仍进工具卡 | Grok CLI 只读审计 |
+| [P09ac](P09ac-grok-model-list-invalid.md) | Bug P2（owner: local Grok Build）：Profile 模型列表含不存在的 `grok-build`，错误被泛化 | Grok CLI 只读审计 |
+| [P09ad](P09ad-grok-env-inherits-bridge-secrets.md) | Bug P1（owner: local Grok Build）：Grok 及其 shell 继承 bridge 全部进程环境（含凭据类变量） | Grok CLI 只读审计 |
+| [P09ae](P09ae-grok-access-mode-ignored.md) | Bug P2（owner: local Grok Build）：Profile 访问模式不映射到 grok argv（read-only 仍 --always-approve） | Grok CLI 只读审计 |
+| [P09af](P09af-grok-thought-dropped.md) | Bug P2（owner: local Grok Build）：Grok `thought` 被丢弃：CoT 为空，idle 计时视为静默 | Grok CLI 只读审计 |
+| [P09ag](P09ag-grok-failure-signatures.md) | Bug P2（owner: local Grok Build）：Grok 恢复失败/未知模型被归为通用可重试失败 | Grok CLI 只读审计 |
+| [P09ah](P09ah-meeting-no-idle-watchdog.md) | Bug P2（owner: local Grok Build）：会议运行无 idle watchdog，挂起的 grok 无限期存活 | Grok CLI 只读审计 |
+| [P09ai](P09ai-stop-leaves-grandchildren.md) | Bug P2（owner: local Grok Build）：停止只信号 grok pid，孙进程（shell 工具）存活 | Grok CLI 只读审计 |
+| [P09aj](P09aj-jsonl-line-unbounded.md) | Bug P3（owner: local Grok Build）：单行 JSONL 无大小上限地缓冲 | Grok CLI 只读审计 |
+| [P09ak](P09ak-grok-readfile-blob-usage-dup.md) | Bug P3（owner: local Grok Build）：`read_file` 工具卡显示 JSON 原文；usage 事件发三次 | Grok CLI 只读审计 |
+| [P09al](P09al-grok-strip-cr-bel-text.md) | Bug P3（owner: local Grok Build）：ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离 | Grok CLI 只读审计 |
+| [P09am](P09am-grok-prompt-on-argv.md) | Bug P3（owner: local Grok Build）：完整 prompt 与 rules 位于 argv（ps 可见） | Grok CLI 只读审计 |
 
 ### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
 
