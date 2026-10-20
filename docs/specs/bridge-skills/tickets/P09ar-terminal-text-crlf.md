@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Preserve CRLF lines before applying carriage-return overwrites**
+> **Preserve CRLF lines before applying carriage-return overwrites**
 > 
 > For ordinary Windows `\r\n` text, this clears the accumulated line on `\r` immediately before `\n` appends it, so `"first\r\nsecond\r\n"` becomes two blank lines. Grok tool results and final text both pass through this helper, causing normal Windows command output to disappear; treat CR followed by LF as a newline and reserve overwrite handling for standalone carriage returns.
 

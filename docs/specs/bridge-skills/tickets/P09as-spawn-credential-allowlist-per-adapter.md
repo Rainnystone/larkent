@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Scope credential passthrough to the selected CLI**
+> **Scope credential passthrough to the selected CLI**
 > 
 > When the bridge process contains credentials for multiple providers, this shared allowlist passes all of them to every adapter: for example, a Grok or Cursor child receives both `ANTHROPIC_API_KEY` and `OPENAI_API_KEY`. Because agent commands can inspect their environment, selecting one CLI unnecessarily exposes every other provider credential; make credential allowlisting adapter-specific while continuing to exclude bridge secrets such as `APP_SECRET`.
 

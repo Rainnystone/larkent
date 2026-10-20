@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Restrict same-name timestamps to task-creating operations**
+> **Restrict same-name timestamps to task-creating operations**
 > 
 > When an existing same-name task was created through the manual command path, then a second independent same-name draft is opened and the existing task is paused or resumed through the tool before that draft is confirmed, the management operation becomes an applied receipt linked to the old task. This helper treats that later mutation timestamp as the task's creation time, so `findSameNameCreateConflict` rejects the otherwise permitted second task; only receipts that actually created or replaced the task should establish this timestamp.
 

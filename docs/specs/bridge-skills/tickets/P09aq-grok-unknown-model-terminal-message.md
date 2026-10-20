@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Match unknown-model errors from the terminal event**
+> **Match unknown-model errors from the terminal event**
 > 
 > The observed unknown-model failure is emitted as a Grok JSONL `error` on stdout, but the outcome paths use `run.stderrSnapshot ?? event.message`; an empty stderr snapshot is `""`, not `undefined`, so the terminal message is never passed to this signature. The new rule therefore does not classify the real failure and users still receive the generic error instead of the model guidance; fall back on the terminal message when stderr is empty or match both sources.
 

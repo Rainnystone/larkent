@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Guard receipt reads while composing the final notice**
+> **Guard receipt reads while composing the final notice**
 > 
 > If one waiting receipt is tracked successfully and a later automation write in the same turn makes the persistence queue unhealthy, `noteResult` now swallows its receipt-read failure but `notice()` calls `getOperation` without protection. `AutomationsStore.assertMutable()` then rethrows during final reply rendering, so the bot can lose its response even though the earlier confirmation card was delivered; apply the same defensive read handling throughout `notice()` and `supersededByThisTurn()`.
 

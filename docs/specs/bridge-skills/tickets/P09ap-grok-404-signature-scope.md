@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Limit the 404 signature to session restoration failures**
+> **Limit the 404 signature to session restoration failures**
 > 
 > Any Grok stderr containing the generic text `404 Not Found` matches this alternation, even when the 404 came from an unrelated API or resource rather than session restoration. Such failures are then shown as “session does not exist” with instructions to start a new turn, obscuring the real problem; require the observed `session get failed: 404` context instead of matching every 404.
 

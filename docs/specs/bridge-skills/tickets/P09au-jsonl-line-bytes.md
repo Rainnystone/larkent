@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Count complete JSONL lines by bytes**
+> **Count complete JSONL lines by bytes**
 > 
 > When a complete non-ASCII line arrives with its newline, `nl` is a UTF-16 code-unit count rather than a byte count, and the buffer is sliced before the later `Buffer.byteLength` check. Consequently an 8–32 MB UTF-8 line can bypass an 8 MB `maxLineBytes` limit, undermining the new memory bound; measure the completed slice with `Buffer.byteLength` before accepting it.
 

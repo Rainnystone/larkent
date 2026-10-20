@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Accept null output on statusless completed tool updates**
+> **Accept null output on statusless completed tool updates**
 > 
 > On older Grok streams that omit `status`, a tool that legitimately completes with `rawOutput: null` has an explicit result carrier but fails the `!= null` test. No `tool_result` is emitted and the call remains in `startedToolCalls`, which can leave the UI showing an in-flight tool and extend the idle watchdog to the one-hour tool window; distinguish presence of the `rawOutput` property from its value.
 

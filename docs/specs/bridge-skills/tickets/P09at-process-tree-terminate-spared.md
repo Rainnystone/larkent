@@ -8,7 +8,7 @@
 
 ## Codex finding (verbatim)
 
-> **</sub>  Terminate stdout-inheriting descendants after draining**
+> **Terminate stdout-inheriting descendants after draining**
 > 
 > On Linux and macOS, when a detached descendant inherits the CLI's stdout, it is added to `spared` and skipped for both the initial SIGTERM and the later SIGKILL. `stop()` then waits only for the leader, destroys the pipe after the drain window, and returns while the descendant continues running as an orphan; this can leave shell commands active after a user stop or timeout. Preserve output long enough to drain, but ensure every spared PID is subsequently terminated.
 
