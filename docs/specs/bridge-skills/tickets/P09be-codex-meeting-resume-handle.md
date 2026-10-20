@@ -1,9 +1,12 @@
 # Task 09be — Codex meeting follow-up loses its thread handle
 
-**Status:** awaiting review — audit finding; implementation is not approved.
+**Status:** held — shared meeting finding, excluded from the current Codex-specific compatibility implementation. Not dispatchable.
+**What to build (future shared review only):** restore missing session-event persistence under the existing per-meeting scope; no product repair is currently authorized.
+**Specification:** [P09be/P09bf follow-ups](../codex-meeting-followups.md).
+**Scheduling:** no current implementation slot. The earlier P09bc → P09bd → P09be → P09bf queue is historical and was scheduling, not functional dependencies.
 **Priority:** proposed P2.
-**Responsibility:** bridge bug in the shared meeting consumer; reproduced with the Codex adapter. No upstream authentication/provider defect is alleged.
-**Blocked by:** review/implementation authorization. No functional dependency on P09bc/P09bd; coordinate meeting-file ownership with P09bf if either is approved.
+**Responsibility:** shared meeting-consumer omission inherited from the prototype, reproduced through Codex. This is not a Codex-adapter-specific defect or an upstream authentication/provider issue.
+**Blocked by:** explicit future authorization for shared meeting changes. No functional ticket dependency on P09bc, P09bd or P09bf. The memory choice is resolved in favor of existing upstream scope; that does not override the later implementation hold.
 **Audit:** [evidence index](../codex-compatibility-audit.md), 2026-10-20.
 **Fixed code:** PR52 `feat/bridge-skills` at `8949a2d1c4339a777b1c4ff04af8443d5272e75b`.
 **Versions:** larkent package 0.7.0; Node 24.19.0; installed Codex CLI 0.159.2 (help/version only); controlled executable 0.0.0-pin. Official Codex `rust-v0.159.2` source: `ff6aec96948b70d94983af2641a6b67c94faeff5`.
@@ -11,14 +14,15 @@
 
 ## Problem and user stories
 
-A participant asks Codex to remember a synthetic decision, then asks a follow-up in the same meeting. The bridge launches another fresh Codex turn without the first thread's resume handle. A follow-up that relies on the prior answer or tool work can lose that context. Recent meeting transcript context is separate from the missing Codex conversation.
+A participant asks Codex to remember a synthetic decision, then asks a follow-up in the same per-meeting conversation. The bridge launches another fresh Codex turn without the first thread's resume handle. A follow-up that relies on the prior answer or tool work can lose that context. Recent meeting transcript context is separate from the missing Codex conversation.
 
-1. As a meeting participant, I want my follow-up to continue this meeting's Codex conversation.
-2. As a participant in another meeting, I want its conversation to remain separate.
+1. As a meeting participant, I want a same-meeting follow-up to resume the existing conversation, so that prior work remains available.
+2. As a participant in another meeting, I want separate context, so that another meeting’s history is not reused.
+3. As a caller using a meeting command, I want the shared meeting conversation preserved while its answer uses the command route, so that delivery mode does not silently reset context.
 
 ## Observed evidence and inference
 
-The reproduction uses real `answerInMeeting → startRunFlow → RunExecutor → CodexAdapter → runJsonlCli` and a controlled subprocess emitting canonical Codex JSONL. Only external Codex execution and Feishu delivery are controlled; no model or live service is called.
+The reproduction uses real `answerInMeeting → startRunFlow → RunExecutor → CodexAdapter → runJsonlCli` and a controlled subprocess emitting canonical Codex JSONL. Only external Codex execution and Feishu delivery are controlled; no model or live service is called. The historical resume probe is broadcast → caller-only; it demonstrates missing recording under the current identity, not proof of native memory or private-content disclosure. The existing shared scope is source-grounded; caller is an output route, not a privacy isolation key.
 
 Observed twice: the adapter emits `system.resumeHandle`, the first answer reaches both recording destinations, the catalog has zero entries, both submissions use the same policy fingerprint, and the second adapter input has no `resumeHandle`. The process pool returns to zero active processes. Seeding the catalog with the first handle and the observed identity makes the second input carry it. This control changes fixture state only, not product code.
 
@@ -30,103 +34,29 @@ Inferred user consequence: native conversational memory will be unavailable thro
 
 ## Minimal proposed boundary and non-goals
 
-Use the existing session-recording contract for meeting system events, under the resolved meeting scope, agent, cwd and policy fingerprint. Preserve existing lookup/isolation rules. No new session database or routing abstraction is needed.
+For future shared review only, restore session-event recording using the existing per-meeting scope and agent/cwd/policy lookup. Preserve caller-mode output routing and existing non-Codex behavior. Do not add actor/delivery isolation, a new session database, a routing framework, a global fingerprint redesign or a Codex-only conditional. Current scope excludes implementing this shared repair.
 
 No product change is included in this audit. Non-goals: Codex login/API adapters, provider behavior, new environment filtering, other CLI audits, meeting transcript redesign, process-tree or JSONL-size fixes.
 
-## Acceptance criteria and test seam
+## Acceptance criteria and test seam (future review only)
 
-- [ ] At the same controlled-process seam, two successful questions in one meeting pass the first Codex handle into the second run.
-- [ ] A different meeting and an incompatible cwd/policy identity do not reuse that handle.
-- [ ] Normal answers still reach the configured destination once; process/pool cleanup remains complete.
-- [ ] Test the meeting caller and adapter boundary, rather than only the catalog helper. Native resume memory remains a separately labeled acceptance gap.
+These criteria describe a possible shared repair; they do not make the ticket implementation-ready.
+
+- [ ] Positive case: two successful questions in one meeting with matching agent/cwd/policy pass the first handle into the second run.
+- [ ] Caller→broadcast case: a caller-mode question followed by broadcast in the same meeting and unchanged identity resumes the shared handle. Caller-mode itself returns its answer with zero direct meeting/IM broadcast sends; the outer command keeps its original-chat reply route.
+- [ ] Different-meeting case: change only meeting identity while cwd and effective policy match; the earlier handle is not reused.
+- [ ] Cwd-mismatch case: keep meeting and other policy inputs fixed, change resolved cwd; the incompatible handle is not reused.
+- [ ] Policy-mismatch case: keep meeting/cwd fixed, change an effective policy input; the incompatible handle is not reused.
+- [ ] Preserve non-Codex shared meeting resume/stop/delivery behavior using existing controlled caller coverage. No new actor/delivery key or artificial adapter-specific guard.
+- [ ] Normal answers reach configured destinations once; process/pool cleanup remains complete.
+- [ ] Exercise the real meeting caller through run flow/executor/adapter with controlled subprocesses and recording destinations, not only the catalog helper. Native memory and real delivery remain separately labeled gaps.
 
 Overlap: P09ay/P09az/P09bb are already represented by the frozen code; P09bc/P09bd cover process cleanup and JSONL limits. None covers this missing recording call. P09bf shares the consumer but concerns terminal failure delivery and can be reviewed independently.
 
-## Sanitized reproduction
+## Evidence and scope history
 
-Use the script below from a clean export of the fixed snapshot with its dependencies. Save it as a temporary `.mts` file outside the checkout. Run with the existing `tsx` executable from the snapshot root:
+[Sanitized runnable evidence](../evidence/codex-meeting-reproduction.md) is separate from this ticket. On the frozen snapshots, the resume probe exits 1 with an observed handle, empty catalog and missing second handle; catalog-seeding exits 0. This is controlled routing evidence, not native shared-memory or disclosure proof.
 
-```sh
-node_modules/.bin/tsx /tmp/codex-meeting-audit.mts resume
-AUDIT_SEED_CATALOG=1 node_modules/.bin/tsx /tmp/codex-meeting-audit.mts resume
-node_modules/.bin/tsx /tmp/codex-meeting-audit.mts failure
-```
+The [specification’s upstream evidence](../codex-meeting-followups.md#further-notes) pins the prototype implementation at `589868119ce9a0a860aaf4936b5f9bac14e72681`: one conversation per meeting, output routing after the same run, missing meeting event persistence despite normal IM recording. The omission does not establish intentional privacy isolation. Caller→broadcast context reuse after persistence is a source-derived consequence, not observed private-content leakage.
 
-The first command exits 1 on the missing-handle assertion; the catalog control exits 0. The final command is P09bf's independent failure-delivery probe and exits 1 on this snapshot. All fixture content is synthetic, and all temporary profile files are removed after each completed probe.
-
-```typescript
-import assert from 'node:assert/strict';
-import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
-const load = (file: string) => import(pathToFileURL(join(process.cwd(), file)).href);
-const { CodexAdapter } = await load('src/agent/codex/adapter.ts');
-const { ActiveRuns } = await load('src/bot/active-runs.ts');
-const { ProcessPool } = await load('src/bot/process-pool.ts');
-const { createDefaultProfileConfig } = await load('src/config/profile-schema.ts');
-const { answerInMeeting } = await load('src/meeting/orchestrator.ts');
-const { MeetingSession } = await load('src/meeting/session.ts');
-const { RunExecutor } = await load('src/runtime/run-executor.ts');
-const { SessionCatalog } = await load('src/session/catalog.ts');
-const { SessionStore } = await load('src/session/store.ts');
-const { WorkspaceStore } = await load('src/workspace/store.ts');
-const { writeScriptedJsonlExecutable } = await load('tests/helpers/fake-executable.ts');
-const { createRecordingLarkChannel } = await load('tests/helpers/recording-lark-channel.ts');
-const { createTmpProfile } = await load('tests/helpers/tmp-profile.ts');
-
-const mode = process.argv[2];
-assert.ok(mode === 'resume' || mode === 'failure');
-const tmp = await createTmpProfile('synthetic-codex-meeting-');
-const lines = mode === 'failure'
-  ? [{ type: 'thread.started', thread_id: 'synthetic-thread-a' }, { type: 'turn.started' }, { type: 'turn.failed', error: { message: 'Synthetic upstream failure' } }]
-  : [{ type: 'thread.started', thread_id: 'synthetic-thread-a' }, { type: 'turn.started' }, { type: 'item.completed', item: { id: 'synthetic-answer', type: 'agent_message', text: 'Synthetic answer' } }, { type: 'turn.completed', usage: { input_tokens: 0, cached_input_tokens: 0, cache_write_input_tokens: 0, output_tokens: 0, reasoning_output_tokens: 0 } }];
-const binary = await writeScriptedJsonlExecutable(tmp.root, 'synthetic-cli.mjs', { lines, exitCode: mode === 'failure' ? 1 : 0 });
-const cfg = createDefaultProfileConfig({ agentKind: 'codex', codex: { binaryPath: binary.path }, accounts: { app: { id: 'synthetic-app', secret: 'synthetic-placeholder', tenant: 'feishu' } } });
-cfg.workspaces.default = tmp.workspace;
-cfg.meeting.enabled = true;
-cfg.meeting.respondIn = 'both';
-const adapter = new CodexAdapter({ binary: binary.path, profileStateDir: tmp.profile, sandbox: 'read-only' });
-const inputs: any[] = [];
-const observed: any[] = [];
-const realRun = adapter.run.bind(adapter);
-adapter.run = opts => {
-  inputs.push(opts);
-  const run = realRun(opts);
-  const source = run.events;
-  run.events = { async *[Symbol.asyncIterator]() { for await (const event of source) { observed.push(event); yield event; } } };
-  return run;
-};
-const activeRuns = new ActiveRuns();
-const pool = new ProcessPool(() => 1);
-const executor = new RunExecutor({ agent: adapter, activeRuns, pool });
-const submissions: any[] = [];
-const realSubmit = executor.submit.bind(executor);
-executor.submit = input => { submissions.push(input); return realSubmit(input); };
-const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
-const sessionCatalog = new SessionCatalog(join(tmp.profile, 'catalog.json')); await sessionCatalog.load();
-const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
-let meetingSends = 0;
-const session = new MeetingSession({ client: { request: async () => { meetingSends++; return { code: 0, data: {} } as never; } }, meetingId: 'synthetic-meeting', meetingNo: '123456789', originChatId: 'synthetic-chat', config: cfg.meeting, joinedWithAccessCheck: true });
-const channel = createRecordingLarkChannel();
-const controls: any = { profile: 'synthetic', profileConfig: cfg, cfg, ownerRefreshState: 'unknown', async refreshOwner() {}, async restart() {}, async exit() {}, configPath: join(tmp.root, 'config.json'), processId: 'synthetic-process' };
-const deps: any = { session, channel, controls, executor, activeRuns, sessions, sessionCatalog, workspaces };
-try {
-  const first = await answerInMeeting(deps, 'Synthetic question one', { deliver: 'broadcast', admitted: true });
-  if (mode === 'resume') {
-    assert.equal(first, 'Synthetic answer');
-    const entriesAfterFirst = sessionCatalog.entries().length;
-    if (process.env.AUDIT_SEED_CATALOG === '1') sessionCatalog.upsertActive({ scopeId: 'meeting:synthetic-meeting', agentId: 'codex', cwdRealpath: inputs[0].cwd, policyFingerprint: submissions[0].policy.policyFingerprint, resumeHandle: 'synthetic-thread-a' });
-    await answerInMeeting(deps, 'Synthetic follow-up question', { deliver: 'caller', admitted: true });
-    console.log(JSON.stringify({ case: mode, systemHandleObserved: observed.some(e => e.type === 'system' && e.resumeHandle === 'synthetic-thread-a'), entriesAfterFirst, samePolicy: submissions[0].policy.policyFingerprint === submissions[1].policy.policyFingerprint, firstReply: true, meetingSends, imSends: channel.sent.length, secondHasResumeHandle: Boolean(inputs[1].resumeHandle), activeProcesses: pool.snapshot().active }));
-    assert.equal(inputs[1].resumeHandle, 'synthetic-thread-a', 'Meeting follow-up must pass first Codex thread handle');
-  } else {
-    console.log(JSON.stringify({ case: mode, answerLength: first.length, meetingSends, imSends: channel.sent.length, activeProcesses: pool.snapshot().active }));
-    assert.ok(first.length > 0 && meetingSends > 0 && channel.sent.length > 0, 'A failed meeting run must deliver a failure notice');
-  }
-} finally {
-  await activeRuns.stopAll({ type: 'meeting' });
-  await Promise.all([sessions.flush(), workspaces.flush()]);
-  await sessionCatalog.flush();
-  await tmp.cleanup();
-}
-```
+Initial audit `2d6bfd5` was review-only. The owner later confirmed preserving upstream scope, but the latest restriction excludes shared meeting changes from current Codex compatibility repairs. Both this finding and P09bf are therefore held; no pending memory-policy choice or implementation-ready authorization is implied. This docs correction changes no product/test source.

@@ -1,10 +1,26 @@
 # PR51 tickets — Revision 3
 
-Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-19
+## Current shared-finding hold — 2026-10-20
+
+[P09be](P09be-codex-meeting-resume-handle.md) and [P09bf](P09bf-codex-meeting-failure-notice.md) are documented shared meeting findings reproduced through Codex. **Both implementations are held/excluded from current Codex-specific compatibility work under the latest scope restriction.** No Codex-only condition may be used to bypass that restriction. This docs update implements nothing.
+
+| Ticket | Current status | Functional blocker |
+| --- | --- | --- |
+| P09bc / P09bd | Existing independently owned batch; this docs task does not alter or accept it | See existing tickets/coordinator record |
+| [P09be](P09be-codex-meeting-resume-handle.md) | **Held**, no dispatch slot | Future explicit authorization for shared meeting changes |
+| [P09bf](P09bf-codex-meeting-failure-notice.md) | **Held**, no dispatch slot | Future explicit authorization for shared meeting changes |
+
+The earlier writer order P09bc → P09bd → P09be → P09bf was scheduling, not functional dependencies. Its P09be/P09bf readiness is superseded by the shared-behavior hold. Neither finding depends functionally on the other. Coordination of existing work remains outside this docs task.
+
+The [concise specification](../codex-meeting-followups.md) records pinned upstream implementation: one shared conversation per meeting; caller/broadcast choose output routing, not memory isolation. The owner confirmed preserving that scope; there is no pending isolation decision. Caller-mode still must not broadcast its current answer through the meeting helper. This source/reference decision does not override the later hold on shared repairs. [Audit evidence](../codex-compatibility-audit.md) and the [separate runnable artifact](../evidence/codex-meeting-reproduction.md) remain review records, not implementation approval or native/live acceptance.
+
+## Historical Revision 3 planning status
+
+Status at 2026-10-19: ready-for-agent（拆票完成，当时的代码实施尚未授权）. The current shared-finding hold above governs P09be/P09bf; the following original planning record is retained as history.
 
 依据 [Revision 3 规格](../../bridge-skills.md)，包含 `0624458` 的 D8 身份补充。用户已将拆分粒度与依赖交由工程判断；采用以下 9 张完整交付切片。每票一个文件，旧 B01–B07 继续 superseded，不复用旧执行顺序。[HANDOFF](../HANDOFF.md)提供代码和验证导航。
 
-## 当前阶段与执行边界
+## 原规划阶段与执行边界（历史）
 
 - 本次完成 to-tickets，更新既有文档 PR；不创建 GitHub Issues、不修改生产代码、不启动服务、不合并 PR。ready-for-agent 表示票内容可供下一阶段认领，不等于现在获准编码或真实测试。
 - 九票共同完成一个首版范围。最初只读链和提醒链是中间验收切片，不是缩减后的最终版本；兼容包、所有操作和六种 CLI 都保留。
@@ -81,6 +97,8 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09bb](P09bb-meeting-idle-budget-without-controls.md) | Test P2（owner: Codex，#52，blocked-by P09aq）：controls.cfg 缺失时会议仍须有 idle 预算 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 | [P09bc](P09bc-process-tree-sigkill-spared.md) | Test/Bug P2（owner: Codex，#52，blocked-by P09aq）：SIGKILL 升级跳过持有 stdout 的进程，run 可能不结束 | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 | [P09bd](P09bd-jsonl-line-cap-bytes.md) | Bug P3（owner: Codex，#52，blocked-by P09aq）：JSONL 8MB 上限按字符索引比较字节（纳入 P09au） | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
+| [P09be](P09be-codex-meeting-resume-handle.md) | 共享会议遗漏（Codex 复现）：handle 未持久化；当前兼容性修复排除共享改动，held | 无功能票依赖；需另行明确授权共享改动 |
+| [P09bf](P09bf-codex-meeting-failure-notice.md) | 共享会议遗漏（Codex 复现）：失败 turn 无通知；当前兼容性修复排除共享改动，held | 无功能票依赖；需另行明确授权共享改动 |
 
 > **分诊原则：** 票据按第一性原理、面向未来判断；不为过时的 CLI 版本做兼容工作（做减法，不打补丁）。
 
