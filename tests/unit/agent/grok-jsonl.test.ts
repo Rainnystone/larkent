@@ -187,6 +187,94 @@ describe('GrokJsonlTranslator', () => {
     expect(events.at(-1)).toMatchObject({ type: 'tool_result', id: 'plugin', isError: true });
   });
 
+  it('does not finish a shell call on a statusless metadata update (P09s)', () => {
+    const output = "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n";
+    const t = new GrokJsonlTranslator();
+    const started = t.translate(p09sToolCall());
+    const progress = t.translate(p09sStatuslessUpdate());
+    const finished = t.translate(p09sCompletedUpdate(output));
+
+    expect(started.map((event) => event.type)).toEqual(['tool_use']);
+    expect(progress).toEqual([]);
+    expect(finished.filter((event) => event.type === 'tool_result')).toEqual([
+      {
+        type: 'tool_result',
+        id: 'call-test-1',
+        output,
+        isError: true,
+      },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('still accepts a statusless update that is the only carrier of rawOutput', () => {
+    const output = "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n";
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      p09sToolCall(),
+      {
+        ...p09sStatuslessUpdate(),
+        rawOutput: {
+          type: 'Bash',
+          output: Array.from(Buffer.from(output)),
+          exit_code: 2,
+          command: 'ls /nonexistent-p09-retest-path',
+        },
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_result')).toEqual([
+      { type: 'tool_result', id: 'call-test-1', output, isError: true },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('adopts a shell tool name carried by the statusless metadata update', () => {
+    const output = "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n";
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call',
+        toolCallId: 'call-test-1',
+        title: 'Run Command',
+        rawInput: { command: 'ls /nonexistent-p09-retest-path' },
+      },
+      p09sStatuslessUpdate(),
+      p09sCompletedUpdate(output),
+    ]);
+    expect(events.filter((event) => event.type === 'tool_result')).toEqual([
+      { type: 'tool_result', id: 'call-test-1', output, isError: true },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('keeps a non-shell grep exit_code of 1 successful', () => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call',
+        toolCallId: 'call-test-grep',
+        title: 'grep',
+        rawInput: { pattern: 'exit_code' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-grep',
+        kind: 'search',
+        title: 'grep',
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-grep',
+        status: 'completed',
+        rawOutput: { exit_code: 1 },
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_result')).toEqual([
+      { type: 'tool_result', id: 'call-test-grep', output: '{"exit_code":1}', isError: false },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
   it('treats a failed tool_call_update as isError', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [
@@ -282,6 +370,82 @@ describe('GrokJsonlTranslator', () => {
     );
   });
 });
+
+/** streaming-json shape of the Grok 1.0.41 `ls` failure (ACP `sessionUpdate` is `type`). */
+function p09sToolCall(): Record<string, unknown> {
+  return {
+    type: 'tool_call',
+    toolCallId: 'call-test-1',
+    title: 'run_terminal_command',
+    rawInput: {
+      command: 'ls /nonexistent-p09-retest-path',
+      description: 'List nonexistent path as specified',
+    },
+    _meta: {
+      'x.ai/tool': {
+        version: 1,
+        name: 'run_terminal_command',
+        kind: 'execute',
+        namespace: 'grok_build',
+        label: 'Run Command',
+        read_only: false,
+      },
+    },
+  };
+}
+
+function p09sStatuslessUpdate(): Record<string, unknown> {
+  return {
+    type: 'tool_call_update',
+    toolCallId: 'call-test-1',
+    kind: 'execute',
+    title: 'Execute `ls /nonexistent-p09-retest-path`',
+    content: [{
+      type: 'content',
+      content: { type: 'text', text: 'List nonexistent path as specified' },
+    }],
+    locations: [],
+    rawInput: {
+      variant: 'Bash',
+      command: 'ls /nonexistent-p09-retest-path',
+      description: 'List nonexistent path as specified',
+      is_background: false,
+    },
+    _meta: {
+      'x.ai/tool': {
+        version: 1,
+        name: 'run_terminal_command',
+        kind: 'execute',
+        namespace: 'grok_build',
+        label: 'Run Command',
+        read_only: false,
+        input: {
+          command: 'ls /nonexistent-p09-retest-path',
+          description: 'List nonexistent path as specified',
+        },
+      },
+    },
+  };
+}
+
+function p09sCompletedUpdate(output: string): Record<string, unknown> {
+  return {
+    type: 'tool_call_update',
+    toolCallId: 'call-test-1',
+    status: 'completed',
+    content: [{ type: 'content', content: { type: 'text', text: output } }],
+    rawOutput: {
+      type: 'Bash',
+      output: Array.from(Buffer.from(output)),
+      exit_code: 2,
+      command: 'ls /nonexistent-p09-retest-path',
+      truncated: false,
+      signal: null,
+      timed_out: false,
+      description: 'List nonexistent path as specified',
+    },
+  };
+}
 
 function toolResultOutput(rawOutput: unknown): string | undefined {
   const t = new GrokJsonlTranslator();

@@ -141,11 +141,24 @@ export class GrokJsonlTranslator {
     }
     const status = stringValue(raw.status);
     if (status === 'in_progress' || status === 'pending') return [];
-    if (status === 'completed' || status === 'failed' || status === 'error' || status === undefined) {
-      if (!this.startedToolCalls.has(id)) this.drift.anomalies++;
-      return this.toolResult(id, raw, status === 'failed' || status === 'error');
-    }
-    return [];
+    const finished = status === 'completed' || status === 'failed' || status === 'error';
+    // Grok 1.0.41 sends a statusless metadata update (kind/title/rawInput, no
+    // rawOutput) before `completed`. Missing status is a result only when that
+    // update itself carries rawOutput (older builds that omit status entirely).
+    this.refineStartedTool(id, raw);
+    if (!finished && !(status === undefined && raw.rawOutput != null)) return [];
+    if (!this.startedToolCalls.has(id)) this.drift.anomalies++;
+    return this.toolResult(id, raw, status === 'failed' || status === 'error');
+  }
+
+  /** Keep the shell tool name. A progress title like `Execute \`ls …\`` is not one. */
+  private refineStartedTool(id: string, raw: Record<string, unknown>): void {
+    const current = this.startedToolCalls.get(id);
+    if (current === undefined) return;
+    const next = explicitToolName(raw);
+    if (!next || next === current) return;
+    if (isShellTool(current) && !isShellTool(next)) return;
+    this.startedToolCalls.set(id, next);
   }
 
   private toolResult(
@@ -312,6 +325,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function explicitToolName(raw: Record<string, unknown>): string | undefined {
+  const meta = isRecord(raw._meta) ? raw._meta['x.ai/tool'] : undefined;
+  const metaName = isRecord(meta) ? stringValue(meta.name) : undefined;
+  return stringValue(raw.toolName) ?? stringValue(raw.name) ?? metaName;
 }
 
 function numberValue(value: unknown): number | undefined {
