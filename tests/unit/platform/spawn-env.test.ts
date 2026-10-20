@@ -4,9 +4,35 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildLarkChannelEnv } from '../../../src/agent/lark-channel-env.js';
-import { mergeProcessEnv, spawnProcess, spawnProcessSync } from '../../../src/platform/spawn.js';
+import { agentSpawnEnv, mergeProcessEnv, spawnProcess, spawnProcessSync } from '../../../src/platform/spawn.js';
 
 describe('platform spawn env', () => {
+  it('excludes exact bridge credential names regardless of casing or override source', () => {
+    const base = {
+      App_Secret: 'synthetic-app-secret',
+      Wake_Webhook_Key: 'synthetic-wake-key',
+      Wake_Webhook_Url: 'synthetic-wake-url',
+      Sand_Box_Auth_Id: 'synthetic-platform-auth',
+      Cloud_Agent_Injected_Secret_Names: 'synthetic-platform-secret-names',
+      MCP_WEBHOOK_SECRET: 'synthetic-mcp-secret',
+      GH_TOKEN: 'synthetic-old-token',
+      LARK_BRIDGE_TOOL_TOKEN: 'synthetic-stale-token',
+    };
+    const env = agentSpawnEnv(base, {
+      APP_SECRET: 'synthetic-override-secret',
+      WAKE_WEBHOOK_KEY: 'synthetic-override-key',
+      gh_token: 'synthetic-new-token',
+      LARK_BRIDGE_TOOL_TOKEN: undefined,
+    });
+
+    expect(env).toEqual({
+      MCP_WEBHOOK_SECRET: 'synthetic-mcp-secret',
+      gh_token: 'synthetic-new-token',
+    });
+    expect(base.App_Secret).toBe('synthetic-app-secret');
+    expect(base.GH_TOKEN).toBe('synthetic-old-token');
+  });
+
   it('runs tool subprocesses without inherited forced colors or the Node NO_COLOR warning', () => {
     for (const base of [
       { ...process.env, NO_COLOR: '1', FORCE_COLOR: '3' },

@@ -60,6 +60,7 @@ describe('Grok adapter environment', () => {
     'PATH',
     'HOME',
     'AUDIT_SENTINEL',
+    'APP_SECRET',
     'WAKE_WEBHOOK_KEY',
     'WAKE_WEBHOOK_URL',
     'SAND_BOX_AUTH_ID',
@@ -78,6 +79,7 @@ describe('Grok adapter environment', () => {
     process.env.PATH = process.env.PATH || '/usr/bin';
     process.env.HOME = process.env.HOME || '/tmp/home';
     process.env.AUDIT_SENTINEL = 'present';
+    process.env.APP_SECRET = 'synthetic-app-secret';
     process.env.WAKE_WEBHOOK_KEY = 'present';
     process.env.WAKE_WEBHOOK_URL = 'present';
     process.env.SAND_BOX_AUTH_ID = 'present';
@@ -121,8 +123,9 @@ describe('Grok adapter environment', () => {
     expect(env.PATH).toBe(process.env.PATH);
     expect(env.HOME).toBe(process.env.HOME);
     expect(env.XAI_API_KEY).toBe('present');
+    expect(env.AUDIT_SENTINEL).toBe('present');
     for (const name of [
-      'AUDIT_SENTINEL',
+      'APP_SECRET',
       'WAKE_WEBHOOK_KEY',
       'WAKE_WEBHOOK_URL',
       'SAND_BOX_AUTH_ID',
@@ -152,7 +155,8 @@ describe('Grok adapter environment', () => {
         const env = spawnedEnv();
         expect(env.NO_COLOR, adapter.id).toBe('1');
         expect(keysNamed(env, 'FORCE_COLOR'), adapter.id).toEqual([]);
-        expect(env.AUDIT_SENTINEL, adapter.id).toBeUndefined();
+        expect(env.AUDIT_SENTINEL, adapter.id).toBe('present');
+        expect(env.APP_SECRET, adapter.id).toBeUndefined();
         expect(env.WAKE_WEBHOOK_KEY, adapter.id).toBeUndefined();
         expect(env.SAND_BOX_AUTH_ID, adapter.id).toBeUndefined();
         expect(env.PATH, adapter.id).toBe(process.env.PATH);
