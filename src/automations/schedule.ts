@@ -511,6 +511,13 @@ function countFiresAfter(
   }
 }
 
+export function scheduleOccurrenceCount(
+  schedule: Schedule,
+  now: number,
+): { count: number; capped: boolean } {
+  return remainingFireCount(schedule, now, EXACT_FIRE_COUNT_CAP);
+}
+
 export function remainingFireCount(
   schedule: Schedule,
   now: number,

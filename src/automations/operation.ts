@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
 import { flushDraftCardOnce } from './command';
 import { AUTOMATION_OPERATION_TTL_MS, automationOperationScope, readAutomationOperationId } from './operation-id';
-import { nextFireAfter } from './schedule';
+import { nextFireAfter, readSchedule, scheduleOccurrenceCount } from './schedule';
 import { normalizeAutomationSchedule } from './schedule-input';
 import { DraftSupersessionConflict, type AutomationOperation, type AutomationsStore } from './store';
 import { DRAFT_SETTLED_SUPERSEDED, scheduleDraftCardSettle } from './draft-card';
@@ -136,8 +136,13 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
     return result === 'ok' ? 'completed' : result === 'failed' ? 'failed' : 'queued';
   };
   const last = executions.at(-1);
+  const now = (context.now ?? Date.now)();
+  const liveDraft = context.store!.getOperationDraft(current.draftId);
+  const occurrence = liveDraft && liveDraft.op !== 'delete' && !liveDraft.pendingRecurring
+    ? scheduleFromDraft(liveDraft.schedule, now) : undefined;
   const base = {
     operationId: current.operationId, draftId: current.draftId, received: true,
+    ...(occurrence ? { occurrenceCount: occurrence.count, ...(occurrence.capped ? { occurrenceCountCapped: true } : {}) } : {}),
     ...(current.supersedesOperationId ? { supersedesOperationId: current.supersedesOperationId } : {}),
     ...(current.taskId ? { taskId: current.taskId } : {}),
     executionScope: 'task', dispatchedCount: current.dispatchedCountKnown === false ? null : current.dispatchedCount,
@@ -148,9 +153,9 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   };
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });
-  const draft = context.store!.getOperationDraft(current.draftId);
+  const draft = liveDraft;
   if (draft?.delivery?.state === 'sending') return unknownAutomationOperation(current.operationId, 'card-delivery-unknown', base);
-  if (!draft || draft.createdAt + AUTOMATION_OPERATION_TTL_MS <= (context.now ?? Date.now)()) return toolResult('execution-failed', 'draft-expired', { ...base, state: 'not-applied', applied: false });
+  if (!draft || draft.createdAt + AUTOMATION_OPERATION_TTL_MS <= now) return toolResult('execution-failed', 'draft-expired', { ...base, state: 'not-applied', applied: false });
   const needsEnd = draft.op !== 'delete' && Boolean(draft.pendingRecurring);
   if (draft.cardMessageId) return toolResult(needsEnd ? 'needs-input' : 'waiting-confirmation', needsEnd ? 'missing-end-at' : 'waiting-confirmation', {
     ...base, state: needsEnd ? 'needs-input' : 'waiting-confirmation', applied: false, cardMessageId: draft.cardMessageId,
@@ -167,4 +172,9 @@ export function validateAutomationOperationId(value: unknown, context: Automatio
 }
 export function unknownAutomationOperation(operationId: string, code: string, data = {}): ToolResult {
   return toolResult('unknown', code, { ...data, operationId, state: 'unknown', applied: null });
+}
+
+function scheduleFromDraft(schedule: unknown, now: number) {
+  const parsed = readSchedule(schedule);
+  return parsed ? scheduleOccurrenceCount(parsed, now) : undefined;
 }

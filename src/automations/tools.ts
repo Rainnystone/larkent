@@ -6,7 +6,7 @@ import type { DraftFlushContext } from './command';
 import { formatZonedDateTime } from './confirm-card';
 import { fireTurnId } from './delivery';
 import { policyGuardReasonLabel } from './policy-guard';
-import { formatFireKey, nextFireAfter, nextFires, REMINDER_MIN_INTERVAL_MS, AGENT_MIN_INTERVAL_MS, ONE_YEAR_MS } from './schedule';
+import { formatFireKey, nextFires, scheduleOccurrenceCount, REMINDER_MIN_INTERVAL_MS, AGENT_MIN_INTERVAL_MS, ONE_YEAR_MS } from './schedule';
 import { automationTargetRevision } from './store';
 import type { AutomationsStore, DraftCardReply } from './store';
 import { normalizeAutomationSchedule, scheduleSchema } from './schedule-input';
@@ -106,18 +106,12 @@ function previewAutomation(params: Record<string, unknown>, context: AutomationT
   const now = (context.now ?? Date.now)();
   const startAt = schedule.kind === 'one-shot' ? schedule.fireAt : schedule.startAt;
   const endAt = schedule.kind === 'one-shot' ? schedule.fireAt : schedule.endAt;
-  let totalCount = 0;
-  let cursor = startAt - 1;
-  for (;;) {
-    const next = nextFireAfter(schedule, cursor);
-    if (!next) break;
-    totalCount++;
-    cursor = next;
-  }
+  const counted = scheduleOccurrenceCount(schedule, now);
   const fires = nextFires(schedule, Math.max(now - 1, startAt - 1), 10);
   return toolResult('ok', 'preview', {
     timezone: canonicalTimezone, schedule: schedule.kind === 'one-shot' ? schedule : { ...schedule, timezone: canonicalTimezone },
-    startAt, endAt, endExclusive: schedule.kind !== 'one-shot', nextFires: fires, totalCount,
+    startAt, endAt, endExclusive: schedule.kind !== 'one-shot', nextFires: fires,
+    occurrenceCount: counted.count, totalCount: counted.count, ...(counted.capped ? { occurrenceCountCapped: true } : {}),
     local: { start: formatZonedDateTime(canonicalTimezone, startAt), end: formatZonedDateTime(canonicalTimezone, endAt), nextFires: fires.map(at => formatZonedDateTime(canonicalTimezone, at)) },
   });
 }

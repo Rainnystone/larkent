@@ -13,7 +13,7 @@ description: 查询与管理任务、预览排期，创建需人工确认的提�
 
 循环排期包含开始时刻，不包含结束时刻。例如在 Asia/Shanghai 2026-10-19 08:00 请求“今天、明天、后天每天 09:00”：开始可设为 19 日 08:00，结束设为 22 日 00:00。核对返回时刻为 19、20、21 日 09:00，共三次；不能改为时间窗口。
 
-回复时展示时区、起止边界、后续时刻和总次数。预览成功只说明参数可用，尚未创建、确认或执行。创建任务使用 `automation.create`（taskType:reminder 或 agent、name、taskText、schedule，可带 timezone）。reminder 到期投递正文；agent 到期在创建时绑定的工作目录运行，按需读取插件并使用所属 profile 已授权的 bot/user 身份，创建者不自动成为 OAuth 用户。agentTasks 开关、工作目录和当前群/话题条件以实际工具结果为准。客户端在发送前确定 operationId，并在结果中返回；重试必须保留原编号和同一语义参数。可在客户端本地先生成编号并保存：`op1.<环境 LARK_BRIDGE_TOOL_SCOPE>.<环境 LARK_BRIDGE_TOOL_ISSUED_AT>.<32 位随机十六进制>`。提交有效期 24 小时，过期编号不能重用；回执可跨 run、重启查询。参数错误修正改变含义时使用新编号。超时、断线或 unknown 先调用 `automation.operation.get`（params.operationId）；禁止盲目重发或换编号重建。unknown 表示结果不明，不能声称失败后自动重建。
+回复时展示时区、起止边界、后续时刻和总次数。次数只引用预览或创建结果中的 `occurrenceCount`（与 `totalCount` 同源，和确认卡同一算法），不要自行按起止日加减；也可以不写次数、改指确认卡。`occurrenceCountCapped` 为真时说超过该次数。预览成功只说明参数可用，尚未创建、确认或执行。创建任务使用 `automation.create`（taskType:reminder 或 agent、name、taskText、schedule，可带 timezone）。reminder 到期投递正文；agent 到期在创建时绑定的工作目录运行，按需读取插件并使用所属 profile 已授权的 bot/user 身份，创建者不自动成为 OAuth 用户。agentTasks 开关、工作目录和当前群/话题条件以实际工具结果为准。客户端在发送前确定 operationId，并在结果中返回；重试必须保留原编号和同一语义参数。可在客户端本地先生成编号并保存：`op1.<环境 LARK_BRIDGE_TOOL_SCOPE>.<环境 LARK_BRIDGE_TOOL_ISSUED_AT>.<32 位随机十六进制>`。提交有效期 24 小时，过期编号不能重用；回执可跨 run、重启查询。参数错误修正改变含义时使用新编号。超时、断线或 unknown 先调用 `automation.operation.get`（params.operationId）；禁止盲目重发或换编号重建。unknown 表示结果不明，不能声称失败后自动重建。
 
 `needs-input/missing-end-at` 可包含已发送的结束时间补全卡；用户补全后仍须点击确认卡。只有 `waiting-confirmation` 且有真实卡片回执时才能说等待确认；`applied` 表示操作已经实际生效；创建、替换和删除需先由用户确认，暂停与恢复立即应用。未来执行与结果送达另看实际状态：operation.get 的 executionState/lastExecution 表示排队、运行及实际运行结果，lastDelivery/deliveredCount 表示独立的交付状态；失败通知送达不代表任务执行成功，运行失败也不表示创建失败。空输出按实际空结果交付；交付待恢复时不重跑业务。dispatch 不等于送达。人工确认不是模型能力，不能用工具或 shell 代点。agent 任务仅在 schema 明确可用时创建。自动运行可以发现和读取插件完成业务，但不能递归创建、替换、删除、暂停或恢复调度，不能借 shell 或人工旧凭据绕过运行类型校验。仅通过工具请求操作，依据实际回执说明保存与确认卡状态。profile、群、actor、运行类型由 bridge 绑定，不能在参数中指定。
 
@@ -25,9 +25,9 @@ description: 查询与管理任务、预览排期，创建需人工确认的提�
 
 | 工具结果 | 用户表述 |
 | --- | --- |
-| `waiting-confirmation` | 已发确认卡，点「是」后生效；现在尚未生效。仅在实际发卡成功且仍待确认时使用。 |
+| `waiting-confirmation` | 已发确认卡，点「是」后生效；现在尚未生效。仅在实际发卡成功且仍待确认时使用。也可说「等待在卡上确认」。 |
 | `applied` | 本次操作已生效；按实际操作说「任务已保存」「已暂停」「已恢复」或「已删除」。未来执行和送达仍以各自实际状态为准。 |
-| `needs-input` | 还需要补充信息；用日常语言问清缺少的内容，例如「要提醒到哪一天？」若已发补全卡，说明在卡片上补全后还需确认。 |
+| `needs-input` | 还需要补充信息；用日常语言问清缺少的内容，例如「要提醒到哪一天？」缺结束日期时说「还需选择结束日期」。若已发补全卡，说明在卡片上补全后还需确认。 |
 | `validation-failed` | 说明具体问题并按原意修正，例如「这个时间不可用，请提供未来的时间。」能依据原意修正时在本轮继续；需要用户决定时再提问。 |
 | `unknown` | 暂时无法确认这次操作是否生效，我先查询原操作的结果。沿用原编号查询，不宣称成功或失败，也不重新创建。 |
 | `execution-failed` | 这次操作未能完成；说明实际失败原因。若是已建立任务的后续运行失败，改说「任务本次运行失败」，不能说成创建失败。 |

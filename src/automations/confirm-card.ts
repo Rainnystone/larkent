@@ -4,7 +4,7 @@ import {
   monthlyFireCount,
   nextFires,
   readSchedule,
-  remainingFireCount,
+  scheduleOccurrenceCount,
   type Schedule,
 } from './schedule';
 import { zonedParts } from './zoned-time';
@@ -97,7 +97,7 @@ function frequencyLine(schedule: Schedule, now: number): string | undefined {
     case 'weekday':
     case 'weekly':
     case 'interval': {
-      const counted = remainingFireCount(schedule, now, EXACT_FIRE_COUNT_CAP);
+      const counted = scheduleOccurrenceCount(schedule, now);
       if (counted.capped) {
         return `超过 ${EXACT_FIRE_COUNT_CAP} 次 · 约每月 ${monthlyFireCount(schedule, now)} 次`;
       }
