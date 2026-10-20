@@ -6,9 +6,9 @@ import { reduce, seedRunState, type RunState } from '../../../src/card/run-state
 import { renderCard } from '../../../src/card/run-renderer';
 import type { AgentEvent } from '../../../src/agent/types';
 
-function cardAfterStop(events: AgentEvent[], stop: StopRequest['type']): RunState {
+function cardAfterStop(events: AgentEvent[], stop: StopRequest): RunState {
   const handle = { interrupted: false };
-  requestStop(handle, { type: stop });
+  requestStop(handle, stop);
   let state = seedRunState({});
   for (const event of events) {
     if (!shouldDeliverAgentEvent(handle, event)) continue;
@@ -17,7 +17,7 @@ function cardAfterStop(events: AgentEvent[], stop: StopRequest['type']): RunStat
   return finalReplyFor(state, { replyMode: 'final-answer', streamed: false });
 }
 
-function stoppedAnswer(chunks: string[], stop: StopRequest['type']): string {
+function stoppedAnswer(chunks: string[], stop: StopRequest): string {
   const translator = new GrokJsonlTranslator();
   for (const chunk of chunks) translator.translate({ type: 'text', data: chunk });
   const state = cardAfterStop(translator.finish('interrupted'), stop);
@@ -26,12 +26,12 @@ function stoppedAnswer(chunks: string[], stop: StopRequest['type']): string {
 
 describe('Grok answer survives stop', () => {
   it('delivers held text as the card answer after an idle-watchdog stop', () => {
-    const card = stoppedAnswer(['answer ', 'before stop'], 'bridge-idle-watchdog');
+    const card = stoppedAnswer(['answer ', 'before stop'], { type: 'bridge-idle-watchdog' });
     expect(card).toContain('answer before stop');
   });
 
   it('delivers held text as the card answer after a user stop', () => {
-    const card = stoppedAnswer(['answer ', 'before stop'], 'user-stop');
+    const card = stoppedAnswer(['answer ', 'before stop'], { type: 'user-stop' });
     expect(card).toContain('answer before stop');
   });
 
@@ -63,7 +63,7 @@ describe('Grok answer survives stop', () => {
         { type: 'final_text', content: 'held answer' },
         { type: 'done', terminationReason: 'interrupted' },
       ],
-      'user-stop',
+      { type: 'user-stop' },
     );
     const card = JSON.stringify(renderCard(state));
     expect(card).toContain('held answer');

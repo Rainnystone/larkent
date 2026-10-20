@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import type { AgentRun } from '../../../src/agent/types';
+import type { RunHandle } from '../../../src/bot/active-runs';
 import { createIdleWatchdog } from '../../../src/bot/idle-watchdog';
 import { consumeCotEvents, type CotPublisher } from '../../../src/bot/cot';
 import { reduce, seedRunState } from '../../../src/card/run-state';
@@ -71,7 +72,7 @@ describe('Grok thoughts', () => {
       stop: async () => {},
       waitForExit: async () => true,
     };
-    const handle = { run, interrupted: false, lastEventAt: 0 };
+    const handle: RunHandle = { run, interrupted: false, lastEventAt: 0 };
     const watchdog = createIdleWatchdog({ handle, idleTimeoutMs: 1000, scope: 'thought' });
     await vi.advanceTimersByTimeAsync(900);
     const [thought] = new GrokJsonlTranslator().translate({
