@@ -55,8 +55,8 @@ export function inspectAutomationToolUse(event: {
   name: string;
   input: unknown;
 }): PolicyGuardHit | undefined {
-  const argv = commandArgv(event.input);
-  return (argv ? inspectArgv(argv) : undefined) ?? inspectToolName(event.name);
+  const command = parseToolCommand(event.input);
+  return (command ? inspectArgv(command.argv, command.shellSyntax) : undefined) ?? inspectToolName(event.name);
 }
 
 function inspectToolName(name: string): PolicyGuardHit | undefined {
@@ -67,7 +67,7 @@ function inspectToolName(name: string): PolicyGuardHit | undefined {
   return inspectLarkArgs(words);
 }
 
-function inspectArgv(raw: readonly string[]): PolicyGuardHit | undefined {
+function inspectArgv(raw: readonly string[], shellSyntax = false): PolicyGuardHit | undefined {
   const commands: string[][] = [[]];
   for (const token of raw) {
     if (/^(?:&&|\|\||[;|&]|\r?\n)$/.test(token)) commands.push([]);
@@ -77,7 +77,7 @@ function inspectArgv(raw: readonly string[]): PolicyGuardHit | undefined {
     const argv = stripWrappers(command);
     const larkIndex = argv.findIndex(token => LARK_CLI_NAME.test(token));
     if (larkIndex >= 0) {
-      const hit = inspectLarkArgs(argv.slice(larkIndex + 1));
+      const hit = inspectLarkArgs(argv.slice(larkIndex + 1), shellSyntax);
       if (hit) return hit;
       // A known CLI's quoted arguments are data, not nested shell programs.
       continue;
@@ -85,24 +85,21 @@ function inspectArgv(raw: readonly string[]): PolicyGuardHit | undefined {
     for (const token of argv) {
       const nested = tokenize(token);
       if (nested.length <= 1) continue;
-      const hit = inspectArgv(nested);
+      const hit = inspectArgv(nested, hasExecutableShellSyntax(token));
       if (hit) return hit;
     }
   }
   return undefined;
 }
 
-function inspectLarkArgs(args: readonly string[]): PolicyGuardHit | undefined {
+function inspectLarkArgs(args: readonly string[], shellSyntax = false): PolicyGuardHit | undefined {
   const positional: string[] = [];
-  // Help on the outer CLI does not make shell substitutions read-only. Keep
-  // the existing mutation checks when arguments contain executable syntax.
-  const hasCommandSubstitution = args.some(token => /\$\(|`/.test(token));
   let options = true;
   for (let index = 0; index < args.length; index++) {
     const token = args[index]!;
     if (token === '--') options = false;
     if (IDENTITY_FLAG_VALUES.has(token)) { index++; continue; }
-    if (options && !hasCommandSubstitution && (token === '--help' || token === '-h')) return undefined;
+    if (options && !shellSyntax && (token === '--help' || token === '-h')) return undefined;
     if (!token.startsWith('-')) positional.push(token.toLowerCase());
   }
   if (mutatesIdentityConfiguration(args, positional)) return { reason: 'auth-config' };
@@ -132,17 +129,49 @@ function stripWrappers(argv: readonly string[]): string[] {
   return out;
 }
 
-function commandArgv(input: unknown): string[] | undefined {
-  if (typeof input === 'string') return tokenize(input);
+function parseToolCommand(input: unknown): { argv: string[]; shellSyntax: boolean } | undefined {
+  if (typeof input === 'string') return { argv: tokenize(input), shellSyntax: hasExecutableShellSyntax(input) };
   if (!input || typeof input !== 'object') return undefined;
   const rec = input as Record<string, unknown>;
   if (Array.isArray(rec.command) && rec.command.every((part) => typeof part === 'string')) {
-    return rec.command;
+    return { argv: rec.command, shellSyntax: false };
   }
-  if (typeof rec.command === 'string') return tokenize(rec.command);
-  if (typeof rec.cmd === 'string') return tokenize(rec.cmd);
-  if (rec.rawInput && typeof rec.rawInput === 'object') return commandArgv(rec.rawInput);
+  if (typeof rec.command === 'string') return parseToolCommand(rec.command);
+  if (typeof rec.cmd === 'string') return parseToolCommand(rec.cmd);
+  if (rec.rawInput && typeof rec.rawInput === 'object') return parseToolCommand(rec.rawInput);
   return undefined;
+}
+
+/** Preserve literal argv/quoted data while withholding help for executable shell expressions. */
+function hasExecutableShellSyntax(command: string): boolean {
+  let quote: "'" | '"' | undefined;
+  let arithmeticDepth = 0;
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index]!;
+    if (quote === "'") {
+      if (char === "'") quote = undefined;
+      continue;
+    }
+    const next = command[index + 1];
+    if (char === '\\' && (!quote || (next !== undefined && /[$`"\\\n]/.test(next)))) { index++; continue; }
+    if (char === "'" && !quote) { quote = "'"; continue; }
+    if (char === '"') { quote = quote ? undefined : '"'; continue; }
+    if (char === '`') return true;
+    if (char === '$' && next === '(') {
+      if (command[index + 2] !== '(') return true;
+      arithmeticDepth += 2;
+      index += 2;
+      continue;
+    }
+    if (char === '$' && next === '{' && /[\s|]/.test(command[index + 2] ?? '')) return true;
+    if (arithmeticDepth) {
+      if (char === '(') arithmeticDepth++;
+      if (char === ')') arithmeticDepth--;
+      continue;
+    }
+    if (!quote && char === '(') return true;
+  }
+  return false;
 }
 
 function tokenize(command: string): string[] {

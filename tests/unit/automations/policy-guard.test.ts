@@ -49,6 +49,12 @@ describe('automatic tool authentication/configuration policy', () => {
     'bash -c "lark-cli auth logout --help && lark-cli auth logout"',
     'lark-cli auth logout --help $(lark-cli auth logout)',
     'lark-cli auth logout --help `lark-cli auth logout`',
+    'lark-cli auth logout --help <(lark-cli auth logout)',
+    'lark-cli auth logout --help >(lark-cli auth logout)',
+    'lark-cli auth logout --help =(lark-cli auth logout)',
+    'lark-cli auth logout --help ${ lark-cli auth logout; }',
+    'lark-cli auth logout --help "$(lark-cli auth logout)"',
+    'lark-cli auth logout --help; (lark-cli auth logout)',
   ])('checks every command even when another command requests help: %s', command => {
     expect(inspectAutomationToolUse({ name: 'Bash', input: { command } })).toEqual({ reason: 'auth-config' });
   });
@@ -56,5 +62,21 @@ describe('automatic tool authentication/configuration policy', () => {
   it('allows quoted help inside a shell wrapper', () => {
     expect(inspectAutomationToolUse({ name: 'Bash', input: { command: 'bash -c "lark-cli auth logout --help"' } }))
       .toBeUndefined();
+  });
+
+  it.each([
+    'lark-cli --profile "$PROFILE" auth logout --help',
+    "lark-cli auth logout --help '$(lark-cli auth logout)'",
+    'lark-cli config set synthetic-key "cost($)" --help',
+    'lark-cli config set synthetic-key "$((1 + (2)))" --help',
+    'lark-cli config set synthetic-key $((1 + (2))) --help',
+  ])('allows help with non-executable shell argument data: %s', command => {
+    expect(inspectAutomationToolUse({ name: 'Bash', input: { command } })).toBeUndefined();
+  });
+
+  it.each(['cost($)', '$(lark-cli auth logout)', '<(lark-cli auth logout)'])('allows help with literal structured argv data: %s', value => {
+    expect(inspectAutomationToolUse({
+      name: 'Bash', input: { command: ['lark-cli', 'config', 'set', 'synthetic-key', value, '--help'] },
+    })).toBeUndefined();
   });
 });
