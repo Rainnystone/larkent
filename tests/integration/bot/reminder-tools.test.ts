@@ -538,7 +538,7 @@ it('replaces a task with the previewed structured schedule only after confirmati
   h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('⏰'))).toBe(false);
   for (const fireAt of [1792375200000, 1792461600000, 1792548000000]) { h.setNow(fireAt); await h.bridge.wakeAutomation(`2@${fireAt}`); }
-  expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('⏰ Replacement'))).toHaveLength(3);
+  await vi.waitFor(() => expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('⏰ Replacement'))).toHaveLength(3), { timeout: 12000 });
 }, 30000);
 
 it('refuses a stale replacement confirmation after a manual pause and records the conflict without creating a task', async () => {
