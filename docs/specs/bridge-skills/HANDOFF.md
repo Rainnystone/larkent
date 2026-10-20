@@ -74,6 +74,10 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09k ✅ | P3 | 插件目录不存在时只给未文档化的 `invalid-package` |
 | P09l ✅ | P3 | Grok 工具卡把输出显示成字节数组 |
 | P09m | P3 | 只读 `auth logout --help` 被误判为认证变更，任务被暂停；`auth-config` 码 agent 看不到 |
+| P09o | P2 | Grok shell 退出码非 0 仍显示成功（见 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)） |
+| P09p | P3 | 草稿修订后旧确认卡仍有效，点「是」重复建任务（见 [P09p](tickets/P09p-superseded-draft-card-still-live.md)） |
+| P09q | P3 | 多草稿状态回复泄漏 `applied` 字段与完整 ID（见 [P09q](tickets/P09q-multi-draft-reply-leaks-fields.md)） |
+| P09r | P3 | 工具卡出现 ANSI 颜色码，与 NO_COLOR 警告同修（见 [P09r](tickets/P09r-tool-card-ansi-escapes.md)） |
 
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
 - **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。

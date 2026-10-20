@@ -39,6 +39,10 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09l](P09l-grok-tool-output-bytes.md) | Bug P3：Grok 工具进度卡把 Bash 输出显示为十进制字节数组 | P09 发现 |
 | [P09m](P09m-policy-guard-help-false-positive.md) | Bug P3：只读 `auth logout --help` 被误判 `auth-config` 并暂停任务；`auth-config` 不在工具结果中 | P09 发现 |
 | [P09n](P09n-settlement-notice-journal-only.md) | Bug P3（deferred，不进 #52）：最终渲染后结算确认卡，结算提示只写入 journal、未补到已流式消息 | #52 Codex 第 3 轮 |
+| [P09o](P09o-grok-shell-failure-renders-success.md) | Bug P2：Grok shell 退出码非 0 仍显示成功（shell 判定漏 `run_terminal_command`） | `b4d67c6` live 复验 |
+| [P09p](P09p-superseded-draft-card-still-live.md) | Bug P3：草稿修订后旧确认卡仍有效，点「是」重复建任务 | `b4d67c6` 全量回归 |
+| [P09q](P09q-multi-draft-reply-leaks-fields.md) | Bug P3：多草稿状态回复泄漏 `applied` 字段与完整卡片 / 草稿 ID | `b4d67c6` 全量回归 |
+| [P09r](P09r-tool-card-ansi-escapes.md) | Bug P3：工具卡出现 ANSI 颜色码（与 NO_COLOR/FORCE_COLOR 警告同修） | `b4d67c6` 全量回归 |
 
 ### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
 
