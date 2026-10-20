@@ -18,7 +18,7 @@ export type StopRequest =
   | { type: 'meeting' }
   | { type: 'subscriber-abandoned' }
   | { type: 'external-signal' }
-  | { type: 'policy-guard' };
+  | { type: 'policy-guard'; code?: 'auth-config' };
 
 export type FailedCause =
   | 'transient-upstream'

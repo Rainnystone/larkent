@@ -34,6 +34,51 @@ afterEach(async () => {
 });
 
 describe('profile identity in existing automatic tasks', { timeout: 20000 }, () => {
+it.each([
+  { args: ['auth', 'logout', '--help'], usage: 'Usage: lark-cli auth logout [options]' },
+  { args: ['auth', 'login', '-h'], usage: 'Usage: lark-cli auth login [options]' },
+  { args: ['profile', 'add', '--help'], usage: 'Usage: lark-cli profile add [options]' },
+  { args: ['config', 'set', '--help'], usage: 'Usage: lark-cli config set [options]' },
+  { args: ['help', 'auth', 'logout'], usage: 'Usage: lark-cli auth logout [options]' },
+])('completes read-only help without pausing the automatic task: $args', async ({ args, usage }) => {
+  const h = await harness({ args });
+  await h.fire();
+  await h.settled();
+  expect(h.store.get(1)).toMatchObject({ lastStatus: 'ok', paused: false });
+  expect(h.bodies()).toContain(usage);
+  expect(await h.calls()).toEqual([expect.objectContaining({ args, env: h.env })]);
+  expect(await h.store.readLog()).toEqual([]);
+  await h.configUnchanged();
+});
+
+it.each([
+  ['auth', 'logout'],
+  ['config', 'set', 'k', 'v'],
+  ['auth', 'logout', '--', '--help'],
+])('exposes the audited auth-config code in the interruption result and Chinese notice: %j', async (...args) => {
+  const h = await harness({ args, hold: true });
+  await h.fire();
+  await h.settled();
+  expect(h.store.get(1)).toMatchObject({ lastStatus: 'failed', paused: true });
+  expect(h.journal.get(`af:1@${NOW + HOUR}`)?.outcome).toMatchObject({
+    kind: 'interrupted', reason: { type: 'policy-guard', code: 'auth-config' },
+  });
+  expect(h.bodies()).toContain('策略拦截（认证/身份配置变更，auth-config）');
+  expect(await h.store.readLog()).toEqual([
+    expect.objectContaining({ result: 'policy-guard', reason: 'auth-config' }),
+  ]);
+  expect(await h.calls()).toEqual([]);
+  await h.configUnchanged();
+  await h.cli.plan('query', {
+    args: ['auth', 'status'], bridgeRequests: [{ operation: 'automation.list' }],
+  });
+  await h.message('query');
+  await vi.waitFor(() => expect(h.bodies()).toContain(
+    '"lastInterruption":{"code":"auth-config","message":"认证/身份配置变更"}',
+  ), { timeout: 10000 });
+  await h.configUnchanged();
+});
+
 it('waits for real automatic settlement when a healthy subprocess outlasts the old polling budget', async () => {
   const h = await harness({ args: ['docs', '+fetch', '--as', 'user'], hold: true });
   await h.fire();
@@ -126,7 +171,7 @@ it.each([
   await h.fire();
   await vi.waitFor(() => expect(h.store.get(1)?.paused).toBe(true), { timeout: 10000 });
   await h.settled();
-  expect(h.bodies()).toContain('策略拦截（认证/身份配置变更）');
+  expect(h.bodies()).toContain('策略拦截（认证/身份配置变更，auth-config）');
   expect(h.bodies()).not.toContain('在本消息话题里追问');
   expect(await h.calls()).toEqual([]);
   const audit = await h.store.readLog();

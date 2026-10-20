@@ -4,7 +4,9 @@ import type { TurnJournal } from '../bot/turn-journal';
 import { createAutomationOperation, getAutomationOperation, serializeAutomationWrite } from './operation';
 import type { DraftFlushContext } from './command';
 import { formatZonedDateTime } from './confirm-card';
-import { nextFireAfter, nextFires, REMINDER_MIN_INTERVAL_MS, AGENT_MIN_INTERVAL_MS, ONE_YEAR_MS } from './schedule';
+import { fireTurnId } from './delivery';
+import { policyGuardReasonLabel } from './policy-guard';
+import { formatFireKey, nextFireAfter, nextFires, REMINDER_MIN_INTERVAL_MS, AGENT_MIN_INTERVAL_MS, ONE_YEAR_MS } from './schedule';
 import { automationTargetRevision } from './store';
 import type { AutomationsStore, DraftCardReply } from './store';
 import { normalizeAutomationSchedule, scheduleSchema } from './schedule-input';
@@ -73,11 +75,17 @@ export async function callAutomationTool(operation: string, params: Record<strin
     ? toolResult('validation-failed', 'unknown-field') : toolResult('ok', 'schema', automationSchema(context));
   if (operation === 'automation.list') {
     if (Object.keys(params).length) return toolResult('validation-failed', 'unknown-field');
-    return toolResult('ok', 'tasks', { tasks: context.store!.listCommitted().filter(item => item.chatId === context.chatId).map(item => ({
-      id: item.id, revision: automationTargetRevision(item), taskType: item.taskType, name: item.name, taskText: item.taskText, schedule: item.schedule,
-      timezone: item.timezone, startAt: item.startAt, endAt: item.endAt, nextFireAt: item.nextFireAt,
-      paused: item.paused, lastStatus: item.lastStatus,
-    })) });
+    return toolResult('ok', 'tasks', { tasks: context.store!.listCommitted().filter(item => item.chatId === context.chatId).map(item => {
+      const outcome = context.journal?.get(fireTurnId(formatFireKey(item.id, item.lastFireAt)))?.outcome;
+      const code = outcome?.kind === 'interrupted' && outcome.reason.type === 'policy-guard'
+        ? outcome.reason.code : undefined;
+      return {
+        id: item.id, revision: automationTargetRevision(item), taskType: item.taskType, name: item.name, taskText: item.taskText, schedule: item.schedule,
+        timezone: item.timezone, startAt: item.startAt, endAt: item.endAt, nextFireAt: item.nextFireAt,
+        paused: item.paused, lastStatus: item.lastStatus,
+        ...(code ? { lastInterruption: { code, message: policyGuardReasonLabel(code) } } : {}),
+      };
+    }) });
   }
   if (operation === 'automation.pause' || operation === 'automation.resume' || operation === 'automation.delete' || operation === 'automation.replace') return serializeAutomationWrite(context.store!, () => manageAutomationOperation(operation, params, context));
   if (operation === 'automation.create') return serializeAutomationWrite(context.store!, () => createAutomationOperation(params, context));

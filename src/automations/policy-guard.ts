@@ -18,7 +18,7 @@ export type PolicyGuardReason =
   | 'user-identity';
 
 export interface PolicyGuardHit {
-  reason: PolicyGuardReason;
+  reason: 'auth-config';
 }
 
 export function policyGuardReasonLabel(reason: PolicyGuardReason): string {
@@ -94,9 +94,15 @@ function inspectArgv(raw: readonly string[]): PolicyGuardHit | undefined {
 
 function inspectLarkArgs(args: readonly string[]): PolicyGuardHit | undefined {
   const positional: string[] = [];
+  // Help on the outer CLI does not make shell substitutions read-only. Keep
+  // the existing mutation checks when arguments contain executable syntax.
+  const hasCommandSubstitution = args.some(token => /\$\(|`/.test(token));
+  let options = true;
   for (let index = 0; index < args.length; index++) {
     const token = args[index]!;
+    if (token === '--') options = false;
     if (IDENTITY_FLAG_VALUES.has(token)) { index++; continue; }
+    if (options && !hasCommandSubstitution && (token === '--help' || token === '-h')) return undefined;
     if (!token.startsWith('-')) positional.push(token.toLowerCase());
   }
   if (mutatesIdentityConfiguration(args, positional)) return { reason: 'auth-config' };

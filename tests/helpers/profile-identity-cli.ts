@@ -98,6 +98,14 @@ const args = process.argv.slice(2);
 const keys = ['LARK_CHANNEL', 'LARK_CHANNEL_HOME', 'LARK_CHANNEL_PROFILE', 'LARK_CHANNEL_CONFIG', 'LARKSUITE_CLI_CONFIG_DIR'];
 const env = Object.fromEntries(keys.map(key => [key, process.env[key]]));
 appendFileSync(join(directory, 'calls.jsonl'), JSON.stringify({ args, env }) + '\n');
+const help = {
+  '["auth","logout","--help"]': 'Usage: lark-cli auth logout [options]',
+  '["auth","login","-h"]': 'Usage: lark-cli auth login [options]',
+  '["profile","add","--help"]': 'Usage: lark-cli profile add [options]',
+  '["config","set","--help"]': 'Usage: lark-cli config set [options]',
+  '["help","auth","logout"]': 'Usage: lark-cli auth logout [options]',
+}[JSON.stringify(args)];
+if (help) { console.log(help); process.exit(0); }
 const configDir = process.env.LARKSUITE_CLI_CONFIG_DIR;
 const config = JSON.parse(readFileSync(join(configDir, 'config.json'), 'utf8'));
 const identity = args.includes('user') || args.includes('--as=user') || args.includes('user-default') || args.includes('--identity=user-default') ? 'user' : 'bot';

@@ -143,7 +143,9 @@ export function formatAgentFailureNotice(
 
 function formatAgentFailureBody(outcome?: RunOutcome, policyGuard?: PolicyGuardReason): string {
   if (outcome?.kind === 'interrupted' && outcome.reason.type === 'policy-guard') {
-    const reason = policyGuard ? `（${policyGuardReasonLabel(policyGuard)}）` : '';
+    const code = outcome.reason.code ?? (policyGuard === 'auth-config' ? policyGuard : undefined);
+    const label = policyGuard ?? code;
+    const reason = label ? `（${policyGuardReasonLabel(label)}${code ? `，${code}` : ''}）` : '';
     return `自动化任务中断：策略拦截${reason}。任务已暂停，可在看板恢复或删除。`;
   }
   return outcome
@@ -509,7 +511,7 @@ async function drainFireRun(input: {
       if (event.type === 'tool_use') {
         const hit = inspectAutomationToolUse(event);
         if (hit) {
-          requestStop(input.handle, { type: 'policy-guard' });
+          requestStop(input.handle, { type: 'policy-guard', code: hit.reason });
           policyGuard = hit.reason;
           void input.handle.run.stop().catch(() => {});
           break;
