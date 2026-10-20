@@ -38,6 +38,7 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09k](P09k-missing-root-diagnostic.md) | Bug P3：插件目录不存在时返回未文档化的 `invalid-package` | P09 发现 |
 | [P09l](P09l-grok-tool-output-bytes.md) | Bug P3：Grok 工具进度卡把 Bash 输出显示为十进制字节数组 | P09 发现 |
 | [P09m](P09m-policy-guard-help-false-positive.md) | Bug P3：只读 `auth logout --help` 被误判 `auth-config` 并暂停任务；`auth-config` 不在工具结果中 | P09 发现 |
+| [P09n](P09n-settlement-notice-journal-only.md) | Bug P3（deferred，不进 #52）：最终渲染后结算确认卡，结算提示只写入 journal、未补到已流式消息 | #52 Codex 第 3 轮 |
 
 ### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
 
