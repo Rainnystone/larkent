@@ -203,7 +203,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
         log.info('agent', 'stop-sigterm', { pid: child.pid, graceMs: stopGraceMs });
         let signalled = false;
         try {
-          signalled = child.kill('SIGTERM');
+          signalled = signalChild(child, 'SIGTERM');
         } catch (error) {
           signalError = error;
         }
@@ -213,7 +213,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
             pid: child.pid, graceMs: stopGraceMs, reason: 'sigterm-did-not-exit',
           });
           try {
-            child.kill('SIGKILL');
+            signalChild(child, 'SIGKILL');
           } catch (error) {
             signalError = error;
           }
@@ -580,6 +580,19 @@ async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T | false
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** Signal the whole process group, then the pid if this child is not a group leader. */
+function signalChild(child: CliChild, signal: NodeJS.Signals): boolean {
+  if (child.pid && process.platform !== 'win32') {
+    try {
+      process.kill(-child.pid, signal);
+      return true;
+    } catch {
+      // ESRCH: not a group leader, or already gone. Fall back to the single pid.
+    }
+  }
+  return child.kill(signal);
 }
 
 function isExternalInterruptSignal(signal: NodeJS.Signals | string | null | undefined): boolean {
