@@ -10,6 +10,48 @@ const BASH_UTF8_BYTES = [228, 184, 173, 230, 150, 135, 123, 34, 111, 107, 34, 58
 const WIRE_BYTES_JSON = '[228,184,173,230,150,135,123,34,111,107,34,58,116,114,117,101,125]';
 
 describe('Grok tool progress card', () => {
+  // Replay of the event fields reported by the independent Grok Build 1.0.41
+  // live acceptance owner. Commands/output are synthetic; no local Grok login.
+  it('renders a completed run_terminal_command exit 2 as failure with command and output', () => {
+    const command = `node "$LARK_BRIDGE_TOOL_CLIENT" tool <<'JSON' && ls /nonexistent-synthetic-card-path
+{"version":1,"operation":"automation.list"}
+JSON`;
+    const output = "ls: cannot access '/nonexistent-synthetic-card-path': No such file or directory";
+    const text = grokCard('run_terminal_command', 'execute', { command }, { type: 'Bash', exit_code: 2, output: [...Buffer.from(output)] });
+    expect(text).toContain('❌');
+    expect(text).not.toContain('✅');
+    expect(text).toContain(command);
+    expect(text).toContain(output);
+  });
+
+  it.each([
+    `printf '%s' '{"version":1,"operation":"automation.list"}' | node "$LARK_BRIDGE_TOOL_CLIENT" tool`,
+    `node "$LARK_BRIDGE_TOOL_CLIENT" tool <<'JSON'
+{"version":1,"operation":"automation.list"}
+JSON`,
+  ])('keeps a successful native shell bridge call folded: %s', command => {
+    const text = grokCard('run_terminal_command', 'execute', { command }, { type: 'Bash', exit_code: 0, output: [...Buffer.from('synthetic protocol payload')] });
+    expect(text).toContain('✅ **自动化：list**');
+    expect(text).not.toContain('❌');
+    expect(text).not.toContain(command);
+    expect(text).not.toContain('synthetic protocol payload');
+  });
+
+  it('keeps successful native shell command and JSON output visible', () => {
+    const text = grokCard('run_terminal_command', 'execute', { command: 'node -e "console.log(42)"' }, { type: 'Bash', exit_code: 0, output: [...Buffer.from('{"exitCode":2}')] });
+    expect(text).toContain('✅');
+    expect(text).not.toContain('❌');
+    expect(text).toContain('console.log(42)');
+    expect(text).toContain('{"exitCode":2}');
+  });
+
+  it('keeps read_file exit-code domain data successful', () => {
+    const text = grokCard('read_file', 'read', { path: 'synthetic.json' }, { type: 'ReadFile', exit_code: 2, content: '{"exitCode":2}' });
+    expect(text).toContain('✅');
+    expect(text).not.toContain('❌');
+    expect(text).toContain('exitCode');
+  });
+
   it.each(['exitCode', 'exit_code'])('keeps a completed plugin card successful with %s domain data', (field) => {
     const translator = new GrokJsonlTranslator();
     const events = [
@@ -116,4 +158,13 @@ function markdownContents(value: unknown): string[] {
   const rec = value as Record<string, unknown>;
   const own = rec.tag === 'markdown' && typeof rec.content === 'string' ? [rec.content] : [];
   return [...own, ...Object.values(rec).flatMap(markdownContents)];
+}
+
+function grokCard(title: string, kind: string, rawInput: object, rawOutput: object): string {
+  const translator = new GrokJsonlTranslator();
+  const events = [
+    ...translator.translate({ type: 'tool_call', toolCallId: 'native', title, kind, status: 'in_progress', rawInput }),
+    ...translator.translate({ type: 'tool_call_update', toolCallId: 'native', status: 'completed', rawOutput }),
+  ];
+  return markdownContents(renderCard(events.reduce((state, event) => reduce(state, event), initialState))).join('\n');
 }
