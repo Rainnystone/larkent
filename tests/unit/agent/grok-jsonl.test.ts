@@ -348,6 +348,46 @@ describe('GrokJsonlTranslator', () => {
     expect(toolResultOutput(BASH_UTF8_TEXT)).toBe(BASH_UTF8_TEXT);
   });
 
+  it('strips ANSI from Grok 1.0.41 colored byte output (P09t)', () => {
+    const colored = '\u001b[33m1792652400000\u001b[39m 2026-10-22 15:00:00\n\u001b[33m1792598400000\u001b[39m 2026-10-22 00:00:00\n';
+    const plain = '1792652400000 2026-10-22 15:00:00\n1792598400000 2026-10-22 00:00:00\n';
+    const bytes = Array.from(Buffer.from(colored));
+    expect(bytes.slice(0, 24)).toEqual([27, 91, 51, 51, 109, 49, 55, 57, 50, 54, 53, 50, 52, 48, 48, 48, 48, 48, 27, 91, 51, 57, 109, 32]);
+
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call',
+        toolCallId: 'call-test-ansi',
+        title: 'run_terminal_command',
+        rawInput: { command: 'node -e "console.log(1792652400000)"', description: 'Convert task timestamps to Shanghai time' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-ansi',
+        kind: 'execute',
+        title: 'Execute `node -e "console.log(1792652400000)"`',
+        rawInput: { variant: 'Bash', command: 'node -e "console.log(1792652400000)"', is_background: false },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-ansi',
+        status: 'completed',
+        rawOutput: { type: 'Bash', output: bytes, exit_code: 0 },
+      },
+    ]);
+    const result = events.find((event) => event.type === 'tool_result');
+    expect(result).toEqual({ type: 'tool_result', id: 'call-test-ansi', output: plain, isError: false });
+    expect(result && result.type === 'tool_result' ? result.output : '').not.toContain('\u001b');
+
+    expect(toolResultOutput(colored)).toBe(plain);
+    expect(toolResultOutput(bytes)).toBe(plain);
+    expect(toolResultOutput({ output: bytes })).toBe(plain);
+    expect(toolResultOutput({ content: bytes })).toBe(plain);
+    expect(toolResultOutput(Array.from(Buffer.from('中文\u001b[33m1792652400000\u001b[39m')))).toBe('中文1792652400000');
+    expect(toolResultOutput('中文{"ok":true}')).toBe('中文{"ok":true}');
+  });
+
   it('keeps ordinary tool objects as JSON', () => {
     expect(toolResultOutput({ lines: 3 })).toBe('{"lines":3}');
     expect(toolResultOutput({ type: 'Bash', output: 'already text' })).toBe(

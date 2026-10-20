@@ -277,20 +277,24 @@ const UTF8_DECODER = new TextDecoder('utf-8');
 
 function serializeToolOutput(value: unknown): string {
   if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
+  if (typeof value === 'string') return stripAnsi(value);
   const decoded = decodeUtf8Bytes(value);
-  if (decoded !== undefined) return decoded;
+  if (decoded !== undefined) return stripAnsi(decoded);
   if (isRecord(value) && !Array.isArray(value) && !(value instanceof Uint8Array)) {
     const wrapped = decodeUtf8Bytes(value.output) ?? decodeUtf8Bytes(value.content);
-    if (wrapped !== undefined) return wrapped;
+    if (wrapped !== undefined) return stripAnsi(wrapped);
   }
   try {
     // Clean native strings before JSON escaping would turn ESC into visible
     // "\u001b" text that the card renderer can no longer recognize as ANSI.
-    return JSON.stringify(value, (_key, part) => typeof part === 'string' ? stripVTControlCharacters(part) : part);
+    return JSON.stringify(value, (_key, part) => typeof part === 'string' ? stripAnsi(part) : part);
   } catch {
-    return String(value);
+    return stripAnsi(String(value));
   }
+}
+
+function stripAnsi(value: string): string {
+  return stripVTControlCharacters(value);
 }
 
 function decodeUtf8Bytes(value: unknown): string | undefined {
