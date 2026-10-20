@@ -392,7 +392,7 @@ async function runMeetingAgent(
   }
 
   const handle = result.execution.handle;
-  const idleTimeoutMs = controls.cfg ? getRunIdleTimeoutMs(controls.cfg) : undefined;
+  const idleTimeoutMs = getRunIdleTimeoutMs(controls.cfg ?? controls.profileConfig);
   const watchdog = handle
     ? createIdleWatchdog({
         handle,
