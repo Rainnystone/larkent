@@ -50,6 +50,52 @@ afterEach(async () => {
 });
 
 describe('P1 Feishu surface parity', () => {
+  it.each([8_388_607, 8_388_608, 8_388_609])(
+    'handles a %i-byte Chinese CLI tool result before replying to Feishu',
+    async bytes => {
+      const h = await startParityBot('grok');
+      const result = {
+        type: 'tool_call_update', toolCallId: 'read_report', status: 'completed', rawOutput: '',
+      };
+      const payloadBytes = bytes - Buffer.byteLength(JSON.stringify(result));
+      result.rawOutput = '中'.repeat(Math.floor(payloadBytes / 3)) + 'x'.repeat(payloadBytes % 3);
+      const wireResult = JSON.stringify(result);
+      expect(Buffer.byteLength(wireResult)).toBe(bytes);
+      expect(wireResult.length).toBeLessThan(8_388_608);
+      // Await each write: process.exit immediately after console.log can truncate
+      // an 8 MiB record before it reaches the bridge's actual subprocess pipe.
+      await writeFile(h.binaryPath, [
+        `#!${process.execPath}`,
+        'import { readFileSync } from "node:fs";',
+        'if (process.argv.includes("--version")) { console.log("grok 0.0.0-pin"); process.exit(0); }',
+        `const script = JSON.parse(readFileSync(${JSON.stringify(h.scriptFile)}, "utf8"));`,
+        'for (const line of script.lines) {',
+        '  await new Promise((resolve, reject) => process.stdout.write(JSON.stringify(line) + "\\n", error => error ? reject(error) : resolve()));',
+        '}',
+      ].join('\n'));
+      await writeFile(h.scriptFile, JSON.stringify({ lines: [
+        { type: 'tool_call', toolCallId: 'read_report', toolName: 'read_file', rawInput: { path: 'report.txt' } },
+        result,
+        { type: 'text', data: 'PINNED_ANSWER：报告已读取。' },
+        { type: 'end', stopReason: 'end_turn' },
+      ] }));
+
+      await h.channel.handlers.message?.(p2pMessage('om_large_report', '请读取中文报告并概括。'));
+      await waitFor(() => snapshotHasAnswer(h.channel.snapshotCalls()) || snapshotHasError(h.channel.snapshotCalls()), 20_000);
+      const rendered = JSON.stringify(h.channel.snapshotCalls());
+      if (bytes <= 8_388_608) {
+        expect(snapshotHasAnswer(h.channel.snapshotCalls())).toBe(true);
+        expect(snapshotHasError(h.channel.snapshotCalls())).toBe(false);
+        expect(rendered).not.toContain('streaming-json line exceeded');
+      } else {
+        expect(snapshotHasError(h.channel.snapshotCalls())).toBe(true);
+        expect(rendered).toContain('⚠️ agent 失败：agent 运行失败');
+        expect(snapshotHasAnswer(h.channel.snapshotCalls())).toBe(false);
+        expect(rendered).not.toContain('中'.repeat(100));
+      }
+    }, 30_000,
+  );
+
   it.each(PIN_AGENT_KINDS)('pins the bot channel-call sequence for %s', async (kind) => {
     const pinned = pinAgentKind(kind);
     const warnings = pinned === 'codex' ? vi.spyOn(console, 'warn') : undefined;
@@ -89,6 +135,7 @@ async function startParityBot(kind: PinAgentKind): Promise<{
   cwd: string;
   scriptFile: string;
   recordPath: string;
+  binaryPath: string;
 }> {
   const tmp = await createTmpProfile(`feishu-parity-${kind}-`);
   const cwd = await realpath(tmp.workspace);
@@ -149,7 +196,7 @@ async function startParityBot(kind: PinAgentKind): Promise<{
     await Promise.all([sessions.flush(), catalog.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
-  return { channel, cwd, scriptFile: installed.fake.scriptPath, recordPath: installed.fake.recordPath };
+  return { channel, cwd, scriptFile: installed.fake.scriptPath, recordPath: installed.fake.recordPath, binaryPath: installed.fake.path };
 }
 
 function setEnv(name: string, value: string | undefined): void {

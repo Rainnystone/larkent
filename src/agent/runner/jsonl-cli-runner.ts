@@ -285,13 +285,13 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     stdoutBuffer += stdoutDecoder.write(chunk);
     let nl = stdoutBuffer.indexOf('\n');
     while (nl !== -1) {
-      if (nl > maxLineBytes) {
+      const line = stdoutBuffer.slice(0, nl);
+      if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
         failOversizedLine();
         return;
       }
-      const line = stdoutBuffer.slice(0, nl).trim();
       stdoutBuffer = stdoutBuffer.slice(nl + 1);
-      enqueueStdoutLine(line);
+      enqueueStdoutLine(line.trim());
       nl = stdoutBuffer.indexOf('\n');
       onStdoutSettled();
     }
