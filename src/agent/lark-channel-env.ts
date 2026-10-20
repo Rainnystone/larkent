@@ -11,6 +11,9 @@ export interface LarkChannelEnvContext {
 export function buildLarkChannelEnv(context?: LarkChannelEnvContext, toolEnv?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     LARK_CHANNEL: '1',
+    // Protocol/tool stdout is plain text. Node warns when both are inherited.
+    NO_COLOR: '1',
+    FORCE_COLOR: undefined,
     // Remove any inherited connection when this run has none.
     LARK_BRIDGE_TOOL_ENDPOINT: toolEnv?.LARK_BRIDGE_TOOL_ENDPOINT,
     LARK_BRIDGE_TOOL_TOKEN: toolEnv?.LARK_BRIDGE_TOOL_TOKEN,

@@ -3,9 +3,24 @@ import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { mergeProcessEnv, spawnProcess } from '../../../src/platform/spawn.js';
+import { buildLarkChannelEnv } from '../../../src/agent/lark-channel-env.js';
+import { mergeProcessEnv, spawnProcess, spawnProcessSync } from '../../../src/platform/spawn.js';
 
 describe('platform spawn env', () => {
+  it('runs tool subprocesses without inherited forced colors or the Node NO_COLOR warning', () => {
+    for (const base of [
+      { ...process.env, NO_COLOR: '1', FORCE_COLOR: '3' },
+      { ...process.env, No_Color: '1', Force_Color: '3' },
+    ]) {
+      const child = spawnProcessSync(process.execPath, ['-e', 'console.log(42); console.error("real diagnostic"); process.exitCode = 2'], {
+        env: mergeProcessEnv(base, buildLarkChannelEnv()), encoding: 'utf8',
+      });
+      expect(child.status).toBe(2);
+      expect(child.stdout).toBe('42\n');
+      expect(child.stderr).toBe('real diagnostic\n');
+    }
+  });
+
   it('overrides env keys case-insensitively for Windows-compatible CODEX_HOME handling', () => {
     const env = mergeProcessEnv(
       {

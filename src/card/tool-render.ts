@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from 'node:util';
 import { bridgeToolLabel, hasCompoundShellInput } from './bridge-tool-call';
 import type { ToolEntry } from './run-state';
 import { toolCommandInput } from './tool-command';
@@ -25,9 +26,10 @@ export function preserveShellToolDetails(tool: ToolEntry): boolean {
 export function toolHeaderText(tool: ToolEntry): string {
   const icon = tool.status === 'done' ? '✅' : tool.status === 'error' ? '❌' : '⏳';
   const bridge = visibleBridgeLabel(tool);
-  if (bridge) return `${icon} **${bridge}**`;
+  if (bridge) return `${icon} **${stripVTControlCharacters(bridge)}**`;
+  const name = stripVTControlCharacters(tool.name);
   const summary = summarizeInput(tool.name, tool.input);
-  return summary ? `${icon} **${tool.name}** — ${summary}` : `${icon} **${tool.name}**`;
+  return summary ? `${icon} **${name}** — ${summary}` : `${icon} **${name}**`;
 }
 
 export function toolBodyMd(tool: ToolEntry): string {
@@ -49,7 +51,7 @@ export function toolBodyMd(tool: ToolEntry): string {
     parts.push('_运行中…_');
   }
 
-  const body = parts.join('\n\n');
+  const body = stripVTControlCharacters(parts.join('\n\n'));
   if (body.length <= BODY_TOTAL_MAX) return body;
   return `${body.slice(0, BODY_TOTAL_MAX)}…\n\n_（body 已截断,完整内容查 \`/doctor\` 或日志）_`;
 }
@@ -60,7 +62,7 @@ function summarizeInput(name: string, input: unknown): string {
   const pick = (key: string, max = HEADER_SUMMARY_MAX): string => {
     const v = rec[key];
     if (typeof v !== 'string') return '';
-    const oneLine = v.replace(/\s+/g, ' ').trim();
+    const oneLine = stripVTControlCharacters(v).replace(/\s+/g, ' ').trim();
     return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
   };
   switch (name) {
@@ -132,5 +134,6 @@ function shortenPath(p: string): string {
 }
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
+  const text = stripVTControlCharacters(s);
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }

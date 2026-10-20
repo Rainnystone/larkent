@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from 'node:util';
 import type { AgentEvent } from '../types';
 import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
@@ -271,7 +272,9 @@ function serializeToolOutput(value: unknown): string {
     if (wrapped !== undefined) return wrapped;
   }
   try {
-    return JSON.stringify(value);
+    // Clean native strings before JSON escaping would turn ESC into visible
+    // "\u001b" text that the card renderer can no longer recognize as ANSI.
+    return JSON.stringify(value, (_key, part) => typeof part === 'string' ? stripVTControlCharacters(part) : part);
   } catch {
     return String(value);
   }

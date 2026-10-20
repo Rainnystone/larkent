@@ -1,3 +1,5 @@
+import { spawnSync } from 'node:child_process';
+import { mergeProcessEnv } from '../../../src/platform/spawn';
 import { describe, expect, it } from 'vitest';
 import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import { renderCard } from '../../../src/card/run-renderer';
@@ -10,6 +12,29 @@ const BASH_UTF8_BYTES = [228, 184, 173, 230, 150, 135, 123, 34, 111, 107, 34, 58
 const WIRE_BYTES_JSON = '[228,184,173,230,150,135,123,34,111,107,34,58,116,114,117,101,125]';
 
 describe('Grok tool progress card', () => {
+  it('cleans structured tool output before JSON serialization while preserving diagnostic text', () => {
+    const text = grokCard('read_file', 'read', { path: '\u001b[33mnotes.txt\u001b[39m' }, { type: 'ReadFile', content: '\u001b[31mread failed: missing file\u001b[39m' });
+    expect(text).toContain('notes.txt');
+    expect(text).toContain('read failed: missing file');
+    expect(text).not.toMatch(/[\u001b\u009b]|\\u001b/);
+  });
+
+  it.each([0, 2])('renders actual colored Node subprocess output as plain text, retaining exit %s and diagnostics', exitCode => {
+    const child = spawnSync(process.execPath, ['-e', `console.log(42); console.error("\\u001b[31mreal diagnostic\\u001b[39m"); process.exitCode = ${exitCode}`], {
+      env: mergeProcessEnv(process.env, { FORCE_COLOR: '1', NO_COLOR: undefined }), encoding: 'utf8',
+    });
+    expect(child.status).toBe(exitCode);
+    const output = child.stdout + child.stderr;
+    expect(output).toContain('\u001b[');
+    const command = 'node -e "console.log(42)"';
+    const text = grokCard('run_terminal_command', 'execute', { command }, { type: 'Bash', exit_code: child.status, output: [...Buffer.from(output)] });
+    expect(text).toContain(exitCode ? '❌' : '✅');
+    expect(text).toContain(command);
+    expect(text).toContain('42');
+    expect(text).toContain('real diagnostic');
+    expect(text).not.toMatch(/[\u001b\u009b]/);
+  });
+
   // Replay of the event fields reported by the independent Grok Build 1.0.41
   // live acceptance owner. Commands/output are synthetic; no local Grok login.
   it('renders a completed run_terminal_command exit 2 as failure with command and output', () => {
