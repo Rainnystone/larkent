@@ -62,7 +62,8 @@ export class GrokJsonlTranslator {
       case 'tool_call_update':
         return this.translateToolCallUpdate(raw);
       case 'usage':
-        return this.translateUsage(raw);
+        this.rememberUsage(raw);
+        return [];
       case 'end':
         return this.translateEnd(raw);
       case 'error':
@@ -89,7 +90,7 @@ export class GrokJsonlTranslator {
         },
       ]);
     }
-    return [...this.finalTextEvents(), this.doneEvent(reason)];
+    return [...this.takeUsage(), ...this.finalTextEvents(), this.doneEvent(reason)];
   }
 
   fail(message: string): AgentEvent[] {
@@ -194,11 +195,15 @@ export class GrokJsonlTranslator {
     ];
   }
 
-  private translateUsage(raw: Record<string, unknown>): AgentEvent[] {
+  private rememberUsage(raw: Record<string, unknown>): void {
     const usage = this.usageEvent(raw);
-    if (!usage) return [];
-    this.lastUsage = usage;
-    return [usage];
+    if (usage) this.lastUsage = usage;
+  }
+
+  private takeUsage(): AgentEvent[] {
+    const usage = this.lastUsage;
+    this.lastUsage = undefined;
+    return usage ? [usage] : [];
   }
 
   private translateEnd(raw: Record<string, unknown>): AgentEvent[] {
@@ -208,8 +213,8 @@ export class GrokJsonlTranslator {
     if (sessionId) this.sessionId = sessionId;
     const events: AgentEvent[] = [];
     if (sessionId) events.push({ type: 'system', resumeHandle: sessionId });
-    const usage = this.usageEvent(raw);
-    if (usage && !sameUsage(usage, this.lastUsage)) events.push(usage);
+    this.rememberUsage(raw);
+    events.push(...this.takeUsage());
     events.push(...this.finalTextEvents());
     events.push(this.doneEvent('normal'));
     return events;
@@ -234,8 +239,10 @@ export class GrokJsonlTranslator {
       numberValue(usage.reasoning_tokens) ?? numberValue(usage.reasoningOutputTokens);
     const costUsd =
       numberValue(raw.total_cost_usd) ??
+      numberValue(usage.total_cost_usd) ??
       numberValue(usage.cost_usd) ??
-      numberValue(usage.costUsd);
+      numberValue(usage.costUsd) ??
+      numberValue(usage.cost);
     if (
       inputTokens === undefined &&
       outputTokens === undefined &&
@@ -288,6 +295,8 @@ const UTF8_DECODER = new TextDecoder('utf-8');
 
 function serializeToolOutput(value: unknown): string {
   if (value === undefined || value === null) return '';
+  const readFile = readFileContent(value);
+  if (readFile !== undefined) return stripAnsi(readFile);
   if (typeof value === 'string') return stripAnsi(value);
   const decoded = decodeUtf8Bytes(value);
   if (decoded !== undefined) return stripAnsi(decoded);
@@ -332,8 +341,11 @@ function isByteInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255;
 }
 
-function sameUsage(a: AgentEvent, b: AgentEvent | undefined): boolean {
-  return Boolean(b && JSON.stringify(a) === JSON.stringify(b));
+function readFileContent(value: unknown): string | undefined {
+  if (!isRecord(value) || value.type !== 'ReadFile') return undefined;
+  const file = value.FileContent;
+  if (!isRecord(file) || typeof file.content !== 'string') return undefined;
+  return file.content;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
