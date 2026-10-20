@@ -105,8 +105,8 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09aq | P2 · 本轮唯一修复（Codex） | 失败分类输入错误：stderr `""` 不回退终态消息（CLI 无关，含 CRLF 与 404 收窄）（见 [P09aq](tickets/P09aq-grok-unknown-model-terminal-message.md)） |
 | P09ar | merged → P09aq | CRLF 被当作回车覆盖，Windows 输出变空行（见 [P09ar](tickets/P09ar-terminal-text-crlf.md)） |
 | P09as | wontfix | 凭据透传 allowlist 未按 adapter 区分（见 [P09as](tickets/P09as-spawn-credential-allowlist-per-adapter.md)） |
-| P09at | P3 deferred（合并后） | 继承 stdout 的后代进程在 drain 后未被终止（见 [P09at](tickets/P09at-process-tree-terminate-spared.md)） |
-| P09au | P3 deferred（合并后） | 完整 JSONL 行按 UTF-16 长度而非字节数检查（见 [P09au](tickets/P09au-jsonl-line-bytes.md)） |
+| P09at | superseded → P09bc | 继承 stdout 的后代进程在 drain 后未被终止（见 [P09at](tickets/P09at-process-tree-terminate-spared.md)） |
+| P09au | superseded → P09bd | 完整 JSONL 行按 UTF-16 长度而非字节数检查（见 [P09au](tickets/P09au-jsonl-line-bytes.md)） |
 | P09av | P3 deferred（合并后） | 同名时间戳取自暂停/恢复等管理回执（见 [P09av](tickets/P09av-store-same-name-timestamp.md)） |
 | P09aw | P3 deferred（合并后） | `notice()`/`supersededByThisTurn()` 回执读取未防护（见 [P09aw](tickets/P09aw-reply-state-guard-notice-reads.md)） |
 | P09ax | P3（合并后） | 删除 jsonl.ts 旧版 statusless 完成分支（见 [P09ax](tickets/P09ax-grok-remove-statusless-branch.md)） |

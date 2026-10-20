@@ -70,8 +70,8 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09aq](P09aq-grok-unknown-model-terminal-message.md) | **Bug P2，本轮 #52 唯一修复**（owner: Codex，CLI 无关）：失败分类输入错误（stderr `""` 不回退终态消息）；并入 P09ar、P09ap | #52 Codex 定向 review（`7514c1e`） |
 | [P09ar](P09ar-terminal-text-crlf.md) | Merged → P09aq：CRLF 被当作回车覆盖，Windows 输出变空行 | #52 Codex 定向 review（`7514c1e`） |
 | [P09as](P09as-spawn-credential-allowlist-per-adapter.md) | Wontfix（owner: Codex（CLI 无关，邮件交接））：凭据透传 allowlist 未按 adapter 区分 | #52 Codex 定向 review（`7514c1e`） |
-| [P09at](P09at-process-tree-terminate-spared.md) | Deferred P3（owner: Codex，合并后跟进）：继承 stdout 的后代进程在 drain 后未被终止 | #52 Codex 定向 review（`7514c1e`） |
-| [P09au](P09au-jsonl-line-bytes.md) | Deferred P3（owner: Codex，合并后跟进）：完整 JSONL 行按 UTF-16 长度而非字节数检查 | #52 Codex 定向 review（`7514c1e`） |
+| [P09at](P09at-process-tree-terminate-spared.md) | Superseded → P09bc：继承 stdout 的后代进程在 drain 后未被终止 | #52 Codex 定向 review（`7514c1e`） |
+| [P09au](P09au-jsonl-line-bytes.md) | Superseded → P09bd：完整 JSONL 行按 UTF-16 长度而非字节数检查 | #52 Codex 定向 review（`7514c1e`） |
 | [P09av](P09av-store-same-name-timestamp.md) | Deferred P3（owner: Codex，合并后跟进）：同名时间戳取自暂停/恢复等管理回执 | #52 Codex 定向 review（`7514c1e`） |
 | [P09aw](P09aw-reply-state-guard-notice-reads.md) | Deferred P3（owner: Codex，合并后跟进）：`notice()`/`supersededByThisTurn()` 回执读取未防护 | #52 Codex 定向 review（`7514c1e`） |
 | [P09ax](P09ax-grok-remove-statusless-branch.md) | Chore P3（owner: local Grok Build，#52 合并后）：删除 jsonl.ts 旧版 statusless 完成分支 | P09ao 分诊 |
