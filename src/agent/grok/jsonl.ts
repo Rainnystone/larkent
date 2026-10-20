@@ -152,12 +152,15 @@ export class GrokJsonlTranslator {
     isError: boolean,
   ): AgentEvent[] {
     this.startedToolCalls.delete(id);
+    const output = raw.rawOutput ?? raw.content ?? raw.output;
+    // "completed" describes the tool lifecycle; a shell process may still fail.
+    const exitCode = isRecord(output) ? numberValue(output.exitCode) ?? numberValue(output.exit_code) : undefined;
     return [
       {
         type: 'tool_result',
         id,
-        output: serializeToolOutput(raw.rawOutput ?? raw.content ?? raw.output),
-        isError,
+        output: serializeToolOutput(output),
+        isError: isError || (exitCode !== undefined && exitCode !== 0),
       },
     ];
   }

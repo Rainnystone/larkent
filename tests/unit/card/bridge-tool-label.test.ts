@@ -20,6 +20,130 @@ const POWERSHELL_LIST_COMMAND = 'node "$env:LARK_BRIDGE_TOOL_CLIENT" tool';
 const EXPANDED_LIST_COMMAND = `node "${CLIENT_PATH}" tool <<'EOF'\n${LIST_REQUEST}\nEOF`;
 
 describe('bridge tool progress-card labels', () => {
+  it('folds a successful bridge call fed by literal piped stdin', () => {
+    const command = `printf '%s\\n' '${LIST_REQUEST}' | node "$LARK_BRIDGE_TOOL_CLIENT" tool`;
+    const state = stateFrom([
+      { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command } },
+      { type: 'tool_result', id: 'tool-1', output: LIST_STDOUT, isError: false },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+    const card = JSON.stringify(renderCard(state));
+
+    expect(card).toContain('✅ **自动化：list**');
+    expectCardHidesInternals(card);
+  });
+
+  it('folds a bridge call fed by a quoted heredoc through cat', () => {
+    const command = `cat <<'EOF' | node "$LARK_BRIDGE_TOOL_CLIENT" tool\n${LIST_REQUEST}\nEOF`;
+    const card = JSON.stringify(renderCard(stateFrom([
+      { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command } },
+      { type: 'tool_result', id: 'tool-1', output: LIST_STDOUT, isError: false },
+      { type: 'done', terminationReason: 'normal' },
+    ])));
+
+    expect(card).toContain('✅ **自动化：list**');
+    expectCardHidesInternals(card);
+  });
+
+  it('keeps a chained shell failure and its command visible', () => {
+    const command = `node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /nonexistent-synthetic-card-path`;
+    const output = `${LIST_STDOUT}\nls: cannot access '/nonexistent-synthetic-card-path': No such file or directory`;
+    const state = stateFrom([
+      { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command, stdin: LIST_REQUEST } },
+      { type: 'tool_result', id: 'tool-1', output, isError: true },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+    const card = JSON.stringify(renderCard(state));
+
+    expect(card).toContain(JSON.stringify(command).slice(1, -1));
+    expect(card).toContain("ls: cannot access '/nonexistent-synthetic-card-path'");
+    expect(card).toContain('❌');
+    expect(card).toContain('"color":"red"');
+    expect(card).not.toContain('✅');
+  });
+
+  it.each([
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool; ls /missing',
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool && ls /missing',
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool || echo recovered',
+    'false | node "$LARK_BRIDGE_TOOL_CLIENT" tool',
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool | cat',
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool\nls /missing',
+    `${POSIX_LIST_COMMAND}\nls /missing`,
+    `node "$LARK_BRIDGE_TOOL_CLIENT" tool <<'EOF' ; ls /missing\n${LIST_REQUEST}\nEOF`,
+    `printf '%s' "$(ls /missing)" | node "$LARK_BRIDGE_TOOL_CLIENT" tool`,
+    `printf '%s' '\`ls /missing\`' | node "$LARK_BRIDGE_TOOL_CLIENT" tool && echo done`,
+    'echo "$LARK_BRIDGE_TOOL_CLIENT" tool',
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool > /tmp/synthetic-output',
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool &',
+    `node "$LARK_BRIDGE_TOOL_CLIENT" tool <<EOF\n$(ls /missing)\nEOF`,
+  ])('retains raw command and output for compound or uncertain shell input: %s', (command) => {
+    const card = JSON.stringify(renderCard(stateFrom([
+      { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command } },
+      { type: 'tool_result', id: 'tool-1', output: 'synthetic shell diagnostic', isError: true },
+      { type: 'done', terminationReason: 'normal' },
+    ])));
+
+    expect(card).toContain(JSON.stringify(command).slice(1, -1));
+    expect(card).toContain('synthetic shell diagnostic');
+    expect(card).toContain('❌');
+    expect(card).not.toContain('✅');
+  });
+
+  it.each([
+    `echo '${LIST_REQUEST}' | node "$LARK_BRIDGE_TOOL_CLIENT" tool`,
+    `printf '%s' '{"operation":"automation.list","params":{"text":"literal ; && || | $(data) ` + '`data`' + `"}}' | node "$LARK_BRIDGE_TOOL_CLIENT" tool`,
+    `node "${CLIENT_PATH}" tool <<'EOF'\n{"operation":"automation.list","text":"; && || | $(data)"}\nEOF`,
+    `node "${CLIENT_PATH}" tool <<EOF\n${LIST_REQUEST}\nEOF`,
+  ])('folds literal stdin without interpreting quoted payload as shell code: %s', (command) => {
+    const card = JSON.stringify(renderCard(stateFrom([
+      { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command } },
+      { type: 'tool_result', id: 'tool-1', output: LIST_STDOUT, isError: false },
+      { type: 'done', terminationReason: 'normal' },
+    ])));
+
+    expect(card).toContain('✅ **自动化：list**');
+    expectCardHidesInternals(card);
+  });
+
+  it.each([
+    ['Shell', { cmd: 'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing' }],
+    ['command_execution', { command: ['bash', '-lc', 'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing'] }],
+    ['Shell', { rawInput: { command: 'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing' } }],
+    ['Bash', 'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing'],
+  ])('keeps compound command details from %s input', (name, input) => {
+    const card = JSON.stringify(renderCard(stateFrom([
+      { type: 'tool_use', id: 'tool-1', name, input },
+      { type: 'tool_result', id: 'tool-1', output: 'synthetic shell diagnostic', isError: true },
+      { type: 'done', terminationReason: 'normal' },
+    ])));
+
+    expect(card).toContain('tool ; ls /missing');
+    expect(card).toContain('synthetic shell diagnostic');
+    expect(card).toContain('❌');
+  });
+
+  it('retains compound bridge details when other tool calls are summarized', () => {
+    const events: AgentEvent[] = [];
+    for (const id of ['one', 'two', 'three']) {
+      events.push(
+        { type: 'tool_use', id, name: 'Bash', input: { command: 'pwd' } },
+        { type: 'tool_result', id, output: '/synthetic', isError: false },
+      );
+    }
+    events.push(
+      { type: 'tool_use', id: 'failure', name: 'Bash', input: { command: 'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing' } },
+      { type: 'tool_result', id: 'failure', output: 'ls: synthetic missing path', isError: true },
+      { type: 'done', terminationReason: 'normal' },
+    );
+    const card = JSON.stringify(renderCard(stateFrom(events)));
+
+    expect(card).toContain('3 个工具调用');
+    expect(card).toContain('tool ; ls /missing');
+    expect(card).toContain('ls: synthetic missing path');
+    expect(card).toContain('❌');
+  });
+
   it.each([
     ['Bash', POSIX_LIST_COMMAND],
     ['Shell', POSIX_LIST_COMMAND],

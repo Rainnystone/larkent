@@ -10,6 +10,35 @@ const BASH_UTF8_BYTES = [228, 184, 173, 230, 150, 135, 123, 34, 111, 107, 34, 58
 const WIRE_BYTES_JSON = '[228,184,173,230,150,135,123,34,111,107,34,58,116,114,117,101,125]';
 
 describe('Grok tool progress card', () => {
+  it.each([
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /nonexistent-synthetic-card-path',
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool',
+  ])('shows a nonzero shell exit as failure even when the tool completed: %s', (command) => {
+    const translator = new GrokJsonlTranslator();
+    const output = "ls: cannot access '/nonexistent-synthetic-card-path': No such file or directory";
+    const events = [
+      ...translator.translate({
+        type: 'tool_call', toolCallId: 'call_failure', toolName: 'Bash', status: 'in_progress',
+        rawInput: { command, stdin: '{"operation":"automation.list"}' },
+      }),
+      ...translator.translate({
+        type: 'tool_call_update', toolCallId: 'call_failure', status: 'completed',
+        rawOutput: { type: 'Bash', output: [...Buffer.from(output)], exitCode: 2 },
+      }),
+    ];
+    const state = events.reduce((next, event) => reduce(next, event), initialState);
+    const card = renderCard(state);
+    const text = markdownContents(card).join('\n');
+
+    expect(text).toContain('❌');
+    expect(text).not.toContain('✅');
+    expect(JSON.stringify(card)).toContain('"color":"red"');
+    if (command.includes(';')) {
+      expect(text).toContain(command);
+      expect(text).toContain(output);
+    }
+  });
+
   it('renders Bash byte-array output as readable utf-8 text', () => {
     const translator = new GrokJsonlTranslator();
     const events = [
