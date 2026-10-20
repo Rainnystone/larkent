@@ -64,16 +64,16 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09ak](P09ak-grok-readfile-blob-usage-dup.md) | Bug P3（owner: local Grok Build）：`read_file` 工具卡显示 JSON 原文；usage 事件发三次 | Grok CLI 只读审计 |
 | [P09al](P09al-grok-strip-cr-bel-text.md) | Bug P3（owner: local Grok Build）：ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离 | Grok CLI 只读审计 |
 | [P09am](P09am-grok-prompt-on-argv.md) | Bug P3（owner: local Grok Build）：完整 prompt 与 rules 位于 argv（ps 可见） | Grok CLI 只读审计 |
-| [P09an](P09an-grok-error-drops-usage.md) | Bug P2（owner: local Grok Build）：失败终态（translateError/fail）丢失已缓存 usage | #52 Codex 定向 review（`7514c1e`） |
+| [P09an](P09an-grok-error-drops-usage.md) | Deferred P3（owner: local Grok Build，合并后跟进）：失败终态（translateError/fail）丢失已缓存 usage（仅 usage 遥测） | #52 Codex 定向 review（`7514c1e`） |
 | [P09ao](P09ao-grok-null-rawoutput-statusless.md) | Wontfix（owner: local Grok Build）：statusless 完成更新中 `rawOutput: null` 未产生 tool_result | #52 Codex 定向 review（`7514c1e`） |
-| [P09ap](P09ap-grok-404-signature-scope.md) | Bug P3 deferred（owner: local Grok Build）：404 签名误匹配任意 `404 Not Found` | #52 Codex 定向 review（`7514c1e`） |
-| [P09aq](P09aq-grok-unknown-model-terminal-message.md) | Bug P2（owner: local Grok Build）：stderr 为空串时 unknown-model 未用终态消息分类 | #52 Codex 定向 review（`7514c1e`） |
-| [P09ar](P09ar-terminal-text-crlf.md) | Bug P1（owner: local Grok Build）：CRLF 被当作回车覆盖，Windows 输出变空行 | #52 Codex 定向 review（`7514c1e`） |
-| [P09as](P09as-spawn-credential-allowlist-per-adapter.md) | Bug P1（owner: Codex（CLI 无关，邮件交接））：凭据透传 allowlist 未按 adapter 区分 | #52 Codex 定向 review（`7514c1e`） |
-| [P09at](P09at-process-tree-terminate-spared.md) | Bug P1（owner: Codex（CLI 无关，邮件交接））：继承 stdout 的后代进程在 drain 后未被终止 | #52 Codex 定向 review（`7514c1e`） |
-| [P09au](P09au-jsonl-line-bytes.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：完整 JSONL 行按 UTF-16 长度而非字节数检查 | #52 Codex 定向 review（`7514c1e`） |
-| [P09av](P09av-store-same-name-timestamp.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：同名时间戳取自暂停/恢复等管理回执 | #52 Codex 定向 review（`7514c1e`） |
-| [P09aw](P09aw-reply-state-guard-notice-reads.md) | Bug P3 deferred（owner: Codex（CLI 无关，邮件交接））：`notice()`/`supersededByThisTurn()` 回执读取未防护 | #52 Codex 定向 review（`7514c1e`） |
+| [P09ap](P09ap-grok-404-signature-scope.md) | Merged → P09aq：404 签名误匹配任意 `404 Not Found` | #52 Codex 定向 review（`7514c1e`） |
+| [P09aq](P09aq-grok-unknown-model-terminal-message.md) | **Bug P2，本轮 #52 唯一修复**（owner: Codex，CLI 无关）：失败分类输入错误（stderr `""` 不回退终态消息）；并入 P09ar、P09ap | #52 Codex 定向 review（`7514c1e`） |
+| [P09ar](P09ar-terminal-text-crlf.md) | Merged → P09aq：CRLF 被当作回车覆盖，Windows 输出变空行 | #52 Codex 定向 review（`7514c1e`） |
+| [P09as](P09as-spawn-credential-allowlist-per-adapter.md) | Wontfix（owner: Codex（CLI 无关，邮件交接））：凭据透传 allowlist 未按 adapter 区分 | #52 Codex 定向 review（`7514c1e`） |
+| [P09at](P09at-process-tree-terminate-spared.md) | Deferred P3（owner: Codex，合并后跟进）：继承 stdout 的后代进程在 drain 后未被终止 | #52 Codex 定向 review（`7514c1e`） |
+| [P09au](P09au-jsonl-line-bytes.md) | Deferred P3（owner: Codex，合并后跟进）：完整 JSONL 行按 UTF-16 长度而非字节数检查 | #52 Codex 定向 review（`7514c1e`） |
+| [P09av](P09av-store-same-name-timestamp.md) | Deferred P3（owner: Codex，合并后跟进）：同名时间戳取自暂停/恢复等管理回执 | #52 Codex 定向 review（`7514c1e`） |
+| [P09aw](P09aw-reply-state-guard-notice-reads.md) | Deferred P3（owner: Codex，合并后跟进）：`notice()`/`supersededByThisTurn()` 回执读取未防护 | #52 Codex 定向 review（`7514c1e`） |
 | [P09ax](P09ax-grok-remove-statusless-branch.md) | Chore P3（owner: local Grok Build，#52 合并后）：删除 jsonl.ts 旧版 statusless 完成分支 | P09ao 分诊 |
 
 > **分诊原则：** 票据按第一性原理、面向未来判断；不为过时的 CLI 版本做兼容工作（做减法，不打补丁）。
@@ -94,6 +94,12 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 
 P09d（`src/card/tool-render.ts`）与 P09l（`src/agent/grok/jsonl.ts`）都影响工具进度卡但不共享文件，可并行；合并后需一并确认 Grok 工具卡既解码字节又折叠 bridge tool 标签。
 | [P10](P10-uat-real-usage.md) | 生产 Grok bridge 真实使用 UAT：14 条自然语言句子覆盖提醒、文档、新闻摘要与五类排期及管理操作，核对 larkent-monitor | P09、#52 合并并部署 |
+
+#52 Codex 定向 review（`7514c1e`）复盘规则（2026-10-20）：
+
+- #52 只接受 automation / plugin 范围内的问题；其他通用发现一律建为 #52 合并后的跟进票。
+- 修复票的回归测试必须覆盖受影响的调用方，不能只测辅助函数。
+- P3 票是合并后跟进，不在 #52 中修。本轮 #52 只修 P09aq（已并入 P09ar、P09ap）。
 
 P09 E2E 发现的 won't-fix（不建票）：
 

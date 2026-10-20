@@ -1,6 +1,6 @@
 # Task 9ar — P09ar CRLF 被当作回车覆盖，Windows 输出变空行
 
-**Status:** todo · bug · P1
+**Status:** merged → [P09aq](P09aq-grok-unknown-model-terminal-message.md)
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20

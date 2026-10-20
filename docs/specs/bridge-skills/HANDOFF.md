@@ -99,18 +99,19 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09ak | P3 | `read_file` 工具卡显示 JSON 原文；usage 事件发三次（见 [P09ak](tickets/P09ak-grok-readfile-blob-usage-dup.md)） |
 | P09al | P3 | ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离（见 [P09al](tickets/P09al-grok-strip-cr-bel-text.md)） |
 | P09am | P3 | 完整 prompt 与 rules 位于 argv（ps 可见）（见 [P09am](tickets/P09am-grok-prompt-on-argv.md)） |
-| P09an | P2 | 失败终态丢失已缓存 usage（见 [P09an](tickets/P09an-grok-error-drops-usage.md)） |
+| P09an | P3 deferred（合并后） | 失败终态丢失已缓存 usage，仅 usage 遥测（见 [P09an](tickets/P09an-grok-error-drops-usage.md)） |
 | P09ao | wontfix | statusless 完成更新中 `rawOutput: null` 未产生 tool_result（见 [P09ao](tickets/P09ao-grok-null-rawoutput-statusless.md)） |
-| P09ap | P3 deferred | 404 签名误匹配任意 `404 Not Found`（见 [P09ap](tickets/P09ap-grok-404-signature-scope.md)） |
-| P09aq | P2 | stderr 为空串时 unknown-model 未用终态消息分类（见 [P09aq](tickets/P09aq-grok-unknown-model-terminal-message.md)） |
-| P09ar | P1 | CRLF 被当作回车覆盖，Windows 输出变空行（见 [P09ar](tickets/P09ar-terminal-text-crlf.md)） |
-| P09as | P1 | 凭据透传 allowlist 未按 adapter 区分（见 [P09as](tickets/P09as-spawn-credential-allowlist-per-adapter.md)） |
-| P09at | P1 | 继承 stdout 的后代进程在 drain 后未被终止（见 [P09at](tickets/P09at-process-tree-terminate-spared.md)） |
-| P09au | P3 deferred | 完整 JSONL 行按 UTF-16 长度而非字节数检查（见 [P09au](tickets/P09au-jsonl-line-bytes.md)） |
-| P09av | P3 deferred | 同名时间戳取自暂停/恢复等管理回执（见 [P09av](tickets/P09av-store-same-name-timestamp.md)） |
-| P09aw | P3 deferred | `notice()`/`supersededByThisTurn()` 回执读取未防护（见 [P09aw](tickets/P09aw-reply-state-guard-notice-reads.md)） |
+| P09ap | merged → P09aq | 404 签名误匹配任意 `404 Not Found`（见 [P09ap](tickets/P09ap-grok-404-signature-scope.md)） |
+| P09aq | P2 · 本轮唯一修复（Codex） | 失败分类输入错误：stderr `""` 不回退终态消息（CLI 无关，含 CRLF 与 404 收窄）（见 [P09aq](tickets/P09aq-grok-unknown-model-terminal-message.md)） |
+| P09ar | merged → P09aq | CRLF 被当作回车覆盖，Windows 输出变空行（见 [P09ar](tickets/P09ar-terminal-text-crlf.md)） |
+| P09as | wontfix | 凭据透传 allowlist 未按 adapter 区分（见 [P09as](tickets/P09as-spawn-credential-allowlist-per-adapter.md)） |
+| P09at | P3 deferred（合并后） | 继承 stdout 的后代进程在 drain 后未被终止（见 [P09at](tickets/P09at-process-tree-terminate-spared.md)） |
+| P09au | P3 deferred（合并后） | 完整 JSONL 行按 UTF-16 长度而非字节数检查（见 [P09au](tickets/P09au-jsonl-line-bytes.md)） |
+| P09av | P3 deferred（合并后） | 同名时间戳取自暂停/恢复等管理回执（见 [P09av](tickets/P09av-store-same-name-timestamp.md)） |
+| P09aw | P3 deferred（合并后） | `notice()`/`supersededByThisTurn()` 回执读取未防护（见 [P09aw](tickets/P09aw-reply-state-guard-notice-reads.md)） |
 | P09ax | P3（合并后） | 删除 jsonl.ts 旧版 statusless 完成分支（见 [P09ax](tickets/P09ax-grok-remove-statusless-branch.md)） |
 
+- **#52 Codex 定向 review（`7514c1e`）分诊（2026-10-20）：** 本轮 #52 只修 P09aq（Codex，CLI 无关；并入 P09ar、P09ap）。P09an/at/au/av/aw 为 P3 合并后跟进；P09as、P09ao wontfix；P09ax 合并后删除遗留分支。复盘规则见 tickets/README.md。
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
 - **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。
 - **`6dd0e44` live 回归（2026-10-20）：** 新增 P09s–P09z。分工：P09s/P09t/P09u 由 local Grok Build 修（代码分支 `feat/bridge-skills`）；P09v/P09w/P09x/P09y 由 Cursor Project 修（同一分支，先 `git pull --rebase`）；P09z 为 deferred。STEP 1 结论：09:00 确认创建了 #19，与 #18（08:45）同名重复；09:00 确认无 toast 但实际成功（P09y），非错误、非 skip-auto-unregistered、非守卫拒绝；#18 为用户本人点击确认。

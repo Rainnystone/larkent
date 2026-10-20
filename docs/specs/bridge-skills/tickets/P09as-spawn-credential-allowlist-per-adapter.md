@@ -1,6 +1,7 @@
 # Task 9as — P09as 凭据透传 allowlist 未按 adapter 区分
 
-**Status:** todo · bug · P1
+**Status:** wontfix · bug
+**Wontfix reason:** 2026-10-20 用户确认不修。
 **Owner:** Codex（CLI 无关，邮件交接）
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20

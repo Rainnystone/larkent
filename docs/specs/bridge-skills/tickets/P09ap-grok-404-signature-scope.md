@@ -1,11 +1,11 @@
 # Task 9ap — P09ap 404 签名误匹配任意 `404 Not Found`
 
-**Status:** deferred · bug · P3
+**Status:** merged → [P09aq](P09aq-grok-unknown-model-terminal-message.md)
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20
 **Blocked by:** None
-**Deferred reason:** 未观察到 Grok 产生非会话类 404。（2026-10-20 实测分诊，本轮不修）
+**Merged reason:** 并入 P09aq 一并修（2026-10-20 用户确认）。
 
 ## Codex finding (verbatim)
 

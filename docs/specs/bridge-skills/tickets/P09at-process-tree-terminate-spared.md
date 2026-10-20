@@ -1,6 +1,7 @@
 # Task 9at — P09at 继承 stdout 的后代进程在 drain 后未被终止
 
-**Status:** todo · bug · P1
+**Status:** deferred · bug · P3（#52 合并后跟进）
+**Deferred reason:** spared PID 仅出现在 Linux；读端关闭后写入者会收到 SIGPIPE 退出。（2026-10-20 用户确认）
 **Owner:** Codex（CLI 无关，邮件交接）
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20

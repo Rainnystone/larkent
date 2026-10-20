@@ -1,6 +1,6 @@
 # Task 9an — P09an Grok 失败终态丢失已缓存的 usage（token/cost）
 
-**Status:** todo · bug · P2
+**Status:** deferred · bug · P3（仅影响 usage 遥测；#52 合并后跟进）
 **Owner:** local Grok Build
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20

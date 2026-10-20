@@ -1,6 +1,6 @@
 # Task 9av — P09av 同名时间戳取自暂停/恢复等管理回执
 
-**Status:** deferred · bug · P3
+**Status:** deferred · bug · P3（#52 合并后跟进）
 **Owner:** Codex（CLI 无关，邮件交接）
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20
