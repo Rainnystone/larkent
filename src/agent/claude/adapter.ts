@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { mergeProcessEnv } from '../../platform/spawn';
+import { agentSpawnEnv } from '../spawn-env';
 import { SpawnFailed } from '../../runtime/errors';
 import { buildBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
@@ -91,7 +91,7 @@ export class ClaudeAdapter implements AgentAdapter {
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
+      env: agentSpawnEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
       stdin: opts.prompt,
       translator: wrapParsedTranslator(
         new ClaudeStreamTranslator(),

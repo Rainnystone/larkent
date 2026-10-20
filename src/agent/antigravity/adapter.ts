@@ -1,4 +1,4 @@
-import { mergeProcessEnv } from '../../platform/spawn';
+import { agentSpawnEnv } from '../spawn-env';
 import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
@@ -95,7 +95,7 @@ export class AntigravityAdapter implements AgentAdapter {
         ...(parsed.printTimeout ? { printTimeout: parsed.printTimeout } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
+      env: agentSpawnEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
       translator: wrapParsedTranslator(new AntigravityJsonlTranslator(), 'agy'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'agy',

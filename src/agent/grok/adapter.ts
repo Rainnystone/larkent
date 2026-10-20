@@ -1,5 +1,5 @@
-import { mergeProcessEnv } from '../../platform/spawn';
 import { SpawnFailed } from '../../runtime/errors';
+import { agentSpawnEnv } from '../spawn-env';
 import { buildBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
@@ -79,7 +79,7 @@ export class GrokAdapter implements AgentAdapter {
         ...(opts.model ? { model: opts.model } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, {
+      env: agentSpawnEnv(process.env, {
         ...buildLarkChannelEnv(this.larkChannel, opts.toolEnv),
         // Grok's own shell sets FORCE_COLOR. Keeping NO_COLOR makes Node warn
         // on every tool card. Color is removed from tool output instead.

@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { SandboxMode } from '../../config/profile-schema';
-import { mergeProcessEnv } from '../../platform/spawn';
+import { agentSpawnEnv } from '../spawn-env';
 import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
@@ -143,7 +143,7 @@ export class CodexAdapter implements AgentAdapter {
         model: opts.model,
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, envOverrides),
+      env: agentSpawnEnv(process.env, envOverrides),
       stdin: prefixBridgeSystemPrompt(opts.prompt, this.botIdentity, opts.promptVariant),
       translator: wrapParsedTranslator(new CodexJsonlTranslator(), 'codex'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,

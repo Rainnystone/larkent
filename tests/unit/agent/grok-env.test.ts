@@ -52,12 +52,21 @@ function keysNamed(env: NodeJS.ProcessEnv, name: string): string[] {
 }
 
 describe('Grok adapter environment', () => {
-  const previous = {
-    NO_COLOR: process.env.NO_COLOR,
-    No_Color: process.env.No_Color,
-    FORCE_COLOR: process.env.FORCE_COLOR,
-    Force_Color: process.env.Force_Color,
-  };
+  const tracked = [
+    'NO_COLOR',
+    'No_Color',
+    'FORCE_COLOR',
+    'Force_Color',
+    'PATH',
+    'HOME',
+    'AUDIT_SENTINEL',
+    'WAKE_WEBHOOK_KEY',
+    'WAKE_WEBHOOK_URL',
+    'SAND_BOX_AUTH_ID',
+    'CLOUD_AGENT_INJECTED_SECRET_NAMES',
+    'XAI_API_KEY',
+  ] as const;
+  const previous = Object.fromEntries(tracked.map((key) => [key, process.env[key]]));
 
   beforeEach(() => {
     spawnMock.spawnProcess.mockReset();
@@ -66,6 +75,14 @@ describe('Grok adapter environment', () => {
     process.env.No_Color = '1';
     process.env.FORCE_COLOR = '1';
     process.env.Force_Color = '1';
+    process.env.PATH = process.env.PATH || '/usr/bin';
+    process.env.HOME = process.env.HOME || '/tmp/home';
+    process.env.AUDIT_SENTINEL = 'present';
+    process.env.WAKE_WEBHOOK_KEY = 'present';
+    process.env.WAKE_WEBHOOK_URL = 'present';
+    process.env.SAND_BOX_AUTH_ID = 'present';
+    process.env.CLOUD_AGENT_INJECTED_SECRET_NAMES = 'present';
+    process.env.XAI_API_KEY = 'present';
   });
 
   afterEach(() => {
@@ -86,6 +103,7 @@ describe('Grok adapter environment', () => {
       cwd: '/tmp',
       toolEnv: {
         LARK_BRIDGE_TOOL_ENDPOINT: 'http://127.0.0.1:9',
+        LARK_BRIDGE_TOOL_TOKEN: 'tool-token',
         LARK_BRIDGE_TOOL_CLIENT: '/tmp/tool-client.mjs',
       },
     });
@@ -99,6 +117,19 @@ describe('Grok adapter environment', () => {
     expect(env.GROK_DISABLE_AUTOUPDATER).toBe('1');
     expect(env.LARK_BRIDGE_TOOL_ENDPOINT).toBe('http://127.0.0.1:9');
     expect(env.LARK_BRIDGE_TOOL_CLIENT).toBe('/tmp/tool-client.mjs');
+    expect(env.LARK_BRIDGE_TOOL_TOKEN).toBe('tool-token');
+    expect(env.PATH).toBe(process.env.PATH);
+    expect(env.HOME).toBe(process.env.HOME);
+    expect(env.XAI_API_KEY).toBe('present');
+    for (const name of [
+      'AUDIT_SENTINEL',
+      'WAKE_WEBHOOK_KEY',
+      'WAKE_WEBHOOK_URL',
+      'SAND_BOX_AUTH_ID',
+      'CLOUD_AGENT_INJECTED_SECRET_NAMES',
+    ]) {
+      expect(env[name], name).toBeUndefined();
+    }
   });
 
   it('keeps NO_COLOR=1 for the shared helper and the other CLI adapters', async () => {
@@ -121,6 +152,11 @@ describe('Grok adapter environment', () => {
         const env = spawnedEnv();
         expect(env.NO_COLOR, adapter.id).toBe('1');
         expect(keysNamed(env, 'FORCE_COLOR'), adapter.id).toEqual([]);
+        expect(env.AUDIT_SENTINEL, adapter.id).toBeUndefined();
+        expect(env.WAKE_WEBHOOK_KEY, adapter.id).toBeUndefined();
+        expect(env.SAND_BOX_AUTH_ID, adapter.id).toBeUndefined();
+        expect(env.PATH, adapter.id).toBe(process.env.PATH);
+        expect(env.HOME, adapter.id).toBe(process.env.HOME);
       } finally {
         child.exitCode = 0;
         child.emit('exit', 0, null);
