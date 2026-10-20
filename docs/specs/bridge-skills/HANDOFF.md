@@ -99,6 +99,7 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09ak | P3 | `read_file` 工具卡显示 JSON 原文；usage 事件发三次（见 [P09ak](tickets/P09ak-grok-readfile-blob-usage-dup.md)） |
 | P09al | P3 | ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离（见 [P09al](tickets/P09al-grok-strip-cr-bel-text.md)） |
 | P09am | P3 | 完整 prompt 与 rules 位于 argv（ps 可见）（见 [P09am](tickets/P09am-grok-prompt-on-argv.md)） |
+| P09an | P2 | 失败终态丢失已缓存 usage（见 [P09an](tickets/P09an-grok-error-drops-usage.md)） |
 
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
 - **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。

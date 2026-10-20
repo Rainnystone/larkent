@@ -64,6 +64,7 @@ Status: ready-for-agent（拆票完成，代码实施尚未授权）· 2026-10-1
 | [P09ak](P09ak-grok-readfile-blob-usage-dup.md) | Bug P3（owner: local Grok Build）：`read_file` 工具卡显示 JSON 原文；usage 事件发三次 | Grok CLI 只读审计 |
 | [P09al](P09al-grok-strip-cr-bel-text.md) | Bug P3（owner: local Grok Build）：ANSI 剥离漏掉 CR/BEL；答案文本与 stderr 片段未剥离 | Grok CLI 只读审计 |
 | [P09am](P09am-grok-prompt-on-argv.md) | Bug P3（owner: local Grok Build）：完整 prompt 与 rules 位于 argv（ps 可见） | Grok CLI 只读审计 |
+| [P09an](P09an-grok-error-drops-usage.md) | Bug P2（owner: local Grok Build）：失败终态（translateError/fail）丢失已缓存 usage | #52 Codex 定向 review（`7514c1e`） |
 
 ### P09a–P09m 依赖与实施顺序（按 `0b55865` 代码路径）
 
