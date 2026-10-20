@@ -8,7 +8,7 @@ const NODE_TRACE_HINT =
 /**
  * Drop the two-line Node warning Grok's tool process prints when it sets both
  * `FORCE_COLOR` and `NO_COLOR`. Parent env cannot stop that injection.
- * Also drop other ANSI/BEL and apply `\r` as a same-line overwrite.
+ * Also drop other ANSI/BEL; CRLF is a newline, bare `\r` overwrites a line.
  */
 export function stripTerminalText(value: string): string {
   return applyCarriageReturn(stripNodeNoColorWarning(stripVTControlCharacters(value)));
@@ -28,11 +28,11 @@ export function stripNodeNoColorWarning(value: string): string {
   return kept.join('\n');
 }
 
-/** `\r` rewinds the current line. BEL is noise, not text. */
+/** Normalize CRLF before applying bare `\r` overwrites. BEL is noise. */
 function applyCarriageReturn(value: string): string {
   let line = '';
   let out = '';
-  for (const ch of value) {
+  for (const ch of value.replace(/\r\n/g, '\n')) {
     if (ch === '\n') {
       out += line + '\n';
       line = '';

@@ -16,7 +16,7 @@ export const grokStderrSignatures: readonly CliSignature[] = Object.freeze([
     userMessage: '未知模型（unknown model id）。请改用 grok models 列出的模型。',
   },
   {
-    pattern: /session get failed:\s*404|404 Not Found/i,
+    pattern: /session get failed:\s*404/i,
     cliVersion: 'grok 1.0.41',
     classify: { kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: true },
     userMessage: '会话不存在（session get failed: 404）。请新开一轮，不要继续旧 session。',

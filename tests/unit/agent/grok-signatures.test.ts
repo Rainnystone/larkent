@@ -29,6 +29,19 @@ function classify(stderrTail: string, terminalEvent?: AgentEvent) {
 }
 
 describe('Grok failure signatures', () => {
+  it.each(['404 Not Found', 'GET /synthetic/resource: 404 Not Found'])('does not classify an unrelated 404 as a missing session: %s', stderr => {
+    const { signature, outcome, message } = classify(stderr);
+    expect(signature).toBeUndefined();
+    expect(outcome).toMatchObject({ kind: 'failed', retriable: true });
+    expect(message).toBe('agent 运行失败');
+  });
+
+  it('retains the specific session get failed: 404 signature', () => {
+    const { outcome, message } = classify('Error: session get failed: 404 Not Found');
+    expect(outcome).toMatchObject({ kind: 'failed', retriable: false, needsHuman: true });
+    expect(message).toContain('会话不存在');
+  });
+
   it('treats a 404 resume as a non-retriable failure without a continue notice', () => {
     const stderr = fixture('s4-bad-session.err');
     const { outcome, message } = classify(stderr);
