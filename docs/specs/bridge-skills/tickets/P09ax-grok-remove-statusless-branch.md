@@ -1,7 +1,7 @@
 # Task 9ax — P09ax 删除 jsonl.ts 中旧版 statusless 完成分支
 
-**Status:** todo · chore · P3（#52 合并后）
-**本轮范围（用户 2026-10-21）：** 低优先级，不在 #52 本轮，不交给 Codex；#52 合并后再评估。白话：删除旧版 Grok 兼容代码（做减法），改不改都行。
+**Status:** on hold（用户 2026-10-21）
+**On hold（用户 2026-10-21）：** 不在 #52 本轮，不交给 Codex，任何人不得实施，除非用户解除。白话：删除旧版 Grok 兼容代码（做减法），改不改都行。
 **Owner:** local Grok Build
 **Found in:** P09ao 分诊（wontfix），2026-10-20
 **Blocked by:** #52 合并

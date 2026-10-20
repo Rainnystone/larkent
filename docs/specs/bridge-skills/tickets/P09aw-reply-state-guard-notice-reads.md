@@ -1,7 +1,7 @@
 # Task 9aw — P09aw `notice()`/`supersededByThisTurn()` 回执读取未防护
 
-**Status:** deferred · bug · P3（#52 合并后跟进）
-**本轮范围（用户 2026-10-21）：** 低优先级，不在 #52 本轮，不交给 Codex；#52 合并后再评估。白话：读确认卡回执的一处代码缺防护，仅数据异常时可能出错，正常使用不触发。
+**Status:** on hold（用户 2026-10-21）
+**On hold（用户 2026-10-21）：** 不在 #52 本轮，不交给 Codex，任何人不得实施，除非用户解除。白话：读确认卡回执的一处代码缺防护，仅数据异常时可能出错，正常使用不触发。
 **Owner:** Codex（CLI 无关，邮件交接）
 **Audit verdict:** CONFIRMED（#52 Codex 定向 review，`7514c1e`，已接受）
 **Found in:** #52 Codex scoped review，2026-10-20
