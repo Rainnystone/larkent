@@ -1238,7 +1238,7 @@ describe('CodexAdapter process contract', () => {
       LARK_CHANNEL: '1',
       CODEX_HOME: '/outer/codex-home',
     });
-    expect(record.env.APP_SECRET).toBe('inherited-secret');
+    expect(record.env.APP_SECRET).toBeUndefined();
   });
 
   it('injects the active bridge profile env while preserving Codex env overrides', async () => {

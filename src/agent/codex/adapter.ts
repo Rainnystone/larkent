@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { SandboxMode } from '../../config/profile-schema';
-import { agentSpawnEnv } from '../spawn-env';
+import { agentSpawnEnv } from '../../platform/spawn';
 import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
