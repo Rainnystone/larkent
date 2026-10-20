@@ -1,6 +1,6 @@
 import { EventEmitter, getEventListeners } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -835,7 +835,10 @@ setInterval(() => {}, 1000);
       const promptPath = record.argv[record.argv.indexOf('--append-system-prompt-file') + 1]!;
       expect(await readFile(promptPath, 'utf8')).toContain('lark-channel-bridge');
       await run.stop();
-      expect(await readFile(join(fake.dir, 'term-seen'), 'utf8')).toBe('yes');
+      // SIGKILL may interrupt writeFileSync after creation but before its write.
+      // Creation alone proves the SIGTERM handler ran; exit confirms escalation.
+      expect((await stat(join(fake.dir, 'term-seen'))).isFile()).toBe(true);
+      expect(run.signal).toBe('SIGKILL');
       expect(await run.waitForExit(1)).toBe(true);
       expect(() => process.kill(record.pid, 0)).toThrow();
       await expect(readFile(promptPath)).rejects.toMatchObject({ code: 'ENOENT' });
