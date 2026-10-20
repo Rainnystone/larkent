@@ -76,6 +76,7 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09m | P3 | 只读 `auth logout --help` 被误判为认证变更，任务被暂停；`auth-config` 码 agent 看不到 |
 
 - **#52 Codex review 第 3 轮 triage：** `schedule.ts:526` won't-fix（live 实测：卡显示 3 次、实际触发 3 次）；`channel.ts:2623` deferred P3，见 [P09n](tickets/P09n-settlement-notice-journal-only.md)；`bridge-tool-call.ts:22` 修复已交给 Codex。
+- **`44aed11` 后续：** P2（Grok 非 shell 工具被按退出码判失败）已在 `b4d67c6` 修复；`44aed11..b4d67c6` 定向 review 无问题；live 复验发现 [P09o](tickets/P09o-grok-shell-failure-renders-success.md)。
 - **Won't-fix：** B3 暂停→恢复后 revision 回到原值（ABA），内容相同、无副作用。
 - **实测（live）验证：** 场景 1–8 主要路径；F4（拦截成立，见 P09m 误报）；F5；F7 结果为 fail（P09c，已修）。
 - **仅代码审阅、未实测：** F6；已授权 user 身份路径（测试 profile 无 user token，bot 身份已实测）。
