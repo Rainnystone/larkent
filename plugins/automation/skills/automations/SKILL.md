@@ -5,6 +5,8 @@ description: 查询与管理任务、预览排期，创建需人工确认的提�
 
 使用共用客户端 `lark-channel-bridge tool`，一份 JSON 请求从 stdin 输入，一份 JSON 结果从 stdout 读取。bridge 通过 `LARK_BRIDGE_TOOL_CLIENT` 提供客户端 JS 绝对路径，无需全局安装或依赖工作目录。POSIX shell 用 `node "$LARK_BRIDGE_TOOL_CLIENT" tool`；PowerShell 用 `node "$env:LARK_BRIDGE_TOOL_CLIENT" tool`。不要把用户文本拼接为 shell 命令；用工具的 stdin 或安全的 JSON 文件。环境中的连接信息属于本轮，不能复制到回复、日志、任务或下轮运行。
 
+按需读取插件时，若 `plugins.inspect` 或 `plugins.read` 返回歧义候选，核对候选的版本和 root，选择目标 ID，并把该候选的 `reference` 原样放进 `params.reference` 重试（inspect 使用 `params.plugin`，read 使用 `params.skill`）。同 ID 包即使版本也相同，仍可用 reference 选择；只写 canonical `plugin:skill` 不能区分同 ID 包。`plugins.list` 保留冲突包及其诊断。资源读取沿用所选包的 reference；旧引用失效时重新发现。内容选择不授予 automation 操作资格，操作可用性仍以 schema 和实际结果为准。
+
 先调用 `automation.schema` 取得当前可用操作、字段、枚举、限制及结果契约。`automation.list` 查询本群的真实任务。`automation.preview` 接收 `taskType` 和结构化 `schedule`，直接校验并返回预览，不创建任务、不发送确认卡。所有请求的 `version` 为 1，操作名放在 `operation`，参数放在 `params`。
 
 模型负责把用户的自然语言映射到 schema 字段。保留原意与准确时间，明确时区。收到 `needs-input` 时依据 `fields` 补必要信息或向用户提问；收到 `validation-failed` 时依据 `code` 在本轮修正，不重复原错误。业务边界、限制与可用性以实际 schema 和工具结果为准。

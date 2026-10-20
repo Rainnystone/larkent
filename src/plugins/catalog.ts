@@ -108,24 +108,27 @@ export class PluginCatalog {
   }
 
   async list() {
-    return Promise.all(this.plugins.filter(p => !this.conflicted(p.id)).map(async plugin => {
+    return Promise.all(this.plugins.map(async plugin => {
       const { id, version, description, availability, diagnostics } = await this.describe(plugin);
-      return { id, version, description, ...(availability === 'available' ? {} : { availability }), ...(diagnostics.length ? { diagnostics } : {}) };
+      return { id, version, description, ...(this.conflicted(id) ? { root: plugin.base, reference: plugin.reference } : {}),
+        ...(availability === 'available' ? {} : { availability }), ...(diagnostics.length ? { diagnostics } : {}) };
     }));
   }
-  async inspect(id: string) {
-    const matches = this.pluginMatches(id);
+  async inspect(id: string, options: { reference?: string } = {}) {
+    const matches = this.pluginMatches(id, options.reference);
     return matches.length === 1 ? this.describe(matches[0]!) : undefined;
   }
-  private pluginMatches(id: string): Plugin[] { return this.plugins.filter(p => p.id === id || p.aliases.includes(id)); }
+  private pluginMatches(id: string, reference?: string): Plugin[] {
+    return this.plugins.filter(p => (p.id === id || p.aliases.includes(id)) && (reference === undefined || p.reference === reference));
+  }
   private async describe(plugin: Plugin) {
     const changes: PluginDiagnostic[] = await unchanged(plugin) ? [] : [{ code: 'package-changed' }];
-    const diagnostics = [...plugin.diagnostics, ...changes];
+    const diagnostics = [...plugin.diagnostics, ...(this.conflicted(plugin.id) ? [{ code: 'plugin-conflict', plugin: plugin.id }] : []), ...changes];
     const skills = plugin.skills.map(({ id, name, aliases, resource, available, diagnostics: problems }) => ({
       id, name, aliases, resource, available: available && !changes.length, diagnostics: [...problems, ...changes],
     }));
     const status = availability(skills);
-    return { id: plugin.id, version: plugin.version, description: plugin.description, reference: plugin.reference,
+    return { id: plugin.id, version: plugin.version, root: plugin.base, description: plugin.description, reference: plugin.reference,
       availability: status === 'available' && diagnostics.length ? 'partial' as const : status, diagnostics, skills };
   }
   private conflicted(id: string): boolean { return this.plugins.filter(p => p.id === id).length > 1; }
@@ -134,9 +137,10 @@ export class PluginCatalog {
     const matches = this.plugins.filter(p => p.id === id);
     return matches.length === 1 && matches[0]!.skills.some(s => s.available) && await unchanged(matches[0]!);
   }
-  async resolveInspect(id: string): Promise<CatalogResult> {
-    const matches = this.pluginMatches(id);
-    if (matches.length > 1) return { code: 'plugin-ambiguous', data: { candidates: matches.map(p => ({ id: p.id, version: p.version, reference: p.reference })) } };
+  async resolveInspect(id: string, options: { reference?: string } = {}): Promise<CatalogResult> {
+    const matches = this.pluginMatches(id, options.reference);
+    if (!matches.length && options.reference !== undefined) return { code: 'stale-plugin-reference' };
+    if (matches.length > 1) return { code: 'plugin-ambiguous', data: { candidates: matches.map(p => ({ id: p.id, version: p.version, root: p.base, reference: p.reference })) } };
     const plugin = matches.length === 1 ? await this.describe(matches[0]!) : undefined;
     return plugin ? { code: 'plugin', data: plugin } : { code: 'plugin-not-found' };
   }
@@ -147,15 +151,14 @@ export class PluginCatalog {
       ...plugin.skills.filter(skill => [skill.id, skill.name, ...skill.aliases,
         ...[plugin.id, ...plugin.aliases].flatMap(name => [skill.name, ...skill.aliases].map(skillName => `${name}:${skillName}`))].includes(id))
         .map(skill => ({ plugin, skill })),
-    ]);
-    if (matches.length > 1) return { code: 'skill-ambiguous', data: { candidates: matches.map(({ plugin, skill }) => ({ id: skill?.id ?? plugin.id, version: plugin.version, reference: plugin.reference, ...(skill ? { resource: skill.resource } : {}) }))
+    ]).filter(({ plugin }) => options.reference === undefined || plugin.reference === options.reference);
+    if (matches.length > 1) return { code: 'skill-ambiguous', data: { candidates: matches.map(({ plugin, skill }) => ({ id: skill?.id ?? plugin.id, version: plugin.version, root: plugin.base, reference: plugin.reference, ...(skill ? { resource: skill.resource } : {}) }))
       .sort((a, b) => a.id.localeCompare(b.id) || a.version.localeCompare(b.version)) } };
-    if (!matches.length) return { code: options.reference !== undefined && !this.plugins.some(plugin => plugin.reference === options.reference)
+    if (!matches.length) return { code: options.reference !== undefined
       ? 'stale-plugin-reference' : 'skill-not-found-or-ambiguous' };
     const { plugin, skill } = matches[0]!;
-    if (this.conflicted(plugin.id)) return this.resolveInspect(plugin.id);
-    if (options.reference !== undefined && options.reference !== plugin.reference) return { code: 'stale-plugin-reference' };
-    if (!skill) return this.resolveInspect(id);
+    if (options.reference === undefined && this.conflicted(plugin.id)) return this.resolveInspect(plugin.id);
+    if (!skill) return { code: 'plugin', data: await this.describe(plugin) };
     if (!skill.available) return { code: 'skill-unavailable', data: { diagnostics: skill.diagnostics } };
     const resource = options.resource ?? skill.resource;
     if (!validPath(resource)) return { code: 'invalid-path' };

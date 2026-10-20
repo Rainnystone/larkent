@@ -79,9 +79,9 @@ async function dispatch(value: unknown, context: ToolRunContext): Promise<ToolRe
       if (Object.keys(params).length) return toolResult('validation-failed', 'unknown-field');
       return toolResult('ok', 'plugins', { plugins: await context.catalog.list(), diagnostics: context.catalog.diagnostics });
     case 'plugins.inspect': {
-      if (Object.keys(params).some(key => key !== 'plugin')) return toolResult('validation-failed', 'unknown-field');
-      if (typeof params.plugin !== 'string' || !params.plugin) return toolResult('validation-failed', 'invalid-params');
-      const result = await context.catalog.resolveInspect(params.plugin);
+      if (Object.keys(params).some(key => !['plugin', 'reference'].includes(key))) return toolResult('validation-failed', 'unknown-field');
+      if (typeof params.plugin !== 'string' || !params.plugin || params.reference !== undefined && typeof params.reference !== 'string') return toolResult('validation-failed', 'invalid-params');
+      const result = await context.catalog.resolveInspect(params.plugin, { reference: params.reference as string | undefined });
       const plugin = record(result.data);
       const automationContext = plugin?.id === 'automation' && !await context.catalog.isAvailable('automation')
         ? { ...context, availability: () => 'automation-plugin-unavailable' } : context;

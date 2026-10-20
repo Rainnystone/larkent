@@ -26,11 +26,14 @@ export const TOOL_REQUEST_SCHEMA = {
       type: 'object', additionalProperties: false, required: ['skill'], properties: {
         skill: { type: 'string', minLength: 1, description: 'Qualified plugin:skill ID, unique name/alias, or plugin name for its directory' },
         resource: { type: 'string', description: 'Declared package-relative resource from the content result' },
-        reference: { type: 'string', description: 'Version reference from discovery/read; stale references are rejected' },
+        reference: { type: 'string', description: 'Exact package reference from discovery, ambiguity candidates or read; selects before ambiguity checks; stale references are rejected' },
       },
     },
     pluginInspectParams: {
-      type: 'object', additionalProperties: false, required: ['plugin'], properties: { plugin: { type: 'string', minLength: 1 } },
+      type: 'object', additionalProperties: false, required: ['plugin'], properties: {
+        plugin: { type: 'string', minLength: 1 },
+        reference: { type: 'string', description: 'Exact package reference from discovery or ambiguity candidates; stale references are rejected' },
+      },
     },
   },
   type: 'object', additionalProperties: false, required: ['version', 'operation'],

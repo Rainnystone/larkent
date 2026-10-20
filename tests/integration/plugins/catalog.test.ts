@@ -249,7 +249,7 @@ it('does not bypass a plugin identifier conflict by naming a skill unique to onl
   await rename(join(first.root, 'skills/sample'), join(first.root, 'skills/first'));
   await rename(join(second.root, 'skills/sample'), join(second.root, 'skills/second'));
   const catalog = await PluginCatalog.load([first.root, second.root]);
-  expect(await catalog.list()).toEqual([]);
+  expect(await catalog.list()).toHaveLength(2);
   expect(await catalog.resolveRead('duplicate:first')).toMatchObject({ code: 'plugin-ambiguous', data: { candidates: [
     { id: 'duplicate', version: '1.0.0' }, { id: 'duplicate', version: '2.0.0' },
   ] } });
@@ -282,9 +282,64 @@ it('isolates broken packages and rejects duplicate IDs without scan-order overri
   const first = await packageFixture('duplicate');
   const second = await packageFixture('duplicate', '2.0.0');
   const catalog = await PluginCatalog.load([first.root, '/synthetic-does-not-exist', good.root, second.root]);
-  expect((await catalog.list()).map(p => p.id)).toEqual(['good']);
+  expect((await catalog.list()).map(p => p.id)).toEqual(['duplicate', 'duplicate', 'good']);
   expect(catalog.diagnostics).toEqual([{ code: 'missing-root', root: '/synthetic-does-not-exist' }, { code: 'plugin-conflict', plugin: 'duplicate' }]);
   expect(await catalog.resolveRead('duplicate:sample')).toMatchObject({ code: 'skill-ambiguous' });
+});
+
+it('lists each conflicting package with its version, root, reference and conflict diagnosis', async () => {
+  const first = await packageFixture('duplicate');
+  const second = await packageFixture('duplicate', '9.9.9');
+  const catalog = await PluginCatalog.load([second.root, first.root]);
+  expect(await catalog.list()).toEqual([
+    expect.objectContaining({ id: 'duplicate', version: '1.0.0', root: await realpath(first.root), reference: expect.any(String), diagnostics: [{ code: 'plugin-conflict', plugin: 'duplicate' }] }),
+    expect.objectContaining({ id: 'duplicate', version: '9.9.9', root: await realpath(second.root), reference: expect.any(String), diagnostics: [{ code: 'plugin-conflict', plugin: 'duplicate' }] }),
+  ]);
+});
+
+it.each(['9.9.9', '1.0.0'])('reads the exact conflicting package using an unchanged ambiguity reference (other version %s)', async version => {
+  const first = await packageFixture('duplicate');
+  const second = await packageFixture('duplicate', version);
+  await writeFile(first.skill, 'First package greeting');
+  await writeFile(second.skill, 'Second package greeting');
+  for (const roots of [[second.root, first.root], [first.root, second.root]]) {
+    const catalog = await PluginCatalog.load(roots);
+    const ambiguous = await catalog.resolveRead('duplicate:sample');
+    expect(ambiguous.code).toBe('skill-ambiguous');
+    const candidates = (ambiguous.data as any).candidates;
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((candidate: any) => candidate.root).sort()).toEqual([await realpath(first.root), await realpath(second.root)].sort());
+    for (const candidate of candidates) {
+      const expected = candidate.root === await realpath(first.root) ? 'First package greeting' : 'Second package greeting';
+      expect(await catalog.resolveRead(candidate.id, { reference: candidate.reference })).toMatchObject({
+        code: 'content', data: { content: expected, source: { version: candidate.version, reference: candidate.reference } },
+      });
+      expect(await catalog.resolveRead('sample', { reference: candidate.reference, resource: 'skills/sample/SKILL.md' })).toMatchObject({
+        code: 'content', data: { content: expected },
+      });
+    }
+    expect(await catalog.resolveRead('duplicate:sample', { reference: 'retired-reference' })).toEqual({ code: 'stale-plugin-reference' });
+  }
+});
+
+it('preserves snapshot and path checks when a reference selects a conflicting package', async () => {
+  const first = await packageFixture('duplicate');
+  const second = await packageFixture('duplicate', '2.0.0');
+  const catalog = await PluginCatalog.load([first.root, second.root]);
+  const reference = (await catalog.list()).find(p => p.version === '1.0.0')!.reference;
+  expect(typeof reference).toBe('string');
+  expect(await catalog.resolveInspect('duplicate')).toMatchObject({ code: 'plugin-ambiguous' });
+  expect(await catalog.resolveInspect('duplicate', { reference })).toMatchObject({ code: 'plugin', data: {
+    version: '1.0.0', root: await realpath(first.root), reference, diagnostics: [{ code: 'plugin-conflict', plugin: 'duplicate' }],
+  } });
+  expect(await catalog.resolveRead('duplicate:sample', { reference, resource: '../private.txt' })).toEqual({ code: 'invalid-path' });
+  expect(await catalog.resolveRead('duplicate:sample', { reference, resource: '.codex-plugin/plugin.json' })).toEqual({ code: 'undeclared-resource' });
+  expect(await catalog.isAvailable('duplicate')).toBe(false);
+  await writeFile(first.skill, 'Changed after catalog load');
+  expect(await catalog.resolveRead('duplicate:sample', { reference })).toEqual({ code: 'package-changed' });
+  expect(await catalog.resolveInspect('duplicate', { reference })).toMatchObject({ code: 'plugin', data: {
+    availability: 'unavailable', skills: [{ available: false, diagnostics: [{ code: 'package-changed' }] }],
+  } });
 });
 
 it('diagnoses a package path whose parent is not a directory as missing-root', async () => {

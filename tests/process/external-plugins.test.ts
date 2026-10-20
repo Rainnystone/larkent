@@ -85,7 +85,53 @@ it('publishes the exact plugin resource request fields in machine-readable schem
       skill: { type: 'string' }, resource: { type: 'string' }, reference: { type: 'string' },
     },
   });
+  expect(schema.$defs.pluginInspectParams).toMatchObject({ properties: { reference: { type: 'string' } } });
 });
+
+it('round-trips conflict candidate references through the installed plugins.read and plugins.inspect client', async () => {
+  const tmp = await createTmpProfile('external-conflict-'); cleanup.push(tmp.cleanup);
+  const first = await writeExternalPlugin(join(tmp.root, 'v1'));
+  const second = await writeExternalPlugin(join(tmp.root, 'v9'), '9.9.9');
+  await writeFile(join(first, 'skills/calculate/SKILL.md'), 'First synthetic greeting');
+  await writeFile(join(second, 'skills/calculate/SKILL.md'), 'Second synthetic greeting');
+  await writeFile(join(tmp.root, 'plugins.json'), JSON.stringify({ schemaVersion: 1, packages: [second, first] }));
+  const host = await client.startHost(tmp.root); cleanup.push(host.close);
+  const call = async (operation: string, params = {}) => {
+    const result = await client.call({ version: 1, operation, params }, host.env);
+    expect(result.code).toBe(0); expect(result.stderr).toBe('');
+    return JSON.parse(result.stdout);
+  };
+  const listed = (await call('plugins.list')).data.plugins.filter((p: any) => p.id === 'fixture-tools');
+  expect(listed).toHaveLength(2);
+  expect(listed).toEqual(expect.arrayContaining([
+    expect.objectContaining({ version: '1.0.0', root: expect.any(String), reference: expect.any(String), diagnostics: [{ code: 'plugin-conflict', plugin: 'fixture-tools' }] }),
+    expect.objectContaining({ version: '9.9.9', root: expect.any(String), reference: expect.any(String), diagnostics: [{ code: 'plugin-conflict', plugin: 'fixture-tools' }] }),
+  ]));
+  const ambiguous = await call('plugins.read', { skill: 'compute' });
+  expect(ambiguous).toMatchObject({ category: 'unavailable', code: 'skill-ambiguous' });
+  expect(ambiguous.data.candidates).toHaveLength(2);
+  for (const candidate of ambiguous.data.candidates) {
+    expect(await call('plugins.read', { skill: candidate.id, reference: candidate.reference })).toMatchObject({
+      category: 'ok', code: 'content', data: {
+        content: candidate.version === '1.0.0' ? 'First synthetic greeting' : 'Second synthetic greeting',
+        source: { version: candidate.version, reference: candidate.reference },
+      },
+    });
+    expect(await call('plugins.inspect', { plugin: 'fixture-tools', reference: candidate.reference })).toMatchObject({
+      category: 'ok', code: 'plugin', data: { version: candidate.version, reference: candidate.reference },
+    });
+    expect(await call('plugins.read', { skill: 'fixture', reference: candidate.reference })).toMatchObject({
+      category: 'ok', code: 'plugin', data: { version: candidate.version, reference: candidate.reference },
+    });
+  }
+  const inspected = await call('plugins.inspect', { plugin: 'fixture-tools' });
+  expect(inspected).toMatchObject({ category: 'unavailable', code: 'plugin-ambiguous' });
+  expect(await call('plugins.inspect', { plugin: 'fixture-tools', reference: inspected.data.candidates[0].reference })).toMatchObject({ category: 'ok', code: 'plugin' });
+  for (const operation of ['plugins.read', 'plugins.inspect']) {
+    expect(await call(operation, { [operation === 'plugins.read' ? 'skill' : 'plugin']: 'fixture-tools', reference: 'retired-reference' }))
+      .toMatchObject({ category: 'unavailable', code: 'stale-plugin-reference' });
+  }
+}, 30000);
 
 // Controlled native-process protocol, not a paid model or a live CLI acceptance claim.
 const controlledRuntime = String.raw`
