@@ -86,9 +86,9 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
       bridge.noteLinkFrame();
       await bridge.tickLink();
     },
-    async turn(next: typeof script, chatId = 'oc_synthetic', waitReply = true, chatType: 'group' | 'p2p' = 'group', replyTo?: string) {
+    async turn(next: typeof script, chatId = 'oc_synthetic', waitReply = true, chatType: 'group' | 'p2p' = 'group', replyTo?: string, actorId = 'ou_synthetic') {
       script = next; const count = runCount; failure = undefined;
-      await channel.handlers.message?.({ messageId: `om_synthetic_${++message}`, content: '今天、明天、后天每天 09:00 提醒', chatId, chatType, ...(chatMode === 'topic' ? { threadId: 'omt_synthetic' } : {}), ...(replyTo ? { threadId: replyTo, rootId: replyTo, replyToMessageId: replyTo } : {}), senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
+      await channel.handlers.message?.({ messageId: `om_synthetic_${++message}`, content: '今天、明天、后天每天 09:00 提醒', chatId, chatType, ...(chatMode === 'topic' ? { threadId: 'omt_synthetic' } : {}), ...(replyTo ? { threadId: replyTo, rootId: replyTo, replyToMessageId: replyTo } : {}), senderId: actorId, senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
       await vi.waitFor(() => expect(runCount).toBeGreaterThan(count), { timeout: 25000 });
       if (failure) throw failure;
       if (waitReply) await vi.waitFor(() => expect(channel.sent.some(item => JSON.stringify(item.content).includes(`Synthetic turn ${runCount} completed`))).toBe(true), { timeout: 12000 });

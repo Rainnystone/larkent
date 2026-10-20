@@ -8,6 +8,7 @@ import { renderSettledCard } from './card-body';
 import { monotonicCardSequence } from './card-sequence';
 import type { AutomationDraft, AutomationsStore } from './store';
 
+export const DRAFT_SETTLED_SUPERSEDED = '已被新卡取代';
 export const DRAFT_SETTLED_CANCELLED = '已取消';
 export const DRAFT_SETTLED_EXPIRED = '已过期';
 export const DRAFT_SETTLED_END_CHOSEN = '已指定结束时间';

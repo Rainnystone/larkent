@@ -284,3 +284,16 @@ it('checks confirmation after the progress-stream receipt is persisted and befor
   expect(await h.sent).toBe(`${BODY}\n\n（回复生成期间已确认：已确认 #1）`);
   h.checkFailure();
 }, 30000);
+
+it('informs the user when a pending draft was superseded while composing the reply', async () => {
+  const h = await harness();
+  h.setScript(async call => {
+    const old = await call('automation.create', reminder);
+    expect(old.category).toBe('waiting-confirmation');
+    expect(await call('automation.create', { ...reminder, schedule: { kind: 'one-shot', fireAt: NOW + 3 * 3600000 }, supersedesOperationId: old.data.operationId })).toMatchObject({ category: 'waiting-confirmation' });
+    return BODY;
+  });
+  await h.command('Revise the pending reminder');
+  expect(await h.sent).toBe(`${BODY}\n\n（回复生成期间已失效：已被新卡取代）`);
+  h.checkFailure();
+}, 30000);

@@ -1,5 +1,5 @@
 import { record, type ToolResult } from '../bridge-tools/protocol';
-import { DRAFT_SETTLED_CANCELLED, DRAFT_SETTLED_EXPIRED, draftConfirmedStatus, draftDeletedStatus, draftReplacedStatus } from './draft-card';
+import { DRAFT_SETTLED_CANCELLED, DRAFT_SETTLED_EXPIRED, DRAFT_SETTLED_SUPERSEDED, draftConfirmedStatus, draftDeletedStatus, draftReplacedStatus } from './draft-card';
 import { AUTOMATIONS_DRAFT_TTL_MS, type AutomationDraft } from './store';
 import type { AutomationToolContext } from './tools';
 
@@ -20,6 +20,10 @@ export function trackAutomationReply(context: Pick<AutomationToolContext, 'store
       const lines: string[] = [];
       for (const [operationId, draft] of waiting) {
         const operation = context.store?.getOperation(operationId);
+        if (operation?.code === 'draft-superseded') {
+          lines.push(`（回复生成期间已失效：${DRAFT_SETTLED_SUPERSEDED}）`);
+          continue;
+        }
         if (operation?.state === 'not-applied' && operation.code === 'draft-closed') {
           lines.push(`（回复生成期间已取消：${DRAFT_SETTLED_CANCELLED}）`);
           continue;

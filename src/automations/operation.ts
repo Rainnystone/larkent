@@ -6,7 +6,8 @@ import { flushDraftCardOnce } from './command';
 import { AUTOMATION_OPERATION_TTL_MS, automationOperationScope, readAutomationOperationId } from './operation-id';
 import { nextFireAfter } from './schedule';
 import { normalizeAutomationSchedule } from './schedule-input';
-import type { AutomationOperation, AutomationsStore } from './store';
+import { DraftSupersessionConflict, type AutomationOperation, type AutomationsStore } from './store';
+import { DRAFT_SETTLED_SUPERSEDED, scheduleDraftCardSettle } from './draft-card';
 import type { AutomationToolContext } from './tools';
 
 const writeTails = new WeakMap<AutomationsStore, Promise<unknown>>();
@@ -36,7 +37,11 @@ export async function createAutomationOperation(params: Record<string, unknown>,
   const operationId = params.operationId;
   const invalid = validateAutomationOperationId(operationId, context);
   if (invalid) return invalid;
-  if (Object.keys(params).some(key => !['operationId', 'taskType', 'schedule', 'timezone', 'name', 'taskText'].includes(key))) return toolResult('validation-failed', 'unknown-field');
+  if (Object.keys(params).some(key => !['operationId', 'taskType', 'schedule', 'timezone', 'name', 'taskText', 'supersedesOperationId'].includes(key))) return toolResult('validation-failed', 'unknown-field');
+  if (params.supersedesOperationId !== undefined) {
+    const invalidTarget = validateAutomationOperationId(params.supersedesOperationId, context);
+    if (invalidTarget) return invalidTarget;
+  }
   if (!context.drafts?.autoAuth) return toolResult('unavailable', 'automation-confirmation-unavailable');
   return submit();
 
@@ -62,6 +67,7 @@ export async function createAutomationOperation(params: Record<string, unknown>,
       const startAt = 'pendingRecurring' in normalized ? normalized.startAt : normalized.schedule.kind === 'one-shot' ? normalized.schedule.fireAt : normalized.schedule.startAt;
       const endAt = schedule ? schedule.kind === 'one-shot' ? schedule.fireAt : schedule.endAt : undefined;
       const fingerprint = createHash('sha256').update(JSON.stringify({ taskType: params.taskType, ...(cwd ? { cwd } : {}), name: params.name.trim(), taskText: params.taskText.trim(), timezone,
+        ...(params.supersedesOperationId ? { supersedesOperationId: params.supersedesOperationId } : {}),
         schedule: pending ? { ...pending, startAt, endAt: null } : schedule })).digest('hex');
       if (previous) {
         if (previous.fingerprint !== fingerprint) return toolResult('validation-failed', 'operation-conflict', { operationId });
@@ -79,15 +85,21 @@ export async function createAutomationOperation(params: Record<string, unknown>,
       }
       const nextFireAt = schedule ? nextFireAfter(schedule, at) : 0;
       if (schedule && !nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
+      const superseded = typeof params.supersedesOperationId === 'string' ? context.store!.getOperation(params.supersedesOperationId) : undefined;
+      const oldDraft = superseded ? context.store!.getOperationDraft(superseded.draftId) : undefined;
       const draft = await context.store!.saveDraft({
         taskType: params.taskType, ...(cwd ? { cwd } : {}), operationId: operationId as string, cardReply: context.cardReply, schedule: pending ?? schedule!, timezone,
         startAt,
         ...(pending ? { pendingRecurring: pending } : { endAt }),
         nextFireAt, name: params.name.trim(), taskText: params.taskText.trim(), chatId: context.chatId, createdBy: context.actorId,
-      }, { operationId: operationId as string, profile: context.profile, chatId: context.chatId, fingerprint });
+      }, { operationId: operationId as string, profile: context.profile, chatId: context.chatId, fingerprint,
+        ...(typeof params.supersedesOperationId === 'string' ? { supersedesOperationId: params.supersedesOperationId } : {}),
+      });
+      if (oldDraft) scheduleDraftCardSettle(context.drafts!.channel, oldDraft, DRAFT_SETTLED_SUPERSEDED);
       await flushDraftCardOnce(context.drafts!, draft.draftId, at);
       return automationOperationResult(context.store!.getOperation(operationId as string)!, context);
-    } catch {
+    } catch (error) {
+      if (error instanceof DraftSupersessionConflict) return toolResult('validation-failed', 'draft-supersession-conflict', { operationId });
       try {
         const operation = context.store!.getOperation(operationId as string);
         if (operation) return automationOperationResult(operation, context);
@@ -117,6 +129,7 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   const last = executions.at(-1);
   const base = {
     operationId: current.operationId, draftId: current.draftId, received: true,
+    ...(current.supersedesOperationId ? { supersedesOperationId: current.supersedesOperationId } : {}),
     ...(current.taskId ? { taskId: current.taskId } : {}),
     executionScope: 'task', dispatchedCount: current.dispatchedCountKnown === false ? null : current.dispatchedCount,
     ...(current.dispatchedCountKnown === false ? { dispatchedCountLowerBound: current.dispatchedCount } : {}), executedCount: executions.filter(entry => executionResult(entry) === 'ok').length,

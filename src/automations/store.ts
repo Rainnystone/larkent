@@ -69,6 +69,8 @@ export interface AutomationItem {
 export interface AutomationOperation {
   operationId: string;
   aliases?: string[];
+  /** Explicit revision of one pending create operation; never inferred from chat/name. */
+  supersedesOperationId?: string;
   profile: string;
   chatId: string;
   fingerprint: string;
@@ -83,7 +85,11 @@ export interface AutomationOperation {
   /** false means the retained count is a lower bound for an existing task. */
   dispatchedCountKnown?: boolean;
 }
-export type RegisterAutomationOperationInput = Pick<AutomationOperation, 'operationId' | 'profile' | 'chatId' | 'fingerprint'>;
+export type RegisterAutomationOperationInput = Pick<AutomationOperation, 'operationId' | 'profile' | 'chatId' | 'fingerprint' | 'supersedesOperationId'>;
+
+export class DraftSupersessionConflict extends Error {
+  constructor() { super('draft-supersession-conflict'); }
+}
 
 export interface TaskMutationGuard {
   chatId: string;
@@ -557,6 +563,18 @@ export class AutomationsStore {
     const draftId = `draft-${this.now()}-${randomBytes(4).toString('hex')}`;
     const createdAt = this.now();
     const draft = draftFromInput(input, draftId, createdAt);
+    if (operation?.supersedesOperationId) {
+      // No await between checking the live target and closing it. A concurrent
+      // human confirmation either wins first, or sees the invalidated receipt.
+      const prior = this.operations.find(entry => entry.operationId === operation.supersedesOperationId || entry.aliases?.includes(operation.supersedesOperationId!));
+      const oldDraft = this.drafts.find(entry => entry.draftId === prior?.draftId);
+      if (!prior || prior.state !== 'received' || prior.profile !== operation.profile || prior.chatId !== operation.chatId
+        || !oldDraft || oldDraft.op !== 'create' || draft.op !== 'create' || oldDraft.createdBy !== draft.createdBy
+        || oldDraft.chatId !== draft.chatId || oldDraft.createdAt + AUTOMATIONS_DRAFT_TTL_MS <= createdAt
+        || oldDraft.delivery?.state === 'sending') throw new DraftSupersessionConflict();
+      prior.state = 'not-applied'; prior.code = 'draft-superseded';
+      this.drafts = this.drafts.filter(entry => entry.draftId !== oldDraft.draftId);
+    }
     if (operation) this.operations.push({ ...operation, draftId, createdAt, state: 'received', dispatchedCount: 0 });
     this.drafts.push(draft);
     await this.persistNow();
@@ -1146,6 +1164,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     || (raw.taskId !== undefined && !isPositiveInt(raw.taskId))
     || (raw.code !== undefined && typeof raw.code !== 'string')
     || (raw.cardStatus !== undefined && typeof raw.cardStatus !== 'string')
+    || (raw.supersedesOperationId !== undefined && (typeof raw.supersedesOperationId !== 'string' || readAutomationOperationId(raw.supersedesOperationId)?.scope !== automationOperationScope(raw.profile, raw.chatId)))
     || (raw.aliases !== undefined && !Array.isArray(raw.aliases))) throw new Error('Invalid automation operation receipt');
   const aliases = raw.aliases as unknown[] | undefined;
   for (const id of [raw.operationId, ...(aliases ?? [])]) {
@@ -1154,6 +1173,7 @@ function parseOperation(raw: unknown): AutomationOperation {
   }
   return {
     operationId: raw.operationId, profile: raw.profile, chatId: raw.chatId, fingerprint: raw.fingerprint, draftId: raw.draftId,
+    ...(raw.supersedesOperationId ? { supersedesOperationId: raw.supersedesOperationId as string } : {}),
     createdAt: raw.createdAt, state: raw.state as AutomationOperation['state'], dispatchedCount: raw.dispatchedCount as number,
     ...(raw.dispatchedCountKnown === false ? { dispatchedCountKnown: false } : {}),
     ...(aliases ? { aliases: aliases as string[] } : {}), ...(raw.taskId ? { taskId: raw.taskId as number } : {}), ...(raw.code ? { code: raw.code as string } : {}),
