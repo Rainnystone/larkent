@@ -1,5 +1,5 @@
 import { once } from 'node:events';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -89,11 +89,14 @@ writeFileSync(${JSON.stringify(seen)}, JSON.stringify({ argv: process.argv.slice
       child.stdin!.end('prompt-body', 'utf8');
       const [code, signal] = await once(child, 'exit');
       expect({ code, signal }).toEqual({ code: 0, signal: null });
-      expect(JSON.parse(await readFile(seen, 'utf8'))).toEqual({
-        argv,
-        cwd,
-        stdin: 'prompt-body',
-      });
+      const recorded = JSON.parse(await readFile(seen, 'utf8')) as {
+        argv: string[];
+        cwd: string;
+        stdin: string;
+      };
+      expect(recorded.argv).toEqual(argv);
+      expect(recorded.stdin).toBe('prompt-body');
+      expect(await realpath(recorded.cwd)).toBe(await realpath(cwd));
     } finally {
       await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 });
     }
