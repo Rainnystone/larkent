@@ -56,7 +56,7 @@ describe('draft card settle', () => {
     expect(h.store.getDraft(draft.draftId)?.cardMessageId).toBe(sent.messageId);
     expect(h.store.getDraft(draft.draftId)?.sequence).toBeUndefined();
     expect(await draftFailEntries(h.logsDir)).toEqual([
-      expect.objectContaining({ code: 10004, msg: 'sequence invalid' }),
+      expect.objectContaining({ level: 'warn', code: 10004, msg: 'sequence invalid' }),
     ]);
   });
 
@@ -374,8 +374,9 @@ async function draftFailEntries(logsDir: string): Promise<Array<{ code?: unknown
   const text = await readFile(join(logsDir, `bridge-${key}.jsonl`), 'utf8');
   return text.trim().split('\n').map((line) => JSON.parse(line) as {
     phase?: string;
-    _event?: string;
+    event?: string;
+    level?: string;
     code?: unknown;
     msg?: unknown;
-  }).filter((entry) => entry.phase === 'auto' && entry._event === 'draft-card');
+  }).filter((entry) => entry.phase === 'auto' && entry.event === 'draft-card-settle-failed');
 }

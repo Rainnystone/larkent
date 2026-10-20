@@ -65,9 +65,11 @@ export async function settleDraftCard(
     if (store && live?.cardId === draft.cardId) {
       await store.updateDraft(draft.draftId, { sequence });
     }
+    log.info('auto', 'draft-card-settled', { draftId: draft.draftId, status });
     return;
   }
   await channel.updateCard(draft.cardMessageId, card);
+  log.info('auto', 'draft-card-settled', { draftId: draft.draftId, status });
 }
 
 export async function expireDueDraftCards(input: {
@@ -131,9 +133,9 @@ function wait(ms: number): Promise<void> {
 
 function logDraftCardFail(draftId: string, error: unknown): void {
   const api = readCardApiError(error);
-  log.fail('auto', error, {
-    event: 'draft-card',
+  log.warn('auto', 'draft-card-settle-failed', {
     draftId,
+    err: error instanceof Error ? error.message : String(error),
     ...(api.code !== undefined ? { code: api.code } : {}),
     ...(api.msg !== undefined ? { msg: api.msg } : {}),
   });

@@ -1042,8 +1042,8 @@ async function confirmCreateDraft(
     taskText: draft.taskText,
     ...(draft.cwd ? { cwd: draft.cwd } : {}),
   });
-  await ctx.onAutomationConfirmed?.(item);
   log.info('auto', 'confirmed', { id: item.id, taskType: item.taskType, chatId: item.chatId });
+  scheduleAutomationConfirmed(ctx.onAutomationConfirmed, item);
   const status = draftConfirmedStatus(item.id);
   return { ok: true, status, toast: status };
 }
@@ -1118,14 +1118,28 @@ async function confirmReplaceDraft(
     const status = draftTargetGoneStatus(draft.targetId);
     return { ok: false, status, toast: status };
   }
-  await ctx.onAutomationConfirmed?.(created);
   log.info('auto', 'replaced', { oldId: draft.targetId, newId: created.id });
+  scheduleAutomationConfirmed(ctx.onAutomationConfirmed, created);
   const status = draftReplacedStatus(draft.targetId, created.id);
   return { ok: true, status, toast: status };
 }
 
 function confirmInvalid(): AutomationConfirmOutcome {
   return { ok: false, status: DRAFT_SETTLED_CANCELLED, toast: AUTO_INVALID_HINT };
+}
+
+function scheduleAutomationConfirmed(
+  onConfirmed: ((item: AutomationItem) => void | Promise<void>) | undefined,
+  item: AutomationItem,
+): void {
+  if (!onConfirmed) return;
+  void (async () => {
+    try {
+      await onConfirmed(item);
+    } catch (error) {
+      log.fail('auto', error, { event: 'confirmed-follow-up', id: item.id });
+    }
+  })();
 }
 
 function findSameNameCreateConflict(

@@ -108,6 +108,20 @@ export interface CardDispatchDeps {
 }
 
 export async function handleCardAction(deps: CardDispatchDeps): Promise<CardActionResponse | void> {
+  const startedAt = Date.now();
+  const incoming = deps.evt.action.value;
+  const cmd = incoming && typeof incoming === 'object' && typeof (incoming as { cmd?: unknown }).cmd === 'string'
+    ? (incoming as { cmd: string }).cmd
+    : '';
+  log.info('cardAction', 'received', { cmd });
+  try {
+    return await dispatchCardAction(deps);
+  } finally {
+    log.info('cardAction', 'responded', { cmd, ms: Date.now() - startedAt });
+  }
+}
+
+async function dispatchCardAction(deps: CardDispatchDeps): Promise<CardActionResponse | void> {
   const value = deps.evt.action.value;
   if (!value || typeof value !== 'object') return;
   const payload = value as Record<string, unknown>;
