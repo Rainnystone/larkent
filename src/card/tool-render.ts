@@ -1,5 +1,6 @@
-import { bridgeToolLabel, hasBridgeToolReference } from './bridge-tool-call';
+import { bridgeToolLabel, hasCompoundShellInput } from './bridge-tool-call';
 import type { ToolEntry } from './run-state';
+import { toolCommandInput } from './tool-command';
 
 const HEADER_SUMMARY_MAX = 80;
 const BODY_FIELD_MAX = 600;
@@ -17,8 +18,8 @@ export function visibleBridgeLabel(tool: ToolEntry): string | undefined {
   return tool.bridgeLabel ?? bridgeToolLabel(tool.input);
 }
 
-export function preserveBridgeToolDetails(tool: ToolEntry): boolean {
-  return !visibleBridgeLabel(tool) && hasBridgeToolReference(tool.input);
+export function preserveShellToolDetails(tool: ToolEntry): boolean {
+  return !visibleBridgeLabel(tool) && hasCompoundShellInput(tool.input);
 }
 
 export function toolHeaderText(tool: ToolEntry): string {
@@ -91,17 +92,14 @@ function summarizeInput(name: string, input: unknown): string {
 
 function renderInput(tool: ToolEntry): string {
   const input = tool.input;
-  const command = shellCommandText(input);
+  const commandInput = toolCommandInput(input);
+  const command = Array.isArray(commandInput) ? commandInput.join('\n') : commandInput;
   if (command) return `**Command**\n\`\`\`bash\n${truncate(command, BODY_FIELD_MAX)}\n\`\`\``;
   if (!input || typeof input !== 'object') return '';
   const rec = input as Record<string, unknown>;
   const str = (k: string): string => (typeof rec[k] === 'string' ? rec[k] as string : '');
 
   switch (tool.name) {
-    case 'Bash': {
-      const cmd = str('command');
-      return cmd ? `**Command**\n\`\`\`bash\n${truncate(cmd, BODY_FIELD_MAX)}\n\`\`\`` : '';
-    }
     case 'Read':
     case 'Edit':
     case 'Write':
@@ -122,16 +120,6 @@ function renderInput(tool: ToolEntry): string {
     default:
       return '';
   }
-}
-
-function shellCommandText(input: unknown): string | undefined {
-  if (typeof input === 'string') return input;
-  if (!input || typeof input !== 'object') return undefined;
-  const rec = input as Record<string, unknown>;
-  if (typeof rec.command === 'string') return rec.command;
-  if (Array.isArray(rec.command) && rec.command.every(part => typeof part === 'string')) return rec.command.join('\n');
-  if (typeof rec.cmd === 'string') return rec.cmd;
-  return rec.rawInput !== undefined ? shellCommandText(rec.rawInput) : undefined;
 }
 
 function renderBashOutput(out: string): string {

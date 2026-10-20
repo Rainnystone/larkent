@@ -7,7 +7,7 @@ import {
   type RunState,
   type ToolEntry,
 } from './run-state';
-import { preserveBridgeToolDetails, toolBodyMd, toolHeaderText, visibleBridgeLabel } from './tool-render';
+import { preserveShellToolDetails, toolBodyMd, toolHeaderText, visibleBridgeLabel } from './tool-render';
 
 const REASONING_MAX = 1500;
 const COLLAPSE_TOOL_THRESHOLD = 3;
@@ -85,9 +85,9 @@ function* groupBlocks(blocks: Block[]): Generator<Group> {
 
 function renderToolGroup(tools: ToolEntry[], finalized: boolean): object[] {
   if (tools.length === 0) return [];
-  // A bridge reference inside a compound/unsupported command must retain its
-  // bounded input/output panel even when surrounding tools are summarized.
-  const detailed = tools.findIndex(preserveBridgeToolDetails);
+  // Compound/unsupported shell commands retain bounded input/output panels
+  // even when surrounding tools are summarized.
+  const detailed = tools.findIndex(preserveShellToolDetails);
   if (detailed >= 0) {
     return [
       ...renderToolGroup(tools.slice(0, detailed), finalized),

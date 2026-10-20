@@ -123,7 +123,11 @@ describe('bridge tool progress-card labels', () => {
     expect(card).toContain('❌');
   });
 
-  it('retains compound bridge details when other tool calls are summarized', () => {
+  it.each([
+    'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing',
+    String.raw`node /synthetic/lark-channel-\bridge.mjs tool ; ls /missing`,
+    "node /synthetic/lark-'channel'-bridge.mjs tool ; ls /missing",
+  ])('retains compound details when other tool calls are summarized: %s', (command) => {
     const events: AgentEvent[] = [];
     for (const id of ['one', 'two', 'three']) {
       events.push(
@@ -132,7 +136,7 @@ describe('bridge tool progress-card labels', () => {
       );
     }
     events.push(
-      { type: 'tool_use', id: 'failure', name: 'Bash', input: { command: 'node "$LARK_BRIDGE_TOOL_CLIENT" tool ; ls /missing' } },
+      { type: 'tool_use', id: 'failure', name: 'Bash', input: { command } },
       { type: 'tool_result', id: 'failure', output: 'ls: synthetic missing path', isError: true },
       { type: 'done', terminationReason: 'normal' },
     );

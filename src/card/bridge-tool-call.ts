@@ -3,6 +3,7 @@
  * shell-tool input (Bash, Shell, command_execution, …). Shared by the card
  * renderer so CLI adapters do not each special-case the client.
  */
+import { toolCommandInput } from './tool-command';
 
 const CLIENT_BASENAME = /^lark-channel-bridge(?:\.mjs)?$/i;
 const CLIENT_VARIABLE = /^\$(?:LARK_BRIDGE_TOOL_CLIENT|\{LARK_BRIDGE_TOOL_CLIENT\}|env:LARK_BRIDGE_TOOL_CLIENT)$/;
@@ -13,9 +14,14 @@ export function bridgeToolLabel(input: unknown): string | undefined {
   return labelForOperation(extractOperation(input));
 }
 
-/** Conservative visibility fallback, never a reason to hide command/output. */
-export function hasBridgeToolReference(input: unknown): boolean {
-  return collectBlobs(input).some(blob => blob.includes('LARK_BRIDGE_TOOL_CLIENT') || blob.includes('lark-channel-bridge'));
+/** Keep compound/uncertain shell details regardless of how the client is spelled. */
+export function hasCompoundShellInput(input: unknown): boolean {
+  const command = toolCommandInput(input);
+  if (Array.isArray(command)) return command.some(hasCompoundShellInput);
+  if (command === undefined) return false;
+  const [head = '', ...lines] = command.split(/\r?\n/);
+  const tokens = shellTokens(head);
+  return !tokens || lines.join('\n').trim().length > 0 || tokens.some(token => typeof token === 'string');
 }
 
 function isBridgeToolInvocation(input: unknown): boolean {
@@ -89,15 +95,11 @@ function collectBlobs(input: unknown): string[] {
 }
 
 function commandArgv(input: unknown): string[] | undefined {
-  if (typeof input === 'string') return standaloneCommand(input);
-  if (!input || typeof input !== 'object') return undefined;
-  const rec = input as Record<string, unknown>;
-  if (Array.isArray(rec.command) && rec.command.every((part) => typeof part === 'string')) {
-    return rec.command.some(part => CLIENT_VARIABLE.test(part)) ? undefined : rec.command;
+  const command = toolCommandInput(input);
+  if (typeof command === 'string') return standaloneCommand(command);
+  if (command) {
+    return command.some(part => CLIENT_VARIABLE.test(part)) ? undefined : command;
   }
-  if (typeof rec.command === 'string') return standaloneCommand(rec.command);
-  if (typeof rec.cmd === 'string') return standaloneCommand(rec.cmd);
-  if (rec.rawInput !== undefined) return commandArgv(rec.rawInput);
   return undefined;
 }
 
