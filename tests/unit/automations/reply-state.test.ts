@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rename, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
@@ -27,6 +27,22 @@ it('omits the invalidated notice when this turn created the superseding draft', 
   tracker.noteResult(waiting(second.operationId!));
   expect(store.getOperation(first.operationId!)).toMatchObject({ code: 'draft-superseded' });
   expect(tracker.notice()).toBeUndefined();
+});
+
+it('does not throw when noting a result after a persist write fails', async () => {
+  const { store, context } = await fixture();
+  const first = await saveReminder(store, 'Morning reminder', NOW);
+  const path = store.getFilePath();
+  await rename(path, `${path}.saved`);
+  await mkdir(path);
+  await expect(saveReminder(store, 'Morning reminder', NOW + 1)).rejects.toThrow();
+  expect(() => store.getOperation(first.operationId!)).toThrow();
+  const tracker = trackAutomationReply(context);
+  expect(() => tracker.noteResult(toolResult('unknown', 'persistence-or-delivery-unknown', {
+    operationId: first.operationId,
+    state: 'unknown',
+    applied: null,
+  }))).not.toThrow();
 });
 
 it('keeps the invalidated notice when another turn superseded the waiting draft', async () => {

@@ -11,12 +11,16 @@ export function trackAutomationReply(context: Pick<AutomationToolContext, 'store
     noteResult(result: ToolResult): void {
       const data = record(result.data);
       if (typeof data?.operationId !== 'string') return;
-      const operation = context.store?.getOperation(data.operationId);
-      if (!operation || operation.profile !== context.profile || operation.chatId !== context.chatId) return;
-      created.add(operation.operationId);
-      if (result.category !== 'waiting-confirmation') return;
-      const draft = context.store!.getOperationDraft(operation.draftId);
-      if (draft) waiting.set(operation.operationId, draft);
+      try {
+        const operation = context.store?.getOperation(data.operationId);
+        if (!operation || operation.profile !== context.profile || operation.chatId !== context.chatId) return;
+        created.add(operation.operationId);
+        if (result.category !== 'waiting-confirmation') return;
+        const draft = context.store!.getOperationDraft(operation.draftId);
+        if (draft) waiting.set(operation.operationId, draft);
+      } catch {
+        // Persist is uncertain; throwing here would replace the tool result with tool-failed.
+      }
     },
     notice(): string | undefined {
       const lines: string[] = [];
