@@ -45,7 +45,10 @@ describe('Grok prompt file', () => {
     const path = argv[argv.indexOf('--prompt-file') + 1] ?? '';
     expect(path).not.toBe('');
     expect(existsSync(path)).toBe(true);
-    expect(statSync(path).mode & 0o777).toBe(0o600);
+    // Windows stat() reports 0o666 for every file; 0600 is a POSIX mode bit.
+    if (process.platform !== 'win32') {
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
     child.stdout.end();
     child.stderr.end();
     child.exitCode = 0;

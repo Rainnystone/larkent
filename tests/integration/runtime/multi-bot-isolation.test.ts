@@ -301,7 +301,7 @@ async function assertIsolation(h: Harness, a: RecordingLarkChannel, b: Recording
     const call = calls.at(-1)!;
     const own = label.toUpperCase();
     const otherLabel = label === 'a' ? 'B' : 'A';
-    const input = JSON.stringify([call.argv, call.stdin]);
+    const input = JSON.stringify([call.argv, call.stdin, call.promptFile ?? '']);
     expect(input).toContain(`${round} prompt-${own}`);
     expect(input).toContain(`ou_bot_${label}`);
     expect(input).toContain(`Bot ${own}`);
@@ -383,7 +383,7 @@ function secondScript(kind: PinAgentKind, answer: string) {
   const script = jsonlScript(kind, 'success');
   return { ...script, lines: JSON.parse(JSON.stringify(script.lines).replaceAll('PINNED_ANSWER', answer)) };
 }
-interface CliRecord { pid: number; argv: string[]; stdin: string; cwd: string; env: Record<string, string> }
+interface CliRecord { pid: number; argv: string[]; stdin: string; promptFile?: string; cwd: string; env: Record<string, string> }
 async function records(fake: ControlledKindCli): Promise<CliRecord[]> {
   return (await readFile(fake.recordPath, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
 }

@@ -42,7 +42,9 @@ const directory = dirname(fileURLToPath(import.meta.url));
 const plan = JSON.parse(readFileSync(join(directory, 'plan.json'), 'utf8'));
 let stdin = '';
 if (kind === 'claude' || kind === 'codex') for await (const chunk of process.stdin) stdin += chunk;
-const prompt = stdin || (kind === 'cursor' ? argv.at(-1) : argv[argv.indexOf('-p') + 1]);
+const promptFileAt = argv.indexOf('--prompt-file');
+const promptFromFile = promptFileAt >= 0 ? readFileSync(argv[promptFileAt + 1], 'utf8') : '';
+const prompt = stdin || promptFromFile || (kind === 'cursor' ? argv.at(-1) : argv[argv.indexOf('-p') + 1]);
 const envKeys = ['LARK_CHANNEL', 'LARK_CHANNEL_HOME', 'LARK_CHANNEL_PROFILE', 'LARK_CHANNEL_CONFIG', 'LARKSUITE_CLI_CONFIG_DIR', 'CODEX_HOME', 'LARK_BRIDGE_TOOL_CLIENT', 'LARK_BRIDGE_TOOL_SCOPE', 'LARK_BRIDGE_TOOL_ISSUED_AT'];
 const report = { mode: plan.mode, session: plan.session, argv, prompt, cwd: process.cwd(), env: Object.fromEntries(envKeys.map(key => [key, process.env[key]])), connected: Boolean(process.env.LARK_BRIDGE_TOOL_TOKEN && process.env.LARK_BRIDGE_TOOL_ENDPOINT), calls: [] };
 const call = (operation, params = {}) => {

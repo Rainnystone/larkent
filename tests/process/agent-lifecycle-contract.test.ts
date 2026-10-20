@@ -148,7 +148,7 @@ describe('shared real adapter lifecycle', () => {
     expect(calls).toHaveLength(2);
     expect(calls[0]!.pid).not.toBe(calls[1]!.pid);
     for (const [index, call] of calls.entries()) {
-      expect(JSON.stringify([call.argv, call.stdin])).toContain(`prompt-${index + 1}`);
+      expect(JSON.stringify([call.argv, call.stdin, call.promptFile ?? ''])).toContain(`prompt-${index + 1}`);
       expect(call.argv).not.toContain('--version');
       expect(call.argv).not.toContain('--help');
     }
@@ -307,6 +307,7 @@ describe('shared real adapter lifecycle', () => {
 interface CallRecord {
   argv: string[];
   stdin: string;
+  promptFile?: string;
   pid: number;
   cwd: string;
   env: Record<string, string>;
