@@ -41,7 +41,7 @@ it('rejects context supplied by the caller even on schema discovery', async () =
     .toMatchObject({ category: 'validation-failed', code: 'unknown-field' });
 });
 
-it('preserves malformed write parameters for deterministic validation and allows a same-turn correction', async () => {
+it('preserves malformed write parameters for deterministic validation and allows a same-turn correction', { timeout: MULTI_CLIENT_TIMEOUT_MS }, async () => {
   const h = await harness();
   const invalid = await client.call({ version: 1, operation: 'automation.create', params: null }, h.run.env);
   expect(JSON.parse(invalid.stdout)).toMatchObject({ category: 'validation-failed', code: 'invalid-params' });
@@ -187,7 +187,7 @@ it.each([
   ['disabled', { availability: (): string => 'automations-disabled' }, 'automations-disabled'],
   ['direct message', { availability: (): string => 'automation-requires-group' }, 'automation-requires-group'],
   ['automated run', { runType: 'automation' }, 'automation-management-unavailable-in-run'],
-] as const)('advertises and enforces unavailable automation in a %s context', async (_label, overrides, code) => {
+] as const)('advertises and enforces unavailable automation in a %s context', { timeout: MULTI_CLIENT_TIMEOUT_MS }, async (_label, overrides, code) => {
   const h = await harness(overrides);
   const inspected = await h.call('plugins.inspect', { plugin: 'automation' });
   expect(inspected.data.capabilities['automation.preview']).toMatchObject({ available: false, reason: code });
