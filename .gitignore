@@ -46,5 +46,9 @@ tests-smoke/
 # planning-with-files local state
 .planning/
 
+# Trae / generated presentation session working files
+.trae/
+draft_*_folder/
+
 # Isolated test-bridge secrets and tester tokens (never commit)
 e2e/.local/
