@@ -22,7 +22,10 @@ import type { startChannel as sourceStartChannel } from '../../src/bot/channel';
 const NOW = Date.parse('2026-10-19T00:00:00Z');
 // Seven runtime turns and 90+ real client processes share a row. Hosted Windows
 // reached the final stop phase at the old 120s limit; individual request budgets stay unchanged.
-const CONTRACT_ROW_TIMEOUT_MS = 240_000;
+// The split files now run these process-heavy rows in parallel workers, so each
+// Windows turn needs a wider budget than the single-file run did.
+const CONTRACT_ROW_TIMEOUT_MS = process.platform === 'win32' ? 600_000 : 240_000;
+const TURN_WAIT_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 30_000;
 const CORRECTED_PREVIEW = [
   { category: 'needs-input', code: 'missing-end-at' },
   { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } },
@@ -90,7 +93,7 @@ export function registerSixCliContract(input: SixCliContractDeps): void {
     let message = 0;
     const send = (content = 'Run the synthetic contract', replyTo?: string) => channel.handlers.message?.({ messageId: `om_contract_${++message}`, content, chatId: 'oc_synthetic', chatType: 'group', senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now,
       ...(replyTo ? { threadId: replyTo, rootId: replyTo, replyToMessageId: replyTo } : {}), raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
-    const wait = (assertion: () => void | Promise<void>) => vi.waitFor(assertion, { timeout: 30000 });
+    const wait = (assertion: () => void | Promise<void>) => vi.waitFor(assertion, { timeout: TURN_WAIT_TIMEOUT_MS });
     const finish = async (value = 42) => {
       await wait(async () => { expect((await runtime.report()).connected).toBe(true); });
       await wait(() => expect(journal.list().at(-1)?.reply?.state).toBe('sent'));

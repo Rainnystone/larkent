@@ -15,7 +15,7 @@ let startChannel: typeof sourceStartChannel;
 beforeAll(async () => {
   client = await buildToolProcess({ channel: true });
   ({ startChannel } = await import(join(client.directory, 'dist/channel.js').replaceAll('\\', '/')));
-}, 30000);
+}, process.platform === 'win32' ? 120_000 : 30_000);
 afterAll(async () => { await client?.cleanup(); });
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); sdk.channel = undefined; vi.restoreAllMocks(); });
 
