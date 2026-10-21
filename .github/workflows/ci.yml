@@ -46,10 +46,14 @@ jobs:
         run: pnpm build:ci
 
   test-ubuntu:
-    name: Test on ubuntu-latest
+    name: Test on ubuntu-latest (shard ${{ matrix.shard }}/2)
     needs: static
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
 
     steps:
       - name: Checkout
@@ -74,10 +78,10 @@ jobs:
         run: pnpm build:ci
 
       - name: Test
-        run: pnpm test:ci
+        run: pnpm test:shard ${{ matrix.shard }}/2
 
   test-platform:
-    name: Test on ${{ matrix.os }}
+    name: Test on ${{ matrix.os }} (shard ${{ matrix.shard }}/2)
     needs: static
     if: >
       github.event_name == 'schedule' ||
@@ -89,8 +93,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
+        shard: [1, 2]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 35
+    timeout-minutes: 25
 
     steps:
       - name: Checkout
@@ -115,4 +120,4 @@ jobs:
         run: pnpm build:ci
 
       - name: Test
-        run: pnpm test:ci
+        run: pnpm test:shard ${{ matrix.shard }}/2

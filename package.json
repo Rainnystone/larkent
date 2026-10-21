@@ -41,6 +41,7 @@
     "pretest": "pnpm build:web",
     "test": "vitest run",
     "test:ci": "vitest run",
+    "test:shard": "vitest run --shard",
     "build:ci": "tsup",
     "test:unit": "vitest run tests/unit --passWithNoTests",
     "test:integration": "vitest run tests/integration --passWithNoTests",
