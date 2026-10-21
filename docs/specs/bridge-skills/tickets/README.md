@@ -99,6 +99,7 @@ Status at 2026-10-19: ready-for-agent（拆票完成，当时的代码实施尚�
 | [P09bd](P09bd-jsonl-line-cap-bytes.md) | Bug P3（owner: Codex，#52，blocked-by P09aq）：JSONL 8MB 上限按字符索引比较字节（纳入 P09au） | 共享/非 Grok 代码影响评估（`7514c1e` vs `953e7bd`） |
 | [P09be](P09be-codex-meeting-resume-handle.md) | 共享会议遗漏（Codex 复现）：handle 未持久化；当前兼容性修复排除共享改动，held | 无功能票依赖；需另行明确授权共享改动 |
 | [P09bf](P09bf-codex-meeting-failure-notice.md) | 共享会议遗漏（Codex 复现）：失败 turn 无通知；当前兼容性修复排除共享改动，held | 无功能票依赖；需另行明确授权共享改动 |
+| [P09bg](P09bg-stop-spares-setsid-descendants.md) | Bug P2（owner: local Grok Build，#52）：/stop 后 CLI 以 setsid 新建会话的工具 shell 存活；需按 /proc ppid 树终止完整后代 | 夜间 live FX-bc/at/ai FAIL（Grok @`0aea2d7`、@`2610aa8`） |
 
 > **分诊原则：** 票据按第一性原理、面向未来判断；不为过时的 CLI 版本做兼容工作（做减法，不打补丁）。
 

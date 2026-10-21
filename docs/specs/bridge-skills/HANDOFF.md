@@ -116,6 +116,7 @@ Revision 3 · 2026-10-20 · Status: P09 E2E 已完成，P09 修复 8/13 完成�
 | P09bb | **done**（`8949a2d`） · P2 | controls.cfg 缺失时会议仍须有 idle 预算（见 [P09bb](tickets/P09bb-meeting-idle-budget-without-controls.md)） |
 | P09bc | **fixed in code**（`2e64fa0, 0aea2d7`） · P2 | SIGKILL 升级跳过持有 stdout 的进程，run 可能不结束（见 [P09bc](tickets/P09bc-process-tree-sigkill-spared.md)） |
 | P09bd | P3 | JSONL 8MB 上限按字符索引比较字节（纳入 P09au）（见 [P09bd](tickets/P09bd-jsonl-line-cap-bytes.md)） |
+| P09bg | P2 | /stop 后 Grok setsid 新建会话的工具 shell 存活；按 ppid 树终止完整后代（见 [P09bg](tickets/P09bg-stop-spares-setsid-descendants.md)） |
 
 - **#52 Codex 定向 review（`7514c1e`）分诊（2026-10-20）：** 本轮 #52 只修 P09aq（Codex，CLI 无关；并入 P09ar、P09ap）。P09an/at/au/av/aw 为 P3 合并后跟进；P09as、P09ao wontfix；P09ax 合并后删除遗留分支。复盘规则见 tickets/README.md。
 - **共享/非 Grok 代码影响评估（2026-10-20，代码阅读，未 live 验证）：** P09aa/ad 修复改动了所有 CLI 共用代码，新增 P09ay（收窄 final_text 闸门）、P09az（回退 env allowlist）；P09ah/ai/aj 修复保留并补测试：P09bb、P09bc、P09bd。均 owner Codex、blocked-by P09aq，P09aq 绿后一批交接。P09ba 不做。
@@ -368,4 +369,4 @@ P09an、P09av、P09aw、P09ax、P09n、P09z 状态为 on hold：不在 #52 本�
 | P09au | 长度上限按字符而非字节计算；随 P09bd 一并解决。 |
 | P09-real-feishu-acceptance | 不是修复票，是整轮验收清单，由夜间端到端测试执行。 |
 
-本轮仍在做：P09bd（Codex）。代码已修、待最终版本实测：P09bc、P09at、P09ai。搁置：P09be、P09bf。不做：P09ao、P09as、P09ba。
+本轮仍在做：P09bd（Codex）、P09bg（local Grok Build；夜间 live FX-bc/at/ai 在 Grok @2610aa8 仍 FAIL：setsid 工具 shell 存活）。代码已修、待最终版本实测：P09bc、P09at、P09ai。搁置：P09be、P09bf。不做：P09ao、P09as、P09ba。
