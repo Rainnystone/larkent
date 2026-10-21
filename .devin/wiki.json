@@ -1,0 +1,54 @@
+{
+  "repo_notes": [
+    {
+      "content": "Larkent is a TypeScript/Node.js bot bridge connecting CLI coding agents (Claude Code, Codex, Kimi, Grok, Cursor, Antigravity) to Feishu/Lark chats, run by a multi-profile runtime supervisor. Write all pages in English and cite sources as file paths with line numbers (for example src/automations/scheduler.ts:1-40), matching the existing wiki style. Domain vocabulary is defined in CONTEXT.md and operational behavior in docs/operations.md; prefer those terms over re-derived naming. The repository is currently at v0.8.0 (commit 50da2131): it adds an Automations subsystem under src/automations/, external bridge plugins (plugins/ plus src/plugins/catalog.ts), a run-bound bridge-tools channel (src/bridge-tools/), and the P09 hardening series across src/agent/runner/, src/runtime/run-executor.ts, src/bot/channel.ts, and the Grok adapter.",
+      "author": "Rainnystone"
+    },
+    {
+      "content": "v0.8.0 additions to document: (1) Automations — persistent per-group tasks (reminder or agent task types) managed through the /auto chat command and a structured lark-channel-bridge tool protocol, with durable operation records, human confirmation cards, a pinned board card, a scheduler with catch-up/miss rules, optional signed status push to larkent-monitor, and automations.timezone config defaulting to the host's local zone. (2) Bridge plugins — host-prepared packages listed in <data-root>/plugins.json, each with a .codex-plugin/plugin.json manifest (name, version, description, skills, plus optional larkent metadata for aliases/resources/requires), discovered via the catalog snapshot at profile startup and read by the agent through plugins.list/inspect/read tool operations; plugins/automation/ is the built-in package. (3) P09 hardening — stopping a run kills the whole spawned process group (setsid leader plus stdout inheritors on escalation), bridge secrets such as LARK_BRIDGE_TOOL_* stay out of agent CLI environments, the Grok prompt is passed via a 0600-permission file and Grok text output strips ANSI/BEL/CR, each streaming-JSON (JSONL) line is capped by UTF-8 byte length, meeting runs get a default idle budget without controls config, and a stopped final answer is only produced for an explicit user stop.",
+      "author": "Rainnystone"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "Entry page: what Larkent is, the high-level architecture (Feishu bot bridge + multi-profile supervisor + agent adapters + automations + bridge plugins), and the repository layout. The layout table must cover every top-level area, including src/automations/, src/plugins/, src/bridge-tools/, src/bot/, src/agent/, src/runtime/, src/meeting/, src/card/, src/commands/, src/config/, src/policy/, src/session/, src/workspace/, src/platform/, src/cli/, src/lark-cli/, bin/, plugins/, tests/, e2e/, and web/. Summarize key concepts and link to every child page.",
+      "parent": null
+    },
+    {
+      "title": "Getting Started & Installation",
+      "purpose": "Installation, profile creation and configuration layout ($LARK_CHANNEL_HOME, profiles.<name> in config.json, src/config/), CLI commands (run/start/stop/restart/status/ps/profile list, ui --print, wake), per-OS service modes (launchd/systemd/Task Scheduler), and the supervisor web console. Based on README.md, docs/agent-setup.md, docs/operations.md, bin/, src/cli/, src/lark-cli/. Include the automations.enabled / automations.agentTasks / automations.timezone keys in the configuration table.",
+      "parent": "Overview"
+    },
+    {
+      "title": "End-to-End Request Lifecycle",
+      "purpose": "Trace one Feishu message from intake (src/bot/: channel, claim, turn journal, backfill ledger, quiet-window flush) through agent run execution (src/agent/runner/, src/runtime/run-executor.ts) to reply delivery (outbox, delivery, bridge-owned final reply), including /stop handling, RunOutcome classification, interruption notices, and recovery. Reflect v0.8.0: a stopped final answer is only produced for an explicit user stop, and stopping a run terminates the spawned process group.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Runtime & Orchestration",
+      "purpose": "The multi-profile control plane: src/runtime/ (supervisor.ts, registry.ts, profile-runtime.ts, agent-runtime.ts, run-executor.ts, host-lock.ts, live-root.ts, locks.ts, profile-discovery.ts), src/platform/ host suspension and PID monitors, FeishuLink outage detection and recover(), the journal and outbox persistence model, and how automation fires and bridge-tool requests pass through the same run executor. Parent page for Automations, Bridge Plugins & Skills, and Agent Run Reliability & P09 Hardening.",
+      "parent": "Overview"
+    },
+    {
+      "title": "Automations",
+      "purpose": "Document the automations subsystem under src/automations/: the /auto chat command (command.ts, schedule-input.ts, schedule.ts), the durable task store and migrations (store.ts, migrations.ts, operation-id.ts), the scheduler with fire/catch-up/miss rules and wake files (scheduler.ts, wake-file.ts, zoned-time.ts), the durable automation operation lifecycle (operation.ts, manage-operation.ts, task-mutation.ts, action-auth.ts), confirmation and scripted cards (confirm-card.ts, draft-card.ts, card-sequence.ts, card-body.ts, end-card.ts, status-block.ts), agent-task fires and policy-guard (agent-run.ts, tools.ts, policy-guard.ts), the pinned board (board.ts, board-card.ts, board-pins.ts, board-auth.ts), reply state and delivery (reply-state.ts, delivery.ts, draft-delivery.ts, chat-lifecycle.ts), and status push to larkent-monitor (status-push.ts, status-pusher.ts). Cover group removal handling (im.chat.member.bot.deleted_v1 / im.chat.disbanded_v1, not-in-chat send codes), the automations vocabulary in CONTEXT.md, and configuration including automations.timezone (IANA name, defaulting to the host's local zone, or UTC when undetectable) in src/config/ with tests/unit/config/automations-settings.test.ts as reference.",
+      "parent": "Runtime & Orchestration"
+    },
+    {
+      "title": "Bridge Plugins & Skills",
+      "purpose": "Document external bridge plugins: <data-root>/plugins.json selecting package roots, the supported .codex-plugin/plugin.json manifest subset (name, version, description, skills) plus larkent metadata (aliases, resources, requires commands/content, revision pins), catalog loading at profile startup and content-reference addressing with declared content scope containment and symlink checks (src/plugins/catalog.ts), the built-in plugins/automation/ package and its skills/automations/SKILL.md, and the run-bound tool channel: LARK_BRIDGE_TOOL_CLIENT environment, src/bridge-tools/ (server.ts, client.ts, protocol.ts, prompt.ts) and src/agent/bridge-system-prompt.ts. Cover plugins.list/inspect/read operations, ambiguity and diagnostics codes, stale-plugin-reference/package-changed handling, and why the bridge does not install or execute package dependencies. Reference the External bridge plugins section of docs/operations.md.",
+      "parent": "Runtime & Orchestration"
+    },
+    {
+      "title": "Agent Run Reliability & P09 Hardening",
+      "purpose": "Document how agent subprocesses are spawned, bounded, stopped and cleaned up (src/agent/runner/jsonl-cli-runner.ts, src/agent/runner/bounded-stderr.ts, src/agent/spawn-env.ts, src/agent/terminal-text.ts, src/runtime/run-executor.ts, src/bot/channel.ts, src/meeting/): spawning under a setsid process-group leader, stop signaling the process group, escalation killing stdout inheritors without killing stdout heirs prematurely, per-line JSONL caps measured in UTF-8 bytes, keeping bridge secrets out of agent CLI environments, the Grok adapter passing its prompt via a 0600-permission file and stripping ANSI/BEL/CR from text output, the meeting idle-timeout default budget applied without controls config, and stopped final answers restricted to explicit user stops. Explain how these interact with stopRequest reasons, RunOutcome, and stderr signature classification.",
+      "parent": "Runtime & Orchestration"
+    },
+    {
+      "title": "Glossary",
+      "purpose": "Define the domain vocabulary from CONTEXT.md in English. Established terms: agent kind, AgentDescriptor, AgentRegistry, adapter, JSONL process runner, translator, envelope, run, idle bound, run options, resume handle, policy fingerprint, session catalog, turn journal, outbox, bridge, supervisor, backfill ledger, claim, backfill mark, lateness hint, kill switch, dry-run, coalesce, bridge-owned final reply, RunOutcome, stop reason, stderr snapshot, recover(), interruption notice, NoticeActionAuth, Feishu Link, host suspension, StoppableHandle. v0.8.0 terms: automation, agent task, fire, fire key, miss rule, status push, larkent-monitor, local wake, catch-up, 已错过 (missed instant), automations log, policy-guard, automation prompt variant, automation operation, draft, scripted card, confirm card, automation tool request, board, scheduler, removed-from-chat, not-in-chat, automation creator, bridge plugin, plugin catalog snapshot, plugin content reference, declared content scope. Note the 'words we do not use' list (no 'default agent', no 'poller'/'patrol' for recovery, resumeHandle naming, no built-in vs added agent distinction).",
+      "parent": "Overview"
+    }
+  ]
+}
