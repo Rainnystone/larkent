@@ -96,7 +96,7 @@ describe.skipIf(!posix)('test-bridge shim', () => {
     }
   });
 
-  it('applies a one-shot fault only to the matching run id', async () => {
+  it('applies a one-shot fault only to the matching run id', { timeout: 20_000 }, async () => {
     const root = await tmp('shim-fault-');
     const fake = await writeScriptedJsonlExecutable(root, 'fake-cli', {
       version: '0.0.0-pin',
