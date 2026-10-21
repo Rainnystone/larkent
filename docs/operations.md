@@ -99,9 +99,19 @@ Evidence from the P03 code phase (2026-10-19):
 - An isolated install of Linux x64 `@larksuite/cli@1.0.98` printed `lark-cli version 1.0.98`. Only version/help were run, confirming the `lark-channel` binding, strict-mode's read/write distinction, and that `auth status --verify` is a network check. No binding, login, or platform request was performed.
 - In the matching release tag [v1.0.98 (ac81f505)](https://github.com/larksuite/cli/tree/ac81f5056ab88f37d581d25916f3dab85abfca76), [token_lock.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/token_lock.go) uses in-process and cross-process locks; [uat_client.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/uat_client.go) re-reads inside the lock, checks store writability, and compares the original credential generation before writing back. This is source evidence; it does not claim 1.0.98 is the minimum version.
 - Automated regression starts the real adapter/subprocess through `startChannel` and uses a synthetic authorization principal and a controllable credential-store stand-in. It verifies human/automated concurrency on the shared directory, a single refresh, and unchanged config for later human sessions, covering bot/user and failure paths. The stand-in version is `0.0.0-controlled`; it does not represent the native CLI or real platform acceptance.
-- **Operator-pending (P09)**: on the target deployment version/OS/credential store, verify the real CLI's concurrent refresh, actual Feishu operations with authorized bot/user, and actual selection by the six model CLIs. This phase has no such results.
+- **Operator-pending (P09)**: on the target deployment version/OS/credential store, verify the real CLI's concurrent refresh, actual Feishu operations with authorized bot/user, and actual selection by the seven model CLIs. This phase has no such results.
 
-`LARK_CHANNEL_CLAUDE_BIN`, `LARK_CHANNEL_CODEX_BIN`, `LARK_CHANNEL_KIMI_BIN`, `LARK_CHANNEL_GROK_BIN`, `LARK_CHANNEL_CURSOR_BIN`, and `LARK_CHANNEL_ANTIGRAVITY_BIN` resolve and save the executable path when a profile is created. Existing profiles use the saved `agent.binaryPath`; to change the executable, stop the profile first, then update the path. The data root and the coding CLI's login directory are different things. The Antigravity executable is `agy`.
+`LARK_CHANNEL_CLAUDE_BIN`, `LARK_CHANNEL_CODEX_BIN`, `LARK_CHANNEL_KIMI_BIN`, `LARK_CHANNEL_GROK_BIN`, `LARK_CHANNEL_CURSOR_BIN`, `LARK_CHANNEL_ANTIGRAVITY_BIN`, and `LARK_CHANNEL_DEVIN_BIN` resolve and save the executable path when a profile is created. Existing profiles use the saved `agent.binaryPath`; to change the executable, stop the profile first, then update the path. The data root and the coding CLI's login directory are different things. The Antigravity executable is `agy`.
+
+### Devin ACP execution
+
+Devin runs through `devin acp` over bidirectional stdio. Prompts, session handles, permission modes and model selection use the protocol; no print-mode ATIF export is needed. Old short Devin handles remain loadable. History replay is excluded from the current answer, text whitespace is preserved, and native tool events feed the existing message-send deduplication, automation guard and idle watchdog. The guard remains best effort, as with the other adapters.
+
+Every new or loaded session receives the current run's permissions before its prompt. Without native sandbox, the default mapping is read-only → `ask`, workspace → `accept-edits`, full → `bypass`. Profile `agent.options.permissionMode` may narrow that mapping. Unexpected requests for human permission are rejected and reported as blocked execution; they do not silently broaden access or count as successful completion.
+
+`agent.options.sandbox: true` enables Devin's native `--sandbox`, independently of generic access hints. Its modes are `plan` for read-only and `autonomous` for writable sandboxed work. Explicit `smart` or `accept-edits` preferences that cannot be retained in that native sandbox are rejected before starting a writable run. The sandbox follows Devin's own granted scopes and platform exceptions: local macOS smoke denied a write to our disposable home fixture outside the workspace, while a system-temp write was allowed. Do not treat it as an absolute denial of every path outside cwd. Existing OS prerequisites and CLI policy still apply.
+
+Model aliases `opus` and `sonnet` select the first matching ordinary model advertised by Devin. `swe-2-max` selects the SWE-2 family and max thought level when exposed separately. Unavailable explicit models or configuration values fail visibly. These rules also apply when resuming; the adapter does not silently create a new conversation after a failed load.
 
 
 ## External bridge plugins
@@ -176,9 +186,9 @@ Retain `source.reference` when following a resource link. `stale-plugin-referenc
 
 The automated catalog, real-client IM and subprocess checks cover synthetic pure skills and command/script bundles, shared profiles, restart/resume, dependencies, ambiguity and containment. Real model selection, the deployment's native CLI versions/access modes, paid model calls, and real Feishu bot/user permissions remain operator acceptance work; skipped opt-in smoke tests are not evidence of those checks.
 
-### Six-CLI invocation contract and operator evidence
+### Seven-CLI invocation contract and operator evidence
 
-`pnpm exec vitest run tests/process/six-cli-bridge-contract.test.ts tests/process/bridge-tools.test.ts` runs without native CLI logins or opt-in flags. The six-row suite starts the actual profile adapters through `startChannel`, using controlled runtime executables (`0.0.0-controlled`, no model). Each child invokes the shared client with JSON stdin and reads actual results before replying. The matrix includes external package scripts, discovery, schema/query, same-turn correction, create/replace/delete confirmation receipts, pause/resume, result queries after automatic execution, fresh credentials, forged-context rejection, completion and stop revocation. Runtime, package and working paths contain spaces and shell metacharacters. The existing CI runs this suite inside `pnpm test` on Ubuntu, macOS and Windows; inspect the exact commit's job logs for six executed rows.
+`pnpm exec vitest run tests/process/seven-cli-bridge-contract.test.ts tests/process/bridge-tools.test.ts` runs without native CLI logins or opt-in flags. The seven-row suite starts the actual profile adapters through `startChannel`, using controlled runtime executables (`0.0.0-controlled`, no model). Each child invokes the shared client with JSON stdin and reads actual results before replying. The matrix includes external package scripts, discovery, schema/query, same-turn correction, create/replace/delete confirmation receipts, pause/resume, result queries after automatic execution, fresh credentials, forged-context rejection, completion and stop revocation. Runtime, package and working paths contain spaces and shell metacharacters. The existing CI runs this suite inside `pnpm test` on Ubuntu, macOS and Windows; inspect the exact commit's job logs for seven executed rows.
 
 | Adapter | Control-process new/resumed IM | Scheduled runs / result continuation | Native CLI version/model and new/resume loops |
 | --- | --- | --- | --- |
@@ -188,6 +198,7 @@ The automated catalog, real-client IM and subprocess checks cover synthetic pure
 | Grok | Covered; existing access mapping retained | Fresh fires; human continuation resumes fire session | Operator-pending |
 | Cursor | Covered; existing full-access mapping retained | Fresh fires; human continuation resumes fire session | Operator-pending |
 | Antigravity | Covered; existing full-access mapping retained | Fresh fires; human continuation resumes fire conversation | Operator-pending |
+| Devin | Covered via native ACP-shaped control peer; current permissions reapplied after load | Fresh fires; human continuation resumes fire session | macOS local new/resume, tools, sandbox and stop smoke passed (3000.11.92, swe-2-high); real Feishu acceptance pending |
 
 These are adapter/control-process checks. A synthetic native-config sentinel staying unchanged does not establish native plugin loading, trust enforcement or a model tool loop. Scheduled fires intentionally start fresh; a human follow-up to their result is an IM run with current facts and a new credential, even when it resumes that session.
 
@@ -311,9 +322,12 @@ GROK_REAL_SMOKE=1 pnpm exec vitest run tests/process/grok-real.smoke.test.ts
 KIMI_REAL_SMOKE=1 pnpm exec vitest run tests/process/kimi-real.smoke.test.ts
 CURSOR_REAL_SMOKE=1 pnpm exec vitest run tests/process/cursor-real.smoke.test.ts
 ANTIGRAVITY_REAL_SMOKE=1 pnpm exec vitest run tests/process/antigravity-real.smoke.test.ts
+DEVIN_REAL_SMOKE=1 pnpm exec vitest run tests/process/devin-real.smoke.test.ts
 ```
 
 Test file paths are relative to the repo root. Real smoke tests call the logged-in CLI; they verify the adapter and do not replace acceptance of the main Feishu flow. The Antigravity real smoke test uses `claude-sonnet-4-6` to avoid Gemini returning `User location is not supported` on some networks; the profile default still follows `agy`'s settings and does not force that model.
+
+The DEVIN opt-in smoke uses `swe-2-high` (`DEVIN_SMOKE_MODEL` may select another installed model) and requires the logged-in native CLI, local `lark-cli`, and this checkout's built bridge client. It checks new/resumed sessions, exact file formatting, synthetic loopback tool calls with same-turn correction, native sandbox denial and cancellation. It sends no real Feishu messages and changes no login state. The sandbox case creates and removes a disposable `.larkent-devin-sandbox-*` directory in the user's home to avoid the system-temp write exception.
 
 
 

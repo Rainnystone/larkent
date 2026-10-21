@@ -1,6 +1,6 @@
 # Agent setup: first Feishu connection
 
-For agents performing deployment or connection tasks. Applies to Claude Code, Codex CLI, Kimi Code, Grok Build, Cursor CLI, and Antigravity CLI.
+For agents performing deployment or connection tasks. Applies to Claude Code, Codex CLI, Kimi Code, Grok Build, Cursor CLI, Antigravity CLI, and Devin CLI.
 
 First-time setup of each profile has three parts:
 
@@ -18,6 +18,7 @@ User-identity authorization is stored in the current profile's lark-cli director
 2. Check the target CLI, login, network, Node, and pnpm against [README requirements](../README.md#requirements). `package.json` is authoritative for versions. When continuing from existing source, use the current checkout as is.
    - The Antigravity CLI executable is `agy` (`agy --version`). Do not use `antigravity` or Gemini CLI.
    - Verify that Cursor's `agent` is actually Cursor CLI.
+   - The Devin CLI executable is `devin` (`devin --version`); this adapter requires its native stdio ACP entry point (`devin acp --help`). Local adapter smoke was verified with 3000.11.92; this is a tested version, not a guessed minimum.
 3. Run `pnpm install --frozen-lockfile`, then `pnpm build`, then check `node bin/lark-channel-bridge.mjs --help`. Use this checkout's local entry point from now on.
 
 **Completion criteria:** dependencies and build succeed; the target CLI is logged in and runs. Record the actual CLI version, source branch/SHA, and code directory.

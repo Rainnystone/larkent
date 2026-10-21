@@ -21,18 +21,18 @@ const collectTsFiles = (rel: string): string[] => {
 };
 
 describe('static architecture contracts', () => {
-  it('declares image and raw resume behavior for all six adapters', () => {
-    const descriptors = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'].map(kind => descriptorFor(requireAgentKind(kind)));
-    expect(descriptors.map(d => d.acceptsImagePaths)).toEqual([false, true, false, false, false, false]);
-    expect(descriptors.map(d => d.acceptsRawResumeHandle)).toEqual([true, false, true, true, true, true]);
+  it('declares image and raw resume behavior for all seven adapters', () => {
+    const descriptors = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity', 'devin'].map(kind => descriptorFor(requireAgentKind(kind)));
+    expect(descriptors.map(d => d.acceptsImagePaths)).toEqual([false, true, false, false, false, false, false]);
+    expect(descriptors.map(d => d.acceptsRawResumeHandle)).toEqual([true, false, true, true, true, true, true]);
   });
 
   it('routes factories and detection through descriptors without reverse adapter imports', () => {
     expect(read('src/runtime/agent-runtime.ts')).not.toMatch(/\bfactories\b|new \w+Adapter\b/);
     expect(read('src/cli/agent-detection.ts')).not.toMatch(
-      /\[\s*['"](?:claude|codex|kimi|grok|cursor|antigravity)['"](?:\s*,\s*['"](?:claude|codex|kimi|grok|cursor|antigravity)['"]){5}\s*,?\s*\]/,
+      /\[\s*['"](?:claude|codex|kimi|grok|cursor|antigravity|devin)['"](?:\s*,\s*['"](?:claude|codex|kimi|grok|cursor|antigravity|devin)['"]){5}\s*,?\s*\]/,
     );
-    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity']) {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity', 'devin']) {
       expect(read(`src/agent/${kind}/adapter.ts`)).not.toMatch(/from ['"].*\/(?:registry|cli\/agent-detection)(?:\.js)?['"]/);
     }
   });
@@ -46,7 +46,7 @@ describe('static architecture contracts', () => {
   });
 
   it('keeps adapter metadata independent of the central registry', () => {
-    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const) {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity', 'devin'] as const) {
       const metadataPath = `src/agent/${kind}/metadata.ts`;
       expect(existsSync(join(root, metadataPath)), metadataPath).toBe(true);
       expect(read(metadataPath), metadataPath).not.toMatch(
@@ -74,6 +74,7 @@ describe('static architecture contracts', () => {
       expect(read(file), file).not.toMatch(/agent\/kimi/);
       expect(read(file), file).not.toMatch(/agent\/cursor/);
       expect(read(file), file).not.toMatch(/agent\/antigravity/);
+      expect(read(file), file).not.toMatch(/agent\/devin/);
     }
   });
 
@@ -116,13 +117,13 @@ describe('static architecture contracts', () => {
     }
   });
 
-  it('keeps the six-kind union only in src/agent/registry.ts', () => {
+  it('keeps the seven-kind union only in src/agent/registry.ts', () => {
     const files = [
       ...collectTsFiles('src'),
       ...collectTsFiles('web/src'),
     ].filter((file) => file !== 'src/agent/registry.ts' && !file.endsWith('.d.ts'));
     const strayUnion =
-      /['"](?:claude|codex|kimi|grok|cursor|antigravity)['"](?:\s*\|\s*['"](?:claude|codex|kimi|grok|cursor|antigravity)['"]){5}/;
+      /['"](?:claude|codex|kimi|grok|cursor|antigravity|devin)['"](?:\s*\|\s*['"](?:claude|codex|kimi|grok|cursor|antigravity|devin)['"]){5}/;
     for (const file of files) {
       const source = read(file)
         .replace(/\/\*[\s\S]*?\*\//g, '')
@@ -131,9 +132,14 @@ describe('static architecture contracts', () => {
     }
   });
 
-  it('spawns agent CLIs only from JsonlCliRunner', () => {
-    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const) {
+  it('spawns agent CLIs only from the JSONL runner or the dedicated Devin ACP runner', () => {
+    for (const kind of ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity', 'devin'] as const) {
       for (const file of collectTsFiles(`src/agent/${kind}`)) {
+        if (file === 'src/agent/devin/acp.ts') {
+          expect(read(file), file).toMatch(/from ['"]\.\.\/\.\.\/platform\/spawn['"]/);
+          expect(read(file), file).toMatch(/\bspawnProcess\b/);
+          continue;
+        }
         expect(read(file), file).not.toMatch(/\bspawnProcess\b/);
       }
     }

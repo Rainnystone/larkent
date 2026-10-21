@@ -10,7 +10,7 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 
 ## Agents
 
-- **agent kind** (`AgentKind`): `claude`, `codex`, `kimi`, `grok`, `cursor`, `antigravity`. Derived from the descriptor tuple in `src/agent/registry.ts`, the single production registration source. Tests may independently list the registered kinds to detect drift.
+- **agent kind** (`AgentKind`): `claude`, `codex`, `kimi`, `grok`, `cursor`, `antigravity`, `devin`. Derived from the descriptor tuple in `src/agent/registry.ts`, the single production registration source. Tests may independently list the registered kinds to detect drift.
 - **AgentDescriptor**: the record that fully describes one agent kind. Adapter-owned metadata, factory, binary detection, options, capabilities and history access. Shared creation, capability, detection and UI entry points consume the registered descriptors.
 - **AgentRegistry**: the registered descriptor tuple, derived ordered kinds and lookup (`AGENT_REGISTRY`). Detection order is derived from each descriptor's explicit priority. Adding an agent means one new adapter directory and one registry entry.
 - **adapter** (`src/agent/<kind>/`): argv building, JSONL translation, model list, capability declaration, per-agent options schema. Knows nothing about Feishu.

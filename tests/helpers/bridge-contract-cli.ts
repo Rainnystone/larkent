@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { jsonlScript, type PinAgentKind } from './scripted-jsonl-cli';
+import { DEVIN_ACP_FIXTURE_SOURCE } from './devin-acp-cli';
 
 export interface ContractPlan {
   mode: 'create' | 'manage' | 'automatic' | 'delete' | 'read' | 'hold';
@@ -40,13 +41,15 @@ if (argv.includes('--version')) { console.log('0.0.0-controlled'); process.exit(
 if (argv.includes('--help')) { console.log('Usage: runtime --output-format stream-json --approve-mcps'); process.exit(0); }
 const directory = dirname(fileURLToPath(import.meta.url));
 const plan = JSON.parse(readFileSync(join(directory, 'plan.json'), 'utf8'));
+let acpSessionRequest;
+async function executeContract(acpPrompt) {
 let stdin = '';
 if (kind === 'claude' || kind === 'codex') for await (const chunk of process.stdin) stdin += chunk;
 const promptFileAt = argv.indexOf('--prompt-file');
 const promptFromFile = promptFileAt >= 0 ? readFileSync(argv[promptFileAt + 1], 'utf8') : '';
-const prompt = stdin || promptFromFile || (kind === 'cursor' ? argv.at(-1) : argv[argv.indexOf('-p') + 1]);
+const prompt = acpPrompt || stdin || promptFromFile || (kind === 'cursor' ? argv.at(-1) : argv[argv.indexOf('-p') + 1]);
 const envKeys = ['LARK_CHANNEL', 'LARK_CHANNEL_HOME', 'LARK_CHANNEL_PROFILE', 'LARK_CHANNEL_CONFIG', 'LARKSUITE_CLI_CONFIG_DIR', 'CODEX_HOME', 'LARK_BRIDGE_TOOL_CLIENT', 'LARK_BRIDGE_TOOL_SCOPE', 'LARK_BRIDGE_TOOL_ISSUED_AT'];
-const report = { mode: plan.mode, session: plan.session, argv, prompt, cwd: process.cwd(), env: Object.fromEntries(envKeys.map(key => [key, process.env[key]])), connected: Boolean(process.env.LARK_BRIDGE_TOOL_TOKEN && process.env.LARK_BRIDGE_TOOL_ENDPOINT), calls: [] };
+const report = { mode: plan.mode, session: acpSessionRequest?.params?.sessionId || plan.session, acpSessionRequest, argv, prompt, cwd: process.cwd(), env: Object.fromEntries(envKeys.map(key => [key, process.env[key]])), connected: Boolean(process.env.LARK_BRIDGE_TOOL_TOKEN && process.env.LARK_BRIDGE_TOOL_ENDPOINT), calls: [] };
 const call = (operation, params = {}) => {
   const child = spawnSync(process.execPath, [process.env.LARK_BRIDGE_TOOL_CLIENT, 'tool'], {
     input: JSON.stringify({ version: 1, operation, params }), encoding: 'utf8', env: process.env, stdio: ['pipe', 'pipe', 'pipe'],
@@ -101,9 +104,19 @@ if (plan.mode === 'create') {
 }
 // This record contains only synthetic observations. Credentials and endpoints never enter it.
 writeFileSync(join(directory, 'report.json'), JSON.stringify(report));
+const exportAt = argv.indexOf('--export');
+if (exportAt >= 0 && argv[exportAt + 1]) writeFileSync(argv[exportAt + 1], JSON.stringify({ session_id: plan.session }));
 console.error('controlled-runtime diagnostic');
 if (plan.mode === 'hold') await new Promise(() => { setInterval(() => {}, 1000); });
 const answer = 'contract-result:' + JSON.stringify({ mode: plan.mode, script: report.script, last: report.calls.at(-1).result.category });
-for (const line of lines) console.log(JSON.stringify(line, (key, value) => key === 'cwd' ? undefined :
-  ['session_id', 'thread_id', 'conversation_id', 'sessionId'].includes(key) ? plan.session : value === 'PINNED_ANSWER' ? answer : value));
+if (kind === 'devin') return answer;
+for (const line of lines) {
+  if (typeof line === 'string') { console.log(line === 'PINNED_ANSWER' ? answer : line); continue; }
+  console.log(JSON.stringify(line, (key, value) => key === 'cwd' ? undefined :
+    ['session_id', 'thread_id', 'conversation_id', 'sessionId'].includes(key) ? plan.session : value === 'PINNED_ANSWER' ? answer : value));
+}
+}
+` + DEVIN_ACP_FIXTURE_SOURCE + String.raw`
+if (kind === 'devin') { await serveDevinAcp({sessionId:plan.session}, {onPrompt:executeContract,onSession:m => {acpSessionRequest=m;}}); }
+else await executeContract();
 `;

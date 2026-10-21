@@ -87,6 +87,19 @@ export function killSurvivingOutOfGroupDescendants(
   return waitThenKill(marks, remainingGraceMs);
 }
 
+/** Confirm detached POSIX group cleanup even after its leader/stdio have exited. */
+export async function waitForProcessGroupExit(child: SignalableChild, timeoutMs: number): Promise<boolean> {
+  if (process.platform === 'win32' || !child.pid || !(child instanceof ChildProcess)) return true;
+  const deadline = Date.now() + Math.max(0, timeoutMs);
+  for (;;) {
+    // Zombies no longer execute or own resources; init may reap them later.
+    if (groupMembers(child.pid, true).length === 0) return true;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return false;
+    await new Promise<void>(resolve => setTimeout(resolve, Math.min(20, remaining)));
+  }
+}
+
 function snapshotOutOfGroup(child: SignalableChild, rootPid: number): readonly ProcMark[] {
   const existing = outOfGroupSnapshots.get(child);
   if (existing) return existing;
@@ -219,24 +232,25 @@ function stdoutInheritors(leaderPid: number): Set<number> {
   return spared;
 }
 
-function groupMembers(leaderPid: number): number[] {
+function groupMembers(leaderPid: number, liveOnly = false): number[] {
   let text: string;
   try {
-    text = execFileSync('ps', ['-axo', 'pid=,pgid='], {
+    text = execFileSync('ps', ['-axo', liveOnly ? 'pid=,pgid=,stat=' : 'pid=,pgid='], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
       maxBuffer: 8 * 1024 * 1024,
       timeout: 5000,
     });
-  } catch {
+  } catch (error) {
+    if (liveOnly) throw error; // Unknown cleanup state must not count as success.
     return [];
   }
   const members: number[] = [];
   for (const line of text.split('\n')) {
-    const [pidText, pgidText] = line.trim().split(/\s+/);
+    const [pidText, pgidText, state] = line.trim().split(/\s+/);
     const pid = Number(pidText);
     const pgid = Number(pgidText);
-    if (pgid === leaderPid && Number.isInteger(pid) && pid > 0) members.push(pid);
+    if (pgid === leaderPid && Number.isInteger(pid) && pid > 0 && (!liveOnly || (state && !state.startsWith('Z')))) members.push(pid);
   }
   return members;
 }

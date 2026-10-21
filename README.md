@@ -25,8 +25,9 @@ Inspired by [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhang
 | Grok Build | `grok` | `grok` |
 | Cursor CLI | `cursor` | `cursor-agent` or Cursor's `agent` |
 | Antigravity CLI | `antigravity` | `agy` |
+| Devin CLI | `devin` | `devin` |
 
-All six use the same runtime contracts. CLI-specific options, image handling, and native history support remain adapter-specific. Select the agent explicitly when creating a profile.
+All seven use the same runtime contracts. CLI-specific options, image handling, and native history support remain adapter-specific. Select the agent explicitly when creating a profile.
 
 ## Requirements
 

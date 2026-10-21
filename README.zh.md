@@ -25,8 +25,9 @@ Larkent 受到 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazh
 | Grok Build | `grok` | `grok` |
 | Cursor CLI | `cursor` | `cursor-agent` 或 Cursor 的 `agent` |
 | Antigravity CLI | `antigravity` | `agy` |
+| Devin CLI | `devin` | `devin` |
 
-六种 CLI 遵循相同的运行契约。各自的参数、图片处理和原生历史能力由对应适配器负责；创建 profile 时明确选择 agent。
+七种 CLI 遵循相同的运行契约。各自的参数、图片处理和原生历史能力由对应适配器负责；创建 profile 时明确选择 agent。
 
 ## 环境要求
 
