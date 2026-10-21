@@ -1,6 +1,14 @@
 import { newAutomationOperationId } from '../automations/operation-id';
 import { record, TOOL_MAX_BYTES, TOOL_REQUEST_SCHEMA, toolResult, type ToolResult } from './protocol';
 
+const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
+
+/** Local tool calls can be slower on loaded or scanned hosts; tests override this. */
+function toolTimeoutMs(env: NodeJS.ProcessEnv): number {
+  const value = Number(env.LARK_BRIDGE_TOOL_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : DEFAULT_TOOL_TIMEOUT_MS;
+}
+
 export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv = process.env): Promise<ToolResult> {
   const endpoint = env.LARK_BRIDGE_TOOL_ENDPOINT;
   const credential = env.LARK_BRIDGE_TOOL_TOKEN;
@@ -17,7 +25,7 @@ export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv =
     if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.pathname !== '/tool' || url.username || url.password || url.search || url.hash) {
       return failed('unavailable', 'invalid-run-endpoint');
     }
-    const response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(10_000) });
+    const response = await fetch(url, { method: 'POST', headers: { authorization: `Bearer ${credential}`, 'content-type': 'application/json' }, body: JSON.stringify(input), redirect: 'error', signal: AbortSignal.timeout(toolTimeoutMs(env)) });
     const text = await response.text();
     // The request bound protects untrusted input; legitimate stored task lists can be larger.
     if (!response.ok) return failed('execution-failed', 'invalid-tool-response');
