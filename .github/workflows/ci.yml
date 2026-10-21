@@ -34,7 +34,7 @@ jobs:
           cache: pnpm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild protobufjs
 
       - name: Build web
         run: pnpm build:web
@@ -65,7 +65,7 @@ jobs:
           cache: pnpm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild protobufjs
 
       - name: Build web
         run: pnpm build:web
@@ -103,7 +103,7 @@ jobs:
           cache: pnpm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild protobufjs
 
       - name: Build web
         run: pnpm build:web
