@@ -3,15 +3,18 @@ name: CI
 on:
   push:
   pull_request:
+  schedule:
+    - cron: '0 18 * * *'
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.head.repo.full_name || github.repository }}-${{ github.event.pull_request.head.ref || github.ref_name }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: Node 20 on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, ubuntu-latest, windows-latest]
+  static:
+    name: Static checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
@@ -29,11 +32,77 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      - name: Test
-        run: pnpm test
+      - name: Build web
+        run: pnpm build:web
 
       - name: Typecheck
         run: pnpm typecheck
 
-      - name: Build
-        run: pnpm build
+      - name: Build CLI
+        run: pnpm build:ci
+
+  test-ubuntu:
+    name: Test on ubuntu-latest
+    needs: static
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        run: pnpm build:web
+
+      - name: Test
+        run: pnpm test:ci
+
+  test-platform:
+    name: Test on ${{ matrix.os }}
+    needs: static
+    if: >
+      github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' &&
+        (github.base_ref == 'master' || startsWith(github.base_ref, 'release/'))) ||
+      (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/')))
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web
+        run: pnpm build:web
+
+      - name: Test
+        run: pnpm test:ci

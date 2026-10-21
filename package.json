@@ -40,6 +40,8 @@
     "typecheck": "tsc --noEmit",
     "pretest": "pnpm build:web",
     "test": "vitest run",
+    "test:ci": "vitest run",
+    "build:ci": "tsup",
     "test:unit": "vitest run tests/unit --passWithNoTests",
     "test:integration": "vitest run tests/integration --passWithNoTests",
     "test:process": "vitest run tests/process --passWithNoTests",
