@@ -12,6 +12,7 @@ Larkent 受到 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazh
 - **延续工作上下文。** 连续对话、切换工作目录、停止当前任务，之后再恢复会话。
 - **同时运行多个 agent。** 每个 bot 可以选择自己的 CLI，保存独立配置和会话；一台主机可运行多个 profile。
 - **读取飞书中的上下文。** 使用 owner 授权的用户身份读取 wiki、文档和聊天记录，回复仍以 bot 身份发出。
+- **定时执行工作。** 创建经人工确认、按排期运行的提醒和 agent 任务。
 - **选择运行方式。** 支持终端前台、后台服务，以及管理多个 profile 的本地 Web 控制台。
 
 ## 支持的 CLI
@@ -62,6 +63,26 @@ node bin/lark-channel-bridge.mjs run --profile my-agent
 完整的注册、授权和验证步骤见 [agent setup 指南](docs/agent-setup.md)。负责部署本仓库的 agent 应先读 [AGENTS.md](AGENTS.md)。
 
 完成后，私聊 bot 或在群里 `@bot` 即可开始使用。前台进程用 `Ctrl-C` 停止。
+
+## Bridge 插件与 skill
+
+Agent CLI 只认识自身工具和原生插件教给它的能力。bridge 通过共用的 JSON 客户端提供自己的工具（例如自动任务排期），但 CLI 没有内建方式发现这个客户端及其调用约定，单靠自己无法稳定调用。Bridge 插件以与具体 CLI 无关的方式补上这一环。
+
+- 每次 IM 运行（含续接会话和定时 agent 运行）都会收到简短的插件摘要和通用工具约定；完整 skill 正文与资源通过 bridge 工具按需读取（`plugins.list` / `plugins.inspect` / `plugins.read`）。
+- 内置的 [`plugins/automation`](plugins/automation/) 包提供 automations skill，所有支持的 CLI 由此获得同一套自动任务约定。
+- 维护者可在 `<data-root>/plugins.json` 中列出包的绝对路径来添加更多插件，同一数据根下的 profile 共用。Bridge 插件与各 CLI 的原生插件分开：bridge 不安装、不下载、不托管 MCP/hooks，也不改变 CLI 信任设置；脚本只返回位置与内容，不代为执行。
+
+Manifest 格式、依赖声明、诊断与更新步骤见 [External bridge plugins](docs/operations.md#external-bridge-plugins)。
+
+## 自动任务
+
+打开 `automations.enabled` 后，bot 可以在群里运行定时任务：**提醒**到期投递正文；**agent 任务**（需打开 `automations.agentTasks`）到期时在创建时绑定的工作目录运行 agent，使用该 profile 已有的授权。
+
+- 用自然语言提出即可。agent 借助 automations skill 先预览排期再创建任务。创建、替换和删除须由人在确认卡上确认后才生效，模型不能代为确认；暂停与恢复立即生效。
+- 可以让 agent 查询和管理任务，也可以使用手动 `/auto` 聊天命令和看板。
+- 任务按 profile 保存在 `<data-root>/profiles/<profile>/` 下。定时运行可以读取插件，但不能自行创建或修改排期。
+
+操作回执、恢复方式和所需事件订阅见 [运行指南](docs/operations.md#automation-operation-recovery)。
 
 ## 运行与配置
 

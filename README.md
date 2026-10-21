@@ -12,6 +12,7 @@ Inspired by [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhang
 - **Keep the conversation going.** Continue a session, switch workspaces, stop a task, and resume later.
 - **Run multiple agents.** Give each bot its own CLI, configuration, sessions, and runtime state. Multiple profiles can run on the same host.
 - **Use your Lark context.** Read wiki pages, documents, and chat history with the owner's authorized user identity. Replies still come from the bot.
+- **Schedule work.** Create confirmed reminders and agent tasks that run on a schedule.
 - **Choose how to run it.** Start in a terminal, use a background service, or manage profiles through the local web console.
 
 ## Supported agents
@@ -62,6 +63,26 @@ Follow the application registration prompts in a terminal with TTY support. For 
 Follow the [agent setup guide](docs/agent-setup.md) for the complete registration, authorization, and verification flow. Agents setting up this repository should start with [AGENTS.md](AGENTS.md).
 
 Once setup is complete, send the bot a direct message or mention it in a group. Stop the foreground process with `Ctrl-C`.
+
+## Bridge plugins and skills
+
+Agent CLIs only know what their own tooling and native plugins teach them. The bridge exposes its own tools, such as automation scheduling, through a shared JSON client, but a CLI has no built-in way to discover that client or its contract, so on its own it would not reliably call it. Bridge plugins close that gap independently of any particular CLI.
+
+- Every IM run, including resumed sessions and scheduled agent runs, receives short package summaries and the common tool contract. Full skill bodies and resources are read on demand through the bridge tool (`plugins.list` / `plugins.inspect` / `plugins.read`).
+- The built-in [`plugins/automation`](plugins/automation/) package ships the automations skill, so every supported CLI learns the same automation contract.
+- Operators can add more packages by listing absolute package roots in `<data-root>/plugins.json`, shared by the profiles under that data root. Bridge plugins are separate from each CLI's native plugins: the bridge does not install, download, host MCP/hooks, or change CLI trust, and it returns scripts without running them.
+
+Manifest format, dependencies, diagnostics, and updates are covered in [External bridge plugins](docs/operations.md#external-bridge-plugins).
+
+## Automations
+
+With `automations.enabled`, a bot can run scheduled tasks in a chat: **reminders** deliver their text when they come due, and **agent tasks** (when `automations.agentTasks` is enabled) run the agent in the working directory captured at creation, using the profile's existing authorization.
+
+- Ask in natural language. The agent uses the automations skill to preview the schedule, then creates the task. Create, replace, and delete only take effect after a human confirms the card; the model cannot confirm for you. Pause and resume apply immediately.
+- List and manage tasks by asking the agent, or with the manual `/auto` chat commands and dashboard.
+- Tasks are stored per profile under `<data-root>/profiles/<profile>/`. Scheduled runs can read plugins but cannot create or change schedules themselves.
+
+See the [operations guide](docs/operations.md#automation-operation-recovery) for operation receipts, recovery, and required event subscriptions.
 
 ## Running and configuration
 
