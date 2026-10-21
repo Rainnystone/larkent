@@ -27,8 +27,9 @@ async function harness(chatMode: 'group' | 'topic' = 'group', agentTasks = true,
 }
 
 // Each effect may include the client's ten-second transport budget and actual child-process work.
+// Windows shards also run the process-heavy contract rows alongside this file.
 function waitForEffect(assertion: () => void | Promise<void>) {
-  return vi.waitFor(assertion, { timeout: 12000 });
+  return vi.waitFor(assertion, { timeout: process.platform === 'win32' ? 30000 : 12000 });
 }
 
 it.each(['group', 'topic'] as const)('creates an agent task through the real client, deduplicates it, and binds its creator and cwd on confirmation (%s)', async mode => {
