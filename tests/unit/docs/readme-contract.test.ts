@@ -21,8 +21,7 @@ describe('README runtime contract', () => {
       '--include-secrets --yes',
       'lark-cli identity policy',
       'profile-local lark-cli directory',
-      'lark-cli 身份策略',
-      '当前 profile 的 lark-cli 目录',
+      "the current profile's lark-cli directory",
       'pnpm test',
       'pnpm typecheck',
       'pnpm build',
@@ -75,7 +74,7 @@ describe('README runtime contract', () => {
     const docs = await readDocs();
 
     expect(docs).toContain('Cloud-doc comments are document-scoped');
-    expect(docs).toContain('云文档评论按文档权限生效');
+    expect(docs).toContain('follows document permissions, not the IM allowlist');
     expect(docs).not.toContain('comments.enabled');
     expect(docs).not.toContain('comments.rateLimit');
     expect(docs).not.toContain('/doc ws bind');
@@ -162,7 +161,7 @@ describe('README runtime contract', () => {
     expect(docs).toContain('"defaultAccess": "full"');
     expect(docs).toContain('"maxAccess": "full"');
     expect(docs).toContain('legacy `sandbox`');
-    expect(docs).toContain('旧版 `sandbox`');
+    expect(docs).toContain('legacy `sandbox` config is read and migrated');
     expect(docs).not.toContain('"sandbox"');
   });
 });
