@@ -66,23 +66,56 @@ Once setup is complete, send the bot a direct message or mention it in a group. 
 
 ## Bridge plugins and skills
 
-Agent CLIs only know what their own tooling and native plugins teach them. The bridge exposes its own tools, such as automation scheduling, through a shared JSON client, but a CLI has no built-in way to discover that client or its contract, so on its own it would not reliably call it. Bridge plugins close that gap independently of any particular CLI.
+Each coding CLI only knows the tools its own setup gives it. Larkent has extra abilities of its own, such as scheduling tasks, but a CLI cannot find or call them by itself. Bridge plugins solve this in one place for every supported CLI: they are packages of skills (plain `SKILL.md` instructions plus optional references and scripts) that the bridge hands to whichever agent is running.
 
-- Every IM run, including resumed sessions and scheduled agent runs, receives short package summaries and the common tool contract. Full skill bodies and resources are read on demand through the bridge tool (`plugins.list` / `plugins.inspect` / `plugins.read`).
-- The built-in [`plugins/automation`](plugins/automation/) package ships the automations skill, so every supported CLI learns the same automation contract.
-- Operators can add more packages by listing absolute package roots in `<data-root>/plugins.json`, shared by the profiles under that data root. Bridge plugins are separate from each CLI's native plugins: the bridge does not install, download, host MCP/hooks, or change CLI trust, and it returns scripts without running them.
+**How it works**
 
-Manifest format, dependencies, diagnostics, and updates are covered in [External bridge plugins](docs/operations.md#external-bridge-plugins).
+1. You do not install anything per CLI. On every chat run, including resumed sessions and scheduled agent runs, the bridge tells the agent which plugins are available and how to call the bridge's tool client.
+2. When the agent needs a skill, it reads the full instructions on demand through that client.
+3. The built-in [`plugins/automation`](plugins/automation/) package ships with Larkent and is always available, so every CLI knows how to work with automations out of the box.
+
+**Adding your own plugins (optional)**
+
+1. Prepare each plugin as a directory on the host, with a `.codex-plugin/plugin.json` manifest and its skill folders.
+2. Create `plugins.json` in the data directory (`$HOME/.lark-channel` by default) and list each plugin's absolute path:
+
+   ```json
+   { "schemaVersion": 1, "packages": ["/srv/larkent-plugins/my-plugin-v1"] }
+   ```
+
+3. Restart the profiles. All profiles using that data directory share the list.
+
+Bridge plugins are separate from a CLI's own native plugins. The bridge does not download or install anything, does not host MCP servers or hooks, does not change the CLI's trust settings, and does not run plugin scripts for the agent. See [External bridge plugins](docs/operations.md#external-bridge-plugins) for the manifest format, dependencies, diagnostics, and updating to a new version.
 
 ## Automations
 
-With `automations.enabled`, a bot can run scheduled tasks in a chat: **reminders** deliver their text when they come due, and **agent tasks** (when `automations.agentTasks` is enabled) run the agent in the working directory captured at creation, using the profile's existing authorization.
+Automations let a bot do things on a schedule in a group chat:
 
-- Ask in natural language. The agent uses the automations skill to preview the schedule, then creates the task. Create, replace, and delete only take effect after a human confirms the card; the model cannot confirm for you. Pause and resume apply immediately.
-- List and manage tasks by asking the agent, or with the manual `/auto` chat commands and dashboard.
-- Tasks are stored per profile under `<data-root>/profiles/<profile>/`. Scheduled runs can read plugins but cannot create or change schedules themselves.
+- **Reminders** post a message when they come due.
+- **Agent tasks** run the agent at the scheduled time, in the working directory that was set when the task was created, using the profile's existing authorization.
 
-See the [operations guide](docs/operations.md#automation-operation-recovery) for operation receipts, recovery, and required event subscriptions.
+**Turn it on**
+
+Set `automations.enabled` to `true` for the profile in `config.json` (see [Configuration and identity](docs/operations.md#configuration-and-identity)). To allow agent tasks, also set `automations.agentTasks`. `automations.timezone` defaults to `Asia/Shanghai`. Restart the profile afterwards. Automations work in group chats only.
+
+**Create a task by just asking**
+
+1. Mention the bot in a group and describe what you want, for example:
+   - "@bot remind me at 09:00 every day today, tomorrow, and the day after to check the build"
+   - "@bot every weekday at 18:00 summarize today's commits in this repo" (an agent task; set the working directory first with `/cd`)
+2. The agent previews the schedule and sends a **confirmation card** showing the task type, name, schedule, time zone, the next few run times, the end time, the task text, and who it runs as.
+3. Click **是 (Yes)** to save it, or **否 (No)** to cancel. Nothing is saved until a person confirms; the agent cannot confirm for you.
+4. Recurring tasks need an end time. If you did not give one, the bot sends a card with quick choices (one week, two weeks, one month, three months, end of year, one year) before the confirmation card.
+
+The earliest start is 10 minutes from now, and a one-time task can be at most a year ahead.
+
+**View and manage tasks**
+
+- Ask the agent: "@bot what scheduled tasks does this group have?", "pause the daily build reminder", "delete task 3".
+- Pause and resume take effect immediately. Delete and replace send a confirmation card first.
+- Or use chat commands: `/auto list`, `/auto pause <id>`, `/auto resume <id>`, `/auto delete <id>`, and `/auto new <schedule> | <name> | <text>` (`/auto new agent ...` for an agent task).
+
+Tasks are saved per profile under the data directory and survive restarts. A scheduled agent run can use plugins but cannot create or change schedules itself. For operation receipts, recovery, and the Feishu events to subscribe to, see the [operations guide](docs/operations.md#automations-events).
 
 ## Running and configuration
 

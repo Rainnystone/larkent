@@ -90,4 +90,5 @@ larkent_lark auth status --json --verify
 ## 按需继续
 
 - 常驻服务、supervisor、停止与日志：[运行指南](operations.md)。
+- 自动任务与 bridge 插件的用法：[README](../README.zh.md#自动任务)（[English](../README.md#automations)）。
 - 接入问题需改代码：在用户指定的 branch/worktree 留下回归与修复，执行 repo 的 `pnpm ci:local`；记录实际命令、退出码和真实场景复验结果。

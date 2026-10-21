@@ -35,6 +35,7 @@ supervisor 先启动 active profile，其余在控制台按需启动。常驻控
 
 - 基本操作：`/help`、`/status`、`/config`、`/cd <path>`、`/new`、`/stop`、`/resume`。
 - 访问管理：`/invite user`、`/remove user`、`/invite group`、`/remove group`、`/invite all group`、`/invite admin`。
+- 自动任务（仅群聊，需 `automations.enabled`）：`/auto list`、`/auto pause <id>`、`/auto resume <id>`、`/auto delete <id>`、`/auto new <时间表> | <名称> | <任务>`（agent 任务用 `/auto new agent ...`）。也可以直接用自然语言请 agent 创建或管理，创建/替换/删除需在确认卡上人工确认。
 - `/stop` 停止当前 scope 的任务，profile 保持在线；前台 Ctrl-C 停止整个 profile。
 
 ## Automations events
@@ -67,6 +68,8 @@ One turn → one bridge-owned final reply. Agents must not post the final answer
 | `mode` | `team` 或带访问名单的 `personal` |
 | `access.allowedUsers/allowedChats/admins` | 用户、群和管理员名单 |
 | `larkCli.identityPreset` | `user-default` 允许使用已授权用户身份 |
+| `automations.enabled` / `automations.agentTasks` | 开启群内自动任务 / 允许 agent 任务（默认均关闭） |
+| `automations.timezone` | 自动任务默认时区（IANA，默认 `Asia/Shanghai`） |
 
 Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并迁移；新配置使用规范字段）：
 

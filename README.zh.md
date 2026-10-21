@@ -66,23 +66,56 @@ node bin/lark-channel-bridge.mjs run --profile my-agent
 
 ## Bridge 插件与 skill
 
-Agent CLI 只认识自身工具和原生插件教给它的能力。bridge 通过共用的 JSON 客户端提供自己的工具（例如自动任务排期），但 CLI 没有内建方式发现这个客户端及其调用约定，单靠自己无法稳定调用。Bridge 插件以与具体 CLI 无关的方式补上这一环。
+每个 coding CLI 只知道自身配置提供的工具。Larkent 有一些自己的能力（例如定时任务），但 CLI 自己找不到、也不会调用它们。Bridge 插件为所有支持的 CLI 统一解决这个问题：插件是一组 skill（普通的 `SKILL.md` 说明，可附带参考资料和脚本），由 bridge 交给当前运行的 agent。
 
-- 每次 IM 运行（含续接会话和定时 agent 运行）都会收到简短的插件摘要和通用工具约定；完整 skill 正文与资源通过 bridge 工具按需读取（`plugins.list` / `plugins.inspect` / `plugins.read`）。
-- 内置的 [`plugins/automation`](plugins/automation/) 包提供 automations skill，所有支持的 CLI 由此获得同一套自动任务约定。
-- 维护者可在 `<data-root>/plugins.json` 中列出包的绝对路径来添加更多插件，同一数据根下的 profile 共用。Bridge 插件与各 CLI 的原生插件分开：bridge 不安装、不下载、不托管 MCP/hooks，也不改变 CLI 信任设置；脚本只返回位置与内容，不代为执行。
+**工作方式**
 
-Manifest 格式、依赖声明、诊断与更新步骤见 [External bridge plugins](docs/operations.md#external-bridge-plugins)。
+1. 不需要为每个 CLI 单独安装。每次聊天运行（含续接会话和定时 agent 运行），bridge 都会告诉 agent 有哪些插件可用，以及如何调用 bridge 的工具客户端。
+2. agent 需要某个 skill 时，再通过该客户端按需读取完整说明。
+3. 内置的 [`plugins/automation`](plugins/automation/) 随 Larkent 提供、始终可用，所以每个 CLI 开箱即会使用自动任务。
+
+**添加自己的插件（可选）**
+
+1. 在主机上把每个插件准备成一个目录，包含 `.codex-plugin/plugin.json` manifest 和 skill 文件夹。
+2. 在数据目录（默认 `$HOME/.lark-channel`）创建 `plugins.json`，列出每个插件的绝对路径：
+
+   ```json
+   { "schemaVersion": 1, "packages": ["/srv/larkent-plugins/my-plugin-v1"] }
+   ```
+
+3. 重启 profile。使用同一数据目录的 profile 共用这份列表。
+
+Bridge 插件与 CLI 自己的原生插件分开。bridge 不下载或安装任何东西，不托管 MCP 服务或 hooks，不改变 CLI 的信任设置，也不替 agent 执行插件脚本。Manifest 格式、依赖声明、诊断和版本更新见 [External bridge plugins](docs/operations.md#external-bridge-plugins)。
 
 ## 自动任务
 
-打开 `automations.enabled` 后，bot 可以在群里运行定时任务：**提醒**到期投递正文；**agent 任务**（需打开 `automations.agentTasks`）到期时在创建时绑定的工作目录运行 agent，使用该 profile 已有的授权。
+自动任务让 bot 在群里按时间表做事：
 
-- 用自然语言提出即可。agent 借助 automations skill 先预览排期再创建任务。创建、替换和删除须由人在确认卡上确认后才生效，模型不能代为确认；暂停与恢复立即生效。
-- 可以让 agent 查询和管理任务，也可以使用手动 `/auto` 聊天命令和看板。
-- 任务按 profile 保存在 `<data-root>/profiles/<profile>/` 下。定时运行可以读取插件，但不能自行创建或修改排期。
+- **提醒**：到期时发送一条消息。
+- **agent 任务**：到期时运行 agent，工作目录为创建任务时设定的目录，使用该 profile 已有的授权。
 
-操作回执、恢复方式和所需事件订阅见 [运行指南](docs/operations.md#automation-operation-recovery)。
+**开启**
+
+在 `config.json` 中把该 profile 的 `automations.enabled` 设为 `true`（见 [配置与身份](docs/operations.md#configuration-and-identity)）。需要 agent 任务时再打开 `automations.agentTasks`。`automations.timezone` 默认为 `Asia/Shanghai`。修改后重启 profile。自动任务仅支持群聊。
+
+**直接说出来就能创建**
+
+1. 在群里 `@bot`，用自然语言描述，例如：
+   - 「@bot 今天、明天、后天每天 09:00 提醒我检查构建」
+   - 「@bot 每个工作日 18:00 总结这个仓库当天的提交」（agent 任务；先用 `/cd` 设好工作目录）
+2. agent 预览排期后发出**确认卡**，显示任务类型、名称、时间表、时区、接下来几次触发时间、结束时间、任务内容和执行身份。
+3. 点 **是** 保存，点 **否** 取消。必须由人确认才会保存，agent 不能代为确认。
+4. 周期任务必须有结束时间。如果没说，bot 会先发一张补全卡，可快速选择一周、两周、一个月、三个月、年底或一年，然后再发确认卡。
+
+最早从 10 分钟后开始；一次性任务最远一年内。
+
+**查看与管理**
+
+- 直接问 agent：「@bot 这个群有哪些定时任务？」「暂停每天的构建提醒」「删除 3 号任务」。
+- 暂停和恢复立即生效；删除和替换会先发确认卡。
+- 也可以用聊天命令：`/auto list`、`/auto pause <编号>`、`/auto resume <编号>`、`/auto delete <编号>`，以及 `/auto new <时间表> | <名称> | <内容>`（agent 任务用 `/auto new agent ...`）。
+
+任务按 profile 保存在数据目录中，重启后保留。定时运行的 agent 可以使用插件，但不能自己创建或修改排期。操作回执、恢复方式和需要订阅的飞书事件见 [运行指南](docs/operations.md#automations-events)。
 
 ## 运行与配置
 
