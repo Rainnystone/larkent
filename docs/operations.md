@@ -69,7 +69,7 @@ One turn → one bridge-owned final reply. Agents must not post the final answer
 | `access.allowedUsers/allowedChats/admins` | 用户、群和管理员名单 |
 | `larkCli.identityPreset` | `user-default` 允许使用已授权用户身份 |
 | `automations.enabled` / `automations.agentTasks` | 开启群内自动任务 / 允许 agent 任务（默认均关闭） |
-| `automations.timezone` | 自动任务默认时区（IANA，默认 `Asia/Shanghai`） |
+| `automations.timezone` | 自动任务使用的时区（IANA 名称，如 `Europe/London`），请设为你所在的时区 |
 
 Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并迁移；新配置使用规范字段）：
 

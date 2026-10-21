@@ -96,7 +96,7 @@ Bridge 插件与 CLI 自己的原生插件分开。bridge 不下载或安装任�
 
 **开启**
 
-在 `config.json` 中把该 profile 的 `automations.enabled` 设为 `true`（见 [配置与身份](docs/operations.md#configuration-and-identity)）。需要 agent 任务时再打开 `automations.agentTasks`。`automations.timezone` 默认为 `Asia/Shanghai`。修改后重启 profile。自动任务仅支持群聊。
+在 `config.json` 中把该 profile 的 `automations.enabled` 设为 `true`（见 [配置与身份](docs/operations.md#configuration-and-identity)）。需要 agent 任务时再打开 `automations.agentTasks`。用 `automations.timezone` 设置你所在的时区（IANA 名称，例如 `Europe/London`、`America/New_York`）。修改后重启 profile。自动任务仅支持群聊。
 
 **直接说出来就能创建**
 

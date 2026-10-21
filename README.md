@@ -96,7 +96,7 @@ Automations let a bot do things on a schedule in a group chat:
 
 **Turn it on**
 
-Set `automations.enabled` to `true` for the profile in `config.json` (see [Configuration and identity](docs/operations.md#configuration-and-identity)). To allow agent tasks, also set `automations.agentTasks`. `automations.timezone` defaults to `Asia/Shanghai`. Restart the profile afterwards. Automations work in group chats only.
+Set `automations.enabled` to `true` for the profile in `config.json` (see [Configuration and identity](docs/operations.md#configuration-and-identity)). To allow agent tasks, also set `automations.agentTasks`. Set `automations.timezone` to your own time zone (an IANA name such as `Europe/London` or `America/New_York`). Restart the profile afterwards. Automations work in group chats only.
 
 **Create a task by just asking**
 
