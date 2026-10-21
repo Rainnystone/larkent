@@ -1,7 +1,11 @@
 name: CI
 
 on:
+  # Feature branches are covered by their pull_request runs; push runs for them
+  # would share the concurrency group and could cancel a PR run carrying the
+  # macOS/Windows jobs. Push stays on for refs that run the full job set.
   push:
+    branches: [master, 'release/*']
   pull_request:
   schedule:
     - cron: '0 18 * * *'
@@ -30,7 +34,7 @@ jobs:
           cache: pnpm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild protobufjs
 
       - name: Build web
         run: pnpm build:web
@@ -61,7 +65,7 @@ jobs:
           cache: pnpm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild protobufjs
 
       - name: Build web
         run: pnpm build:web
@@ -83,7 +87,7 @@ jobs:
       matrix:
         os: [macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 25
+    timeout-minutes: 35
 
     steps:
       - name: Checkout
@@ -99,7 +103,7 @@ jobs:
           cache: pnpm
 
       - name: Install
-        run: pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild protobufjs
 
       - name: Build web
         run: pnpm build:web
