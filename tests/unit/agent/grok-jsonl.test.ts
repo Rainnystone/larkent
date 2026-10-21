@@ -9,6 +9,9 @@ const END = {
   sessionId: SESSION,
   usage: { input_tokens: 10, output_tokens: 4, cache_read_input_tokens: 2 },
 };
+/** Worked example: UTF-8 of `中文{"ok":true}` as Grok sends it on the wire. */
+const BASH_UTF8_TEXT = '中文{"ok":true}';
+const BASH_UTF8_BYTES = [228, 184, 173, 230, 150, 135, 123, 34, 111, 107, 34, 58, 116, 114, 117, 101, 125];
 
 function collect(translator: GrokJsonlTranslator, lines: unknown[]): AgentEvent[] {
   return lines.flatMap((line) => translator.translate(line));
@@ -89,7 +92,7 @@ describe('GrokJsonlTranslator', () => {
     });
   });
 
-  it('drops thoughts and pre-tool commentary, holding only the post-tool answer', () => {
+  it('keeps pre-tool commentary in the final answer and maps thoughts to thinking', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [
       { type: 'thought', data: 'looking' },
@@ -111,12 +114,166 @@ describe('GrokJsonlTranslator', () => {
       { type: 'end', sessionId: SESSION },
     ]);
     expect(events).toEqual([
+      { type: 'thinking', delta: 'looking' },
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
       { type: 'tool_result', id: 'call_1', output: '{"lines":3}', isError: false },
       { type: 'system', resumeHandle: SESSION },
-      { type: 'final_text', content: 'Done.' },
+      { type: 'final_text', content: 'Let me check.\n\nDone.' },
       { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
+  });
+
+  it.each(['exitCode', 'exit_code'])('keeps completed non-shell %s output successful', (field) => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call', toolCallId: 'plugin', toolName: 'mcp_process_report',
+        status: 'in_progress', rawInput: {},
+      },
+      {
+        type: 'tool_call_update', toolCallId: 'plugin', status: 'completed',
+        rawOutput: { [field]: 2 },
+      },
+    ]);
+    expect(events.at(-1)).toEqual({
+      type: 'tool_result', id: 'plugin', output: `{"${field}":2}`, isError: false,
+    });
+  });
+
+  it.each(['Bash', 'Shell', 'command_execution', 'run_terminal_cmd'])(
+    'uses native exit status for %s results', (toolName) => {
+      for (const field of ['exitCode', 'exit_code']) {
+        for (const [exitCode, isError] of [[2, true], [0, false]] as const) {
+          const t = new GrokJsonlTranslator();
+          const events = collect(t, [
+            { type: 'tool_call', toolCallId: 'shell', toolName, status: 'in_progress' },
+            {
+              type: 'tool_call_update', toolCallId: 'shell', status: 'completed',
+              rawOutput: { [field]: exitCode },
+            },
+          ]);
+          expect(events.at(-1)).toMatchObject({ type: 'tool_result', id: 'shell', isError });
+        }
+      }
+    },
+  );
+
+  it.each(['Bash', 'mcp_process_report'])('uses %s status when the initial call is already completed', (toolName) => {
+    const t = new GrokJsonlTranslator();
+    expect(t.translate({
+      type: 'tool_call', toolCallId: 'inline', toolName, status: 'completed', rawOutput: { exitCode: 2 },
+    }).at(-1)).toMatchObject({ type: 'tool_result', id: 'inline', isError: toolName === 'Bash' });
+  });
+
+  it('keeps interleaved shell and plugin result status tied to each call', () => {
+    const t = new GrokJsonlTranslator();
+    const results = collect(t, [
+      { type: 'tool_call', toolCallId: 'shell', toolName: 'Bash', status: 'in_progress' },
+      { type: 'tool_call', toolCallId: 'plugin', toolName: 'mcp_process_report', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'shell', status: 'completed', rawOutput: { exitCode: 2 } },
+      { type: 'tool_call_update', toolCallId: 'plugin', status: 'completed', rawOutput: { exitCode: 2 } },
+    ]).filter((event) => event.type === 'tool_result');
+    expect(results).toEqual([
+      { type: 'tool_result', id: 'shell', output: '{"exitCode":2}', isError: true },
+      { type: 'tool_result', id: 'plugin', output: '{"exitCode":2}', isError: false },
+    ]);
+  });
+
+  it.each(['failed', 'error'])('preserves non-shell lifecycle %s with a zero exit field', (status) => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      { type: 'tool_call', toolCallId: 'plugin', toolName: 'mcp_process_report', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'plugin', status, rawOutput: { exitCode: 0 } },
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: 'tool_result', id: 'plugin', isError: true });
+  });
+
+  it('does not finish a shell call on a statusless metadata update (P09s)', () => {
+    const output = "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n";
+    const t = new GrokJsonlTranslator();
+    const started = t.translate(p09sToolCall());
+    const progress = t.translate(p09sStatuslessUpdate());
+    const finished = t.translate(p09sCompletedUpdate(output));
+
+    expect(started.map((event) => event.type)).toEqual(['tool_use']);
+    expect(progress).toEqual([]);
+    expect(finished.filter((event) => event.type === 'tool_result')).toEqual([
+      {
+        type: 'tool_result',
+        id: 'call-test-1',
+        output,
+        isError: true,
+      },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('still accepts a statusless update that is the only carrier of rawOutput', () => {
+    const output = "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n";
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      p09sToolCall(),
+      {
+        ...p09sStatuslessUpdate(),
+        rawOutput: {
+          type: 'Bash',
+          output: Array.from(Buffer.from(output)),
+          exit_code: 2,
+          command: 'ls /nonexistent-p09-retest-path',
+        },
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_result')).toEqual([
+      { type: 'tool_result', id: 'call-test-1', output, isError: true },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('adopts a shell tool name carried by the statusless metadata update', () => {
+    const output = "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n";
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call',
+        toolCallId: 'call-test-1',
+        title: 'Run Command',
+        rawInput: { command: 'ls /nonexistent-p09-retest-path' },
+      },
+      p09sStatuslessUpdate(),
+      p09sCompletedUpdate(output),
+    ]);
+    expect(events.filter((event) => event.type === 'tool_result')).toEqual([
+      { type: 'tool_result', id: 'call-test-1', output, isError: true },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
+  });
+
+  it('keeps a non-shell grep exit_code of 1 successful', () => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call',
+        toolCallId: 'call-test-grep',
+        title: 'grep',
+        rawInput: { pattern: 'exit_code' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-grep',
+        kind: 'search',
+        title: 'grep',
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-grep',
+        status: 'completed',
+        rawOutput: { exit_code: 1 },
+      },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_result')).toEqual([
+      { type: 'tool_result', id: 'call-test-grep', output: '{"exit_code":1}', isError: false },
+    ]);
+    expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
   });
 
   it('treats a failed tool_call_update as isError', () => {
@@ -170,4 +327,184 @@ describe('GrokJsonlTranslator', () => {
       },
     ]);
   });
+
+  it('decodes a Bash wrapper whose output is utf-8 bytes of 中文+JSON', () => {
+    expect(toolResultOutput({ type: 'Bash', output: BASH_UTF8_BYTES })).toBe(BASH_UTF8_TEXT);
+    expect(toolResultOutput({ content: BASH_UTF8_BYTES })).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('decodes a utf-8 byte number array tool payload', () => {
+    expect(toolResultOutput(BASH_UTF8_BYTES)).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('decodes a Uint8Array tool payload as utf-8 text', () => {
+    expect(toolResultOutput(Uint8Array.from(BASH_UTF8_BYTES))).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('decodes a Buffer tool payload as utf-8 text', () => {
+    expect(toolResultOutput(Buffer.from(BASH_UTF8_BYTES))).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('leaves string tool output unchanged', () => {
+    expect(toolResultOutput(BASH_UTF8_TEXT)).toBe(BASH_UTF8_TEXT);
+  });
+
+  it('strips ANSI from Grok 1.0.41 colored byte output (P09t)', () => {
+    const colored = '\u001b[33m1792652400000\u001b[39m 2026-10-22 15:00:00\n\u001b[33m1792598400000\u001b[39m 2026-10-22 00:00:00\n';
+    const plain = '1792652400000 2026-10-22 15:00:00\n1792598400000 2026-10-22 00:00:00\n';
+    const bytes = Array.from(Buffer.from(colored));
+    expect(bytes.slice(0, 24)).toEqual([27, 91, 51, 51, 109, 49, 55, 57, 50, 54, 53, 50, 52, 48, 48, 48, 48, 48, 27, 91, 51, 57, 109, 32]);
+
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      {
+        type: 'tool_call',
+        toolCallId: 'call-test-ansi',
+        title: 'run_terminal_command',
+        rawInput: { command: 'node -e "console.log(1792652400000)"', description: 'Convert task timestamps to Shanghai time' },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-ansi',
+        kind: 'execute',
+        title: 'Execute `node -e "console.log(1792652400000)"`',
+        rawInput: { variant: 'Bash', command: 'node -e "console.log(1792652400000)"', is_background: false },
+      },
+      {
+        type: 'tool_call_update',
+        toolCallId: 'call-test-ansi',
+        status: 'completed',
+        rawOutput: { type: 'Bash', output: bytes, exit_code: 0 },
+      },
+    ]);
+    const result = events.find((event) => event.type === 'tool_result');
+    expect(result).toEqual({ type: 'tool_result', id: 'call-test-ansi', output: plain, isError: false });
+    expect(result && result.type === 'tool_result' ? result.output : '').not.toContain('\u001b');
+
+    expect(toolResultOutput(colored)).toBe(plain);
+    expect(toolResultOutput(bytes)).toBe(plain);
+    expect(toolResultOutput({ output: bytes })).toBe(plain);
+    expect(toolResultOutput({ content: bytes })).toBe(plain);
+    expect(toolResultOutput(Array.from(Buffer.from('中文\u001b[33m1792652400000\u001b[39m')))).toBe('中文1792652400000');
+    expect(toolResultOutput('中文{"ok":true}')).toBe('中文{"ok":true}');
+  });
+
+  it('keeps ordinary tool objects as JSON', () => {
+    expect(toolResultOutput({ lines: 3 })).toBe('{"lines":3}');
+    expect(toolResultOutput({ type: 'Bash', output: 'already text' })).toBe(
+      '{"type":"Bash","output":"already text"}',
+    );
+  });
+
+  it('replaces illegal utf-8 sequences instead of throwing', () => {
+    expect(toolResultOutput([0xff])).toBe('\uFFFD');
+  });
+
+  it('does not treat non-byte number arrays as utf-8', () => {
+    expect(toolResultOutput([256, 1])).toBe('[256,1]');
+    expect(toolResultOutput([-1, 0])).toBe('[-1,0]');
+    expect(toolResultOutput({ type: 'Bash', output: [256, 1] })).toBe(
+      '{"type":"Bash","output":[256,1]}',
+    );
+    expect(toolResultOutput({ type: 'Bash', output: [-1, 0] })).toBe(
+      '{"type":"Bash","output":[-1,0]}',
+    );
+  });
 });
+
+/** streaming-json shape of the Grok 1.0.41 `ls` failure (ACP `sessionUpdate` is `type`). */
+function p09sToolCall(): Record<string, unknown> {
+  return {
+    type: 'tool_call',
+    toolCallId: 'call-test-1',
+    title: 'run_terminal_command',
+    rawInput: {
+      command: 'ls /nonexistent-p09-retest-path',
+      description: 'List nonexistent path as specified',
+    },
+    _meta: {
+      'x.ai/tool': {
+        version: 1,
+        name: 'run_terminal_command',
+        kind: 'execute',
+        namespace: 'grok_build',
+        label: 'Run Command',
+        read_only: false,
+      },
+    },
+  };
+}
+
+function p09sStatuslessUpdate(): Record<string, unknown> {
+  return {
+    type: 'tool_call_update',
+    toolCallId: 'call-test-1',
+    kind: 'execute',
+    title: 'Execute `ls /nonexistent-p09-retest-path`',
+    content: [{
+      type: 'content',
+      content: { type: 'text', text: 'List nonexistent path as specified' },
+    }],
+    locations: [],
+    rawInput: {
+      variant: 'Bash',
+      command: 'ls /nonexistent-p09-retest-path',
+      description: 'List nonexistent path as specified',
+      is_background: false,
+    },
+    _meta: {
+      'x.ai/tool': {
+        version: 1,
+        name: 'run_terminal_command',
+        kind: 'execute',
+        namespace: 'grok_build',
+        label: 'Run Command',
+        read_only: false,
+        input: {
+          command: 'ls /nonexistent-p09-retest-path',
+          description: 'List nonexistent path as specified',
+        },
+      },
+    },
+  };
+}
+
+function p09sCompletedUpdate(output: string): Record<string, unknown> {
+  return {
+    type: 'tool_call_update',
+    toolCallId: 'call-test-1',
+    status: 'completed',
+    content: [{ type: 'content', content: { type: 'text', text: output } }],
+    rawOutput: {
+      type: 'Bash',
+      output: Array.from(Buffer.from(output)),
+      exit_code: 2,
+      command: 'ls /nonexistent-p09-retest-path',
+      truncated: false,
+      signal: null,
+      timed_out: false,
+      description: 'List nonexistent path as specified',
+    },
+  };
+}
+
+function toolResultOutput(rawOutput: unknown): string | undefined {
+  const t = new GrokJsonlTranslator();
+  const events = collect(t, [
+    {
+      type: 'tool_call',
+      toolCallId: 'call_1',
+      toolName: 'Bash',
+      status: 'in_progress',
+      rawInput: { command: 'bridge-tool' },
+    },
+    {
+      type: 'tool_call_update',
+      toolCallId: 'call_1',
+      status: 'completed',
+      rawOutput,
+    },
+  ]);
+  const result = events.find((event) => event.type === 'tool_result');
+  return result && result.type === 'tool_result' ? result.output : undefined;
+}

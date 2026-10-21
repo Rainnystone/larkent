@@ -1,5 +1,5 @@
 import { join } from 'node:path';
-import { setImmediate as yieldIO } from 'node:timers/promises';
+import { setImmediate as yieldIO, setTimeout as waitIO } from 'node:timers/promises';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
@@ -338,9 +338,11 @@ function message(messageId: string, content: string): NormalizedMessage {
 
 async function drainIO() { for (let n = 0; n < 50; n++) await yieldIO(); }
 async function waitFor(predicate: () => boolean) {
-  for (let n = 0; n < 10_000; n++) {
+  // Date and product timers are virtual here; asynchronous I/O still needs real time.
+  const deadline = performance.now() + 2_000;
+  while (performance.now() < deadline) {
     if (predicate()) return;
-    await yieldIO();
+    await waitIO(5);
   }
   if (predicate()) return;
   throw new Error('timed out');

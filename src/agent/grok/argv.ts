@@ -1,9 +1,9 @@
 export interface BuildGrokArgsInput {
   /**
-   * User / bridge prompt. Grok `-p` does not read stdin
-   * (headless docs: piped stdin is ignored), so this travels via argv.
+   * Path to the prompt. `--prompt-file` starts headless the same way `-p`
+   * does, without putting the prompt text on the process argv.
    */
-  prompt: string;
+  promptFile: string;
   /**
    * Extra system-prompt rules (`--rules`). Used for the bridge identity
    * prompt. Do not use `--system-prompt-override`: that replaces Grok's
@@ -18,21 +18,29 @@ export interface BuildGrokArgsInput {
   sessionId?: string;
   /** Forwarded to `grok -m`. Omitted uses the CLI / config default. */
   model?: string;
+  /**
+   * When set, map the profile access mode onto `--permission-mode` and
+   * `--sandbox`. Omitted keeps the historical unattended `--always-approve`.
+   */
+  permissionMode?: string;
+  sandbox?: string;
 }
 
 export function buildGrokArgs(input: BuildGrokArgsInput): string[] {
   const args = [
-    '-p',
-    input.prompt,
+    '--prompt-file',
+    input.promptFile,
     '--output-format',
     'streaming-json',
     '--rules',
     input.rules,
-    // Unattended Feishu bot: always bypass tool prompts. Restricted
-    // profile access modes are not mapped onto Grok flags.
-    '--always-approve',
-    '--no-auto-update',
   ];
+  if (input.permissionMode) args.push('--permission-mode', input.permissionMode);
+  if (input.sandbox) args.push('--sandbox', input.sandbox);
+  // No access mode: unattended Feishu bot bypasses tool prompts.
+  // `bypassPermissions` is that same mode, so it does not also pass the alias.
+  if (!input.permissionMode && !input.sandbox) args.push('--always-approve');
+  args.push('--no-auto-update');
   if (input.sessionId) args.push('-r', input.sessionId);
   if (input.model) args.push('-m', input.model);
   return args;

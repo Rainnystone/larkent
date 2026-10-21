@@ -1,4 +1,5 @@
 import type { AgentEvent } from '../types';
+import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
 
 export type CursorFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
@@ -228,7 +229,7 @@ function parseToolCall(
     return {
       name,
       input: parseToolArguments(fn.arguments ?? fn.args),
-      ...toolResultFields(result),
+      ...toolResultFields(result, name),
     };
   }
 
@@ -241,7 +242,7 @@ function parseToolCall(
     return {
       name,
       input: body.args ?? {},
-      ...toolResultFields(result),
+      ...toolResultFields(result, name),
     };
   }
   return undefined;
@@ -255,6 +256,7 @@ function toolCallName(key: string): string {
 
 function toolResultFields(
   result: Record<string, unknown> | undefined,
+  name: string,
 ): { output?: string; isError?: boolean } {
   if (!result) return {};
   if (isRecord(result.error) || typeof result.error === 'string') {
@@ -267,7 +269,9 @@ function toolResultFields(
     };
   }
   if (isRecord(result.success)) {
-    return { output: stringifyToolOutput(result.success), isError: false };
+    const failedExit = [result.success.exitCode, result.success.exit_code]
+      .some(code => typeof code === 'number' && Number.isInteger(code) && code !== 0);
+    return { output: stringifyToolOutput(result.success), isError: isShellTool(name) && failedExit };
   }
   if (result.success !== undefined) {
     return { output: stringifyToolOutput(result.success), isError: false };

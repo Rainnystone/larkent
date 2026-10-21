@@ -1,3 +1,6 @@
+import { bridgeToolInstructions } from '../bridge-tools/prompt';
+import type { ToolRunContext } from '../bridge-tools/server';
+import type { PluginCatalog } from '../plugins/catalog';
 import { capabilityForProfile } from '../agent/capability';
 import {
   cardUserMessage,
@@ -73,11 +76,13 @@ export function formatAutomationAgentPrompt(
   fire: Pick<FireSend, 'chatId' | 'createdBy' | 'taskText' | 'catchUp' | 'timezone' | 'fireAt'>,
   now: number,
   botOpenId?: string,
+  instructions?: string[],
 ): string {
   const userInput = fire.catchUp
     ? `${formatCatchUpPromptHint(fire.timezone, fire.fireAt, now)}\n\n${fire.taskText}`
     : fire.taskText;
   return buildAgentPrompt({
+    instructions,
     context: {
       chatId: fire.chatId,
       chatType: 'group',
@@ -138,7 +143,9 @@ export function formatAgentFailureNotice(
 
 function formatAgentFailureBody(outcome?: RunOutcome, policyGuard?: PolicyGuardReason): string {
   if (outcome?.kind === 'interrupted' && outcome.reason.type === 'policy-guard') {
-    const reason = policyGuard ? `（${policyGuardReasonLabel(policyGuard)}）` : '';
+    const code = outcome.reason.code ?? (policyGuard === 'auth-config' ? policyGuard : undefined);
+    const label = policyGuard ?? code;
+    const reason = label ? `（${policyGuardReasonLabel(label)}${code ? `，${code}` : ''}）` : '';
     return `自动化任务中断：策略拦截${reason}。任务已暂停，可在看板恢复或删除。`;
   }
   return outcome
@@ -166,6 +173,7 @@ export function automationScopeForReply(
 
 export interface AgentFireRuntime extends AutomationDeliveryDeps {
   executor: RunExecutor;
+  pluginCatalog: PluginCatalog;
   sessions: SessionStore;
   sessionCatalog?: SessionCatalog;
   workspaces: WorkspaceStore;
@@ -215,10 +223,17 @@ async function runAutomationAgentFireBody(
   }
   runtime.workspaces.setCwd(scope, cwd);
 
+  const toolContext: ToolRunContext = {
+    catalog: runtime.pluginCatalog, profile: runtime.profile, chatId: fire.chatId, actorId: fire.createdBy,
+    runType: 'automation', store: runtime.automations, journal: runtime.journal,
+    timezone: runtime.profileConfig.automations.timezone, agentTasks: runtime.profileConfig.automations.agentTasks,
+    cwd, now: runtime.now, availability: () => 'automation-management-unavailable-in-run',
+  };
   const prompt = formatAutomationAgentPrompt(
     fire,
     now,
     runtime.botOpenId() || undefined,
+    await bridgeToolInstructions(toolContext),
   );
   const journal = runtime.journal;
   if (journal && !journal.get(turnId)) {
@@ -247,35 +262,46 @@ async function runAutomationAgentFireBody(
     fire.createdBy,
   );
   const capability = capabilityForProfile(runtime.profileConfig);
-  const flow = await startRunFlow({
-    scopeId: scope,
-    scope: {
-      source: 'im',
-      chatId: fire.chatId,
-      actorId: fire.createdBy,
-    },
-    prompt,
-    attachments: [],
-    access,
-    capability,
-    profileConfig: runtime.profileConfig,
-    sessions: runtime.sessions,
-    ...(runtime.sessionCatalog ? { sessionCatalog: runtime.sessionCatalog } : {}),
-    workspaces: runtime.workspaces,
-    executor: runtime.executor,
-    now,
-    cwdOverride: cwd,
-    forceResumeHandle: null,
-    bypassPool: true,
-    promptVariant: 'automation',
-    stopGraceMs: getAgentStopGraceMs(runtime.cfg),
-    observability: {
-      profile: runtime.profile,
-      agent: capability.agentId,
-      source: 'automation',
-      stage: 'submit',
-    },
-  });
+  let flow: Awaited<ReturnType<typeof startRunFlow>>;
+  try {
+    flow = await startRunFlow({
+      toolContext,
+      scopeId: scope,
+      scope: {
+        source: 'im',
+        chatId: fire.chatId,
+        actorId: fire.createdBy,
+      },
+      prompt,
+      attachments: [],
+      access,
+      capability,
+      profileConfig: runtime.profileConfig,
+      sessions: runtime.sessions,
+      ...(runtime.sessionCatalog ? { sessionCatalog: runtime.sessionCatalog } : {}),
+      workspaces: runtime.workspaces,
+      executor: runtime.executor,
+      now,
+      cwdOverride: cwd,
+      forceResumeHandle: null,
+      bypassPool: true,
+      promptVariant: 'automation',
+      stopGraceMs: getAgentStopGraceMs(runtime.cfg),
+      observability: {
+        profile: runtime.profile,
+        agent: capability.agentId,
+        source: 'automation',
+        stage: 'submit',
+      },
+    });
+  } catch {
+    noteUnanchored(runtime, fire, turnId, scope, {
+      kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: true,
+    });
+    await postFireMarkdown(runtime, fire, turnId, scope, '自动化任务中断：运行启动失败', false);
+    log.info('auto', 'result', { id: fire.id, fireAt: fire.fireAt, outcome: 'agent-start-failed' });
+    return;
+  }
   if (!flow.ok) {
     noteUnanchored(runtime, fire, turnId, scope, {
       kind: 'failed',
@@ -485,7 +511,7 @@ async function drainFireRun(input: {
       if (event.type === 'tool_use') {
         const hit = inspectAutomationToolUse(event);
         if (hit) {
-          requestStop(input.handle, { type: 'policy-guard' });
+          requestStop(input.handle, { type: 'policy-guard', code: hit.reason });
           policyGuard = hit.reason;
           void input.handle.run.stop().catch(() => {});
           break;

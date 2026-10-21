@@ -5,11 +5,10 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
 import {
-  assessAutomationProposal,
-  automationProposalSuffix,
+  assessAutomationSchedule,
   completeDraftEnd,
   handleAutoCommand,
-  submitAutomationProposal,
+  submitAutomationCommand,
 } from '../../../src/automations/command';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
@@ -34,10 +33,10 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
-describe('proposal schedule acceptance', () => {
+describe('manual schedule acceptance', () => {
   it('turns 今天 HH:MM into a one-shot confirm card', async () => {
     const h = await harness();
-    await h.propose('今天 15:50', 'proposal');
+    await h.propose('今天 15:50', 'command');
 
     expect(h.store.listDrafts()).toHaveLength(1);
     const draft = scheduleDraft(h.store.listDrafts()[0]);
@@ -49,7 +48,7 @@ describe('proposal schedule acceptance', () => {
 
   it('shows the recurring start on the confirm card and does not fire today', async () => {
     const h = await harness();
-    await h.propose('从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 16:05', 'proposal');
+    await h.propose('从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 16:05', 'command');
 
     const draft = scheduleDraft(h.store.listDrafts()[0]);
     expect(draft.startAt).toBe(Date.UTC(2026, 9, 19, 7, 40, 0));
@@ -64,7 +63,7 @@ describe('proposal schedule acceptance', () => {
 
   it('logs auto.rejected for a past 今天 time without the task or schedule text', async () => {
     const h = await harness();
-    await h.propose('今天 15:00', 'proposal');
+    await h.propose('今天 15:00', 'command');
 
     expect(h.store.listDrafts()).toEqual([]);
     expect(markdowns(h.channel)).toEqual(['今天 15:00 已过，可改为「明天 15:00」。']);
@@ -74,7 +73,7 @@ describe('proposal schedule acceptance', () => {
         phase: 'auto',
         event: 'rejected',
         reason: 'past-time',
-        source: 'proposal',
+        source: 'command',
       }),
     ]);
     const blob = JSON.stringify(rejected);
@@ -100,10 +99,10 @@ describe('proposal schedule acceptance', () => {
 
   it('uses distinct replies for a bad start, a start before today, an inverted end, and a start past one year', async () => {
     const h = await harness();
-    await h.propose('从 昨天 起 every 10m until 2026-10-19', 'proposal');
-    await h.propose('从 2026-10-17 起 every 10m until 2026-10-19', 'proposal');
-    await h.propose('从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 15:40', 'proposal');
-    await h.propose('从 2027-10-19 起 every 10m until 2027-10-20', 'proposal');
+    await h.propose('从 昨天 起 every 10m until 2026-10-19', 'command');
+    await h.propose('从 2026-10-17 起 every 10m until 2026-10-19', 'command');
+    await h.propose('从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 15:40', 'command');
+    await h.propose('从 2027-10-19 起 every 10m until 2027-10-20', 'command');
 
     expect(markdowns(h.channel)).toEqual([
       '无法识别开始时间。例如：从 明天 15:40 起 every 10m 15:40-16:05 until 2026-10-19 16:05',
@@ -119,7 +118,7 @@ describe('proposal schedule acceptance', () => {
   it('rejects a recurring window that has no fire left before the end', async () => {
     const h = await harness();
     const scheduleText = 'every 10m 15:40-16:05 until 2026-10-18 15:10';
-    const verdict = assessAutomationProposal({
+    const verdict = assessAutomationSchedule({
       taskType: 'reminder',
       scheduleText,
       now: NOW,
@@ -127,13 +126,6 @@ describe('proposal schedule acceptance', () => {
       hasCwd: true,
     });
     expect(verdict).toMatchObject({ outcome: 'reject', reason: 'no-remaining-fires' });
-    expect(automationProposalSuffix(verdict, scheduleText, {
-      now: NOW,
-      timezone: 'Asia/Shanghai',
-    })).toBe(
-      `⚠️ 没有创建任务：结束前已没有可触发的时刻「${scheduleText}」。可写成「明天 09:00」「2026-10-19 15:50」「10 分钟后」。`,
-    );
-
     await h.command(`new ${scheduleText} | ${NAME} | ${TASK}`);
     expect(h.store.listDrafts()).toEqual([]);
     expect(markdowns(h.channel)).toEqual(['结束前已没有可触发的时刻。']);
@@ -238,7 +230,7 @@ async function harness() {
     autoAuth,
     channel,
     command: (args: string) => handleAutoCommand(args, ctx),
-    propose: (scheduleText: string, source: 'proposal' | 'command') => submitAutomationProposal(ctx, {
+    propose: (scheduleText: string, source: 'command') => submitAutomationCommand(ctx, {
       taskType: 'reminder',
       scheduleText,
       name: NAME,

@@ -1,18 +1,55 @@
 import { describe, expect, it } from 'vitest';
 import {
   automationConfirmCard,
+  automationReplaceCard,
   describeEnd,
   describeIdentity,
   describeSchedule,
   formatZonedDateTime,
 } from '../../../src/automations/confirm-card';
-import { monthlyFireCount, nextFires, type Schedule } from '../../../src/automations/schedule';
+import { nextFires, type Schedule } from '../../../src/automations/schedule';
 
 const TZ = 'Asia/Shanghai';
 const NOW = Date.UTC(2026, 9, 17, 3, 0, 0);
 const END = NOW + 30 * 24 * 60 * 60 * 1000;
 
 describe('confirm card copy', () => {
+  it('explains replacement, the original schedule, and the number change on confirmation', () => {
+    const card = automationReplaceCard({
+      target: {
+        id: 1,
+        name: '原提醒',
+        taskType: 'reminder',
+        scheduleLabel: '每天 10:00',
+        nextFireLabel: '2026-10-18 10:00',
+        endLabel: '2026-11-16 11:00',
+      },
+      taskType: 'reminder',
+      name: '新提醒',
+      taskText: '提醒检查进度',
+      timezone: TZ,
+      schedule: {
+        kind: 'daily',
+        timezone: TZ,
+        times: [{ hour: 11, minute: 0 }],
+        startAt: NOW,
+        endAt: END,
+      },
+      now: NOW,
+      confirmToken: 'auto_cb.v1.confirm',
+      rejectToken: 'auto_cb.v1.reject',
+    });
+    const body = JSON.stringify((card as { body: object }).body);
+    expect(body).not.toContain('将删除');
+    expect(body).toContain('替换：#1 原提醒 · 每天 10:00 → 新设置如下');
+    expect(body).toContain('确认后原 #1 将由新编号取代');
+    expect(body).toContain('每天 11:00');
+    expect(card).toMatchObject({
+      header: { title: { content: '确认替换 #1' } },
+      config: { summary: { content: '确认替换 #1' } },
+    });
+  });
+
   it('describes every schedule kind for reuse by later tickets', () => {
     expect(describeSchedule({ kind: 'one-shot', fireAt: NOW + 15 * 60_000 }, TZ))
       .toBe('一次性 2026-10-17 11:15');
@@ -42,7 +79,7 @@ describe('confirm card copy', () => {
     expect(laterCard).toContain('2026-11-26 11:00');
   });
 
-  it('renders weekday 不计调休, monthly count, and identity on the card', () => {
+  it('renders weekday 不计调休, exact remaining count, and identity on the card', () => {
     const card = JSON.stringify(automationConfirmCard({
       taskType: 'reminder',
       name: '站会',
@@ -54,13 +91,13 @@ describe('confirm card copy', () => {
       rejectToken: 'auto_cb.v1.reject',
     }));
     expect(card).toContain('工作日不计调休');
-    expect(card).toContain('约每月');
+    expect(card).toContain('共 21 次');
+    expect(card).not.toContain('约每月');
     expect(card).toContain('本 bot 发送提醒（不跑 agent）');
     expect(card).toContain('auto.confirm');
     expect(card).toContain('是');
     expect(describeEnd(weekday(), TZ)).toMatch(/2026-11-16/);
     expect(describeIdentity('agent', '/tmp/ws')).toContain('已快照工作目录');
-    expect(describeIdentity('agent', '/tmp/ws')).toContain('仅 bot 身份');
     expect(describeIdentity('agent')).toContain('纵深防御不是安全边界');
   });
 
@@ -116,14 +153,14 @@ describe('confirm card copy', () => {
     expect(one).not.toContain('接下来 3 次');
   });
 
-  it('keeps three upcoming lines and a monthly count through year end', () => {
+  it('keeps three upcoming lines and the exact weekday total through year end', () => {
     const schedule = weekdayUntil(Date.UTC(2026, 11, 31, 16, 0, 0));
     const markdown = cardMarkdown(schedule);
     const fires = nextFires(schedule, NOW, 3).map((fireAt) => `- ${formatZonedDateTime(TZ, fireAt)}`);
     expect(fires).toEqual(['- 2026-10-19 09:00', '- 2026-10-20 09:00', '- 2026-10-21 09:00']);
     expect(listedFires(markdown)).toEqual({ count: 3, lines: fires });
-    expect(markdown).toContain(`约每月 ${monthlyFireCount(schedule, NOW)} 次`);
-    expect(markdown).not.toMatch(/共 \d+ 次/);
+    expect(markdown.split('\n\n')).toContain('共 54 次');
+    expect(markdown).not.toContain('约每月');
   });
 
   it('uses the one remaining 16:00 fire for the short afternoon window', () => {
@@ -137,7 +174,7 @@ describe('confirm card copy', () => {
     expect(markdown).not.toContain('约每月');
   });
 
-  it('counts every remaining fire when the end is inside 30 days', () => {
+  it('counts every remaining fire in an eight-day daily window', () => {
     const schedule: Schedule = {
       kind: 'daily',
       timezone: TZ,
@@ -165,7 +202,7 @@ describe('confirm card copy', () => {
     expect(markdown).not.toContain('约每月');
   });
 
-  it('counts a future start instant in the short-horizon total', () => {
+  it('counts a future start instant in the remaining total', () => {
     const startAt = Date.UTC(2026, 9, 18, 7, 40);
     const schedule = windowInterval(startAt, Date.UTC(2026, 9, 18, 8, 5));
     const markdown = cardMarkdown(schedule);
@@ -176,6 +213,91 @@ describe('confirm card copy', () => {
     ]);
     expect(markdown.split('\n\n')).toContain('共 3 次');
     expect(markdown).not.toContain('约每月');
+  });
+
+  it('counts 31 daily 09:00 fires in the Oct 22–Nov 22 Shanghai month window', () => {
+    const markdown = cardMarkdown(dailyAtNine(
+      Date.UTC(2026, 9, 21, 16, 0, 0),
+      Date.UTC(2026, 10, 21, 16, 0, 0),
+    ), Date.UTC(2026, 9, 19, 0, 0, 0));
+    expect(markdown).toContain('从 2026-10-22 00:00 开始');
+    expect(markdown.split('\n\n')).toContain('共 31 次');
+    expect(markdown).not.toContain('约每月');
+  });
+
+  it('counts 28, 29, 30, and 31 daily fires on those month lengths', () => {
+    const now = Date.UTC(2026, 0, 15, 0, 0, 0);
+    expect(cardMarkdown(dailyAtNine(
+      Date.UTC(2026, 0, 31, 16, 0, 0),
+      Date.UTC(2026, 1, 28, 16, 0, 0),
+    ), now).split('\n\n')).toContain('共 28 次');
+    expect(cardMarkdown(dailyAtNine(
+      Date.UTC(2028, 0, 31, 16, 0, 0),
+      Date.UTC(2028, 1, 29, 16, 0, 0),
+    ), now).split('\n\n')).toContain('共 29 次');
+    expect(cardMarkdown(dailyAtNine(
+      Date.UTC(2026, 2, 31, 16, 0, 0),
+      Date.UTC(2026, 3, 30, 16, 0, 0),
+    ), now).split('\n\n')).toContain('共 30 次');
+    expect(cardMarkdown(dailyAtNine(
+      Date.UTC(2025, 11, 31, 16, 0, 0),
+      Date.UTC(2026, 0, 31, 16, 0, 0),
+    ), Date.UTC(2025, 11, 15, 0, 0, 0)).split('\n\n')).toContain('共 31 次');
+  });
+
+  it('excludes a daily fire that lands exactly on endAt', () => {
+    const markdown = cardMarkdown(dailyAtNine(
+      Date.UTC(2026, 9, 22, 1, 0, 0),
+      Date.UTC(2026, 10, 22, 1, 0, 0),
+    ), Date.UTC(2026, 9, 19, 0, 0, 0));
+    expect(markdown.split('\n\n')).toContain('共 31 次');
+    expect(markdown).not.toContain('共 32 次');
+  });
+
+  it('counts weekday, weekly, and interval windows from a future start', () => {
+    const now = Date.UTC(2026, 9, 17, 3, 0, 0);
+    const weekdayMarkdown = cardMarkdown({
+      kind: 'weekday',
+      timezone: TZ,
+      times: [{ hour: 9, minute: 0 }],
+      startAt: Date.UTC(2026, 9, 21, 16, 0, 0),
+      endAt: Date.UTC(2026, 10, 21, 16, 0, 0),
+    }, now);
+    expect(weekdayMarkdown).toContain('从 2026-10-22 00:00 开始');
+    expect(weekdayMarkdown.split('\n\n')).toContain('共 22 次');
+
+    const weeklyMarkdown = cardMarkdown({
+      kind: 'weekly',
+      timezone: TZ,
+      weekdays: [1],
+      times: [{ hour: 10, minute: 0 }],
+      startAt: Date.UTC(2026, 9, 18, 16, 0, 0),
+      endAt: Date.UTC(2026, 10, 15, 16, 0, 0),
+    }, now);
+    expect(weeklyMarkdown.split('\n\n')).toContain('共 4 次');
+
+    const intervalMarkdown = cardMarkdown({
+      kind: 'interval',
+      timezone: TZ,
+      everyMs: 60 * 60_000,
+      window: { from: { hour: 9, minute: 0 }, to: { hour: 12, minute: 0 } },
+      startAt: Date.UTC(2026, 9, 21, 16, 0, 0),
+      endAt: Date.UTC(2026, 9, 23, 16, 0, 0),
+    }, now);
+    expect(intervalMarkdown.split('\n\n')).toContain('共 6 次');
+  });
+
+  it('caps a pathological horizon instead of counting forever', () => {
+    const startAt = Date.UTC(2026, 0, 1, 0, 0, 0);
+    const markdown = cardMarkdown({
+      kind: 'interval',
+      timezone: TZ,
+      everyMs: 10 * 60_000,
+      startAt,
+      endAt: startAt + 2 * 365 * 24 * 60 * 60_000,
+    }, startAt);
+    expect(markdown.split('\n\n')).toContain('超过 52560 次 · 约每月 4464 次');
+    expect(markdown).not.toMatch(/共 \d+ 次/);
   });
 });
 
@@ -217,6 +339,16 @@ function listedFires(markdown: string): { count: number; lines: string[] } {
   return {
     count: Number(match[1]),
     lines: match[2].split('\n').filter((line) => line.startsWith('- ')),
+  };
+}
+
+function dailyAtNine(startAt: number, endAt: number): Schedule {
+  return {
+    kind: 'daily',
+    timezone: TZ,
+    times: [{ hour: 9, minute: 0 }],
+    startAt,
+    endAt,
   };
 }
 

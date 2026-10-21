@@ -7,7 +7,7 @@ import {
   type RunState,
   type ToolEntry,
 } from './run-state';
-import { toolBodyMd, toolHeaderText } from './tool-render';
+import { preserveShellToolDetails, toolBodyMd, toolHeaderText, visibleBridgeLabel } from './tool-render';
 
 const REASONING_MAX = 1500;
 const COLLAPSE_TOOL_THRESHOLD = 3;
@@ -85,6 +85,16 @@ function* groupBlocks(blocks: Block[]): Generator<Group> {
 
 function renderToolGroup(tools: ToolEntry[], finalized: boolean): object[] {
   if (tools.length === 0) return [];
+  // Compound/unsupported shell commands retain bounded input/output panels
+  // even when surrounding tools are summarized.
+  const detailed = tools.findIndex(preserveShellToolDetails);
+  if (detailed >= 0) {
+    return [
+      ...renderToolGroup(tools.slice(0, detailed), finalized),
+      toolPanel(tools[detailed]!, false),
+      ...renderToolGroup(tools.slice(detailed + 1), finalized),
+    ];
+  }
   if (tools.length < COLLAPSE_TOOL_THRESHOLD) {
     return tools.map((t) => toolPanel(t, false));
   }
@@ -111,11 +121,12 @@ function reasoningPanel(content: string, active: boolean): object {
 }
 
 function toolPanel(tool: ToolEntry, expanded: boolean): object {
+  const body = toolBodyMd(tool);
   return collapsiblePanel({
     title: toolHeaderText(tool),
     expanded,
     border: tool.status === 'error' ? 'red' : 'grey',
-    body: toolBodyMd(tool) || '_无输出_',
+    body: body || (visibleBridgeLabel(tool) ? '' : '_无输出_'),
   });
 }
 

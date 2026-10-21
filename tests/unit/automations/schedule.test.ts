@@ -354,7 +354,7 @@ describe('weekly and monthly count', () => {
     );
     expect(daily.ok).toBe(true);
     if (!daily.ok) return;
-    expect(monthlyFireCount(daily.schedule, Date.UTC(2026, 0, 1, 0, 0, 0))).toBe(30);
+    expect(monthlyFireCount(daily.schedule, Date.UTC(2026, 0, 1, 0, 0, 0))).toBe(31);
 
     const weekday = parseSchedule(
       {
@@ -369,5 +369,67 @@ describe('weekly and monthly count', () => {
     expect(weekday.ok).toBe(true);
     if (!weekday.ok) return;
     expect(monthlyFireCount(weekday.schedule, Date.UTC(2026, 0, 1, 0, 0, 0))).toBe(22);
+  });
+
+  it('estimates one calendar month from a future start, not 30 days from now', () => {
+    const now = Date.UTC(2026, 9, 19, 0, 0, 0);
+    const daily = parseSchedule(
+      {
+        kind: 'daily',
+        timezone: SHANGHAI,
+        times: [{ hour: 9, minute: 0 }],
+        startAt: Date.UTC(2026, 9, 21, 16, 0, 0),
+        endAt: Date.UTC(2026, 11, 31, 16, 0, 0),
+      },
+      { taskType: 'reminder', now },
+    );
+    expect(daily.ok).toBe(true);
+    if (!daily.ok) return;
+    expect(monthlyFireCount(daily.schedule, now)).toBe(31);
+  });
+
+  it('uses 28/29/30/31-day calendar months for the monthly estimate', () => {
+    const now = Date.UTC(2026, 0, 15, 0, 0, 0);
+    const feb = parseSchedule(
+      {
+        kind: 'daily',
+        timezone: SHANGHAI,
+        times: [{ hour: 9, minute: 0 }],
+        startAt: Date.UTC(2026, 0, 31, 16, 0, 0),
+        endAt: Date.UTC(2026, 11, 31, 16, 0, 0),
+      },
+      { taskType: 'reminder', now },
+    );
+    expect(feb.ok).toBe(true);
+    if (!feb.ok) return;
+    expect(monthlyFireCount(feb.schedule, now)).toBe(28);
+
+    const leap = parseSchedule(
+      {
+        kind: 'daily',
+        timezone: SHANGHAI,
+        times: [{ hour: 9, minute: 0 }],
+        startAt: Date.UTC(2028, 0, 31, 16, 0, 0),
+        endAt: Date.UTC(2028, 11, 31, 16, 0, 0),
+      },
+      { taskType: 'reminder', now: Date.UTC(2028, 0, 15, 0, 0, 0) },
+    );
+    expect(leap.ok).toBe(true);
+    if (!leap.ok) return;
+    expect(monthlyFireCount(leap.schedule, Date.UTC(2028, 0, 15, 0, 0, 0))).toBe(29);
+
+    const apr = parseSchedule(
+      {
+        kind: 'daily',
+        timezone: SHANGHAI,
+        times: [{ hour: 9, minute: 0 }],
+        startAt: Date.UTC(2026, 2, 31, 16, 0, 0),
+        endAt: Date.UTC(2026, 11, 31, 16, 0, 0),
+      },
+      { taskType: 'reminder', now },
+    );
+    expect(apr.ok).toBe(true);
+    if (!apr.ok) return;
+    expect(monthlyFireCount(apr.schedule, now)).toBe(30);
   });
 });

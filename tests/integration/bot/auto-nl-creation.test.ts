@@ -1,7 +1,7 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
-import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
+import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { AutomationsStore } from '../../../src/automations/store';
@@ -25,9 +25,7 @@ const CHAT = 'oc_group';
 const USER = 'ou_user';
 const MATE = 'ou_mate';
 const NOW = Date.UTC(2026, 9, 17, 3, 0, 0);
-const FIRE_AT = NOW + 10 * 60_000;
 const VISIBLE = '好的，10 分钟后提醒你交周报。';
-const CARD_INSTANT = '2026-10-17 11:10';
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -36,82 +34,8 @@ afterEach(async () => {
   sdk.channel = undefined;
 });
 
-describe('A6 natural-language creation', () => {
-  it('strips the proposal from the outbox reply, posts a confirm card whose absolute instant matches the draft, and leaves status/log clean', async () => {
-    const h = await harness({
-      events: [
-        { type: 'text', delta: `${VISIBLE}\n${proposalXml({
-          taskType: 'reminder',
-          schedule: '10 分钟后',
-          name: '交周报',
-          taskText: '提醒我交周报',
-          chatId: 'oc_spoof',
-          createdBy: 'ou_spoof',
-          scope: 'auto:9:1',
-        })}` },
-        { type: 'done', terminationReason: 'normal' },
-      ],
-    });
-
-    await h.channel.handlers.message?.(mention('om_nl', '10 分钟后提醒我交周报'));
-    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.confirm')));
-
-    const answers = markdownSends(h).filter((text) => text.includes(VISIBLE));
-    expect(answers).toHaveLength(1);
-    expect(answers[0]).toContain(VISIBLE);
-    expect(answers[0]).not.toContain('automation_proposal');
-    expect(answers[0]).not.toContain('oc_spoof');
-    expect(answers[0]).not.toContain('ou_spoof');
-    expect(answers[0]).not.toContain('auto:9:1');
-
-    const prompt = h.agent.runOptions[0]?.prompt ?? '';
-    expect(prompt).toContain('automation_proposal');
-    expect(prompt).toContain('10 分钟后提醒我交周报');
-
-    const card = confirmCard(h);
-    expect(card).toContain('交周报');
-    expect(card).toContain('提醒我交周报');
-    expect(card).toContain(CARD_INSTANT);
-    expect(card).toContain('Asia/Shanghai');
-
-    const draft = h.store.listDrafts()[0];
-    expect(draft).toMatchObject({
-      taskType: 'reminder',
-      name: '交周报',
-      taskText: '提醒我交周报',
-      timezone: 'Asia/Shanghai',
-      chatId: CHAT,
-      createdBy: USER,
-      nextFireAt: FIRE_AT,
-    });
-    expect(draft && 'nextFireAt' in draft ? draft.nextFireAt : undefined).toBe(FIRE_AT);
-
-    const turn = h.journal.list().find((entry) => entry.messageIds.includes('om_nl'));
-    expect(turn?.reply?.markdown).toContain(VISIBLE);
-    expect(turn?.reply?.markdown).not.toContain('automation_proposal');
-    expect(turn?.reply?.state === 'sent' || turn?.reply?.messageId).toBeTruthy();
-    expect(h.journal.list().filter((entry) => entry.reply?.markdown?.includes(VISIBLE))).toHaveLength(1);
-
-    expect(await h.store.readLog()).toEqual([]);
-    await expectStatusClean(h.statusPath, ['提醒我交周报', USER, CHAT, 'oc_spoof']);
-
-    await h.channel.handlers.cardAction?.(
-      cardClick(MATE, confirmToken(card), draft!.cardMessageId!),
-    );
-    expect(h.store.list()[0]).toMatchObject({
-      id: 1,
-      taskType: 'reminder',
-      name: '交周报',
-      taskText: '提醒我交周报',
-      chatId: CHAT,
-      createdBy: USER,
-      nextFireAt: FIRE_AT,
-    });
-    expect(await h.store.readLog()).toEqual([]);
-    await expectStatusClean(h.statusPath, ['提醒我交周报', USER, 'oc_spoof']);
-  }, 15_000);
-
-  it('creates nothing from a proposal in a bot-sent mention', async () => {
+describe('legacy reply from an app sender', () => {
+  it('keeps an old tag inert in a bot-sent mention', async () => {
     const h = await harness({
       events: [{
         type: 'text',
@@ -134,132 +58,6 @@ describe('A6 natural-language creation', () => {
     expect(await h.store.readLog()).toEqual([]);
   }, 15_000);
 
-  it('strips the proposal from the live markdown stream on the default reply path', async () => {
-    const h = await harness({
-      replyMode: 'markdown',
-      events: [
-        { type: 'text', delta: `${VISIBLE}\n${proposalXml({
-          taskType: 'reminder',
-          schedule: '10 分钟后',
-          name: '交周报',
-          taskText: '提醒我交周报',
-          chatId: 'oc_spoof',
-        })}` },
-        { type: 'done', terminationReason: 'normal' },
-      ],
-    });
-
-    await h.channel.handlers.message?.(mention('om_md', '10 分钟后提醒我交周报'));
-    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.confirm')));
-
-    const streamed = h.channel.streams.flatMap((stream) => stream.markdownContents);
-    expect(streamed.some((text) => text.includes(VISIBLE))).toBe(true);
-    for (const text of streamed) {
-      expect(text).not.toContain('automation_proposal');
-      expect(text).not.toContain('oc_spoof');
-    }
-    const turn = h.journal.list().find((entry) => entry.messageIds.includes('om_md'));
-    expect(turn?.reply?.markdown).toContain(VISIBLE);
-    expect(turn?.reply?.markdown).not.toContain('automation_proposal');
-    expect(h.store.listDrafts()[0]).toMatchObject({
-      chatId: CHAT,
-      createdBy: USER,
-      nextFireAt: FIRE_AT,
-    });
-    expect(await h.store.readLog()).toEqual([]);
-    await expectStatusClean(h.statusPath, ['提醒我交周报', USER, CHAT, 'oc_spoof']);
-  }, 15_000);
-
-  it('creates a draft from Codex finalText without leaking the tag on the dedicated reply', async () => {
-    const h = await harness({
-      replyMode: 'markdown',
-      agentKind: 'codex',
-      events: [
-        { type: 'tool_use', id: 't1', name: 'Bash', input: { command: 'true' } },
-        { type: 'tool_result', id: 't1', output: 'ok', isError: false },
-        { type: 'final_text', content: `${VISIBLE}\n${proposalXml({
-          taskType: 'reminder',
-          schedule: '10 分钟后',
-          name: '交周报',
-          taskText: '提醒我交周报',
-        })}` },
-        { type: 'done', terminationReason: 'normal' },
-      ],
-    });
-
-    await h.channel.handlers.message?.(mention('om_codex', '10 分钟后提醒我交周报'));
-    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.confirm')));
-
-    const shown = [
-      ...markdownSends(h),
-      ...h.channel.streams.flatMap((stream) => stream.markdownContents),
-    ];
-    expect(shown.some((text) => text.includes(VISIBLE))).toBe(true);
-    for (const text of shown) {
-      expect(text).not.toContain('automation_proposal');
-    }
-    expect(h.store.listDrafts()[0]).toMatchObject({
-      name: '交周报',
-      chatId: CHAT,
-      createdBy: USER,
-      nextFireAt: FIRE_AT,
-    });
-    expect(await h.store.readLog()).toEqual([]);
-    await expectStatusClean(h.statusPath, ['提醒我交周报', USER, 'oc_spoof']);
-  }, 15_000);
-
-  it('defers the confirm card while the link is down and posts it after reconnect', async () => {
-    const h = await harness({
-      linkDown: true,
-      events: [
-        { type: 'text', delta: `${VISIBLE}\n${proposalXml({
-          taskType: 'reminder',
-          schedule: '10 分钟后',
-          name: '交周报',
-          taskText: '提醒我交周报',
-        })}` },
-        { type: 'done', terminationReason: 'normal' },
-      ],
-    });
-    await h.channel.handlers.message?.(mention('om_nl', '10 分钟后提醒我交周报'));
-    await waitFor(() => h.store.listDrafts().length === 1);
-    expect(h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
-    expect(markdownSends(h).some((text) => text.includes(VISIBLE))).toBe(false);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
-
-    h.channel.connectionState = 'connected';
-    await h.bridge.tickLink();
-    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.confirm')));
-    const draft = h.store.listDrafts()[0];
-    expect(draft?.cardMessageId).toBeTypeOf('string');
-    expect(confirmCard(h)).toContain('交周报');
-  }, 15_000);
-
-  it('asks for an end on a weekday proposal before any confirm card', async () => {
-    const h = await harness({
-      events: [{
-        type: 'text',
-        delta: `好的。\n${proposalXml({
-          taskType: 'reminder',
-          schedule: '每个工作日 09:00',
-          name: '站会',
-          taskText: '提醒站会',
-        })}`,
-      }, { type: 'done', terminationReason: 'normal' }],
-    });
-    await h.channel.handlers.message?.(mention('om_week', '每个工作日 9 点提醒站会'));
-    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes('auto.end.')));
-    const endCard = JSON.stringify(h.channel.sent.find((item) => JSON.stringify(item.content).includes('auto.end.'))?.content);
-    expect(endCard).toContain('end_at');
-    expect(endCard).not.toContain('auto.confirm');
-    expect(h.store.list()).toEqual([]);
-    expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]).toMatchObject({
-      name: '站会',
-      createdBy: USER,
-      chatId: CHAT,
-    });
-  }, 15_000);
 });
 
 async function harness(opts: {
@@ -402,51 +200,11 @@ function mention(
   } as unknown as NormalizedMessage;
 }
 
-function confirmCard(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string {
-  const send = [...h.channel.sent].reverse().find((item) => JSON.stringify(item.content).includes('auto.confirm'));
-  expect(send, 'expected a confirm card in chat').toBeDefined();
-  return JSON.stringify(send?.content);
-}
-
-function confirmToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v1\.[^"]+)"/);
-  expect(match?.[1], 'expected auto.confirm token').toBeDefined();
-  return match![1]!;
-}
-
-function cardClick(
-  operatorId: string,
-  token: string,
-  messageId: string,
-): CardActionEvent {
-  return {
-    action: { value: { cmd: 'auto.confirm', auto_token: token } },
-    chatId: CHAT,
-    messageId,
-    operator: { openId: operatorId, name: 'Op' },
-  } as unknown as CardActionEvent;
-}
-
 function markdownSends(h: { channel: ReturnType<typeof createRecordingLarkChannel> }): string[] {
   return h.channel.sent.flatMap((item) => {
     const content = item.content as { markdown?: unknown };
     return typeof content?.markdown === 'string' ? [content.markdown] : [];
   });
-}
-
-async function expectStatusClean(statusPath: string, forbidden: string[]): Promise<void> {
-  try {
-    const raw = await readFile(statusPath, 'utf8');
-    for (const token of forbidden) {
-      expect(raw, `status block must not contain ${token}`).not.toContain(token);
-    }
-    const parsed = JSON.parse(raw) as { items?: unknown };
-    if (Array.isArray(parsed.items) && parsed.items.length > 0) {
-      expect(JSON.stringify(parsed.items)).not.toMatch(/taskText|createdBy|chatId/);
-    }
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-  }
 }
 
 async function waitFor(predicate: () => boolean): Promise<void> {

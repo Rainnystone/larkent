@@ -1,47 +1,82 @@
 import { describe, expect, it } from 'vitest';
 import { inspectAutomationToolUse } from '../../../src/automations/policy-guard';
 
-describe('automation policy-guard whitelist', () => {
+describe('automatic tool authentication/configuration policy', () => {
   it.each([
-    ['lark-cli im chat.members create --chat-id oc_x --data {"id_list":["ou_a"]}', 'members'],
-    ['lark-cli im chat.members delete --chat-id oc_x --data {"id_list":["ou_a"]}', 'members'],
-    ['lark-cli im +chat-create --name team', 'chat-create'],
-    ['lark-cli im chats create --name team', 'chat-create'],
-    ['lark-cli im chats delete --chat-id oc_x', 'leave'],
-    ['lark-cli im chat.members.me_leave --chat-id oc_x', 'leave'],
-    ['bash -c "lark-cli im +chat-create --name extra"', 'chat-create'],
-    ['lark-cli im +chat-update --chat-id oc_x --name n', 'chat-settings'],
-    ['lark-cli contact +search-user --query alice', 'contacts'],
-    ['lark-cli corehr employees search', 'hr'],
-    ['lark-cli im +chat-messages-list --chat-id oc_x --as user', 'user-identity'],
-    ['lark-cli auth login --no-wait', 'user-identity'],
-    ['lark-cli config strict-mode off', 'user-identity'],
-  ] as const)('blocks %s as %s', (command, reason) => {
-    expect(inspectAutomationToolUse({ name: 'Bash', input: { command } })).toEqual({ reason });
+    ['auth', 'logout', '--help'],
+    ['auth', 'login', '-h'],
+    ['profile', 'add', '--help'],
+    ['config', 'set', '--help'],
+    ['help', 'auth', 'logout'],
+    ['help', 'config', 'set'],
+    ['--help', 'auth', 'logout'],
+    ['--profile', 'synthetic', 'auth', 'login', '-h'],
+    ['auth', 'status'],
+    ['config', 'show'],
+    ['config', 'strict-mode'],
+    ['config', 'default-as'],
+    ['docs', '+fetch', '--as', 'user'],
+  ])('allows read-only help and existing identity use: %j', (...args) => {
+    expect(inspectAutomationToolUse({ name: 'Bash', input: { command: ['lark-cli', ...args] } })).toBeUndefined();
   });
 
   it.each([
-    'lark-cli im +chat-messages-list --chat-id oc_group',
-    'lark-cli im +messages-send --chat-id oc_group --text hi',
-    'lark-cli im +chat-members-list --chat-id oc_group',
-    'lark-cli im +messages-search --query standup --as bot',
-    'lark-cli docs +content --token docx',
-    'pwd',
-    'git status',
-    'echo chats create',
-  ])('allows %s', (command) => {
+    ['auth', 'logout'],
+    ['auth', 'login'],
+    ['config', 'set', 'k', 'v'],
+    ['profile', 'add', 'synthetic'],
+    ['config', 'strict-mode', 'off'],
+    ['config', 'default-as', 'user'],
+    ['config', 'strict-mode', '--reset'],
+    ['auth', 'logout', '--', '--help'],
+    ['auth', 'login', '--', '-h'],
+    ['config', 'set', 'k', '--', '--help'],
+    ['auth', 'logout', '--help=false'],
+    ['auth', 'logout', '--helper'],
+    ['--profile', '--help', 'auth', 'logout'],
+    ['--as', '-h', 'config', 'set', 'k', 'v'],
+  ])('still blocks mutations, including help-looking data: %j', (...args) => {
+    expect(inspectAutomationToolUse({ name: 'Bash', input: { command: ['lark-cli', ...args] } }))
+      .toEqual({ reason: 'auth-config' });
+  });
+
+  it.each([
+    'lark-cli auth logout --help && lark-cli auth logout',
+    'lark-cli config set k v; lark-cli config set --help',
+    'lark-cli help auth logout || lark-cli config set k v',
+    'lark-cli auth login -h | lark-cli auth logout',
+    'lark-cli auth logout --help\nlark-cli config set k v',
+    'bash -c "lark-cli auth logout --help && lark-cli auth logout"',
+    'lark-cli auth logout --help $(lark-cli auth logout)',
+    'lark-cli auth logout --help `lark-cli auth logout`',
+    'lark-cli auth logout --help <(lark-cli auth logout)',
+    'lark-cli auth logout --help >(lark-cli auth logout)',
+    'lark-cli auth logout --help =(lark-cli auth logout)',
+    'lark-cli auth logout --help ${ lark-cli auth logout; }',
+    'lark-cli auth logout --help "$(lark-cli auth logout)"',
+    'lark-cli auth logout --help; (lark-cli auth logout)',
+  ])('checks every command even when another command requests help: %s', command => {
+    expect(inspectAutomationToolUse({ name: 'Bash', input: { command } })).toEqual({ reason: 'auth-config' });
+  });
+
+  it('allows quoted help inside a shell wrapper', () => {
+    expect(inspectAutomationToolUse({ name: 'Bash', input: { command: 'bash -c "lark-cli auth logout --help"' } }))
+      .toBeUndefined();
+  });
+
+  it.each([
+    'lark-cli --profile "$PROFILE" auth logout --help',
+    "lark-cli auth logout --help '$(lark-cli auth logout)'",
+    'lark-cli config set synthetic-key "cost($)" --help',
+    'lark-cli config set synthetic-key "$((1 + (2)))" --help',
+    'lark-cli config set synthetic-key $((1 + (2))) --help',
+  ])('allows help with non-executable shell argument data: %s', command => {
     expect(inspectAutomationToolUse({ name: 'Bash', input: { command } })).toBeUndefined();
   });
 
-  it('treats personnel/org tool names as blocked even without argv', () => {
-    expect(inspectAutomationToolUse({ name: 'im_chat_members_create', input: {} })).toEqual({
-      reason: 'members',
-    });
-    expect(inspectAutomationToolUse({ name: 'im.chats.create', input: {} })).toEqual({
-      reason: 'chat-create',
-    });
-    expect(inspectAutomationToolUse({ name: 'contact_search_user', input: {} })).toEqual({
-      reason: 'contacts',
-    });
+  it.each(['cost($)', '$(lark-cli auth logout)', '<(lark-cli auth logout)'])('allows help with literal structured argv data: %s', value => {
+    expect(inspectAutomationToolUse({
+      name: 'Bash', input: { command: ['lark-cli', 'config', 'set', 'synthetic-key', value, '--help'] },
+    })).toBeUndefined();
   });
 });

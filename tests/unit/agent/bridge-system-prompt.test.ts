@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AUTOMATION_BRIDGE_PROMPT_ADDENDUM,
   BRIDGE_SYSTEM_PROMPT,
   buildBridgeSystemPrompt,
   prefixBridgeSystemPrompt,
@@ -83,15 +82,7 @@ describe('buildBridgeSystemPrompt', () => {
     expect(prompt).toContain('ou_bot_self');
   });
 
-  it('appends the automation bot-only override without changing the default prompt', () => {
-    const human = buildBridgeSystemPrompt({ openId: 'ou_bot_self' });
-    const auto = buildBridgeSystemPrompt({ openId: 'ou_bot_self' }, 'automation');
-    expect(human).not.toContain('无人值守自动化');
-    expect(auto.startsWith(human)).toBe(true);
-    expect(auto).toContain(AUTOMATION_BRIDGE_PROMPT_ADDENDUM.trim());
-    expect(auto).toContain('忽略上文「身份规则」');
-    expect(auto).toContain('不要 `--as user`');
-  });
+
 });
 
 describe('prefixBridgeSystemPrompt', () => {

@@ -2,13 +2,16 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { resolveAppPaths } from '../../../src/config/app-paths';
+import { createDefaultProfileConfig, type AgentKind, type RootConfig } from '../../../src/config/profile-schema';
 import {
   createRootConfig,
-  loadRootConfig,
+  markPermissionDefaultsMigration,
   saveRootConfig,
 } from '../../../src/config/profile-store';
 import { Supervisor } from '../../../src/runtime/supervisor';
+import { SessionStore } from '../../../src/session/store';
+import { WorkspaceStore } from '../../../src/workspace/store';
 
 const roots: string[] = [];
 const started: string[] = [];
@@ -39,18 +42,18 @@ beforeEach(async () => {
   roots.push(root);
   const configPath = join(root, 'config.json');
 
-  // claude (cli_a), work (cli_b), dup (cli_b — same app as work).
-  await mkdir(join(root, 'profiles', 'claude'), { recursive: true });
-  await saveRootConfig(
-    createRootConfig('claude', createDefaultProfileConfig({ agentKind: 'claude', accounts: { app: app('cli_a') } })),
-    configPath,
-  );
-  const rc = (await loadRootConfig(configPath))!;
-  for (const [name, id] of [['work', 'cli_b'], ['dup', 'cli_b']] as const) {
-    await mkdir(join(root, 'profiles', name), { recursive: true });
-    rc.profiles[name] = createDefaultProfileConfig({ agentKind: 'claude', accounts: { app: app(id) } });
+  // claude (cli_a), work (cli_b), dup (cli_b — same app as work),
+  // kimi/grok for the mixed-kind host test. First-run persists stay in the hook.
+  const rc = createRootConfig('claude', await materializeProfile(root, 'claude', 'cli_a'));
+  for (const [name, id, kind] of [
+    ['work', 'cli_b', 'claude'],
+    ['dup', 'cli_b', 'claude'],
+    ['kimi', 'cli_kimi', 'kimi'],
+    ['grok', 'cli_grok', 'grok'],
+  ] as const) {
+    rc.profiles[name] = await materializeProfile(root, name, id, kind);
   }
-  await saveRootConfig(rc, configPath);
+  await saveRootConfig(withPermissionDefaults(rc), configPath);
 
   sup = new Supervisor({ configPath, rootDir: root, runPreflight: false, startChannelFn: stubStartChannel });
 });
@@ -77,19 +80,6 @@ describe('Supervisor', () => {
   });
 
   it('hosts two profiles of different agent kinds at once', async () => {
-    const rc = (await loadRootConfig(join(root, 'config.json')))!;
-    rc.profiles.kimi = createDefaultProfileConfig({
-      agentKind: 'kimi',
-      accounts: { app: app('cli_kimi') },
-    });
-    rc.profiles.grok = createDefaultProfileConfig({
-      agentKind: 'grok',
-      accounts: { app: app('cli_grok') },
-    });
-    await saveRootConfig(rc, join(root, 'config.json'));
-    await mkdir(join(root, 'profiles', 'kimi'), { recursive: true });
-    await mkdir(join(root, 'profiles', 'grok'), { recursive: true });
-
     await sup.startProfile('kimi');
     await sup.startProfile('grok');
     expect(sup.isOnline('kimi')).toBe(true);
@@ -118,3 +108,36 @@ describe('Supervisor', () => {
     expect(started.filter((p) => p === 'claude')).toHaveLength(1);
   });
 });
+
+function withPermissionDefaults(rootConfig: RootConfig): RootConfig {
+  return Object.keys(rootConfig.profiles).reduce(
+    (next, name) => markPermissionDefaultsMigration(next, name),
+    rootConfig,
+  );
+}
+
+/**
+ * Finish first-run persists in the hook (workspace default, permission
+ * marker, empty session/workspace docs). Two startProfiles on Windows
+ * AV-retry writes otherwise race vitest's 5s default.
+ */
+async function materializeProfile(
+  rootDir: string,
+  name: string,
+  appId: string,
+  agentKind: AgentKind = 'claude',
+) {
+  const paths = resolveAppPaths({ rootDir, profile: name });
+  await mkdir(paths.profileDir, { recursive: true });
+  await mkdir(paths.defaultWorkspaceDir, { recursive: true });
+  await Promise.all([
+    new SessionStore(paths.sessionsFile).load(),
+    new WorkspaceStore(paths.workspacesFile).load(),
+  ]);
+  const profile = createDefaultProfileConfig({
+    agentKind,
+    accounts: { app: app(appId) },
+  });
+  profile.workspaces.default = paths.defaultWorkspaceDir;
+  return profile;
+}

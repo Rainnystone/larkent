@@ -1,5 +1,8 @@
-import { mergeProcessEnv } from '../../platform/spawn';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { SpawnFailed } from '../../runtime/errors';
+import { agentSpawnEnv } from '../spawn-env';
 import { buildBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
@@ -12,6 +15,7 @@ import type {
 } from '../types';
 import { buildGrokArgs } from './argv';
 import { GrokJsonlTranslator } from './jsonl';
+import { toGrokPermissionMode, toGrokSandbox } from './options';
 
 export interface GrokAdapterOptions {
   binary?: string;
@@ -69,21 +73,30 @@ export class GrokAdapter implements AgentAdapter {
       throw new Error('cwd is required for GrokAdapter.run');
     }
 
+    const permissionMode = toGrokPermissionMode(opts.permissionMode);
+    const sandbox = toGrokSandbox(opts.sandbox);
+    const promptFile = writePromptFile(opts.prompt);
     return runJsonlCli({
       runId: opts.runId,
       binaryPath: this.binary,
       argv: buildGrokArgs({
-        prompt: opts.prompt,
+        promptFile: promptFile.path,
         rules: buildBridgeSystemPrompt(this.botIdentity, opts.promptVariant),
         ...(opts.resumeHandle ? { sessionId: opts.resumeHandle } : {}),
         ...(opts.model ? { model: opts.model } : {}),
+        ...(permissionMode ? { permissionMode } : {}),
+        ...(sandbox ? { sandbox } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, {
-        ...buildLarkChannelEnv(this.larkChannel),
+      env: agentSpawnEnv(process.env, {
+        ...buildLarkChannelEnv(this.larkChannel, opts.toolEnv),
+        // Grok's own shell sets FORCE_COLOR. Keeping NO_COLOR makes Node warn
+        // on every tool card. Color is removed from tool output instead.
+        NO_COLOR: undefined,
         GROK_DISABLE_AUTOUPDATER: '1',
       }),
       translator: wrapParsedTranslator(new GrokJsonlTranslator(), 'grok'),
+      cleanup: () => promptFile.cleanup(),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'grok',
       missingTerminalOnSuccess: 'grok exited before a terminal streaming-json end event',
@@ -94,4 +107,17 @@ export class GrokAdapter implements AgentAdapter {
       },
     });
   }
+}
+
+function writePromptFile(content: string): { path: string; cleanup: () => void } {
+  const dir = mkdtempSync(join(tmpdir(), 'lark-grok-'));
+  chmodSync(dir, 0o700);
+  const path = join(dir, 'prompt.txt');
+  writeFileSync(path, content, { encoding: 'utf8', mode: 0o600 });
+  return {
+    path,
+    cleanup: () => {
+      rmSync(dir, { recursive: true, force: true });
+    },
+  };
 }

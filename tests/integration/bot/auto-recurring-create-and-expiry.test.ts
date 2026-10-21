@@ -50,6 +50,8 @@ describe('A2 recurring creation and expiry', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
 
     const endCard = cardContaining(h, 'auto.end.');
+    expect(endCard).toContain('一周');
+    expect(endCard).toContain('两周');
     expect(endCard).toContain('一个月');
     expect(endCard).toContain('三个月');
     expect(endCard).toContain('今年年底');
@@ -224,7 +226,7 @@ describe('A2 recurring creation and expiry', () => {
       settledJson: settled,
       originalJson: endCard,
       status: '已指定结束时间',
-      absent: ['auto.end.', 'auto.reject', '一个月', 'end_at', MATE, 'Op', USER],
+      absent: ['auto.end.', 'auto.reject', '一周', '一个月', 'end_at', MATE, 'Op', USER],
     });
 
     const second = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId, 'auto.end.1m'));
@@ -251,7 +253,7 @@ describe('A2 recurring creation and expiry', () => {
       settledJson: settled,
       originalJson: endCard,
       status: '已取消',
-      absent: ['auto.end.', 'auto.reject', '一个月', 'end_at', MATE, 'Op', USER],
+      absent: ['auto.end.', 'auto.reject', '一周', '一个月', 'end_at', MATE, 'Op', USER],
     });
   });
 

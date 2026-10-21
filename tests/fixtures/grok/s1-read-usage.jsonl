@@ -1,0 +1,6 @@
+{"type":"tool_call","toolCallId":"call_read","toolName":"read_file","status":"in_progress","rawInput":{"path":"note.txt"}}
+{"type":"tool_call_update","toolCallId":"call_read","status":"completed","rawOutput":{"type":"ReadFile","FileContent":{"content":"1→audit-note\nline-two\n","content_concise":"audit-note","absolute_path":"/tmp/note.txt","offset":0,"raw_output":"","total_lines":2}}}
+{"type":"usage","usage":{"input_tokens":21480,"output_tokens":436,"cache_read_input_tokens":2944,"cache_creation_input_tokens":0,"reasoning_tokens":276}}
+{"type":"usage","usage":{"input_tokens":796,"output_tokens":30,"cache_read_input_tokens":24320,"cache_creation_input_tokens":0,"reasoning_tokens":27}}
+{"type":"text","data":"AUDIT_DONE"}
+{"type":"end","stopReason":"end_turn","sessionId":"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee","usage":{"input_tokens":22276,"cache_read_input_tokens":27264,"cache_creation_input_tokens":0,"output_tokens":466,"reasoning_tokens":303,"total_tokens":50006,"cost":0.06098}}

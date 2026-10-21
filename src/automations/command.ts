@@ -1,22 +1,19 @@
-import type { NormalizedMessage } from '@larksuite/channel';
+import { reconcileDraftCard, sendAutomationDraftCard } from './draft-delivery';
 import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
-import { senderTypeFromRaw } from '../bot/self-message';
+import { senderTypeFromMessage } from '../bot/self-message';
 import { classify, isNotInChat } from '../bot/feishu-error';
 import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
-import { DEFAULT_AUTOMATION_TIMEZONE } from '../config/profile-schema';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
 import { draftCardBodyFromCard } from './card-body';
 import {
   automationConfirmCard,
   automationDeleteCard,
   automationReplaceCard,
-  automationTargetSnapshot,
 } from './confirm-card';
-import type { AutomationProposalFields } from './proposal';
-import { automationEndCard, type EndCardTokens } from './end-card';
+import { automationEndCard, type EndCardTokens, type EndPresetAction } from './end-card';
 import {
   ONE_YEAR_MS,
   nextFireAfter,
@@ -30,15 +27,19 @@ import {
   type ScheduleRejectReason,
   type TaskType,
 } from './schedule';
-import { addLocalDays, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
+import { addLocalCalendarDays, addLocalDays, addLocalMonths, isValidCalendarDate, zonedLocalToUtc, zonedParts } from './zoned-time';
 import { formatAutomationListLine } from './board-card';
 import {
   draftConfirmedStatus,
   draftDeletedStatus,
   draftReplacedStatus,
+  draftSameNameExistsStatus,
   draftTargetGoneStatus,
+  draftTargetChangedStatus,
   DRAFT_SETTLED_CANCELLED,
 } from './draft-card';
+import { mutateAutomationTask, taskMutationLabels } from './task-mutation';
+import { taskMutationError } from './store';
 import type {
   AutomationDraft,
   AutomationItem,
@@ -109,26 +110,22 @@ export type ScheduleTextRejectReason =
   | 'end-not-after-start'
   | 'no-remaining-fires';
 
-export type ProposalRejectSource = 'proposal' | 'command';
+export type AutomationRejectSource = 'command' | 'confirmation';
 
-export const AUTOMATION_CONFIRM_PENDING_LINE = '已生成确认卡，点「是」后生效。';
-
-export type AutomationProposalVerdict =
+export type AutomationScheduleVerdict =
   | { outcome: 'confirm'; schedule: Schedule }
   | { outcome: 'needs-end'; pending: PendingRecurring; startAt?: number }
   | { outcome: 'reject'; reason: ScheduleTextRejectReason; clock?: string }
-  | { outcome: 'refuse'; message: string }
-  | { outcome: 'delete' }
-  | { outcome: 'unknown-id' };
+  | { outcome: 'refuse'; message: string };
 
-/** Schedule, floor, ceiling, and cwd checks shared with proposal delivery. */
-export function assessAutomationProposal(input: {
+/** Text schedules remain supported by manual commands and stored confirmation drafts. */
+export function assessAutomationSchedule(input: {
   taskType: AutomationTaskType;
   scheduleText: string;
   now: number;
   timezone: string;
   hasCwd: boolean;
-}): AutomationProposalVerdict {
+}): AutomationScheduleVerdict {
   const parsed = parseScheduleText(input.scheduleText, {
     taskType: input.taskType,
     now: input.now,
@@ -160,243 +157,13 @@ export function assessAutomationProposal(input: {
   return { outcome: 'confirm', schedule: parsed.schedule };
 }
 
-/** Gates that would otherwise become a second chat message after the model reply. */
-export function planAutomationProposalReply(input: {
-  proposal?: AutomationProposalFields;
-  taskType?: AutomationTaskType;
-  scheduleText?: string;
-  now: number;
-  timezone: string;
-  agentTasks: boolean;
-  hasCwd: boolean;
-  group: boolean;
-  canSave: boolean;
-  targetInChat?: boolean;
-}): AutomationProposalVerdict {
-  const proposal = input.proposal ?? createProposalFromLegacy(input.taskType, input.scheduleText);
-  switch (proposal.op) {
-    case 'delete':
-      return planDeleteProposal(input);
-    case 'replace':
-      return planReplaceProposal(input, proposal);
-    case 'create':
-      return planCreateProposal(input, proposal);
-    default: {
-      const _exhaustive: never = proposal;
-      return _exhaustive;
-    }
-  }
-}
-
-function createProposalFromLegacy(
-  taskType: AutomationTaskType | undefined,
-  scheduleText: string | undefined,
-): AutomationProposalFields {
-  const text = scheduleText ?? '';
-  return {
-    op: 'create',
-    taskType: taskType ?? 'reminder',
-    scheduleText: text,
-    name: text,
-    taskText: text,
-  };
-}
-
-function planDeleteProposal(input: {
-  group: boolean;
-  canSave: boolean;
-  targetInChat?: boolean;
-}): AutomationProposalVerdict {
-  if (!input.group) return { outcome: 'refuse', message: AUTO_P2P_HINT };
-  if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
-  if (!input.targetInChat) return { outcome: 'unknown-id' };
-  return { outcome: 'delete' };
-}
-
-function planReplaceProposal(
-  input: {
-    now: number;
-    timezone: string;
-    agentTasks: boolean;
-    hasCwd: boolean;
-    group: boolean;
-    canSave: boolean;
-    targetInChat?: boolean;
-  },
-  proposal: Extract<AutomationProposalFields, { op: 'replace' }>,
-): AutomationProposalVerdict {
-  if (!input.group) return { outcome: 'refuse', message: AUTO_P2P_HINT };
-  if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
-  if (!input.targetInChat) return { outcome: 'unknown-id' };
-  if (proposal.taskType === 'agent' && !input.agentTasks) {
-    return { outcome: 'refuse', message: AUTO_AGENT_DISABLED };
-  }
-  return assessAutomationProposal({
-    taskType: proposal.taskType,
-    scheduleText: proposal.scheduleText,
-    now: input.now,
-    timezone: input.timezone,
-    hasCwd: input.hasCwd,
-  });
-}
-
-function planCreateProposal(
-  input: {
-    now: number;
-    timezone: string;
-    agentTasks: boolean;
-    hasCwd: boolean;
-    group: boolean;
-    canSave: boolean;
-  },
-  proposal: Extract<AutomationProposalFields, { op: 'create' }>,
-): AutomationProposalVerdict {
-  if (!input.group) return { outcome: 'refuse', message: AUTO_P2P_HINT };
-  if (proposal.taskType === 'agent' && !input.agentTasks) {
-    return { outcome: 'refuse', message: AUTO_AGENT_DISABLED };
-  }
-  if (!input.canSave) return { outcome: 'refuse', message: AUTO_NEW_USAGE };
-  return assessAutomationProposal({
-    taskType: proposal.taskType,
-    scheduleText: proposal.scheduleText,
-    now: input.now,
-    timezone: input.timezone,
-    hasCwd: input.hasCwd,
-  });
-}
-
 function hasRemainingFire(schedule: Schedule, now: number): boolean {
   return nextFires(schedule, now, 1).length > 0;
 }
 
-/** Clock used to build a rejection example. Never a hard-coded calendar date. */
-export type RejectionExampleClock = {
-  now: number;
-  timezone: string;
-};
-
-const REJECTION_EXAMPLE_HOUR = 15;
-const REJECTION_EXAMPLE_MINUTE = 50;
-
-function rejectionAbsoluteExample(clock: RejectionExampleClock): string {
-  const tomorrow = shiftLocalDate(clock.timezone, clock.now, 1);
-  const pad = (value: number): string => String(value).padStart(2, '0');
-  return `${tomorrow.year}-${pad(tomorrow.month)}-${pad(tomorrow.day)} ${pad(REJECTION_EXAMPLE_HOUR)}:${pad(REJECTION_EXAMPLE_MINUTE)}`;
-}
-
-function rejectionClock(clock?: RejectionExampleClock): RejectionExampleClock {
-  return clock ?? { now: Date.now(), timezone: DEFAULT_AUTOMATION_TIMEZONE };
-}
-
-export function automationRejectReplyLine(
-  reasonMessage: string,
-  scheduleText: string,
-  verb = '没有创建任务',
-  clock?: RejectionExampleClock,
-): string {
-  const stem = reasonMessage.endsWith('。') ? reasonMessage.slice(0, -1) : reasonMessage;
-  const example = rejectionAbsoluteExample(rejectionClock(clock));
-  return `⚠️ ${verb}：${stem}「${scheduleText}」。可写成「明天 09:00」「${example}」「10 分钟后」。`;
-}
-
-export function automationProposalSuffix(
-  verdict: AutomationProposalVerdict,
-  proposalOrSchedule: AutomationProposalFields | string,
-  clock?: RejectionExampleClock,
-): string | undefined {
-  const proposal = typeof proposalOrSchedule === 'string'
-    ? createProposalFromLegacy('reminder', proposalOrSchedule)
-    : proposalOrSchedule;
-  const verb = proposalVerb(proposal.op);
-  switch (verdict.outcome) {
-    case 'confirm':
-      if (proposal.op === 'replace') return `已生成确认卡，点「是」后用新任务替换 #${proposal.id}。`;
-      return AUTOMATION_CONFIRM_PENDING_LINE;
-    case 'delete':
-      return proposal.op === 'delete' ? `已生成确认卡，点「是」后删除 #${proposal.id}。` : undefined;
-    case 'needs-end':
-      return undefined;
-    case 'unknown-id':
-      if (proposal.op === 'create') return undefined;
-      return `⚠️ 没有删除任务：本群没有 #${proposal.id}。`;
-    case 'reject':
-      if (verdict.reason === 'past-time') {
-        return `⚠️ ${verb}：${rejectMessage(verdict.reason, verdict)}`;
-      }
-      return automationRejectReplyLine(
-        rejectMessage(verdict.reason, verdict),
-        proposalScheduleText(proposal),
-        verb,
-        clock,
-      );
-    case 'refuse':
-      return `⚠️ ${verb}：${verdict.message}`;
-    default: {
-      const _exhaustive: never = verdict;
-      return _exhaustive;
-    }
-  }
-}
-
-export type ReplaceProposalApplyResult =
-  | { posted: true }
-  | { posted: false; reason: 'target-gone' | 'not-posted' };
-
-/**
- * User-facing line after apply. A replace that did not post a draft must not
- * keep a line that claims a confirmation card was generated.
- */
-export function replaceProposalLineAfterApply(
-  planned: string | undefined,
-  proposal: AutomationProposalFields,
-  applied: ReplaceProposalApplyResult | void,
-): string | undefined {
-  if (!applied || applied.posted || proposal.op !== 'replace') return planned;
-  if (!planned?.includes('已生成确认卡')) return planned;
-  switch (applied.reason) {
-    case 'target-gone':
-      return automationProposalSuffix({ outcome: 'unknown-id' }, proposal);
-    case 'not-posted':
-      return undefined;
-    default: {
-      const _exhaustive: never = applied.reason;
-      return _exhaustive;
-    }
-  }
-}
-
-function proposalVerb(op: AutomationProposalFields['op']): string {
-  switch (op) {
-    case 'create':
-      return '没有创建任务';
-    case 'delete':
-      return '没有删除任务';
-    case 'replace':
-      return '没有替换任务';
-    default: {
-      const _exhaustive: never = op;
-      return _exhaustive;
-    }
-  }
-}
-
-function proposalScheduleText(proposal: AutomationProposalFields): string {
-  switch (proposal.op) {
-    case 'create':
-    case 'replace':
-      return proposal.scheduleText;
-    case 'delete':
-      return '';
-    default: {
-      const _exhaustive: never = proposal;
-      return _exhaustive;
-    }
-  }
-}
-
 export function noteAutomationRejected(
   reason: ScheduleTextRejectReason,
-  source: ProposalRejectSource,
+  source: AutomationRejectSource,
 ): void {
   log.info('auto', 'rejected', {
     reason: rejectLogReason(reason),
@@ -475,13 +242,17 @@ export function parseEndAtText(text: string, timezone: string): number | undefin
 }
 
 export function presetEndAt(
-  action: Extract<AutoCardAction, 'auto.end.1m' | 'auto.end.3m' | 'auto.end.eoy' | 'auto.end.1y'>,
+  action: EndPresetAction,
   timezone: string,
   now: number,
   startAt = now,
 ): number {
   const parts = zonedParts(timezone, startAt);
   switch (action) {
+    case 'auto.end.1w':
+      return addLocalCalendarDays(timezone, parts, 7);
+    case 'auto.end.2w':
+      return addLocalCalendarDays(timezone, parts, 14);
     case 'auto.end.1m':
       return addLocalMonths(timezone, parts, 1);
     case 'auto.end.3m':
@@ -801,18 +572,6 @@ function parseWeekdayList(text: string): number[] | undefined {
   return days;
 }
 
-function addLocalMonths(
-  timezone: string,
-  parts: { year: number; month: number; day: number; hour: number; minute: number },
-  months: number,
-): number {
-  const cursor = new Date(Date.UTC(parts.year, parts.month - 1 + months, 1));
-  const year = cursor.getUTCFullYear();
-  const month = cursor.getUTCMonth() + 1;
-  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  return zonedLocalToUtc(timezone, year, month, Math.min(parts.day, lastDay), parts.hour, parts.minute);
-}
-
 export function rejectMessage(
   reason: ScheduleTextRejectReason,
   detail?: { clock?: string },
@@ -881,7 +640,7 @@ function rejectLogReason(reason: ScheduleTextRejectReason): string {
   }
 }
 
-export type AutomationProposalContext = Pick<
+export type AutomationCommandContext = Pick<
   CommandContext,
   | 'channel'
   | 'msg'
@@ -941,7 +700,7 @@ export async function handleAutoCommand(args: string, ctx: CommandContext): Prom
       await replyAuto(ctx, AUTO_NEW_USAGE);
       return;
     case 'new':
-      await submitAutomationProposal(ctx, parsed);
+      await submitAutomationCommand(ctx, parsed);
       return;
     default: {
       const _exhaustive: never = parsed;
@@ -950,10 +709,10 @@ export async function handleAutoCommand(args: string, ctx: CommandContext): Prom
   }
 }
 
-export async function submitAutomationProposal(
-  ctx: AutomationProposalContext,
+export async function submitAutomationCommand(
+  ctx: AutomationCommandContext,
   parsed: ParsedAutoNew,
-  source: ProposalRejectSource = 'command',
+  source: AutomationRejectSource = 'command',
 ): Promise<void> {
   if (!ctx.controls.profileConfig.automations.enabled) return;
   if (isIgnoredAutoSender(ctx)) return;
@@ -978,7 +737,7 @@ export async function submitAutomationProposal(
   const cwd = parsed.taskType === 'agent'
     ? ctx.workspaces.cwdFor(ctx.scope) ?? ctx.controls.profileConfig.workspaces.default
     : undefined;
-  const verdict = assessAutomationProposal({
+  const verdict = assessAutomationSchedule({
     taskType: parsed.taskType,
     scheduleText: parsed.scheduleText,
     now,
@@ -1047,9 +806,6 @@ export async function submitAutomationProposal(
       }
       return;
     }
-    case 'delete':
-    case 'unknown-id':
-      return;
     default: {
       const _exhaustive: never = verdict;
       return _exhaustive;
@@ -1057,157 +813,8 @@ export async function submitAutomationProposal(
   }
 }
 
-export async function submitAutomationDeleteProposal(
-  ctx: AutomationProposalContext,
-  proposal: Extract<AutomationProposalFields, { op: 'delete' }>,
-): Promise<void> {
-  if (!canPostMutationProposal(ctx)) return;
-  const item = ctx.automations?.get(proposal.id);
-  if (!item || item.chatId !== ctx.msg.chatId || !ctx.automations) return;
-  const draft = await ctx.automations.saveDraft({
-    op: 'delete',
-    chatId: ctx.msg.chatId,
-    createdBy: ctx.msg.senderId,
-    targetId: item.id,
-    target: automationTargetSnapshot(item),
-  });
-  if (!ctx.isLinkDown?.()) await postDeleteCard(ctx, draft);
-  if (ctx.automations.getDraft(draft.draftId)) {
-    log.info('auto', 'draft', {
-      draftId: draft.draftId,
-      op: 'delete',
-      targetId: item.id,
-      chatId: ctx.msg.chatId,
-    });
-  }
-}
-
-export async function submitAutomationReplaceProposal(
-  ctx: AutomationProposalContext,
-  proposal: Extract<AutomationProposalFields, { op: 'replace' }>,
-): Promise<ReplaceProposalApplyResult> {
-  if (!canPostMutationProposal(ctx)) return { posted: false, reason: 'not-posted' };
-  const item = ctx.automations?.get(proposal.id);
-  if (!item || item.chatId !== ctx.msg.chatId || !ctx.automations) {
-    log.info('auto', 'rejected', {
-      reason: 'unknown-id',
-      source: 'proposal',
-      id: proposal.id,
-    });
-    return { posted: false, reason: 'target-gone' };
-  }
-  if (proposal.taskType === 'agent' && !ctx.controls.profileConfig.automations.agentTasks) {
-    return { posted: false, reason: 'not-posted' };
-  }
-
-  const now = (ctx.now ?? Date.now)();
-  const timezone = ctx.controls.profileConfig.automations.timezone;
-  const cwd = proposal.taskType === 'agent'
-    ? ctx.workspaces.cwdFor(ctx.scope) ?? ctx.controls.profileConfig.workspaces.default
-    : undefined;
-  const hasCwd = typeof cwd === 'string' && cwd.trim().length > 0;
-  const verdict = assessAutomationProposal({
-    taskType: proposal.taskType,
-    scheduleText: proposal.scheduleText,
-    now,
-    timezone,
-    hasCwd,
-  });
-  const target = automationTargetSnapshot(item);
-  switch (verdict.outcome) {
-    case 'refuse':
-    case 'reject':
-    case 'delete':
-    case 'unknown-id':
-      return { posted: false, reason: 'not-posted' };
-    case 'needs-end': {
-      const draft = await ctx.automations.saveDraft({
-        op: 'replace',
-        targetId: item.id,
-        target,
-        scheduleText: proposal.scheduleText,
-        taskType: proposal.taskType,
-        schedule: verdict.pending,
-        timezone,
-        startAt: verdict.startAt ?? now,
-        nextFireAt: 0,
-        chatId: ctx.msg.chatId,
-        createdBy: ctx.msg.senderId,
-        name: proposal.name,
-        taskText: proposal.taskText,
-        pendingRecurring: verdict.pending,
-        ...(cwd ? { cwd } : {}),
-      });
-      if (!ctx.isLinkDown?.()) await postEndCard(ctx, draft);
-      if (ctx.automations.getDraft(draft.draftId)) {
-        log.info('auto', 'draft', {
-          draftId: draft.draftId,
-          op: 'replace',
-          targetId: item.id,
-          taskType: proposal.taskType,
-          chatId: ctx.msg.chatId,
-          waiting: 'end',
-        });
-      }
-      return draftPostResult(ctx.automations, draft.draftId);
-    }
-    case 'confirm': {
-      const nextFireAt = nextFireAfter(verdict.schedule, now);
-      const startAt = scheduleStartAt(verdict.schedule, now);
-      const endAt = scheduleEndAt(verdict.schedule);
-      const draft = await ctx.automations.saveDraft({
-        op: 'replace',
-        targetId: item.id,
-        target,
-        scheduleText: proposal.scheduleText,
-        taskType: proposal.taskType,
-        schedule: verdict.schedule,
-        timezone,
-        startAt,
-        ...(endAt !== undefined ? { endAt } : {}),
-        nextFireAt,
-        chatId: ctx.msg.chatId,
-        createdBy: ctx.msg.senderId,
-        name: proposal.name,
-        taskText: proposal.taskText,
-        ...(cwd ? { cwd } : {}),
-      });
-      if (!ctx.isLinkDown?.()) {
-        await postConfirmCard(ctx, draft, verdict.schedule, now, ctx.msg.messageId);
-      }
-      if (ctx.automations.getDraft(draft.draftId)) {
-        log.info('auto', 'draft', {
-          draftId: draft.draftId,
-          op: 'replace',
-          targetId: item.id,
-          taskType: proposal.taskType,
-          chatId: ctx.msg.chatId,
-        });
-      }
-      return draftPostResult(ctx.automations, draft.draftId);
-    }
-    default: {
-      const _exhaustive: never = verdict;
-      return _exhaustive;
-    }
-  }
-}
-
-function draftPostResult(store: AutomationsStore, draftId: string): ReplaceProposalApplyResult {
-  return store.getDraft(draftId)
-    ? { posted: true }
-    : { posted: false, reason: 'not-posted' };
-}
-
-function canPostMutationProposal(ctx: AutomationProposalContext): boolean {
-  if (!ctx.controls.profileConfig.automations.enabled) return false;
-  if (isIgnoredAutoSender(ctx)) return false;
-  if (ctx.scope.startsWith('auto:') || ctx.scope.startsWith('meeting:')) return false;
-  if (ctx.chatMode === 'p2p' || ctx.msg.chatType === 'p2p') return false;
-  return Boolean(ctx.automations && ctx.autoAuth && ctx.automationsScheduler);
-}
-
-type DraftFlushContext = {
+export type DraftFlushContext = {
+  botAppId?: string;
   channel: CommandContext['channel'];
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
@@ -1232,9 +839,9 @@ export async function flushPendingDraftCards(ctx: DraftFlushContext): Promise<vo
   }
 }
 
-async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: number): Promise<void> {
+export async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: number): Promise<void> {
   const automations = ctx.automations;
-  if (!automations || !ctx.autoAuth) return;
+  if (!automations || !ctx.autoAuth || ctx.isLinkDown?.()) return;
   for (;;) {
     const inflight = draftCardClaims.get(draftId);
     if (inflight) {
@@ -1243,6 +850,8 @@ async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: 
     }
     const draft = automations.getDraft(draftId);
     if (!draft || draft.cardMessageId) return;
+    if (draft.delivery?.state === 'sending') { await reconcileDraftCard(ctx.channel, automations, draft, ctx.botAppId); return; }
+    if (draft.delivery?.state === 'rejected') return;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -1269,8 +878,8 @@ async function deliverUnboundDraftCard(
     automations: ctx.automations,
     autoAuth: ctx.autoAuth,
     automationsScheduler: ctx.automationsScheduler,
-    chatMode: 'group' as const,
-    msg: { chatId: draft.chatId, messageId: '', threadId: undefined },
+    chatMode: draft.cardReply?.replyInThread ? 'topic' as const : 'group' as const,
+    msg: { chatId: draft.chatId, messageId: draft.cardReply?.replyTo ?? '', threadId: draft.cardReply?.threadId },
   };
   switch (draft.op) {
     case 'delete':
@@ -1285,7 +894,7 @@ async function deliverUnboundDraftCard(
       {
         const schedule = readSchedule(draft.schedule);
         if (!schedule) return;
-        await postConfirmCard(cardCtx, draft, schedule, now, '');
+        await postConfirmCard(cardCtx, draft, schedule, now, cardCtx.msg.messageId);
       }
       return;
     default: {
@@ -1332,8 +941,13 @@ export async function completeDraftEnd(
     nextFireAt,
     pendingRecurring: null,
     cardMessageId: null,
+    ...(draft.operationId ? { cardReply: { ...(draft.cardReply ?? {}), replyTo } } : {}),
   });
   if (!updated || updated.op === 'delete') return { ok: false, message: AUTO_INVALID_HINT };
+  if (updated.operationId) {
+    await flushDraftCardOnce(ctx, updated.draftId, now);
+    return { ok: true };
+  }
   await postConfirmCard({
     channel: ctx.channel,
     automations: ctx.automations,
@@ -1350,6 +964,8 @@ export function resolveEndAt(
   input: { timezone: string; now: number; startAt?: number; customText?: string },
 ): number | undefined {
   switch (action) {
+    case 'auto.end.1w':
+    case 'auto.end.2w':
     case 'auto.end.1m':
     case 'auto.end.3m':
     case 'auto.end.eoy':
@@ -1379,6 +995,14 @@ export async function confirmAutomationDraft(
   },
   draft: AutomationDraft,
 ): Promise<AutomationConfirmOutcome> {
+  if (draft.op !== 'create' && ctx.automations) {
+    const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision });
+    if (code) {
+      const status = code === 'target-not-found' ? draftTargetGoneStatus(draft.targetId) : draftTargetChangedStatus(draft.targetId);
+      if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code, status);
+      return { ok: false, status, toast: status };
+    }
+  }
   switch (draft.op) {
     case 'create':
       return confirmCreateDraft(ctx, draft);
@@ -1398,7 +1022,14 @@ async function confirmCreateDraft(
   draft: Exclude<AutomationDraft, DeleteAutomationDraft | ReplaceAutomationDraft>,
 ): Promise<AutomationConfirmOutcome> {
   if (!ctx.automations || draft.pendingRecurring) return confirmInvalid();
+  const conflict = findSameNameCreateConflict(ctx.automations, draft);
+  if (conflict) {
+    const status = draftSameNameExistsStatus(conflict.id);
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, 'same-name-confirmed', status);
+    return { ok: false, status, toast: status };
+  }
   const item = await ctx.automations.create({
+    ...(draft.operationId ? { operationId: draft.operationId } : {}),
     taskType: draft.taskType,
     schedule: draft.schedule,
     timezone: draft.timezone,
@@ -1411,8 +1042,8 @@ async function confirmCreateDraft(
     taskText: draft.taskText,
     ...(draft.cwd ? { cwd: draft.cwd } : {}),
   });
-  await ctx.onAutomationConfirmed?.(item);
   log.info('auto', 'confirmed', { id: item.id, taskType: item.taskType, chatId: item.chatId });
+  scheduleAutomationConfirmed(ctx.onAutomationConfirmed, item);
   const status = draftConfirmedStatus(item.id);
   return { ok: true, status, toast: status };
 }
@@ -1427,12 +1058,14 @@ async function confirmDeleteDraft(
     const status = draftTargetGoneStatus(draft.targetId);
     return { ok: false, status, toast: status };
   }
-  const ok = await ctx.automationsScheduler.delete(draft.targetId);
+  const ok = await ctx.automationsScheduler.delete(draft.targetId, { chatId: draft.chatId, revision: draft.target.revision, operationId: draft.operationId });
   if (!ok) {
-    const status = draftTargetGoneStatus(draft.targetId);
+    const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision }) ?? 'target-not-found';
+    const status = code === 'target-state-conflict' ? draftTargetChangedStatus(draft.targetId) : draftTargetGoneStatus(draft.targetId);
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code, status);
     return { ok: false, status, toast: status };
   }
-  log.info('auto', 'deleted', { id: draft.targetId, source: 'proposal' });
+  log.info('auto', 'deleted', { id: draft.targetId, source: 'confirmation' });
   const status = draftDeletedStatus(draft.targetId);
   return { ok: true, status, toast: status };
 }
@@ -1447,20 +1080,21 @@ async function confirmReplaceDraft(
   const now = (ctx.now ?? Date.now)();
   const blocked = replaceConfirmBlock(draft, now);
   if (blocked.outcome !== 'confirm') {
-    if (blocked.outcome === 'reject') noteAutomationRejected(blocked.reason, 'proposal');
+    if (blocked.outcome === 'reject') noteAutomationRejected(blocked.reason, 'confirmation');
     const message = blocked.outcome === 'reject'
       ? rejectMessage(blocked.reason, blocked)
       : blocked.outcome === 'refuse'
         ? blocked.message
         : AUTO_INVALID_HINT;
+    if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, blocked.outcome === 'reject' ? blocked.reason : 'confirmation-invalid', message);
     return { ok: false, status: message, toast: message };
   }
-  let created: AutomationItem;
+  let created: AutomationItem | undefined;
   try {
     const nextFireAt = nextFireAfter(blocked.schedule, now);
     const startAt = scheduleStartAt(blocked.schedule, now);
     const endAt = scheduleEndAt(blocked.schedule);
-    created = await ctx.automations.create({
+    created = await ctx.automations.replace(draft, {
       taskType: draft.taskType,
       schedule: blocked.schedule,
       timezone: draft.timezone,
@@ -1474,23 +1108,18 @@ async function confirmReplaceDraft(
       ...(draft.cwd ? { cwd: draft.cwd } : {}),
     });
   } catch (error) {
+    if (draft.operationId) throw error;
     log.fail('auto', error, { event: 'replace', oldId: draft.targetId });
     const status = `没有替换 #${draft.targetId}：新任务未创建`;
     return { ok: false, status, toast: status };
   }
-  await ctx.onAutomationConfirmed?.(created);
-  log.info('auto', 'confirmed', { id: created.id, taskType: created.taskType, chatId: created.chatId });
-  const old = ctx.automations.get(draft.targetId);
-  if (!old || old.chatId !== draft.chatId) {
-    const status = `已确认 #${created.id}（${draftTargetGoneStatus(draft.targetId)}）`;
-    return { ok: true, status, toast: status };
-  }
-  const deleted = await ctx.automationsScheduler.delete(draft.targetId);
-  if (!deleted) {
-    const status = `已确认 #${created.id}（${draftTargetGoneStatus(draft.targetId)}）`;
-    return { ok: true, status, toast: status };
+  if (!created) {
+    if (draft.operationId) await ctx.automations.takeDraft(draft.draftId);
+    const status = draftTargetGoneStatus(draft.targetId);
+    return { ok: false, status, toast: status };
   }
   log.info('auto', 'replaced', { oldId: draft.targetId, newId: created.id });
+  scheduleAutomationConfirmed(ctx.onAutomationConfirmed, created);
   const status = draftReplacedStatus(draft.targetId, created.id);
   return { ok: true, status, toast: status };
 }
@@ -1499,19 +1128,44 @@ function confirmInvalid(): AutomationConfirmOutcome {
   return { ok: false, status: DRAFT_SETTLED_CANCELLED, toast: AUTO_INVALID_HINT };
 }
 
-function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): AutomationProposalVerdict {
+function scheduleAutomationConfirmed(
+  onConfirmed: ((item: AutomationItem) => void | Promise<void>) | undefined,
+  item: AutomationItem,
+): void {
+  if (!onConfirmed) return;
+  void (async () => {
+    try {
+      await onConfirmed(item);
+    } catch (error) {
+      log.fail('auto', error, { event: 'confirmed-follow-up', id: item.id });
+    }
+  })();
+}
+
+function findSameNameCreateConflict(
+  store: AutomationsStore,
+  draft: Exclude<AutomationDraft, DeleteAutomationDraft | ReplaceAutomationDraft>,
+): AutomationItem | undefined {
+  const name = draft.name.trim();
+  return store.list().find(item => item.chatId === draft.chatId && item.createdBy === draft.createdBy
+    && item.name.trim() === name && (store.appliedOperationAppliedAt(item.id) ?? 0) >= draft.createdAt);
+}
+
+function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): AutomationScheduleVerdict {
   if (draft.taskType === 'agent' && !(draft.cwd && draft.cwd.trim())) {
     return { outcome: 'refuse', message: AUTO_AGENT_NEEDS_CWD };
   }
-  const textVerdict = assessAutomationProposal({
-    taskType: draft.taskType,
-    scheduleText: draft.scheduleText,
-    now,
-    timezone: draft.timezone,
-    hasCwd: true,
-  });
-  if (textVerdict.outcome === 'reject' && textVerdict.reason === 'past-time') return textVerdict;
-  if (textVerdict.outcome === 'refuse') return textVerdict;
+  if (draft.scheduleText) {
+    const textVerdict = assessAutomationSchedule({
+      taskType: draft.taskType,
+      scheduleText: draft.scheduleText,
+      now,
+      timezone: draft.timezone,
+      hasCwd: true,
+    });
+    if (textVerdict.outcome === 'reject' && textVerdict.reason === 'past-time') return textVerdict;
+    if (textVerdict.outcome === 'refuse') return textVerdict;
+  }
   const stored = readSchedule(draft.schedule);
   if (!stored) return { outcome: 'reject', reason: 'invalid-schedule' };
   if (stored.kind === 'one-shot' && stored.fireAt <= now) {
@@ -1554,33 +1208,9 @@ async function mutateAuto(
     await replyAuto(ctx, AUTO_UNKNOWN_ID);
     return;
   }
-  const item = ctx.automations.get(id);
-  if (!item || item.chatId !== ctx.msg.chatId) {
-    await replyAuto(ctx, AUTO_UNKNOWN_ID);
-    return;
-  }
-  let ok = false;
-  switch (op) {
-    case 'pause':
-      ok = await ctx.automationsScheduler.pause(id);
-      if (ok) log.info('auto', 'paused', { id });
-      await replyAuto(ctx, ok ? `已暂停 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
-      return;
-    case 'resume':
-      ok = await ctx.automationsScheduler.resume(id);
-      if (ok) log.info('auto', 'resumed', { id });
-      await replyAuto(ctx, ok ? `已恢复 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
-      return;
-    case 'delete':
-      ok = await ctx.automationsScheduler.delete(id);
-      if (ok) log.info('auto', 'deleted', { id });
-      await replyAuto(ctx, ok ? `已删除 #${id} ${item.name}` : AUTO_UNKNOWN_ID);
-      return;
-    default: {
-      const _exhaustive: never = op;
-      return _exhaustive;
-    }
-  }
+  const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: ctx.msg.chatId, now: ctx.now }, op, id);
+  if (result.ok) log.info('auto', { pause: 'paused', resume: 'resumed', delete: 'deleted' }[op], { id });
+  await replyAuto(ctx, result.ok ? `已${taskMutationLabels[op]} #${id} ${result.item.name}` : AUTO_UNKNOWN_ID);
 }
 
 async function postEndCard(
@@ -1599,11 +1229,15 @@ async function postEndCard(
   const card = automationEndCard(tokens);
   let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo: ctx.msg.messageId,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
+    if (draft.operationId) {
+      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
+      throw error;
+    }
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
@@ -1679,11 +1313,15 @@ async function postConfirmCard(
     : automationConfirmCard(body);
   let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
+    if (draft.operationId) {
+      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
+      throw error;
+    }
     await settleDraftCardFailure(ctx, draft, error, replyTo);
     return;
   }
@@ -1726,11 +1364,15 @@ async function postDeleteCard(
   });
   let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendManagedCard(ctx.channel, ctx.msg.chatId, card, {
+    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       ...(ctx.msg.messageId ? { replyTo: ctx.msg.messageId } : {}),
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
     });
   } catch (error) {
+    if (draft.operationId) {
+      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
+      throw error;
+    }
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
@@ -1832,6 +1474,8 @@ function signEndTokens(auth: AutoActionAuth, draft: AutomationDraft): EndCardTok
     ttlMs: AUTO_CARD_TTL_MS,
   });
   return {
+    'auto.end.1w': sign('auto.end.1w'),
+    'auto.end.2w': sign('auto.end.2w'),
     'auto.end.1m': sign('auto.end.1m'),
     'auto.end.3m': sign('auto.end.3m'),
     'auto.end.eoy': sign('auto.end.eoy'),
@@ -1874,13 +1518,13 @@ function scheduleEndAt(schedule: Schedule): number | undefined {
 }
 
 function isIgnoredAutoSender(ctx: Pick<CommandContext, 'msg' | 'channel'>): boolean {
-  const senderType = senderTypeFromRaw((ctx.msg as NormalizedMessage & { raw?: unknown }).raw);
+  const senderType = senderTypeFromMessage(ctx.msg);
   if (senderType === 'app' || senderType === 'bot') return true;
   const botOpenId = ctx.channel.botIdentity?.openId;
   return Boolean(botOpenId) && ctx.msg.senderId === botOpenId;
 }
 
-async function replyAuto(ctx: AutomationProposalContext, markdown: string): Promise<void> {
+async function replyAuto(ctx: AutomationCommandContext, markdown: string): Promise<void> {
   try {
     await ctx.channel.send(
       ctx.msg.chatId,

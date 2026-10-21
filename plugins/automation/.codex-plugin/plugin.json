@@ -1,0 +1,6 @@
+{
+  "name": "automation",
+  "version": "1.0.0",
+  "description": "查看与管理本群自动化任务，预览排期并创建需人工确认的提醒或 agent 自动任务。",
+  "skills": "./skills"
+}

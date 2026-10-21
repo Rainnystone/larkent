@@ -1,13 +1,12 @@
-import { chmod, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
-import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store';
+import { createRootConfig, loadRootConfig, saveRootConfig } from '../../../src/config/profile-store';
 import { createRuntimeAgent } from '../../../src/cli/commands/start';
 import { resolveProfileRuntime } from '../../../src/runtime/profile-runtime';
-
-const { loadRootConfig } = await import('../../../src/config/profile-store');
+import { writeVersionExecutable } from '../../helpers/fake-executable';
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -70,25 +69,11 @@ async function createLegacyCodexConfig(options: {
   cleanups.push(() => rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 25 }));
   const workspace = join(root, 'workspace');
   const binDir = join(root, 'bin');
-  await Promise.all([
-    mkdir(workspace, { recursive: true }),
-    mkdir(binDir, { recursive: true }),
-  ]);
-  const codex = join(binDir, 'codex');
-  await writeFile(
-    codex,
-    [
-      '#!/bin/sh',
-      'if [ "$1" = "--version" ]; then',
-      '  echo "codex-cli 999.0.0"',
-      '  exit 0',
-      'fi',
-      'exit 0',
-      '',
-    ].join('\n'),
-    'utf8',
-  );
-  await chmod(codex, 0o755);
+  await mkdir(workspace, { recursive: true });
+  // Windows: cross-spawn cmd-wraps an existing extensionless `codex`, so a
+  // #!/bin/sh stub can stall until checkAgentVersion's 5s timeout and race
+  // vitest's 5s default. writeVersionExecutable uses a .cmd echo stub there.
+  const codex = await writeVersionExecutable(binDir, 'codex', 'codex-cli 999.0.0');
 
   const secrets = {
     providers: {

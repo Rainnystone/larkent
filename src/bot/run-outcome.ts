@@ -18,7 +18,7 @@ export type StopRequest =
   | { type: 'meeting' }
   | { type: 'subscriber-abandoned' }
   | { type: 'external-signal' }
-  | { type: 'policy-guard' };
+  | { type: 'policy-guard'; code?: 'auth-config' };
 
 export type FailedCause =
   | 'transient-upstream'
@@ -82,13 +82,19 @@ export function noteTerminalStop(handle: StoppableHandle, event: AgentEvent): bo
   return reason ? requestStop(handle, reason) : false;
 }
 
-/** System events always pass. A real terminal still lands after stop. */
+/**
+ * System and terminal events still land after stop. Only an explicit user stop
+ * admits a buffered final answer. Grok and Codex can hold that answer until
+ * interruption; other stop reasons must not publish it. Later text deltas stay
+ * suppressed for every stop reason.
+ */
 export function shouldDeliverAgentEvent(
   handle: StoppableHandle,
   event: AgentEvent,
 ): boolean {
   if (event.type === 'system') return true;
   if (!handle.interrupted) return true;
+  if (event.type === 'final_text') return handle.stopRequest?.type === 'user-stop';
   return event.type === 'done' || event.type === 'error';
 }
 

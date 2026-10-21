@@ -6,6 +6,32 @@ export const FEISHU_LIST_VISIBILITY_LAG_MS = 2_000;
 export const FEISHU_READBACK_PAGE_SIZE = 50;
 export const FEISHU_READBACK_MAX_PAGES = 20;
 
+/** Thread containers reject time-range parameters; chat list still uses `start_time`. */
+export function feishuReadbackListParams(input: {
+  containerId: string;
+  inThread: boolean;
+  afterMs: number;
+  pageToken?: string;
+}): {
+  container_id_type: 'thread' | 'chat';
+  container_id: string;
+  start_time?: string;
+  sort_type: 'ByCreateTimeDesc';
+  page_size: number;
+  page_token?: string;
+  card_msg_content_type: 'user_card_content';
+} {
+  return {
+    container_id_type: input.inThread ? 'thread' : 'chat',
+    container_id: input.containerId,
+    ...(input.inThread ? {} : { start_time: String(Math.floor(input.afterMs / 1000)) }),
+    sort_type: 'ByCreateTimeDesc',
+    page_size: FEISHU_READBACK_PAGE_SIZE,
+    ...(input.pageToken ? { page_token: input.pageToken } : {}),
+    card_msg_content_type: 'user_card_content',
+  };
+}
+
 export type DeliverySendOptions = {
   replyTo?: string;
   replyInThread?: boolean;
@@ -149,17 +175,16 @@ export async function readBackBotReply(input: {
   const threadId = input.threadId?.trim();
   // A parent message id is not a thread id. If the real thread is unknown,
   // skip list rather than probing a container Feishu will not treat as a topic.
-  if (inThread && !threadId) return { kind: 'none' };
+  const containerId = inThread ? threadId : input.chatId;
+  if (!containerId) return { kind: 'none' };
   for (let page = 0; page < FEISHU_READBACK_MAX_PAGES; page += 1) {
     const res = await input.channel.rawClient.im.v1.message.list({
-      params: {
-        container_id_type: inThread ? 'thread' : 'chat',
-        container_id: inThread ? threadId : input.chatId,
-        start_time: String(Math.floor(input.afterMs / 1000)),
-        sort_type: 'ByCreateTimeDesc',
-        page_size: FEISHU_READBACK_PAGE_SIZE,
-        ...(pageToken ? { page_token: pageToken } : {}),
-      },
+      params: feishuReadbackListParams({
+        containerId,
+        inThread,
+        afterMs: input.afterMs,
+        pageToken,
+      }),
     });
     const payload = asRecord(asRecord(res)?.data);
     const items = Array.isArray(payload?.items) ? payload.items : [];

@@ -2,9 +2,11 @@ import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { log } from '../../core/logger';
 import { RunCleanupFailed } from '../../runtime/errors';
+import { killSurvivingOutOfGroupDescendants, signalProcessTree } from '../../platform/process-tree';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import { readProcessStartMs } from '../../platform/process-info';
 import type { AgentEvent, AgentRun } from '../types';
+import { stripTerminalText } from '../terminal-text';
 import { BoundedStderr } from './bounded-stderr';
 
 export type JsonlFinishReason = 'normal' | 'interrupted' | 'timeout';
@@ -37,6 +39,8 @@ export interface JsonlCliRunnerInput {
   stopGraceMs?: number;
   spawnName: string;
   emptyStdoutDestroyMs?: number;
+  /** A single JSONL line above this size fails the run instead of growing the buffer. */
+  maxLineBytes?: number;
   missingTerminalOnSuccess?: string;
   failNonzeroAfterTerminal?: boolean;
   successFinish?: JsonlFinishReason;
@@ -47,6 +51,7 @@ type CliChild = SpawnedProcessByStdio<Writable, Readable, Readable>;
 
 const STOP_STDOUT_QUIET_MS = 50;
 const STOP_STDOUT_DRAIN_MS = 5000;
+const DEFAULT_MAX_LINE_BYTES = 8 * 1024 * 1024;
 
 export function wrapParsedTranslator(
   inner: ParsedJsonlTranslator,
@@ -76,6 +81,7 @@ export function wrapParsedTranslator(
 
 export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const stopGraceMs = input.stopGraceMs ?? 5000;
+  const detached = true;
   const child = spawnProcess(input.binaryPath, [...input.argv], {
     cwd: input.cwd,
     env: input.env,
@@ -102,6 +108,8 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const stdoutDecoder = new StringDecoder('utf8');
   let stdoutBuffer = '';
   let sawStdout = false;
+  let lineOverflow = false;
+  const maxLineBytes = input.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
 
   const stderr = new BoundedStderr();
   let runtimeError: Error | null = null;
@@ -203,17 +211,27 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
         log.info('agent', 'stop-sigterm', { pid: child.pid, graceMs: stopGraceMs });
         let signalled = false;
         try {
-          signalled = child.kill('SIGTERM');
+          signalled = signalChild(child, 'SIGTERM', detached);
         } catch (error) {
           signalError = error;
         }
-        if (signalled && await within(exitPromise, stopGraceMs) !== false) return;
+        const signalledAt = Date.now();
+        if (signalled && await within(exitPromise, stopGraceMs) !== false) {
+          // Leader exit drops setsid descendants from the process group. Kill
+          // whoever survived SIGTERM, using the snapshot taken before it.
+          const followUp = killSurvivingOutOfGroupDescendants(
+            child,
+            stopGraceMs - (Date.now() - signalledAt),
+          );
+          if (followUp) await followUp;
+          return;
+        }
         if (!exited) {
           log.warn('agent', 'stop-sigkill', {
             pid: child.pid, graceMs: stopGraceMs, reason: 'sigterm-did-not-exit',
           });
           try {
-            child.kill('SIGKILL');
+            signalChild(child, 'SIGKILL', detached);
           } catch (error) {
             signalError = error;
           }
@@ -263,18 +281,31 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     armIdle();
   };
 
+  const failOversizedLine = (): void => {
+    if (lineOverflow) return;
+    lineOverflow = true;
+    stdoutBuffer = '';
+    runtimeError = new Error(`${input.spawnName} streaming-json line exceeded ${maxLineBytes} bytes`);
+    child.stdout.destroy();
+    requestStop('interrupted');
+  };
   child.stdout.on('data', (chunk: Buffer) => {
-    if (stdoutClosed) return;
+    if (stdoutClosed || lineOverflow) return;
     sawStdout = true;
     stdoutBuffer += stdoutDecoder.write(chunk);
     let nl = stdoutBuffer.indexOf('\n');
     while (nl !== -1) {
-      const line = stdoutBuffer.slice(0, nl).trim();
+      const line = stdoutBuffer.slice(0, nl);
+      if (Buffer.byteLength(line, 'utf8') > maxLineBytes) {
+        failOversizedLine();
+        return;
+      }
       stdoutBuffer = stdoutBuffer.slice(nl + 1);
-      enqueueStdoutLine(line);
+      enqueueStdoutLine(line.trim());
       nl = stdoutBuffer.indexOf('\n');
       onStdoutSettled();
     }
+    if (Buffer.byteLength(stdoutBuffer, 'utf8') > maxLineBytes) failOversizedLine();
   });
   const closeStdout = (): void => {
     if (stdoutClosed) return;
@@ -504,6 +535,10 @@ async function* iterateEvents(input: {
 
     const earlyRuntimeError = input.getError();
     if (earlyRuntimeError instanceof RunCleanupFailed) throw earlyRuntimeError;
+    if (earlyRuntimeError && /streaming-json line exceeded/.test(earlyRuntimeError.message)) {
+      yield* emit(input.translator.fail(`${input.spawnName} runtime error: ${earlyRuntimeError.message}`));
+      return;
+    }
     if (earlyRuntimeError && input.child.exitCode === null && input.child.signalCode === null) {
       yield* emit(input.translator.fail(`${input.spawnName} runtime error: ${earlyRuntimeError.message}`));
       return;
@@ -540,7 +575,7 @@ async function* iterateEvents(input: {
     }
     if (exitCode !== 0 && exitCode !== null) {
       if (!terminal || input.failNonzeroAfterTerminal) {
-        const stderrText = input.stderr.snapshot().trim();
+        const stderrText = stripTerminalText(input.stderr.snapshot()).trim();
         const detail = stderrText ? `: ${stderrText.slice(0, 500)}` : '';
         yield* emit(input.translator.fail(`${input.spawnName} exited with code ${exitCode}${detail}`));
       }
@@ -580,6 +615,11 @@ async function within<T>(work: Promise<T>, timeoutMs: number): Promise<T | false
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/** Signal the detached process group, falling back to the single pid on ESRCH. */
+function signalChild(child: CliChild, signal: NodeJS.Signals, detached: boolean): boolean {
+  return signalProcessTree(child, signal, detached);
 }
 
 function isExternalInterruptSignal(signal: NodeJS.Signals | string | null | undefined): boolean {

@@ -1,6 +1,6 @@
 import { EventEmitter, getEventListeners } from 'node:events';
 import { PassThrough } from 'node:stream';
-import { chmod, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -835,7 +835,10 @@ setInterval(() => {}, 1000);
       const promptPath = record.argv[record.argv.indexOf('--append-system-prompt-file') + 1]!;
       expect(await readFile(promptPath, 'utf8')).toContain('lark-channel-bridge');
       await run.stop();
-      expect(await readFile(join(fake.dir, 'term-seen'), 'utf8')).toBe('yes');
+      // SIGKILL may interrupt writeFileSync after creation but before its write.
+      // Creation alone proves the SIGTERM handler ran; exit confirms escalation.
+      expect((await stat(join(fake.dir, 'term-seen'))).isFile()).toBe(true);
+      expect(run.signal).toBe('SIGKILL');
       expect(await run.waitForExit(1)).toBe(true);
       expect(() => process.kill(record.pid, 0)).toThrow();
       await expect(readFile(promptPath)).rejects.toMatchObject({ code: 'ENOENT' });
@@ -1238,7 +1241,7 @@ describe('CodexAdapter process contract', () => {
       LARK_CHANNEL: '1',
       CODEX_HOME: '/outer/codex-home',
     });
-    expect(record.env.APP_SECRET).toBe('inherited-secret');
+    expect(record.env.APP_SECRET).toBeUndefined();
   });
 
   it('injects the active bridge profile env while preserving Codex env overrides', async () => {
@@ -1980,8 +1983,9 @@ describe('GrokAdapter process contract', () => {
     expect(await realpath(record.cwd)).toBe(await realpath(fake.dir));
     expect(record.env.LARK_CHANNEL).toBe('1');
     expect(record.env.GROK_DISABLE_AUTOUPDATER).toBe('1');
-    expect(record.argv[0]).toBe('-p');
-    expect(record.argv[1]).toBe('hello');
+    expect(record.argv[0]).toBe('--prompt-file');
+    expect(record.argv).not.toContain('-p');
+    expect(record.argv).not.toContain('hello');
     expect(record.argv.slice(2, 4)).toEqual(['--output-format', 'streaming-json']);
     const rules = record.argv[record.argv.indexOf('--rules') + 1];
     expect(rules).toContain('lark-channel-bridge 运行约定');

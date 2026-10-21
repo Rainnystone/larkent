@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CliSignature } from '../agent/cli-signatures';
+import { cliFailureInput, type CliSignature } from '../agent/cli-signatures';
 import { descriptorFor, isAgentKind } from '../agent/registry';
 import {
   mergeAgentOptions,
@@ -20,6 +20,7 @@ import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
 import { log } from '../core/logger';
 import { RunCleanupFailed, RunRejected, SpawnFailed } from './errors';
+import { openToolRun, type ToolRun, type ToolRunContext } from '../bridge-tools/server';
 
 export interface RunExecutorDeps {
   agent: AgentAdapter;
@@ -38,6 +39,7 @@ export interface RunExecutorDeps {
 }
 
 export interface SubmitRunInput {
+  toolContext?: ToolRunContext;
   scopeId: string;
   policy: RunPolicyAllow;
   resumeHandle?: string;
@@ -143,9 +145,22 @@ export class RunExecutor {
           },
         )
       : undefined;
+    let tools: ToolRun | undefined;
+    try {
+      if (input.toolContext) tools = await openToolRun({
+        ...input.toolContext,
+        runType: input.promptVariant === 'automation' ? 'automation' : 'im',
+      });
+    } catch (error) {
+      release();
+      releaseScope();
+      throw new SpawnFailed('bridge tool connection failed', error);
+    }
+    const closeTools = (): Promise<void> => tools?.close() ?? Promise.resolve();
     const runOptions = {
       runId,
       prompt: input.policy.prompt,
+      ...(tools ? { toolEnv: tools.env } : {}),
       cwd: input.policy.cwdRealpath,
       resumeHandle: input.resumeHandle,
       model: input.model,
@@ -160,12 +175,14 @@ export class RunExecutor {
     try {
       await this.agent.prepareRun?.(runOptions);
     } catch (err) {
+      await closeTools();
       release();
       releaseScope();
       if (err instanceof SpawnFailed) throw err;
       throw new SpawnFailed('agent prepare failed', err, 'agent-prepare-failed');
     }
     if (!input.bypassPool && this.activeRuns.newRunsPaused()) {
+      await closeTools();
       release();
       releaseScope();
       throw new RunRejected(
@@ -176,6 +193,7 @@ export class RunExecutor {
     try {
       run = this.agent.run(runOptions);
     } catch (err) {
+      await closeTools();
       release();
       releaseScope();
       throw new SpawnFailed('agent spawn failed', err);
@@ -202,17 +220,20 @@ export class RunExecutor {
     let stopping: Promise<void> | undefined;
     let settled = false;
     const stopChild = (): Promise<void> => {
+      void closeTools().catch(() => {});
       stopping ??= (async () => { await rawRun.stop(); })();
       // A forced stop can reject while the graceful wait is still pending.
       void stopping.catch(() => {});
       return stopping;
     };
     const finish = (forceStop: boolean): Promise<void> => {
+      const toolsClosed = closeTools();
       if (forceStop && !settled) {
         requestStop(handle, { type: 'subscriber-abandoned' });
         stopChild();
       }
       finishing ??= (async () => {
+        await toolsClosed;
         if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
           log.warn('run', 'post-done-exit-timeout', {
             ...dimensions, graceMs: this.postDoneExitGraceMs,
@@ -252,6 +273,7 @@ export class RunExecutor {
     try {
       handle = this.activeRuns.register(input.scopeId, ownedRun);
     } catch (err) {
+      await closeTools();
       // No owner was registered, but the spawned child still owns its slot.
       await rawRun.stop();
       if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
@@ -321,12 +343,11 @@ function observeRunEvents(
         if (event.type === 'error') {
           const stopRequest = opts.handle().stopRequest ?? stopRequestFromTerminal(event);
           const signatures = opts.stderrSignatures?.();
-          const stderrTail = opts.handle().run.stderrSnapshot ?? event.message;
+          const failure = cliFailureInput(opts.handle().run.stderrSnapshot, event.message, signatures);
           const outcome = deriveRunOutcome({
             stopRequest: opts.handle().stopRequest,
             terminalEvent: event,
-            stderrTail,
-            signatures,
+            ...failure,
             exit: opts.handle().run.exit,
             signal: opts.handle().run.signal,
           });

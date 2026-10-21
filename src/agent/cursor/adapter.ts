@@ -1,5 +1,5 @@
 import { detectCursorBinary } from './detection';
-import { mergeProcessEnv } from '../../platform/spawn';
+import { agentSpawnEnv } from '../spawn-env';
 import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
@@ -105,7 +105,7 @@ export class CursorAdapter implements AgentAdapter {
         ...(parsed.sandbox ? { sandbox: parsed.sandbox } : {}),
       }),
       cwd: opts.cwd,
-      env: mergeProcessEnv(process.env, buildLarkChannelEnv(this.larkChannel)),
+      env: agentSpawnEnv(process.env, buildLarkChannelEnv(this.larkChannel, opts.toolEnv)),
       translator: wrapParsedTranslator(new CursorJsonlTranslator(), 'cursor'),
       stopGraceMs: opts.stopGraceMs ?? this.defaultStopGraceMs,
       spawnName: 'cursor',

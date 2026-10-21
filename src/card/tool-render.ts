@@ -1,4 +1,7 @@
+import { stripVTControlCharacters } from 'node:util';
+import { bridgeToolLabel, hasCompoundShellInput } from './bridge-tool-call';
 import type { ToolEntry } from './run-state';
+import { toolCommandInput } from './tool-command';
 
 const HEADER_SUMMARY_MAX = 80;
 const BODY_FIELD_MAX = 600;
@@ -12,13 +15,25 @@ const OUTPUT_MAX = 1200;
  */
 const BODY_TOTAL_MAX = 2500;
 
+export function visibleBridgeLabel(tool: ToolEntry): string | undefined {
+  return tool.bridgeLabel ?? bridgeToolLabel(tool.input);
+}
+
+export function preserveShellToolDetails(tool: ToolEntry): boolean {
+  return !visibleBridgeLabel(tool) && hasCompoundShellInput(tool.input);
+}
+
 export function toolHeaderText(tool: ToolEntry): string {
   const icon = tool.status === 'done' ? '✅' : tool.status === 'error' ? '❌' : '⏳';
+  const bridge = visibleBridgeLabel(tool);
+  if (bridge) return `${icon} **${stripVTControlCharacters(bridge)}**`;
+  const name = stripVTControlCharacters(tool.name);
   const summary = summarizeInput(tool.name, tool.input);
-  return summary ? `${icon} **${tool.name}** — ${summary}` : `${icon} **${tool.name}**`;
+  return summary ? `${icon} **${name}** — ${summary}` : `${icon} **${name}**`;
 }
 
 export function toolBodyMd(tool: ToolEntry): string {
+  if (visibleBridgeLabel(tool)) return '';
   const parts: string[] = [];
   const inputMd = renderInput(tool);
   if (inputMd) parts.push(inputMd);
@@ -36,7 +51,7 @@ export function toolBodyMd(tool: ToolEntry): string {
     parts.push('_运行中…_');
   }
 
-  const body = parts.join('\n\n');
+  const body = stripVTControlCharacters(parts.join('\n\n'));
   if (body.length <= BODY_TOTAL_MAX) return body;
   return `${body.slice(0, BODY_TOTAL_MAX)}…\n\n_（body 已截断,完整内容查 \`/doctor\` 或日志）_`;
 }
@@ -47,7 +62,7 @@ function summarizeInput(name: string, input: unknown): string {
   const pick = (key: string, max = HEADER_SUMMARY_MAX): string => {
     const v = rec[key];
     if (typeof v !== 'string') return '';
-    const oneLine = v.replace(/\s+/g, ' ').trim();
+    const oneLine = stripVTControlCharacters(v).replace(/\s+/g, ' ').trim();
     return oneLine.length > max ? `${oneLine.slice(0, max)}…` : oneLine;
   };
   switch (name) {
@@ -79,15 +94,14 @@ function summarizeInput(name: string, input: unknown): string {
 
 function renderInput(tool: ToolEntry): string {
   const input = tool.input;
+  const commandInput = toolCommandInput(input);
+  const command = Array.isArray(commandInput) ? commandInput.join('\n') : commandInput;
+  if (command) return `**Command**\n\`\`\`bash\n${truncate(command, BODY_FIELD_MAX)}\n\`\`\``;
   if (!input || typeof input !== 'object') return '';
   const rec = input as Record<string, unknown>;
   const str = (k: string): string => (typeof rec[k] === 'string' ? rec[k] as string : '');
 
   switch (tool.name) {
-    case 'Bash': {
-      const cmd = str('command');
-      return cmd ? `**Command**\n\`\`\`bash\n${truncate(cmd, BODY_FIELD_MAX)}\n\`\`\`` : '';
-    }
     case 'Read':
     case 'Edit':
     case 'Write':
@@ -120,5 +134,6 @@ function shortenPath(p: string): string {
 }
 
 function truncate(s: string, max: number): string {
-  return s.length > max ? `${s.slice(0, max)}…` : s;
+  const text = stripVTControlCharacters(s);
+  return text.length > max ? `${text.slice(0, max)}…` : text;
 }

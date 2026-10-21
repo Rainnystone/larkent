@@ -9,6 +9,9 @@ import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { startRunFlow } from '../bot/run-flow';
+import { createIdleWatchdog } from '../bot/idle-watchdog';
+import { shouldDeliverAgentEvent } from '../bot/run-outcome';
+import { getRunIdleTimeoutMs } from '../config/schema';
 import { evaluateAccess, isAccessFenceEnabled } from '../policy/access';
 import { describeMeetingError } from './manager';
 import type { MeetingSession } from './session';
@@ -388,15 +391,36 @@ async function runMeetingAgent(
     return result.rejectReason.userVisible;
   }
 
+  const handle = result.execution.handle;
+  const idleTimeoutMs = getRunIdleTimeoutMs(controls.cfg ?? controls.profileConfig);
+  const watchdog = handle
+    ? createIdleWatchdog({
+        handle,
+        idleTimeoutMs,
+        scope: scopeId,
+      })
+    : undefined;
   let answer = '';
-  for await (const event of result.execution.subscribe()) {
-    const chunk = textOf(event);
-    if (chunk) answer += chunk;
-    if (event.type === 'error') {
-      log.warn('meeting', 'run-error', { meetingId: session.meetingId });
+  try {
+    for await (const event of result.execution.subscribe()) {
+      if (handle && !shouldDeliverAgentEvent(handle, event)) continue;
+      watchdog?.noteDelivered(event);
+      const chunk = textOf(event);
+      if (chunk) answer += chunk;
+      if (event.type === 'error') {
+        log.warn('meeting', 'run-error', { meetingId: session.meetingId });
+      }
     }
+  } finally {
+    watchdog?.dispose();
   }
-  return answer.trim();
+  answer = answer.trim();
+  if (handle?.stopRequest?.type === 'bridge-idle-watchdog') {
+    const minutes = Math.max(1, Math.round((idleTimeoutMs ?? 60_000) / 60_000));
+    const notice = `_${minutes} 分钟无响应,已自动终止_`;
+    return answer ? `${answer}\n\n${notice}` : notice;
+  }
+  return answer;
 }
 
 /** Collect assistant text from the agent event stream. */

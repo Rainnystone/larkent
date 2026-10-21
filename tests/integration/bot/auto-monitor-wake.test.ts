@@ -71,7 +71,7 @@ describe('automation monitor wake hook', () => {
       paused: false,
       nextFireAt: fireAt,
       lastFireAt: 0,
-      lastStatus: 'ok',
+      lastStatus: 'never',
     });
     const live = h.store.get(1)!;
     expect(JSON.stringify(status)).not.toContain('secret ping body');

@@ -58,6 +58,19 @@ export const NETWORK_TRANSIENT_SIGNATURES: readonly CliSignature[] = Object.free
   },
 ]);
 
+/** Combine both failure sources without changing an existing stderr match. */
+export function cliFailureInput(
+  stderrSnapshot: string | undefined,
+  terminalMessage: string | undefined,
+  signatures: readonly CliSignature[] | undefined,
+): { stderrTail: string; signatures: readonly CliSignature[] | undefined } {
+  const stderrTail = [stderrSnapshot, terminalMessage]
+    .filter((text): text is string => Boolean(text?.trim()))
+    .join('\n');
+  const existing = matchCliSignature(stderrSnapshot, signatures);
+  return { stderrTail, signatures: existing ? [existing] : signatures };
+}
+
 export function matchCliSignature(
   stderrTail: string | undefined,
   signatures: readonly CliSignature[] | undefined,

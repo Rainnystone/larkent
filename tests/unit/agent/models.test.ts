@@ -19,7 +19,8 @@ describe('agent model catalog', () => {
     expect(claude.map((m) => m.value)).not.toContain('gpt-5-codex');
     const grok = supportedModels('grok');
     expect(grok[0]?.value).toBe(DEFAULT_MODEL);
-    expect(grok.map((m) => m.value)).toContain('grok-build');
+    expect(grok.map((m) => m.value)).toContain('grok-4.7');
+    expect(grok.map((m) => m.value)).not.toContain('grok-build');
     expect(grok.map((m) => m.value)).not.toContain('gpt-5-codex');
     const cursor = supportedModels('cursor');
     expect(cursor[0]?.value).toBe(DEFAULT_MODEL);

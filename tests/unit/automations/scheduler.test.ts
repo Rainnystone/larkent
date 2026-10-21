@@ -539,7 +539,7 @@ describe('automation scheduler', () => {
     });
     expect(h.store.get(1)?.lastStatus).not.toBe('running');
     expect(await readStatus(h.statusPath)).toMatchObject({
-      items: [expect.objectContaining({ paused: true, lastFireAt: 0, lastStatus: 'ok' })],
+      items: [expect.objectContaining({ paused: true, lastFireAt: 0, lastStatus: 'never' })],
     });
   });
 
@@ -1358,7 +1358,7 @@ describe('automation scheduler', () => {
       ]);
       const status = await readStatus(h.statusPath);
       expect(status.items).toEqual([
-        expect.objectContaining({ id: 1, lastStatus: 'ok', nextFireAt }),
+        expect.objectContaining({ id: 1, lastStatus: 'never', nextFireAt }),
       ]);
 
       writes.doc = 0;

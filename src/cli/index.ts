@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import pkg from '../../package.json';
+import { runToolCli } from '../bridge-tools/client';
 import { formatAgentPreflightDiagnostic, getAgentPreflightDiagnostic } from '../agent/preflight';
 import { agentKindChoices } from '../agent/registry';
 import { runMigrate } from './commands/migrate';
@@ -36,6 +37,11 @@ program
   .version(pkg.version, '-v, --version');
 
 // === process-level commands (work directly on bridge processes) ===
+
+program.command('tool')
+  .description('Run-scoped bridge tool: one versioned JSON request on stdin, one JSON result on stdout')
+  .option('--schema', 'print the machine-readable request schema')
+  .action(runToolCli);
 
 program
   .command('run')

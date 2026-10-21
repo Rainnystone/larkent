@@ -55,6 +55,86 @@ describe('AutomationsStore', () => {
     await expect(readFile(statusPath, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('loads lastFireAt 0 and lastStatus ok as never without changing other fields', async () => {
+    const { path, logPath, statusPath } = await fixture();
+    const saved = {
+      id: 1,
+      taskType: 'reminder',
+      schedule: { kind: 'one-shot', fireAt: 1_760_000_600_000 },
+      timezone: 'Asia/Shanghai',
+      startAt: 1_760_000_000_000,
+      endAt: 1_760_000_600_000,
+      nextFireAt: 1_760_000_600_000,
+      lastFireAt: 0,
+      paused: false,
+      missed: 0,
+      lastStatus: 'ok',
+      fireHistory: [],
+      chatId: 'oc_group',
+      createdBy: 'ou_alice',
+      name: '交周报',
+      taskText: '提醒交周报',
+      missedInstants: [],
+      skippedInstants: [],
+    };
+    await writeFile(path, `${JSON.stringify({
+      schemaVersion: 2,
+      nextId: 4,
+      items: [
+        saved,
+        { ...saved, id: 2, name: '已触发', lastFireAt: 1_760_000_300_000, lastStatus: 'ok' },
+        { ...saved, id: 3, name: '未触发失败', lastStatus: 'failed' },
+      ],
+      drafts: [],
+      started: [],
+      boards: [],
+      operations: [],
+    })}\n`);
+    const store = new AutomationsStore({ path, logPath, statusPath, now: () => 1_760_000_000_000 });
+    await store.load();
+    expect(store.list()).toEqual([
+      expect.objectContaining({
+        id: 1,
+        name: '交周报',
+        taskText: '提醒交周报',
+        timezone: 'Asia/Shanghai',
+        startAt: 1_760_000_000_000,
+        endAt: 1_760_000_600_000,
+        nextFireAt: 1_760_000_600_000,
+        lastFireAt: 0,
+        paused: false,
+        missed: 0,
+        lastStatus: 'never',
+      }),
+      expect.objectContaining({ id: 2, name: '已触发', lastFireAt: 1_760_000_300_000, lastStatus: 'ok' }),
+      expect.objectContaining({ id: 3, name: '未触发失败', lastFireAt: 0, lastStatus: 'failed' }),
+    ]);
+    expect(store.listCommitted()[0]?.lastStatus).toBe('never');
+  });
+
+  it('records lastStatus never on create, ok after a successful fire, and failed after a failed fire', async () => {
+    const { store } = await fixture();
+    await store.load();
+    const created = await store.create(reminderInput());
+    expect(created.lastStatus).toBe('never');
+    expect(store.get(created.id)?.lastStatus).toBe('never');
+    expect(store.listCommitted()).toEqual([
+      expect.objectContaining({ id: created.id, lastFireAt: 0, lastStatus: 'never' }),
+    ]);
+
+    const okItem = await store.create(reminderInput({ name: 'ok-fire' }));
+    const okKey = `${okItem.id}@${okItem.nextFireAt}`;
+    await store.markStarted(okKey);
+    expect(await store.settleFire(okItem.id, 'ok', okKey)).toBe(true);
+    expect(store.get(okItem.id)?.lastStatus).toBe('ok');
+
+    const failedItem = await store.create(reminderInput({ name: 'failed-fire' }));
+    const failedKey = `${failedItem.id}@${failedItem.nextFireAt}`;
+    await store.markStarted(failedKey);
+    expect(await store.settleFire(failedItem.id, 'failed', failedKey)).toBe(true);
+    expect(store.get(failedItem.id)?.lastStatus).toBe('failed');
+  });
+
   it('assigns never-reused monotonic ids across delete and restart (delete 3, create → 4)', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     await store.load();
@@ -120,13 +200,13 @@ describe('AutomationsStore', () => {
   it('refuses a future schemaVersion without overwriting the original file', async () => {
     const { path, logPath, statusPath, store } = await fixture();
     const future = `${JSON.stringify({
-      schemaVersion: 2,
+      schemaVersion: 3,
       nextId: 9,
       items: [{ id: 8, taskType: 'reminder', name: 'keep-me' }],
     }, null, 2)}\n`;
     await writeFile(path, future);
 
-    await expect(store.load()).rejects.toThrow(/schemaVersion: 2/);
+    await expect(store.load()).rejects.toThrow(/schemaVersion: 3/);
     expect(await readFile(path, 'utf8')).toBe(future);
     await expect(store.create(reminderInput())).rejects.toBeDefined();
     expect(await readFile(path, 'utf8')).toBe(future);
@@ -292,7 +372,7 @@ describe('AutomationsStore', () => {
         paused: false,
         nextFireAt: 1_760_000_600_000,
         lastFireAt: 0,
-        lastStatus: 'ok',
+        lastStatus: 'never',
         endAt: 1_760_000_600_000,
         missed: 0,
       }],

@@ -35,7 +35,7 @@ describe('stall check after recovery', () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.agent.started;
     const run = h.agent.manual[0]!;
     run.push({ type: 'text', delta: 'WORKING' });
     await waitFor(() => rendered(h.channel).includes('WORKING'));
@@ -60,7 +60,7 @@ describe('stall check after recovery', () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.agent.started;
     const run = h.agent.manual[0]!;
     run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
     await waitFor(() => rendered(h.channel).includes('long_tool'));
@@ -87,7 +87,7 @@ describe('stall check after recovery', () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.agent.started;
     const run = h.agent.manual[0]!;
     run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
     await waitFor(() => rendered(h.channel).includes('long_tool'));
@@ -113,7 +113,7 @@ describe('stall check after recovery', () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.agent.started;
     const run = h.agent.manual[0]!;
     run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
     await waitFor(() => rendered(h.channel).includes('long_tool'));
@@ -145,7 +145,7 @@ describe('stall check after recovery', () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.agent.started;
     const run = h.agent.manual[0]!;
     run.push({ type: 'text', delta: 'WORKING' });
     await waitFor(() => rendered(h.channel).includes('WORKING'));
@@ -227,11 +227,14 @@ async function harness() {
 
 class StreamingFakeAgent extends FakeAgentAdapter {
   readonly manual: ReturnType<typeof manualRun>[] = [];
+  private markStarted!: () => void;
+  readonly started = new Promise<void>(resolve => { this.markStarted = resolve; });
   constructor() { super({ id: 'claude' }); }
   override run(opts: AgentRunOptions): AgentRun {
     const recorded = super.run(opts);
     const manual = manualRun(recorded);
     this.manual.push(manual);
+    this.markStarted();
     return manual.run;
   }
 }

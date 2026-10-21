@@ -8,6 +8,7 @@ import { renderSettledCard } from './card-body';
 import { monotonicCardSequence } from './card-sequence';
 import type { AutomationDraft, AutomationsStore } from './store';
 
+export const DRAFT_SETTLED_SUPERSEDED = '已被新卡取代';
 export const DRAFT_SETTLED_CANCELLED = '已取消';
 export const DRAFT_SETTLED_EXPIRED = '已过期';
 export const DRAFT_SETTLED_END_CHOSEN = '已指定结束时间';
@@ -16,6 +17,10 @@ export const DRAFT_SETTLE_RETRY_MIN_MS = 1_000;
 
 export function draftConfirmedStatus(id: number): string {
   return `已确认 #${id}`;
+}
+
+export function draftSameNameExistsStatus(id: number): string {
+  return `已有同名任务 #${id}，此确认已失效`;
 }
 
 export function draftDeletedStatus(id: number): string {
@@ -28,6 +33,10 @@ export function draftReplacedStatus(oldId: number, newId: number): string {
 
 export function draftTargetGoneStatus(id: number): string {
   return `#${id} 已不存在`;
+}
+
+export function draftTargetChangedStatus(id: number): string {
+  return `#${id} 状态已变化，请重新查询。`;
 }
 
 export function automationSettledCard(status: string): object {
@@ -56,9 +65,11 @@ export async function settleDraftCard(
     if (store && live?.cardId === draft.cardId) {
       await store.updateDraft(draft.draftId, { sequence });
     }
+    log.info('auto', 'draft-card-settled', { draftId: draft.draftId, status });
     return;
   }
   await channel.updateCard(draft.cardMessageId, card);
+  log.info('auto', 'draft-card-settled', { draftId: draft.draftId, status });
 }
 
 export async function expireDueDraftCards(input: {
@@ -71,11 +82,11 @@ export async function expireDueDraftCards(input: {
     } catch (error) {
       logDraftCardFail(draft.draftId, error);
       if (isPermanentDraftCardError(error)) {
-        await input.store.takeDraft(draft.draftId);
+        await input.store.takeDraft(draft.draftId, 'draft-expired');
       }
       continue;
     }
-    await input.store.takeDraft(draft.draftId);
+    await input.store.takeDraft(draft.draftId, 'draft-expired');
   }
 }
 
@@ -122,9 +133,9 @@ function wait(ms: number): Promise<void> {
 
 function logDraftCardFail(draftId: string, error: unknown): void {
   const api = readCardApiError(error);
-  log.fail('auto', error, {
-    event: 'draft-card',
+  log.warn('auto', 'draft-card-settle-failed', {
     draftId,
+    err: error instanceof Error ? error.message : String(error),
     ...(api.code !== undefined ? { code: api.code } : {}),
     ...(api.msg !== undefined ? { msg: api.msg } : {}),
   });

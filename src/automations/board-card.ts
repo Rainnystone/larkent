@@ -79,6 +79,8 @@ function formatEnd(item: AutomationItem): string {
 export function automationStatusLabel(item: AutomationItem): string {
   if (item.paused) return '已暂停';
   switch (item.lastStatus) {
+    case 'never':
+      return '尚未运行';
     case 'ok':
       return '待触发';
     case 'running':

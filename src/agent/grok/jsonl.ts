@@ -1,4 +1,6 @@
 import type { AgentEvent } from '../types';
+import { stripTerminalText } from '../terminal-text';
+import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
 
 export type GrokFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
@@ -23,14 +25,15 @@ export interface ProtocolDriftState {
  * `text` lines are incremental chunks of the same answer, not complete
  * messages. They are concatenated and held back as `final_text` on `end`
  * (same hold-back as kimi/codex, so showToolCalls:false sends one reply).
- * Pre-tool commentary and `thought` lines are dropped rather than streamed,
- * so Feishu only gets the final answer unless the operator turns tools on.
+ * Text that arrived before a tool call is kept and separated from the later
+ * answer. `thought` lines become `thinking` deltas and are not part of that
+ * answer.
  */
 export class GrokJsonlTranslator {
   private sessionId: string | undefined;
   private terminal = false;
   private pendingText = '';
-  private readonly startedToolCalls = new Set<string>();
+  private readonly startedToolCalls = new Map<string, string>();
   private lastUsage: AgentEvent | undefined;
   private drift: ProtocolDriftState = {
     unknownEvents: 0,
@@ -45,17 +48,21 @@ export class GrokJsonlTranslator {
     }
 
     switch (raw.type) {
-      case 'thought':
-        return [];
+      case 'thought': {
+        const delta = stringValue(raw.data) ?? stringValue(raw.text);
+        if (!delta) return [];
+        return [{ type: 'thinking', delta }];
+      }
       case 'text':
         return this.queueText(stringValue(raw.data) ?? stringValue(raw.text));
       case 'tool_call':
-        this.pendingText = '';
+        this.keepPendingBeforeTool();
         return this.translateToolCall(raw);
       case 'tool_call_update':
         return this.translateToolCallUpdate(raw);
       case 'usage':
-        return this.translateUsage(raw);
+        this.rememberUsage(raw);
+        return [];
       case 'end':
         return this.translateEnd(raw);
       case 'error':
@@ -82,7 +89,7 @@ export class GrokJsonlTranslator {
         },
       ]);
     }
-    return [...this.finalTextEvents(), this.doneEvent(reason)];
+    return [...this.takeUsage(), ...this.finalTextEvents(), this.doneEvent(reason)];
   }
 
   fail(message: string): AgentEvent[] {
@@ -107,6 +114,12 @@ export class GrokJsonlTranslator {
     return [];
   }
 
+  /** Keep commentary that arrived before a tool instead of dropping it. */
+  private keepPendingBeforeTool(): void {
+    if (!this.pendingText) return;
+    if (!/\n\s*$/.test(this.pendingText)) this.pendingText += '\n\n';
+  }
+
   private translateToolCall(raw: Record<string, unknown>): AgentEvent[] {
     const id = stringValue(raw.toolCallId) ?? stringValue(raw.id);
     const name = stringValue(raw.toolName) ?? stringValue(raw.name) ?? stringValue(raw.title);
@@ -116,7 +129,7 @@ export class GrokJsonlTranslator {
     }
     const events: AgentEvent[] = [];
     if (!this.startedToolCalls.has(id)) {
-      this.startedToolCalls.add(id);
+      this.startedToolCalls.set(id, name);
       events.push({
         type: 'tool_use',
         id,
@@ -139,11 +152,24 @@ export class GrokJsonlTranslator {
     }
     const status = stringValue(raw.status);
     if (status === 'in_progress' || status === 'pending') return [];
-    if (status === 'completed' || status === 'failed' || status === 'error' || status === undefined) {
-      if (!this.startedToolCalls.has(id)) this.drift.anomalies++;
-      return this.toolResult(id, raw, status === 'failed' || status === 'error');
-    }
-    return [];
+    const finished = status === 'completed' || status === 'failed' || status === 'error';
+    // Grok 1.0.41 sends a statusless metadata update (kind/title/rawInput, no
+    // rawOutput) before `completed`. Missing status is a result only when that
+    // update itself carries rawOutput (older builds that omit status entirely).
+    this.refineStartedTool(id, raw);
+    if (!finished && !(status === undefined && raw.rawOutput != null)) return [];
+    if (!this.startedToolCalls.has(id)) this.drift.anomalies++;
+    return this.toolResult(id, raw, status === 'failed' || status === 'error');
+  }
+
+  /** Keep the shell tool name. A progress title like `Execute \`ls …\`` is not one. */
+  private refineStartedTool(id: string, raw: Record<string, unknown>): void {
+    const current = this.startedToolCalls.get(id);
+    if (current === undefined) return;
+    const next = explicitToolName(raw);
+    if (!next || next === current) return;
+    if (isShellTool(current) && !isShellTool(next)) return;
+    this.startedToolCalls.set(id, next);
   }
 
   private toolResult(
@@ -151,22 +177,32 @@ export class GrokJsonlTranslator {
     raw: Record<string, unknown>,
     isError: boolean,
   ): AgentEvent[] {
+    const name = this.startedToolCalls.get(id);
     this.startedToolCalls.delete(id);
+    const output = raw.rawOutput ?? raw.content ?? raw.output;
+    // "completed" describes the tool lifecycle; a shell process may still fail.
+    const exitCode = isShellTool(name) && isRecord(output)
+      ? numberValue(output.exitCode) ?? numberValue(output.exit_code)
+      : undefined;
     return [
       {
         type: 'tool_result',
         id,
-        output: serializeToolOutput(raw.rawOutput ?? raw.content ?? raw.output),
-        isError,
+        output: serializeToolOutput(output),
+        isError: isError || (exitCode !== undefined && exitCode !== 0),
       },
     ];
   }
 
-  private translateUsage(raw: Record<string, unknown>): AgentEvent[] {
+  private rememberUsage(raw: Record<string, unknown>): void {
     const usage = this.usageEvent(raw);
-    if (!usage) return [];
-    this.lastUsage = usage;
-    return [usage];
+    if (usage) this.lastUsage = usage;
+  }
+
+  private takeUsage(): AgentEvent[] {
+    const usage = this.lastUsage;
+    this.lastUsage = undefined;
+    return usage ? [usage] : [];
   }
 
   private translateEnd(raw: Record<string, unknown>): AgentEvent[] {
@@ -176,8 +212,8 @@ export class GrokJsonlTranslator {
     if (sessionId) this.sessionId = sessionId;
     const events: AgentEvent[] = [];
     if (sessionId) events.push({ type: 'system', resumeHandle: sessionId });
-    const usage = this.usageEvent(raw);
-    if (usage && !sameUsage(usage, this.lastUsage)) events.push(usage);
+    this.rememberUsage(raw);
+    events.push(...this.takeUsage());
     events.push(...this.finalTextEvents());
     events.push(this.doneEvent('normal'));
     return events;
@@ -202,8 +238,10 @@ export class GrokJsonlTranslator {
       numberValue(usage.reasoning_tokens) ?? numberValue(usage.reasoningOutputTokens);
     const costUsd =
       numberValue(raw.total_cost_usd) ??
+      numberValue(usage.total_cost_usd) ??
       numberValue(usage.cost_usd) ??
-      numberValue(usage.costUsd);
+      numberValue(usage.costUsd) ??
+      numberValue(usage.cost);
     if (
       inputTokens === undefined &&
       outputTokens === undefined &&
@@ -224,7 +262,7 @@ export class GrokJsonlTranslator {
   }
 
   private finalTextEvents(): AgentEvent[] {
-    const content = this.pendingText;
+    const content = stripTerminalText(this.pendingText);
     this.pendingText = '';
     if (!content || isControlTokenOnly(content)) return [];
     return [{ type: 'final_text', content }];
@@ -240,7 +278,7 @@ export class GrokJsonlTranslator {
 
   private flushPendingText(events: AgentEvent[]): AgentEvent[] {
     if (events.length === 0 || !this.pendingText) return events;
-    const pending = this.pendingText;
+    const pending = stripTerminalText(this.pendingText);
     this.pendingText = '';
     if (isControlTokenOnly(pending)) return events;
     return [{ type: 'text', delta: pending.endsWith('\n') ? pending : `${pending}\n\n` }, ...events];
@@ -252,18 +290,61 @@ function isControlTokenOnly(value: string): boolean {
   return /^<\|[a-z_]+\|>$/.test(value.trim());
 }
 
+const UTF8_DECODER = new TextDecoder('utf-8');
+
 function serializeToolOutput(value: unknown): string {
   if (value === undefined || value === null) return '';
-  if (typeof value === 'string') return value;
+  const readFile = readFileContent(value);
+  if (readFile !== undefined) return stripAnsi(readFile);
+  if (typeof value === 'string') return stripAnsi(value);
+  const decoded = decodeUtf8Bytes(value);
+  if (decoded !== undefined) return stripAnsi(decoded);
+  if (isRecord(value) && !Array.isArray(value) && !(value instanceof Uint8Array)) {
+    const wrapped = decodeUtf8Bytes(value.output) ?? decodeUtf8Bytes(value.content);
+    if (wrapped !== undefined) return stripAnsi(wrapped);
+  }
   try {
-    return JSON.stringify(value);
+    // Clean native strings before JSON escaping would turn ESC into visible
+    // "\u001b" text that the card renderer can no longer recognize as ANSI.
+    return JSON.stringify(value, (_key, part) => typeof part === 'string' ? stripAnsi(part) : part);
   } catch {
-    return String(value);
+    return stripAnsi(String(value));
   }
 }
 
-function sameUsage(a: AgentEvent, b: AgentEvent | undefined): boolean {
-  return Boolean(b && JSON.stringify(a) === JSON.stringify(b));
+function stripAnsi(value: string): string {
+  // Tool text, including the Node NO_COLOR warning Grok injects itself,
+  // plus ANSI, BEL, and `\r` progress overwrites.
+  return stripTerminalText(value);
+}
+
+function decodeUtf8Bytes(value: unknown): string | undefined {
+  const bytes = asUtf8Bytes(value);
+  if (!bytes) return undefined;
+  return UTF8_DECODER.decode(bytes);
+}
+
+function asUtf8Bytes(value: unknown): Uint8Array | undefined {
+  if (value instanceof Uint8Array) return value;
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  const bytes = new Uint8Array(value.length);
+  for (let i = 0; i < value.length; i++) {
+    const n = value[i];
+    if (!isByteInt(n)) return undefined;
+    bytes[i] = n;
+  }
+  return bytes;
+}
+
+function isByteInt(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255;
+}
+
+function readFileContent(value: unknown): string | undefined {
+  if (!isRecord(value) || value.type !== 'ReadFile') return undefined;
+  const file = value.FileContent;
+  if (!isRecord(file) || typeof file.content !== 'string') return undefined;
+  return file.content;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -272,6 +353,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+function explicitToolName(raw: Record<string, unknown>): string | undefined {
+  const meta = isRecord(raw._meta) ? raw._meta['x.ai/tool'] : undefined;
+  const metaName = isRecord(meta) ? stringValue(meta.name) : undefined;
+  return stringValue(raw.toolName) ?? stringValue(raw.name) ?? metaName;
 }
 
 function numberValue(value: unknown): number | undefined {

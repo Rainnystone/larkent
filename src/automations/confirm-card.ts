@@ -1,6 +1,14 @@
 import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
-import { monthlyFireCount, nextFires, readSchedule, type Schedule } from './schedule';
+import {
+  EXACT_FIRE_COUNT_CAP,
+  monthlyFireCount,
+  nextFires,
+  readSchedule,
+  scheduleOccurrenceCount,
+  type Schedule,
+} from './schedule';
 import { zonedParts } from './zoned-time';
+import { automationTargetRevision } from './store';
 import type { AutomationItem, AutomationTargetSnapshot, AutomationTaskType } from './store';
 
 function escapeMd(s: string): string {
@@ -81,10 +89,6 @@ function describeStart(schedule: Schedule, timezone: string, now: number): strin
   }
 }
 
-const SHORT_HORIZON_MS = 30 * 24 * 60 * 60_000;
-/** Above a month of the 10-minute floor, so a horizon under 30 days is not truncated. */
-const SHORT_HORIZON_FIRE_CAP = 30 * 24 * 6 + 1;
-
 function frequencyLine(schedule: Schedule, now: number): string | undefined {
   switch (schedule.kind) {
     case 'one-shot':
@@ -92,11 +96,13 @@ function frequencyLine(schedule: Schedule, now: number): string | undefined {
     case 'daily':
     case 'weekday':
     case 'weekly':
-    case 'interval':
-      if (schedule.endAt - now < SHORT_HORIZON_MS) {
-        return `共 ${nextFires(schedule, now, SHORT_HORIZON_FIRE_CAP).length} 次`;
+    case 'interval': {
+      const counted = scheduleOccurrenceCount(schedule, now);
+      if (counted.capped) {
+        return `超过 ${EXACT_FIRE_COUNT_CAP} 次 · 约每月 ${monthlyFireCount(schedule, now)} 次`;
       }
-      return `约每月 ${monthlyFireCount(schedule, now)} 次`;
+      return `共 ${counted.count} 次`;
+    }
     default: {
       const _exhaustive: never = schedule;
       return _exhaustive;
@@ -126,7 +132,7 @@ function upcomingSection(schedule: Schedule, timezone: string, now: number): str
 export function describeIdentity(taskType: AutomationTaskType, cwd?: string): string {
   if (taskType === 'reminder') return '本 bot 发送提醒（不跑 agent）';
   const cwdNote = cwd ? '；已快照工作目录' : '';
-  return `本 profile 的 agent，仅 bot 身份${cwdNote}；默认自动批准工具；agent 有完整 shell，这是纵深防御不是安全边界`;
+  return `本 profile 的 agent，沿用 profile 已授权的 bot/user 身份${cwdNote}；默认自动批准工具；agent 有完整 shell，这是纵深防御不是安全边界`;
 }
 
 export interface AutomationConfirmBodyInput {
@@ -200,6 +206,7 @@ export function automationTargetSnapshot(item: AutomationItem): AutomationTarget
     ? describeEnd(schedule, item.timezone)
     : (item.endAt > 0 ? formatZonedDateTime(item.timezone, item.endAt) : '无');
   return {
+    revision: automationTargetRevision(item),
     id: item.id,
     name: item.name,
     taskType: item.taskType,
@@ -238,13 +245,14 @@ export function automationReplaceCard(input: AutomationConfirmBodyInput & {
   confirmToken: string;
   rejectToken: string;
 }): object {
-  const removed = `将删除：#${input.target.id} ${escapeMd(input.target.name)} · ${escapeMd(input.target.scheduleLabel)}`;
+  const replacement = `替换：#${input.target.id} ${escapeMd(input.target.name)} · ${escapeMd(input.target.scheduleLabel)} → 新设置如下`;
+  const numberChange = `确认后原 #${input.target.id} 将由新编号取代`;
   const title = `确认替换 #${input.target.id}`;
   return card2({
     title,
     summary: title,
     elements: [
-      md(`${removed}\n\n${automationConfirmBody(input)}`),
+      md(`${replacement}\n\n${numberChange}\n\n${automationConfirmBody(input)}`),
       hr,
       confirmButtons(input.confirmToken, input.rejectToken),
     ],

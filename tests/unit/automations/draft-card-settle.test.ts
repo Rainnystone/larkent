@@ -56,7 +56,7 @@ describe('draft card settle', () => {
     expect(h.store.getDraft(draft.draftId)?.cardMessageId).toBe(sent.messageId);
     expect(h.store.getDraft(draft.draftId)?.sequence).toBeUndefined();
     expect(await draftFailEntries(h.logsDir)).toEqual([
-      expect.objectContaining({ code: 10004, msg: 'sequence invalid' }),
+      expect.objectContaining({ level: 'warn', code: 10004, msg: 'sequence invalid' }),
     ]);
   });
 
@@ -269,6 +269,7 @@ describe('draft card settle', () => {
     expect(settled).toContain('周期任务必须指定结束时间。请选择常用时长，或输入结束日期。');
     expect(settled).not.toContain('不该出现的确认正文');
     expect(settled).not.toContain('确认卡任务原文');
+    expect(settled).not.toContain('一周');
     expect(settled).not.toContain('一个月');
     expect(settled).not.toContain('end_at');
     expect(settled).not.toContain('"tag":"button"');
@@ -304,6 +305,8 @@ async function harness() {
 }
 
 const END_TOKENS: EndCardTokens = {
+  'auto.end.1w': 'auto_cb.v1.1w',
+  'auto.end.2w': 'auto_cb.v1.2w',
   'auto.end.1m': 'auto_cb.v1.1m',
   'auto.end.3m': 'auto_cb.v1.3m',
   'auto.end.eoy': 'auto_cb.v1.eoy',
@@ -371,8 +374,9 @@ async function draftFailEntries(logsDir: string): Promise<Array<{ code?: unknown
   const text = await readFile(join(logsDir, `bridge-${key}.jsonl`), 'utf8');
   return text.trim().split('\n').map((line) => JSON.parse(line) as {
     phase?: string;
-    _event?: string;
+    event?: string;
+    level?: string;
     code?: unknown;
     msg?: unknown;
-  }).filter((entry) => entry.phase === 'auto' && entry._event === 'draft-card');
+  }).filter((entry) => entry.phase === 'auto' && entry.event === 'draft-card-settle-failed');
 }

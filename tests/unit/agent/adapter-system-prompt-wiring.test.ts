@@ -196,8 +196,10 @@ describe('GrokAdapter system prompt wiring', () => {
     adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
 
     const args = argv();
-    expect(args[0]).toBe('-p');
-    expect(args[1]).toBe('hi');
+    expect(args[0]).toBe('--prompt-file');
+    expect(args).not.toContain('-p');
+    expect(args).not.toContain('hi');
+    expect(readFileSync(args[1]!, 'utf8')).toBe('hi');
     expect(args[args.indexOf('--rules') + 1]).toBe(
       buildBridgeSystemPrompt({ openId: 'ou_bot_self', name: 'Bridge' }),
     );
@@ -212,7 +214,10 @@ describe('GrokAdapter system prompt wiring', () => {
     adapter.run({ runId: 'r1', prompt: 'hi', cwd: '/tmp' });
 
     const args = argv();
-    expect(args[1]).toBe('hi');
+    expect(args[0]).toBe('--prompt-file');
+    expect(args).not.toContain('-p');
+    expect(args).not.toContain('hi');
+    expect(readFileSync(args[1]!, 'utf8')).toBe('hi');
     expect(args[args.indexOf('--rules') + 1]).toBe(buildBridgeSystemPrompt(undefined));
   });
 });
