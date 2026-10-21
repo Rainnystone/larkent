@@ -149,7 +149,23 @@ export interface AutomationsConfig {
   statusSecret?: string;
 }
 
-export const DEFAULT_AUTOMATION_TIMEZONE = 'Asia/Shanghai';
+/** IANA zone of this process, or `UTC` when Intl cannot provide a usable one. */
+export function resolveLocalTimeZone(): string {
+  try {
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (typeof timeZone !== 'string' || timeZone.length === 0) return 'UTC';
+    try {
+      new Intl.DateTimeFormat('en-US', { timeZone });
+    } catch {
+      return 'UTC';
+    }
+    return timeZone;
+  } catch {
+    return 'UTC';
+  }
+}
+
+export const DEFAULT_AUTOMATION_TIMEZONE = resolveLocalTimeZone();
 
 export const AUTOMATIONS_DEFAULTS: AutomationsConfig = {
   enabled: false,

@@ -1,10 +1,12 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createDefaultProfileConfig,
+  DEFAULT_AUTOMATION_TIMEZONE,
   normalizeProfileConfig,
+  resolveLocalTimeZone,
 } from '../../../src/config/profile-schema';
 import { createRootConfig, loadRootConfig, saveRootConfig } from '../../../src/config/profile-store';
 
@@ -21,7 +23,7 @@ afterEach(async () => {
 });
 
 describe('automations profile settings', () => {
-  it('reads unset automations as disabled reminders, disabled agent tasks, Asia/Shanghai', () => {
+  it('reads unset automations as disabled reminders, disabled agent tasks, and the default automation timezone', () => {
     const cfg = createDefaultProfileConfig({
       agentKind: 'claude',
       accounts: { app },
@@ -30,7 +32,7 @@ describe('automations profile settings', () => {
     expect(cfg.automations).toEqual({
       enabled: false,
       agentTasks: false,
-      timezone: 'Asia/Shanghai',
+      timezone: DEFAULT_AUTOMATION_TIMEZONE,
     });
   });
 
@@ -51,7 +53,7 @@ describe('automations profile settings', () => {
     expect(profile.automations).toEqual({
       enabled: true,
       agentTasks: false,
-      timezone: 'Asia/Shanghai',
+      timezone: DEFAULT_AUTOMATION_TIMEZONE,
       statusEndpoint: 'https://status.test',
       statusSecret: 'unit-status-secret',
     });
@@ -73,7 +75,7 @@ describe('automations profile settings', () => {
     expect(blank.automations).toEqual({
       enabled: true,
       agentTasks: false,
-      timezone: 'Asia/Shanghai',
+      timezone: DEFAULT_AUTOMATION_TIMEZONE,
     });
   });
 
@@ -110,7 +112,7 @@ describe('automations profile settings', () => {
     });
   });
 
-  it('treats truthy-but-not-true flags as off and invalid IANA as Asia/Shanghai', () => {
+  it('treats truthy-but-not-true flags as off and invalid IANA as the default automation timezone', () => {
     const cfg = normalizeProfileConfig({
       schemaVersion: 3,
       agentKind: 'claude',
@@ -124,7 +126,7 @@ describe('automations profile settings', () => {
     expect(cfg.automations).toEqual({
       enabled: false,
       agentTasks: false,
-      timezone: 'Asia/Shanghai',
+      timezone: DEFAULT_AUTOMATION_TIMEZONE,
     });
   });
 
@@ -142,5 +144,32 @@ describe('automations profile settings', () => {
       agentTasks: false,
       timezone: 'Europe/Berlin',
     });
+  });
+});
+
+describe('resolveLocalTimeZone', () => {
+  it('returns the Intl zone, or UTC when resolvedOptions yields an empty or invalid zone', () => {
+    expect(resolveLocalTimeZone()).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+
+    const spy = vi.spyOn(Intl.DateTimeFormat.prototype, 'resolvedOptions');
+    try {
+      spy.mockReturnValue({
+        locale: 'en-US',
+        calendar: 'gregory',
+        numberingSystem: 'latn',
+        timeZone: '',
+      });
+      expect(resolveLocalTimeZone()).toBe('UTC');
+
+      spy.mockReturnValue({
+        locale: 'en-US',
+        calendar: 'gregory',
+        numberingSystem: 'latn',
+        timeZone: 'Not/AZone',
+      });
+      expect(resolveLocalTimeZone()).toBe('UTC');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
