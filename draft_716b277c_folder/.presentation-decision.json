@@ -1,1 +1,0 @@
-{"audience":"项目维护者与技术负责人","reader_task":"判断上游未合并 PR 中哪些修复必须吸收、哪些功能值得排期，并按风险和依赖确定顺序","genre_contract":"workplace.technical_doc","adapter":null,"presentation_mode":"normal","visual_plan":{"reason":"核心信息是上游 PR 与本仓代码的逐项对照和优先级排序，用表格承载精确比较；无需额外画板或图片","blocks":[]}}
