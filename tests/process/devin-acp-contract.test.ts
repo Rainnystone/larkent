@@ -127,7 +127,9 @@ describe('DEVIN ACP adapter contract', () => {
     expect(r.exit).toBeUndefined(); await collect(r); expect(await r.waitForExit(1000)).toBe(true);
     expect(r.exit).toBe(17); expect(r.stderrSnapshot).toContain('ECONNRESET');
   });
-  it('exposes leader exit before inherited stdout pipes have closed', async () => {
+  // Windows closes the inherited stdio pipe with the leader, so the premise of
+  // this POSIX contract (a descendant still holding stdout open) cannot occur.
+  it.skipIf(process.platform === 'win32')('exposes leader exit before inherited stdout pipes have closed', async () => {
     const f = await fixture({ spawnDescendant: true, holdPipe: true, exitCode: 17 }); const r = f.run();
     const pending = collect(r);
     const until = Date.now() + 1500;
@@ -149,7 +151,9 @@ describe('DEVIN ACP adapter contract', () => {
     await iterator.next(); const pending = iterator.next();
     expect(await r.waitForExit(1)).toBe(false);
     await iterator.return!(); await pending;
-    expect(await r.waitForExit(1)).toBe(true); expect(r.signal).toBe('SIGKILL');
+    expect(await r.waitForExit(1)).toBe(true);
+    // Windows terminates directly and reports no POSIX signal.
+    if (process.platform !== 'win32') expect(r.signal).toBe('SIGKILL');
   });
   it('cleans up when the iterator is returned before its first next', async () => {
     const f = await fixture({ hang: true }); const r = f.run();
