@@ -12,12 +12,17 @@ const sdk = vi.hoisted(() => ({ channel: undefined as ReturnType<typeof createRe
 vi.mock('@larksuite/channel', async original => ({ ...await original<typeof import('@larksuite/channel')>(), createLarkChannel: () => sdk.channel }));
 
 const NOW = Date.parse('2026-10-19T00:00:00Z'); // 08:00 Shanghai
+// Hosted Windows spawns each real client process several times slower than
+// POSIX; the POSIX budget stays tight so genuine hangs still fail fast.
+const EFFECT_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 12_000;
+const TEST_TIMEOUT_MS = process.platform === 'win32' ? 60_000 : 30_000;
+const LONG_TEST_TIMEOUT_MS = process.platform === 'win32' ? 90_000 : 45_000;
 const FIRES = [1792371600000, 1792458000000, 1792544400000];
 const END = 1792598400000; // October 22 00:00 Shanghai, exclusive
 const schedule = { kind: 'daily', timezone: 'Asia/Shanghai', times: [{ hour: 9, minute: 0 }], startAt: NOW, endAt: END };
 const reminder = { taskType: 'reminder', name: 'Synthetic reminder', taskText: 'Synthetic reminder body', schedule };
 let client: Awaited<ReturnType<typeof buildToolProcess>>;
-beforeAll(async () => { client = await buildToolProcess(); }, 30000);
+beforeAll(async () => { client = await buildToolProcess(); }, TEST_TIMEOUT_MS);
 afterAll(async () => { await client?.cleanup(); });
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); sdk.channel = undefined; });
@@ -28,7 +33,7 @@ async function harness(chatMode: 'group' | 'topic' = 'group', agentTasks = true,
 
 // Each effect may include the client's ten-second transport budget and actual child-process work.
 function waitForEffect(assertion: () => void | Promise<void>) {
-  return vi.waitFor(assertion, { timeout: 12000 });
+  return vi.waitFor(assertion, { timeout: EFFECT_TIMEOUT_MS });
 }
 
 it.each(['group', 'topic'] as const)('creates an agent task through the real client, deduplicates it, and binds its creator and cwd on confirmation (%s)', async mode => {
@@ -52,7 +57,7 @@ it.each(['group', 'topic'] as const)('creates an agent task through the real cli
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, taskType: 'agent', name: task.name, schedule }]);
   });
   expect(h.store.list()).toMatchObject([{ createdBy: 'ou_synthetic', chatId: 'oc_synthetic' }]);
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it('fires confirmed agent tasks with fresh credentials and on-demand plugin reads while denying recursive management', async () => {
   const h = await harness(); let operationId = ''; let manual: NodeJS.ProcessEnv = {};
@@ -105,7 +110,7 @@ it('fires confirmed agent tasks with fresh credentials and on-demand plugin read
     expect(opts.promptVariant).not.toBe('automation');
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { executedCount: 2, lastExecution: 'ok' } });
   }, 'oc_synthetic', true, 'group', h.journal.get(`af:1@${FIRES[1]}`)?.reply?.messageId);
-}, 45000);
+}, LONG_TEST_TIMEOUT_MS);
 
 it('keeps creation applied when a run fails and reports runtime failure separately from delivered failure notice', async () => {
   const h = await harness(); let operationId = '';
@@ -126,7 +131,7 @@ it('keeps creation applied when a run fails and reports runtime failure separate
   });
   expect(h.store.list()).toMatchObject([{ id: 1, taskType: 'agent', lastStatus: 'failed', paused: false }]);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('自动化任务中断'))).toBe(true);
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it('rejects agent creation in the same turn when its captured working directory becomes unavailable', async () => {
   const h = await harness();
@@ -137,7 +142,7 @@ it('rejects agent creation in the same turn when its captured working directory 
   });
   expect(h.store.listDrafts()).toEqual([]);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it('rejects an agent replacement when the captured working directory is gone', async () => {
   const h = await harness();
@@ -154,7 +159,7 @@ it('rejects an agent replacement when the captured working directory is gone', a
   expect(h.store.list()).toHaveLength(1);
   expect(h.store.listDrafts()).toEqual([]);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it('does not reuse an agent replacement drafted from a different workspace', async () => {
   const h = await harness();
@@ -186,7 +191,7 @@ it('does not reuse an agent replacement drafted from a different workspace', asy
   const cwds = await Promise.all(drafts.map(async draft => realpath(draft.op === 'delete' ? '' : draft.cwd!)));
   expect(new Set(cwds).size).toBe(2);
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(2);
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it('reports an empty successful run before delivery and recovers its staged result after restart without rerunning', async () => {
   const h = await harness(); let operationId = ''; let fires = 0;
@@ -215,7 +220,7 @@ it('reports an empty successful run before delivery and recovers its staged resu
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { executedCount: 1, deliveredCount: 1, lastExecution: 'ok', lastDelivery: 'sent' } });
   });
   expect(fires).toBe(1);
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it('exposes a running automatic task then revokes its client on stop and preserves the applied creation receipt', async () => {
   const h = await harness(); let operationId = ''; let automatic: NodeJS.ProcessEnv = {};
@@ -242,7 +247,7 @@ it('exposes a running automatic task then revokes its client on stop and preserv
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { applied: true, executedCount: 0, failedCount: 1, executionState: 'interrupted', lastExecution: 'failed' } });
   });
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it.each(['agent-disabled', 'automation-disabled', 'p2p'] as const)('reports unavailable agent creation without ghost tasks or cards (%s)', async mode => {
   const h = await harness('group', mode !== 'agent-disabled');
@@ -254,7 +259,7 @@ it.each(['agent-disabled', 'automation-disabled', 'p2p'] as const)('reports unav
   }, 'oc_synthetic', true, mode === 'p2p' ? 'p2p' : 'group');
   expect(h.store.list()).toEqual([]); expect(h.store.listDrafts()).toEqual([]);
   expect(h.channel.sent.some(row => JSON.stringify(row.content).includes('auto.confirm'))).toBe(false);
-}, 30000);
+}, TEST_TIMEOUT_MS);
 
 it('uses the deployment plugin snapshot for automatic fires and loads a new version only after restart', async () => {
   let first = ''; let next = ''; let reference = '';
@@ -287,4 +292,4 @@ it('uses the deployment plugin snapshot for automatic fires and loads a new vers
   await h.restart(); runWithVersion('2.0.0', { result: 7, doubled: 14 }); await h.advanceConnectedTo(FIRES[1]!); await h.bridge.wakeAutomation(`1@${FIRES[1]}`);
   await waitForEffect(() => expect(h.journal.get(`af:1@${FIRES[1]}`)?.reply?.state).toBe('sent')); h.checkFailure();
   expect(h.channel.sent.some(row => JSON.stringify(row.content).includes('Automatic fixture value: 7'))).toBe(true);
-}, 30000);
+}, TEST_TIMEOUT_MS);
