@@ -111,7 +111,7 @@ Every new or loaded session receives the current run's permissions before its pr
 
 `agent.options.sandbox: true` enables Devin's native `--sandbox`, independently of generic access hints. Its modes are `plan` for read-only and `autonomous` for writable sandboxed work. Explicit `smart` or `accept-edits` preferences that cannot be retained in that native sandbox are rejected before starting a writable run. The sandbox follows Devin's own granted scopes and platform exceptions: local macOS smoke denied a write to our disposable home fixture outside the workspace, while a system-temp write was allowed. Do not treat it as an absolute denial of every path outside cwd. Existing OS prerequisites and CLI policy still apply.
 
-Model aliases `opus` and `sonnet` select the first matching ordinary model advertised by Devin. `swe-2-max` selects the SWE-2 family and max thought level when exposed separately. Unavailable explicit models or configuration values fail visibly. These rules also apply when resuming; the adapter does not silently create a new conversation after a failed load.
+Model aliases `opus` and `sonnet` select the first matching ordinary model advertised by Devin. `swe-2-max` selects the SWE-2 family and max thought level when exposed separately. Explicit `swe-2-*` selections restate the matching thought level when it is exposed separately, so a resumed session does not keep a previous tier. Unavailable explicit models or configuration values fail visibly. These rules also apply when resuming; the adapter does not silently create a new conversation after a failed load.
 
 
 ## External bridge plugins

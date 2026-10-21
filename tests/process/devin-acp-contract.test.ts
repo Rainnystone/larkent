@@ -41,10 +41,14 @@ describe('DEVIN ACP adapter contract', () => {
   });
   it('preserves native sandbox despite generic workspace hints', async () => {
     const f = await fixture({}, { sandbox: true });
-    await collect(f.run({ agentOptions: { sandbox: 'workspace-write', permissionMode: 'acceptEdits' } }));
+    await collect(f.run({ agentOptions: { sandbox: 'workspace-write' } }));
     const report = await f.report();
     expect(report.argv).toContain('--sandbox');
     expect(report.calls[2].params.value).toBe('autonomous');
+  });
+  it.each(['acceptEdits', 'default'])('rejects generic restricted mode %s that the sandbox cannot preserve', async permissionMode => {
+    const f = await fixture({}, { sandbox: true });
+    expect(() => f.run({ agentOptions: { sandbox: 'workspace-write', permissionMode } })).toThrow(/sandbox/i);
   });
   it('retains the sandbox implied by a profile autonomous mode under generic policy', async () => {
     const f = await fixture({}, { permissionMode: 'autonomous' });
@@ -100,6 +104,13 @@ describe('DEVIN ACP adapter contract', () => {
     const calls = (await f.report()).calls;
     expect(calls).toContainEqual(expect.objectContaining({ method: 'session/set_config_option', params: expect.objectContaining({ configId: 'model', value: model === 'opus' ? 'claude-opus-5-5-medium' : 'swe-2-high' }) }));
     if (model === 'swe-2-max') expect(calls).toContainEqual(expect.objectContaining({ params: expect.objectContaining({ configId: 'thought_level', value: 'max' }) }));
+  });
+  it('restates thought_level when a resumed session leaves swe-2-max', async () => {
+    const f = await fixture({ thoughtLevel: 'max' });
+    await collect(f.run({ resumeHandle: 'old', model: 'swe-2-high' }));
+    const calls = (await f.report()).calls;
+    expect(calls).toContainEqual(expect.objectContaining({ method: 'session/set_config_option', params: expect.objectContaining({ configId: 'model', value: 'swe-2-high' }) }));
+    expect(calls).toContainEqual(expect.objectContaining({ method: 'session/set_config_option', params: expect.objectContaining({ configId: 'thought_level', value: 'high' }) }));
   });
   it.each([{ loadError: true }, { configError: true }, { malformed: true }])('fails rather than reporting success for %j', async script => {
     const f = await fixture(script); const events = await collect(f.run({ resumeHandle: 'missing' }));

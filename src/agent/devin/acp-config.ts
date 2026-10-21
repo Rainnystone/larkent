@@ -19,7 +19,7 @@ export function resolveDevinRunConfig(profile: unknown, run: AgentRunOptions): D
   if (base.permissionMode && ranks[base.permissionMode] < ranks[mode]) mode = base.permissionMode;
   if (access === 'read-only') mode = 'auto';
   else if (access === 'workspace' && ranks[mode] > 1 && !sandbox) mode = 'accept-edits';
-  if (sandbox && access !== 'read-only' && [base.permissionMode, raw.permissionMode].some(m => m === 'smart' || m === 'accept-edits')) {
+  if (sandbox && access !== 'read-only' && (mode === 'smart' || mode === 'accept-edits')) {
     throw new Error('Devin sandbox cannot preserve the requested restricted permission mode');
   }
   return { sandbox, mode, access };
@@ -36,7 +36,7 @@ export async function configureDevinSession(agent: ClientContext, sessionId: str
   let options = state.configOptions ?? undefined;
   const mode = config.sandbox ? (config.mode === 'auto' || config.access === 'read-only' ? 'plan' : 'autonomous')
     : ({ auto: 'ask', 'accept-edits': 'accept-edits', smart: 'smart', dangerous: 'bypass', autonomous: 'bypass' } as const)[config.mode];
-  if (config.sandbox && ['smart', 'accept-edits'].includes(config.mode) && config.access === 'full') {
+  if (config.sandbox && ['smart', 'accept-edits'].includes(config.mode) && config.access !== 'read-only') {
     throw new Error('Devin sandbox cannot preserve the requested restricted permission mode');
   }
   if (options !== undefined) {
@@ -58,10 +58,16 @@ export async function configureDevinSession(agent: ClientContext, sessionId: str
   const selected = exact ?? alias;
   if (!selected) throw new Error(`Devin model unavailable: ${model}`);
   await set(selector.id, selected.value);
-  if (model === 'swe-2-max' && !exact) {
+  // Config options persist across resumes: explicit SWE-2 tiers must restate
+  // their thought_level, including when stepping down from a previous max.
+  const sweTier = model.startsWith('swe-2-') ? model.slice('swe-2-'.length) : undefined;
+  if (sweTier) {
     const thinking = options?.find(o => o.category === 'thought_level');
-    if (!thinking || !choices(thinking).some(o => o.value === 'max')) throw new Error('Devin does not support SWE-2 max thinking');
-    await set(thinking.id, 'max');
+    if (thinking && choices(thinking).some(o => o.value === sweTier)) {
+      if (thinking.currentValue !== sweTier) await set(thinking.id, sweTier);
+    } else if (!exact) {
+      throw new Error(`Devin does not support SWE-2 ${sweTier} thinking`);
+    }
   }
 
   async function set(configId: string, value: string): Promise<void> {

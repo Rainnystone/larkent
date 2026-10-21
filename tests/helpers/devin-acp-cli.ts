@@ -21,7 +21,7 @@ async function serveDevinAcp(script, hooks = {}) {
   const configs = [
     { id: 'mode', name: 'Mode', category: 'mode', type: 'select', currentValue: modes[0], options: modes.map(value => ({ value, name: value })) },
     { id: 'model', name: 'Model', category: 'model', type: 'select', currentValue: 'swe-2-high', options: ['adaptive','swe-2-high','swe-1-6','claude-opus-5-5-medium','claude-sonnet-5-5-medium'].map(value => ({ value, name: value })) },
-    { id: 'thought_level', name: 'Thinking', category: 'thought_level', type: 'select', currentValue: 'high', options: ['medium','high','max'].map(value => ({ value, name: value })) },
+    { id: 'thought_level', name: 'Thinking', category: 'thought_level', type: 'select', currentValue: script.thoughtLevel || 'high', options: ['medium','high','max'].map(value => ({ value, name: value })) },
   ];
   const sessionResult = () => script.legacyModes ? { modes: { currentModeId: modes[0], availableModes: modes.map(id => ({id,name:id})) } } : { configOptions: configs };
   if (script.ignoreTerm) process.on('SIGTERM', () => {});
