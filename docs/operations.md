@@ -1,10 +1,10 @@
 # Larkent operations
 
-运行参考；首次安装与用户授权先读 [agent setup](agent-setup.md)。本文中的命令在当前源码 checkout 执行，`my-agent` 替换为实际 profile 名。自定义数据根时，每条 bridge 命令带相同的 `LARK_CHANNEL_HOME`。
+Operations reference. For first install and user authorization, read [agent setup](agent-setup.md) first. Run the commands here from the current source checkout and replace `my-agent` with the actual profile name. With a custom data root, pass the same `LARK_CHANNEL_HOME` to every bridge command.
 
 ## Profiles and services
 
-每个 profile 对应一个飞书应用和一种 CLI。前台运行：
+Each profile maps to one Feishu app and one CLI. Run in the foreground:
 
 ```sh
 node bin/lark-channel-bridge.mjs run --profile my-agent
@@ -12,7 +12,7 @@ node bin/lark-channel-bridge.mjs profile list
 node bin/lark-channel-bridge.mjs ps
 ```
 
-用前台终端的 `Ctrl-C` 停止，等待正常退出，再切换到 per-profile service：
+Stop with `Ctrl-C` in the foreground terminal and wait for a clean exit, then switch to the per-profile service:
 
 ```sh
 node bin/lark-channel-bridge.mjs start --profile my-agent
@@ -21,7 +21,7 @@ node bin/lark-channel-bridge.mjs restart --profile my-agent
 node bin/lark-channel-bridge.mjs stop --profile my-agent
 ```
 
-macOS 使用 launchd；Linux 使用 systemd user；Windows 使用 Task Scheduler 和 `.cmd` 包装。Linux 服务若需在用户退出登录后继续运行，需要配置相应用户的 linger。
+macOS uses launchd; Linux uses systemd user services; Windows uses Task Scheduler with a `.cmd` wrapper. For a Linux service to keep running after the user logs out, enable linger for that user.
 
 ## Supervisor console
 
@@ -29,49 +29,49 @@ macOS 使用 launchd；Linux 使用 systemd user；Windows 使用 Task Scheduler
 node bin/lark-channel-bridge.mjs run --web-ui
 ```
 
-supervisor 先启动 active profile，其余在控制台按需启动。常驻控制台使用 `start --web-ui`，停止或重启使用 `stop --web-ui` / `restart --web-ui`。`ui --print` 输出本地入口。切换模式前先停止原模式中的同一 profile。
+The supervisor starts the active profile first; start the others on demand in the console. For an always-on console use `start --web-ui`; stop or restart with `stop --web-ui` / `restart --web-ui`. `ui --print` prints the local URL. Before switching modes, stop the same profile in the old mode.
 
 ## Chat commands
 
-- 基本操作：`/help`、`/status`、`/config`、`/cd <path>`、`/new`、`/stop`、`/resume`。
-- 访问管理：`/invite user`、`/remove user`、`/invite group`、`/remove group`、`/invite all group`、`/invite admin`。
-- 自动任务（仅群聊，需 `automations.enabled`）：`/auto list`、`/auto pause <id>`、`/auto resume <id>`、`/auto delete <id>`、`/auto new <时间表> | <名称> | <任务>`（agent 任务用 `/auto new agent ...`）。也可以直接用自然语言请 agent 创建或管理，创建/替换/删除需在确认卡上人工确认。
-- `/stop` 停止当前 scope 的任务，profile 保持在线；前台 Ctrl-C 停止整个 profile。
+- Basics: `/help`, `/status`, `/config`, `/cd <path>`, `/new`, `/stop`, `/resume`.
+- Access management: `/invite user`, `/remove user`, `/invite group`, `/remove group`, `/invite all group`, `/invite admin`.
+- Automations (group chats only, requires `automations.enabled`): `/auto list`, `/auto pause <id>`, `/auto resume <id>`, `/auto delete <id>`, `/auto new <schedule> | <name> | <task>` (use `/auto new agent ...` for an agent task). You can also ask the agent in natural language to create or manage tasks; create, replace, and delete require a person to confirm on the confirmation card.
+- `/stop` stops the current scope's task while the profile stays online; foreground `Ctrl-C` stops the whole profile.
 
 ## Automations events
 
-`automations.enabled` 打开后，bridge 通过现有长连接的 `onRawEvent` 处理 bot 被移出群和群解散。在飞书开放平台为该应用订阅这两个事件（与会议 `vc.bot.*` 一样走同一条连接，不要再开第二条）：
+When `automations.enabled` is on, the bridge handles the bot being removed from a group and group disbanding through `onRawEvent` on the existing long connection. Subscribe the app to these two events in the Feishu Open Platform (they use the same connection as meeting `vc.bot.*` events; do not open a second one):
 
 - `im.chat.member.bot.deleted_v1`
 - `im.chat.disbanded_v1`
 
-未订阅时，bridge 仍会在发送被拒为不在群内（`230002`）或群已解散（`232009`）时删除该群任务。
+Without the subscription, the bridge still deletes a group's tasks when a send is rejected because the bot is not in the group (`230002`) or the group was disbanded (`232009`).
 
-Agent 任务（`automations.agentTasks`）沿用当前 profile 已授权的 bot/user 身份；任务正文、适用 skill 和操作需要决定选择。`--as user` 等已有身份选择不会触发策略中断，历史建群、成员、通讯录、人事等业务类别限制已退出。平台权限、profile 的明确配置和最终回复归属仍适用。任务的 `createdBy` 保留创建者，不据此切换 OAuth 用户。
+Agent tasks (`automations.agentTasks`) use the bot/user identity already authorized for the current profile; the task text, applicable skills, and the operation decide which one. Existing identity choices such as `--as user` do not trigger a policy interrupt, and the former business-category restrictions (group creation, members, contacts, HR, and so on) have been retired. Platform permissions, the profile's explicit configuration, and final-reply ownership still apply. A task's `createdBy` keeps the creator; it does not switch the OAuth user.
 
-无人值守时，登录、登出、绑定/初始化/移除配置、设置 strict-mode/default-as/risk-control、tenant-access-token 写入/移除、keychain-downgrade 和 profile add/use/remove/rename 等认证/身份配置变更仍触发 `policy-guard`：中断、暂停任务、群内通知和脱敏审计（`auth-config`）。读取 `auth status`、`config show` 或无参数的 strict-mode/default-as 是状态查询。工具事件检查覆盖常见 argv、命令字符串、包装命令和工具名称，但事件可能在命令执行后才出现；agent 仍有完整 shell，这不是主机权限隔离或完整 shell 拦截器。
+Unattended, authentication/identity configuration changes still trigger `policy-guard`: login, logout, bind/init/remove config, setting strict-mode/default-as/risk-control, tenant-access-token write/remove, keychain-downgrade, and profile add/use/remove/rename. The guard interrupts the run, pauses the task, notifies the group, and writes a redacted audit entry (`auth-config`). Reading `auth status`, `config show`, or strict-mode/default-as without arguments counts as a status query. Tool-event checks cover common argv, command strings, wrapper commands, and tool names, but an event may appear only after the command ran. The agent still has a full shell; this is not host permission isolation or a complete shell interceptor.
 
-Cloud-doc comments are document-scoped. 云文档评论按文档权限生效：文档评论中的 `@bot` 使用该文档会话，不套用 IM 白名单。
+Cloud-doc comments are document-scoped: an `@bot` in a document comment uses that document's session and follows document permissions, not the IM allowlist.
 
-One turn → one bridge-owned final reply. Agents must not post the final answer to the triggering chat themselves (`lark-cli im +messages-send` / `+messages-reply` / `send-card` to the current chat). Sending to other chats, or sending when the user explicitly asks for a lark-cli send, is allowed. 一轮对话只有一条由 bridge 发出的最终回复；agent 不要自己把最终答案发到触发会话。
+One turn → one bridge-owned final reply. Agents must not post the final answer to the triggering chat themselves (`lark-cli im +messages-send` / `+messages-reply` / `send-card` to the current chat). Sending to other chats, or sending when the user explicitly asks for a lark-cli send, is allowed.
 
 ## Configuration and identity
 
-配置位于 `$HOME/.lark-channel/config.json` 的 `profiles.<name>` 下；`LARK_CHANNEL_HOME` 可改变数据根。常用项：
+Configuration lives under `profiles.<name>` in `$HOME/.lark-channel/config.json`; `LARK_CHANNEL_HOME` changes the data root. Common keys:
 
-| 项 | 含义 |
+| Key | Meaning |
 | --- | --- |
-| `workspaces.default` | profile 默认工作目录 |
-| `preferences.model` | 传给对应 CLI 的模型选择 |
-| `preferences.showToolCalls` | 是否展示工具过程 |
-| `preferences.backfill` | 离线回补的开关与窗口（`enabled` / `dryRun` / lookback 等；`maxMentionsPerChat` 对群 @ 和 session-known p2p 人话都封顶；缺省即默认值） |
-| `mode` | `team` 或带访问名单的 `personal` |
-| `access.allowedUsers/allowedChats/admins` | 用户、群和管理员名单 |
-| `larkCli.identityPreset` | `user-default` 允许使用已授权用户身份 |
-| `automations.enabled` / `automations.agentTasks` | 开启群内自动任务 / 允许 agent 任务（默认均关闭） |
-| `automations.timezone` | 自动任务使用的时区（IANA 名称，如 `Europe/London`），请设为你所在的时区 |
+| `workspaces.default` | Profile's default working directory |
+| `preferences.model` | Model selection passed to the CLI |
+| `preferences.showToolCalls` | Whether to show tool activity |
+| `preferences.backfill` | Offline catch-up switch and window (`enabled` / `dryRun` / lookback, etc.; `maxMentionsPerChat` caps both group @mentions and session-known DM human messages; omitted means defaults) |
+| `mode` | `team`, or `personal` with an access list |
+| `access.allowedUsers/allowedChats/admins` | User, group, and admin lists |
+| `larkCli.identityPreset` | `user-default` allows using the authorized user identity |
+| `automations.enabled` / `automations.agentTasks` | Enable group automations / allow agent tasks (both off by default) |
+| `automations.timezone` | Time zone for automations (IANA name such as `Europe/London`); defaults to the host machine's local zone, or UTC if it cannot be detected |
 
-Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并迁移；新配置使用规范字段）：
+Canonical permissions (legacy `sandbox` config is read and migrated; new config uses the canonical fields):
 
 ```json
 {
@@ -82,26 +82,27 @@ Canonical permissions（旧版 `sandbox` / legacy `sandbox` 配置可读取并�
 }
 ```
 
-**lark-cli identity policy / lark-cli 身份策略**：人工对话保持原身份约定，用户资源操作显式使用 `--as user`。首次完整授权、权限核验和续接步骤见 [setup 指南](agent-setup.md#3-主动请求一次完整用户身份授权)。自动任务复用同一 profile 的 adapter 和以下环境，不调用配置变更用的 identity-policy，不修改 `larkCli.identityPreset` 或向群发送授权链接：
+**lark-cli identity policy**: human conversations keep the existing identity convention; user-resource operations use `--as user` explicitly. For first full authorization, permission checks, and continuation steps, see the [setup guide](agent-setup.md#3-request-one-full-user-identity-authorization). Automations reuse the same profile's adapter and the environment below. They do not call the config-changing identity-policy, do not modify `larkCli.identityPreset`, and do not send authorization links to groups:
 
-- `LARK_CHANNEL_HOME` / `LARK_CHANNEL_PROFILE`：同一数据根和 profile。
-- `LARK_CHANNEL_CONFIG`：`<data-root>/profiles/<profile>/lark-cli-source/config.json`。
-- `LARKSUITE_CLI_CONFIG_DIR`：`<data-root>/profiles/<profile>/lark-cli`。人工与自动 run 共用此目录；不能以 bridge tool 的连接环境覆盖这些身份环境。
+- `LARK_CHANNEL_HOME` / `LARK_CHANNEL_PROFILE`: the same data root and profile.
+- `LARK_CHANNEL_CONFIG`: `<data-root>/profiles/<profile>/lark-cli-source/config.json`.
+- `LARKSUITE_CLI_CONFIG_DIR`: `<data-root>/profiles/<profile>/lark-cli`. Human and automated runs share this directory; the bridge tool's connection environment must not override these identity variables.
 
-profile-local lark-cli directory 即当前 profile 的 lark-cli 目录；凭据存储由 CLI 管理。Token 刷新、并发锁和写回校验由 lark-cli 负责；bridge 不复制 token、不另建凭据存储、不自行刷新。配置目录须由同一部署用户持有并可写，CLI 自身使用的凭据存储须对该用户可用。授权缺失/过期、平台拒绝或显式 strict-mode 限制沿用任务失败处理；无人值守时不登录、不改配置、不借其他 profile 授权。维护者处理依赖、授权或账号变更后再恢复任务。
+The profile-local lark-cli directory is the current profile's lark-cli directory; the CLI manages credential storage. lark-cli owns token refresh, concurrency locks, and write-back checks; the bridge does not copy tokens, build its own credential store, or refresh on its own. The config directory must be owned and writable by the deploying user, and the credential store the CLI uses must be available to that user. Missing or expired authorization, platform rejection, or an explicit strict-mode restriction is handled as a task failure. Unattended runs never log in, change config, or borrow another profile's authorization. Resume tasks after a maintainer has handled dependencies, authorization, or account changes.
 
-### 自动任务的 lark-cli 依赖核验
+### Verifying the lark-cli dependency for automations
 
-部署前用只读命令记录实际版本和 profile 绑定能力：`lark-cli --version`、`lark-cli config bind --help`（应包含 `lark-channel`）。锁与刷新写回不能由帮助文本证明；核对对应发布版的实现和受控并发结果。缺少 profile 绑定、并发刷新锁或写回校验时，诊断为“lark-cli 依赖未就绪：需要 profile 绑定及并发刷新加锁/写回校验能力”，停止相关操作并由维护者准备合适版本；不要通过改环境、自动登录或复制 token 绕过。bridge 不以猜测的最低版本号替代能力核验。
+Before deploying, record the actual version and profile-binding capability with read-only commands: `lark-cli --version` and `lark-cli config bind --help` (should include `lark-channel`). Help text cannot prove locking and refresh write-back; check the corresponding release's implementation and controlled concurrency results. If profile binding, concurrent-refresh locking, or write-back checks are missing, diagnose "lark-cli dependency not ready: needs profile binding plus concurrent-refresh locking/write-back checks", stop the related operation, and have a maintainer prepare a suitable version. Do not work around it by changing the environment, logging in automatically, or copying tokens. The bridge does not substitute a guessed minimum version number for a capability check.
 
-P03 代码阶段（2026-10-19）的证据：
+Evidence from the P03 code phase (2026-10-19):
 
-- 隔离安装的 Linux x64 `@larksuite/cli@1.0.98` 实际输出 `lark-cli version 1.0.98`；只执行 version/help，确认 `lark-channel` 绑定、strict-mode 的读写区分及 `auth status --verify` 是网络验证；未执行绑定、登录或平台请求。
-- 对应发布标签 [v1.0.98（ac81f505）](https://github.com/larksuite/cli/tree/ac81f5056ab88f37d581d25916f3dab85abfca76) 的 [token_lock.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/token_lock.go) 使用进程内和跨进程锁；[uat_client.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/uat_client.go) 在锁内重读、检查存储可写性并比较原代凭据后写回。这是源码证据，不宣称 1.0.98 为最低版本。
-- 自动回归经 `startChannel` 启动真实 adapter/子进程，用合成授权主体和可控凭据存储替身验证人工/自动并发共享目录、一次刷新及后续人工会话配置不变，覆盖 bot/user 和失败路径。替身版本为 `0.0.0-controlled`，不代表原生 CLI 或真实平台验收。
-- **Operator-pending（P09）**：在目标部署版本/OS/凭据存储上验证真实 CLI 的并发刷新，以及已授权 bot/user 的实际飞书操作和六种模型 CLI 的实际选择；本阶段没有这些结果。
+- An isolated install of Linux x64 `@larksuite/cli@1.0.98` printed `lark-cli version 1.0.98`. Only version/help were run, confirming the `lark-channel` binding, strict-mode's read/write distinction, and that `auth status --verify` is a network check. No binding, login, or platform request was performed.
+- In the matching release tag [v1.0.98 (ac81f505)](https://github.com/larksuite/cli/tree/ac81f5056ab88f37d581d25916f3dab85abfca76), [token_lock.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/token_lock.go) uses in-process and cross-process locks; [uat_client.go](https://github.com/larksuite/cli/blob/ac81f5056ab88f37d581d25916f3dab85abfca76/internal/auth/uat_client.go) re-reads inside the lock, checks store writability, and compares the original credential generation before writing back. This is source evidence; it does not claim 1.0.98 is the minimum version.
+- Automated regression starts the real adapter/subprocess through `startChannel` and uses a synthetic authorization principal and a controllable credential-store stand-in. It verifies human/automated concurrency on the shared directory, a single refresh, and unchanged config for later human sessions, covering bot/user and failure paths. The stand-in version is `0.0.0-controlled`; it does not represent the native CLI or real platform acceptance.
+- **Operator-pending (P09)**: on the target deployment version/OS/credential store, verify the real CLI's concurrent refresh, actual Feishu operations with authorized bot/user, and actual selection by the six model CLIs. This phase has no such results.
 
-`LARK_CHANNEL_CLAUDE_BIN`、`LARK_CHANNEL_CODEX_BIN`、`LARK_CHANNEL_KIMI_BIN`、`LARK_CHANNEL_GROK_BIN`、`LARK_CHANNEL_CURSOR_BIN`、`LARK_CHANNEL_ANTIGRAVITY_BIN` 用于创建 profile 时解析并保存程序路径。已有 profile 使用保存的 `agent.binaryPath`；更换程序前先停止 profile，再更新路径。数据根与 coding CLI 的登录目录是两回事。Antigravity 的程序名是 `agy`。
+`LARK_CHANNEL_CLAUDE_BIN`, `LARK_CHANNEL_CODEX_BIN`, `LARK_CHANNEL_KIMI_BIN`, `LARK_CHANNEL_GROK_BIN`, `LARK_CHANNEL_CURSOR_BIN`, and `LARK_CHANNEL_ANTIGRAVITY_BIN` resolve and save the executable path when a profile is created. Existing profiles use the saved `agent.binaryPath`; to change the executable, stop the profile first, then update the path. The data root and the coding CLI's login directory are different things. The Antigravity executable is `agy`.
+
 
 ## External bridge plugins
 
@@ -247,7 +248,7 @@ For each unpaused item, `t` is the earliest `nextFires` value with `t > lastFire
 
 Larkent's own catch-up still uses `!paused && nextFireAt > 0 && now > nextFireAt && lastFireAt < nextFireAt`. `now == nextFireAt` is not a miss. Paused items are not missed.
 
-Fire key: `<id>@<nextFireAt>`, for example `3@1792218600000` (local `/auto` id, not the opaque push id). Wake at most once per key. After a miss, Larkent catch-up (restart, link recovery, or this wake) runs the latest eligible instant at most once within 24 hours; older instants are 已错过 and are not sent.
+Fire key: `<id>@<nextFireAt>`, for example `3@1792218600000` (local `/auto` id, not the opaque push id). Wake at most once per key. After a miss, Larkent catch-up (restart, link recovery, or this wake) runs the latest eligible instant at most once within 24 hours; older instants are marked missed (shown as 已错过) and are not sent.
 
 ### Local wake CLI
 
@@ -275,24 +276,24 @@ Linux, macOS, and Windows share this file transport. There is no stable IPC to t
 
 ## Logs and stored data
 
-- profile 结构化日志：`<data-root>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`。
-- supervisor 结构化日志：`<data-root>/logs/bridge-YYYYMMDD.jsonl`。
-- automations wake requests：`<data-root>/profiles/<profile>/automations-wake/`。
-- daemon stdout/stderr 路径由 `status --profile <profile>` / `status --web-ui` 显示。前台运行登记用 `ps` 查看。
+- Profile structured logs: `<data-root>/profiles/<profile>/logs/bridge-YYYYMMDD.jsonl`.
+- Supervisor structured logs: `<data-root>/logs/bridge-YYYYMMDD.jsonl`.
+- Automations wake requests: `<data-root>/profiles/<profile>/automations-wake/`.
+- Daemon stdout/stderr paths are shown by `status --profile <profile>` / `status --web-ui`. Foreground runs are registered and listed by `ps`.
 
-Profile 使用 schema v3，session、workspace 和 catalog 使用 v2。版本回退要同时恢复匹配的数据备份；仅切换 Git 版本不会降级持久化数据。
+Profiles use schema v3; sessions, workspaces, and the catalog use v2. Rolling back a version requires restoring a matching data backup at the same time; switching the Git version alone does not downgrade persisted data.
 
-`profile export` 导出配置；`profile remove --purge --yes` 涉及删除；`profile export --include-secrets --yes` 包含敏感信息。具体参数先查对应 `--help`，只对已明确指定的 profile 执行。数据目录、导出文件、OAuth 材料和日志留在私有环境。
+`profile export` exports configuration; `profile remove --purge --yes` deletes data; `profile export --include-secrets --yes` includes sensitive information. Check each command's `--help` for exact arguments and run them only on an explicitly named profile. Keep data directories, export files, OAuth material, and logs in a private environment.
 
 ## Troubleshooting
 
-| 现象 | 检查 |
+| Symptom | Check |
 | --- | --- |
-| 注册流程没有 TTY | 使用终端/PTY，或在已有应用路径通过交互提供凭据 |
-| CLI 找不到或启动失败 | 核对对应程序的版本、登录和 profile 保存的 binaryPath |
-| 文档/聊天记录读取缺权限 | 核对当前 profile、`--as user`、app scope、用户 scope 和目标资源可见性 |
-| 用户授权链接过期 | 在同一 profile 用完整范围重新发起 device flow |
-| 重启提示 profile 已占用 | 先查实际进程与运行模式，正常停止原 owner |
+| Registration flow has no TTY | Use a terminal/PTY, or provide credentials interactively through the existing-app path |
+| CLI not found or fails to start | Check the executable's version, login, and the profile's saved `binaryPath` |
+| Missing permission reading docs/chat history | Check the current profile, `--as user`, app scope, user scope, and target resource visibility |
+| User authorization link expired | Restart the device flow with the full scope in the same profile |
+| Restart says the profile is in use | Check the actual process and run mode, then stop the original owner cleanly |
 
 ## Development checks
 
@@ -303,7 +304,7 @@ pnpm typecheck
 pnpm build
 ```
 
-完整门禁是 `pnpm ci:local`；后面三条用于定向排查。真实 CLI smoke 按需开启：
+The full gate is `pnpm ci:local`; the other three are for targeted investigation. Enable real CLI smoke tests as needed:
 
 ```sh
 GROK_REAL_SMOKE=1 pnpm exec vitest run tests/process/grok-real.smoke.test.ts
@@ -312,7 +313,8 @@ CURSOR_REAL_SMOKE=1 pnpm exec vitest run tests/process/cursor-real.smoke.test.ts
 ANTIGRAVITY_REAL_SMOKE=1 pnpm exec vitest run tests/process/antigravity-real.smoke.test.ts
 ```
 
-测试文件路径相对 repo 根。真实 smoke 会调用已登录的 CLI；它验证适配器，不替代飞书主流程验收。Antigravity 的真实 smoke 使用 `claude-sonnet-4-6`，避免部分网络下 Gemini 返回 `User location is not supported`；profile 默认仍跟随 `agy` 的 settings，不强制该模型。
+Test file paths are relative to the repo root. Real smoke tests call the logged-in CLI; they verify the adapter and do not replace acceptance of the main Feishu flow. The Antigravity real smoke test uses `claude-sonnet-4-6` to avoid Gemini returning `User location is not supported` on some networks; the profile default still follows `agy`'s settings and does not force that model.
+
 
 
 ### Automation operation recovery

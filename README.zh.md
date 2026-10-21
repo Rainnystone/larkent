@@ -4,7 +4,7 @@
 
 Larkent 受到 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) 启发，并在此基础上进行了架构重构：统一 agent 注册与进程执行机制，让多个 CLI 共用运行底座，同时保持各 bot 的配置、会话和运行状态独立。
 
-[English](README.md)
+[English](README.md) | **简体中文**
 
 ## 可以做什么
 
@@ -96,7 +96,7 @@ Bridge 插件与 CLI 自己的原生插件分开。bridge 不下载或安装任�
 
 **开启**
 
-在 `config.json` 中把该 profile 的 `automations.enabled` 设为 `true`（见 [配置与身份](docs/operations.md#configuration-and-identity)）。需要 agent 任务时再打开 `automations.agentTasks`。用 `automations.timezone` 设置你所在的时区（IANA 名称，例如 `Europe/London`、`America/New_York`）。修改后重启 profile。自动任务仅支持群聊。
+在 `config.json` 中把该 profile 的 `automations.enabled` 设为 `true`（见 [配置与身份](docs/operations.md#configuration-and-identity)）。需要 agent 任务时再打开 `automations.agentTasks`。`automations.timezone` 默认使用主机本地时区（无法识别时为 UTC）；如需其他时区，设为 IANA 名称，例如 `Europe/London`、`America/New_York`。修改后重启 profile。自动任务仅支持群聊。
 
 **直接说出来就能创建**
 

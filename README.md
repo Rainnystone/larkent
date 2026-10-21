@@ -4,7 +4,7 @@ Bring your coding agents into Feishu / Lark. Larkent connects conversations to C
 
 Inspired by [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge), Larkent has since undergone an architectural refactor: a shared agent registry and process runner, independent bot profiles, and consistent session and lifecycle handling across multiple CLIs.
 
-[中文说明](README.zh.md)
+**English** | [简体中文](README.zh.md)
 
 ## What Larkent does
 
@@ -96,7 +96,7 @@ Automations let a bot do things on a schedule in a group chat:
 
 **Turn it on**
 
-Set `automations.enabled` to `true` for the profile in `config.json` (see [Configuration and identity](docs/operations.md#configuration-and-identity)). To allow agent tasks, also set `automations.agentTasks`. Set `automations.timezone` to your own time zone (an IANA name such as `Europe/London` or `America/New_York`). Restart the profile afterwards. Automations work in group chats only.
+Set `automations.enabled` to `true` for the profile in `config.json` (see [Configuration and identity](docs/operations.md#configuration-and-identity)). To allow agent tasks, also set `automations.agentTasks`. `automations.timezone` defaults to the host machine's local time zone (UTC if it cannot be detected); set it to an IANA name such as `Europe/London` or `America/New_York` to use a different zone. Restart the profile afterwards. Automations work in group chats only.
 
 **Create a task by just asking**
 
@@ -104,7 +104,7 @@ Set `automations.enabled` to `true` for the profile in `config.json` (see [Confi
    - "@bot remind me at 09:00 every day today, tomorrow, and the day after to check the build"
    - "@bot every weekday at 18:00 summarize today's commits in this repo" (an agent task; set the working directory first with `/cd`)
 2. The agent previews the schedule and sends a **confirmation card** showing the task type, name, schedule, time zone, the next few run times, the end time, the task text, and who it runs as.
-3. Click **是 (Yes)** to save it, or **否 (No)** to cancel. Nothing is saved until a person confirms; the agent cannot confirm for you.
+3. Click **Yes** (labeled 是 on the card) to save it, or **No** (labeled 否) to cancel. Nothing is saved until a person confirms; the agent cannot confirm for you.
 4. Recurring tasks need an end time. If you did not give one, the bot sends a card with quick choices (one week, two weeks, one month, three months, end of year, one year) before the confirmation card.
 
 The earliest start is 10 minutes from now, and a one-time task can be at most a year ahead.
