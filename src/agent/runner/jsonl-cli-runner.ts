@@ -2,7 +2,7 @@ import type { Readable, Writable } from 'node:stream';
 import { StringDecoder } from 'node:string_decoder';
 import { log } from '../../core/logger';
 import { RunCleanupFailed } from '../../runtime/errors';
-import { signalProcessTree } from '../../platform/process-tree';
+import { killSurvivingOutOfGroupDescendants, signalProcessTree } from '../../platform/process-tree';
 import { spawnProcess, type SpawnedProcessByStdio } from '../../platform/spawn';
 import { readProcessStartMs } from '../../platform/process-info';
 import type { AgentEvent, AgentRun } from '../types';
@@ -215,7 +215,17 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
         } catch (error) {
           signalError = error;
         }
-        if (signalled && await within(exitPromise, stopGraceMs) !== false) return;
+        const signalledAt = Date.now();
+        if (signalled && await within(exitPromise, stopGraceMs) !== false) {
+          // Leader exit drops setsid descendants from the process group. Kill
+          // whoever survived SIGTERM, using the snapshot taken before it.
+          const followUp = killSurvivingOutOfGroupDescendants(
+            child,
+            stopGraceMs - (Date.now() - signalledAt),
+          );
+          if (followUp) await followUp;
+          return;
+        }
         if (!exited) {
           log.warn('agent', 'stop-sigkill', {
             pid: child.pid, graceMs: stopGraceMs, reason: 'sigterm-did-not-exit',
