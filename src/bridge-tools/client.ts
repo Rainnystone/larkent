@@ -2,11 +2,13 @@ import { newAutomationOperationId } from '../automations/operation-id';
 import { record, TOOL_MAX_BYTES, TOOL_REQUEST_SCHEMA, toolResult, type ToolResult } from './protocol';
 
 const DEFAULT_TOOL_TIMEOUT_MS = 10_000;
+// Node timers above the signed 32-bit range overflow to a 1ms timeout.
+const MAX_TOOL_TIMEOUT_MS = 2_147_483_647;
 
 /** Local tool calls can be slower on loaded or scanned hosts; tests override this. */
 function toolTimeoutMs(env: NodeJS.ProcessEnv): number {
   const value = Number(env.LARK_BRIDGE_TOOL_TIMEOUT_MS);
-  return Number.isFinite(value) && value > 0 ? value : DEFAULT_TOOL_TIMEOUT_MS;
+  return Number.isInteger(value) && value > 0 && value <= MAX_TOOL_TIMEOUT_MS ? value : DEFAULT_TOOL_TIMEOUT_MS;
 }
 
 export async function requestBridgeTool(input: unknown, env: NodeJS.ProcessEnv = process.env): Promise<ToolResult> {
