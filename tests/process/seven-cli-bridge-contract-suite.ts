@@ -20,11 +20,11 @@ import { createTmpProfile } from '../helpers/tmp-profile';
 import type { startChannel as sourceStartChannel } from '../../src/bot/channel';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z');
-// Three contract files run concurrently on CI. Windows file scanning can make a
+// Seven contract files run concurrently on CI. Windows file scanning can make a
 // local tool round-trip slow enough to hit the client's production 10s timeout.
 process.env.LARK_BRIDGE_TOOL_TIMEOUT_MS = process.platform === 'win32' ? '120000' : '60000';
 // Seven runtime turns and 90+ real client processes share a row. Hosted Windows
-// reached the final stop phase at the old 120s limit; the split files now run
+// reached the final stop phase at the old 120s limit; the per-agent files now run
 // these process-heavy rows in parallel workers, so each Windows turn needs a
 // wider budget than the single-file run did.
 const CONTRACT_ROW_TIMEOUT_MS = process.platform === 'win32' ? 600_000 : 240_000;

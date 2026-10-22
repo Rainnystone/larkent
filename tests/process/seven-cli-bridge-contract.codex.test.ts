@@ -19,5 +19,5 @@ beforeAll(async () => {
 afterAll(async () => { await client?.cleanup(); });
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); sdk.channel = undefined; vi.restoreAllMocks(); });
 
-const KINDS: readonly PinAgentKind[] = ['cursor', 'antigravity'];
+const KINDS: readonly PinAgentKind[] = ['codex'];
 registerSevenCliContract({ kinds: KINDS, getClient: () => client, getStartChannel: () => startChannel, sdk, cleanup });
