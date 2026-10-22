@@ -39,6 +39,9 @@ vi.mock('@larksuite/channel', async original => ({
 import { startChannel, type BridgeChannel } from '../../../src/bot/channel';
 
 const cleanups: Array<() => Promise<void>> = [];
+// Windows runners hold locks and settle rollbacks several times slower than
+// POSIX; keep the POSIX budget tight so genuine hangs still fail fast.
+const TEST_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 10_000;
 beforeEach(() => { sdk.channel = createRecordingLarkChannel(); });
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -179,7 +182,7 @@ describe('settled profile persistence', () => {
       child.stdout.end(); child.stderr.end();
       await closing;
     }
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('clears issued resume selections after disabling channel intake on disconnect', async () => {
     let issued: { owner: ResumeCandidates; nonce: string; identity: SessionCatalogIdentity } | undefined;
@@ -213,7 +216,7 @@ describe('settled profile persistence', () => {
     await h.channel.handlers.message?.(command);
     await h.channel.handlers.cardAction?.(card);
     expect(h.channel.sent).toHaveLength(sent);
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('waits for the bot consumer after run cleanup and saves the last system event before resolving', async () => {
     const producerReady = deferred();
@@ -257,7 +260,7 @@ describe('settled profile persistence', () => {
     expect(reopenedSessions.resumeFor('oc_test', h.root)).toBe('final-on-stop');
     expect(reopenedCatalog.entries()).toEqual([expect.objectContaining({ scopeId: 'oc_test', agentId: 'claude', cwdRealpath: h.root, resumeHandle: 'final-on-stop' })]);
     expect(sequence).toEqual(['flush']);
-  });
+  }, TEST_TIMEOUT_MS);
 
   it.each(['final handle', 'consumer settlement'])('drains interrupted comments through %s before flushing', async check => {
     const run = controlledAgent();
@@ -298,7 +301,7 @@ describe('settled profile persistence', () => {
     expect(restored.resumeFor(scope, h.root)).toBe('final-on-stop');
     expect(catalog.entries()[0]?.resumeHandle).toBe('final-on-stop');
     expect(h.channel.sent).toEqual([]);
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('saves system handles delivered after interruption even without a rendering delay', async () => {
     const run = controlledAgent();
@@ -312,7 +315,7 @@ describe('settled profile persistence', () => {
     const restored = new SessionStore(h.paths.sessionsFile);
     await restored.load();
     expect(restored.resumeFor('oc_test', h.root)).toBe('final-on-stop');
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('settles queued consumers even when the active run cannot release its pool slot', async () => {
     const diagnostics = captureDiagnostics();
@@ -353,7 +356,7 @@ describe('settled profile persistence', () => {
         errors: [/\[stream\.fail\].*err=active child remains owned/, /\[disconnect\.fail\].*step=stopAll.*err=failed to stop all active runs/],
       });
     } finally { run.cleanup.resolve(); }
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('attempts disconnect and every store flush and rejects all persistence failures', async () => {
     const diagnostics = captureDiagnostics();
@@ -373,7 +376,7 @@ describe('settled profile persistence', () => {
       /\[disconnect\.fail\].*step=callback-nonces.*err=nonce save failed/,
       /\[disconnect\.fail\].*step=workspaces.*err=workspaces save failed/,
     ] });
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('reports failed run cleanup while still persisting its final handle and attempting channel disconnect', async () => {
     const diagnostics = captureDiagnostics();
@@ -399,7 +402,7 @@ describe('settled profile persistence', () => {
       warnings: [/\[run\.post-done-exit-timeout\].*profile=test.*agent=claude/],
       errors: [/\[stream\.fail\].*err=child cleanup failed/, /\[disconnect\.fail\].*step=stopAll.*err=failed to stop all active runs/],
     });
-  });
+  }, TEST_TIMEOUT_MS);
 });
 
 async function supervisorHarness(beforeReturn?: (bridge: BridgeChannel, index: number) => Promise<void>) {
@@ -475,7 +478,7 @@ describe('supervisor lifecycle ownership', () => {
     expect(h.sup.isOnline('a')).toBe(false);
     expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
     diagnostics.expect({});
-  });
+  }, TEST_TIMEOUT_MS);
 
   it.each([false, true])('waits for an entered restart and owns its new bridge before stop, rollback fails=%s', async fails => {
     const diagnostics = captureDiagnostics();
@@ -541,7 +544,7 @@ describe('supervisor lifecycle ownership', () => {
       /\[supervisor\.rollback-disconnect-failed\].*profile=a.*err=Error: new lifecycle cleanup failed/,
       /\[supervisor\.disconnect-failed\].*profile=a.*err=AggregateError: profile bridges did not stop/,
     ] : [] });
-  });
+  }, TEST_TIMEOUT_MS);
 
   it.each([false, true])('shares concurrent stops, then permits a failed stop retry, failure=%s', async fails => {
     const diagnostics = captureDiagnostics();
@@ -590,7 +593,7 @@ describe('supervisor lifecycle ownership', () => {
     expect(readAndPrune(h.paths.userRegistryFile)).toEqual([]);
     expect((await checkRuntimeLock(h.paths.profileLockFile)).locked).toBe(false);
     diagnostics.expect({ warnings: fails ? [/\[supervisor\.disconnect-failed\].*profile=a.*err=Error: shared stop failed/] : [] });
-  });
+  }, TEST_TIMEOUT_MS);
 });
 
 describe('shutdown callers preserve failed ownership', () => {
@@ -627,7 +630,7 @@ describe('shutdown callers preserve failed ownership', () => {
     expect(h.sup.isOnline('a')).toBe(false);
     for (const lock of acquired) expect((await checkRuntimeLock(lock.target)).locked).toBe(false);
     diagnostics.expect({ warnings: [new RegExp(`\\[supervisor\\.lock-release-failed\\].*profile=a.*kind=${kind}.*err=Error: ${kind} lock release failed`)] });
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('keeps a registry persistence failure visible and refuses a new bridge until stop succeeds', async () => {
     const diagnostics = captureDiagnostics();
@@ -643,7 +646,7 @@ describe('shutdown callers preserve failed ownership', () => {
     await h.sup.stopProfile('a');
     expect(h.sup.isOnline('a')).toBe(false);
     diagnostics.expect({ warnings: [/\[supervisor\.unregister-failed\].*profile=a.*err=Error: registry removal save failed/] });
-  });
+  }, TEST_TIMEOUT_MS);
 
   it.each(['stopProfile', 'exit'] as const)('propagates %s rejection and retains profile locks and registry', async caller => {
     const diagnostics = captureDiagnostics();
@@ -661,7 +664,7 @@ describe('shutdown callers preserve failed ownership', () => {
     await h.sup.stopProfile('a');
     expect(h.sup.isOnline('a')).toBe(false);
     diagnostics.expect({ warnings: [/\[supervisor\.disconnect-failed\].*profile=a.*err=Error: save failed after settlement/] });
-  });
+  }, TEST_TIMEOUT_MS);
 
   it('attempts every profile on shutdown, removes only successful profiles and propagates errors', async () => {
     const diagnostics = captureDiagnostics();
@@ -674,7 +677,7 @@ describe('shutdown callers preserve failed ownership', () => {
     expect(h.sup.list().map(item => item.profile)).toEqual(['a']);
     expect(readAndPrune(h.paths.userRegistryFile).map(entry => entry.profileName)).toEqual(['a']);
     diagnostics.expect({ warnings: [/\[supervisor\.disconnect-failed\].*profile=a.*err=Error: profile a cleanup failed/] });
-  });
+  }, TEST_TIMEOUT_MS);
 
   it.each([false, true])('rolls back reconnect and retains every failed bridge when new cleanup fails=%s', async failNext => {
     const diagnostics = captureDiagnostics();
@@ -707,7 +710,7 @@ describe('shutdown callers preserve failed ownership', () => {
       /\[supervisor\.old-disconnect-failed\].*profile=a.*err=Error: old bridge did not settle/,
       ...(failNext ? [/\[supervisor\.rollback-disconnect-failed\].*profile=a.*err=Error: new bridge did not settle/] : []),
     ] });
-  });
+  }, TEST_TIMEOUT_MS);
 });
 
 describe('foreground and daemon signal owner', () => {
@@ -752,5 +755,5 @@ describe('foreground and daemon signal owner', () => {
         errors: [/\[shutdown\.fail\].*signal=SIGTERM.*err=supervisor shutdown did not complete cleanly/, /关闭失败；保留运行状态与锁/],
       });
     } finally { process.exitCode = previousExitCode; }
-  });
+  }, TEST_TIMEOUT_MS);
 });
