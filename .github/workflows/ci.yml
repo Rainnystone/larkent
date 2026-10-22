@@ -7,6 +7,7 @@ on:
   push:
     branches: [master, 'release/*']
   pull_request:
+  merge_group:
   schedule:
     - cron: '0 18 * * *'
 
@@ -84,9 +85,11 @@ jobs:
     name: Test on ${{ matrix.os }} (shard ${{ matrix.shard }}/2)
     needs: static
     if: >
+      github.event_name == 'merge_group' ||
       github.event_name == 'schedule' ||
       (github.event_name == 'pull_request' &&
-        (github.base_ref == 'master' || startsWith(github.base_ref, 'release/'))) ||
+        (github.base_ref == 'master' || startsWith(github.base_ref, 'release/')) &&
+        matrix.os == 'windows-latest') ||
       (github.event_name == 'push' &&
         (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/')))
     strategy:
@@ -121,3 +124,27 @@ jobs:
 
       - name: Test
         run: pnpm test:shard ${{ matrix.shard }}/2
+
+  ci-success:
+    name: CI success
+    if: always()
+    needs: [static, test-ubuntu, test-platform]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Verify required jobs
+        env:
+          STATIC: ${{ needs.static.result }}
+          UBUNTU: ${{ needs.test-ubuntu.result }}
+          PLATFORM: ${{ needs.test-platform.result }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -eu
+          [ "$STATIC" = success ]
+          [ "$UBUNTU" = success ]
+          if [ "$EVENT" = merge_group ] || [ "$EVENT" = push ] || [ "$EVENT" = schedule ]; then
+            [ "$PLATFORM" = success ]
+          else
+            [ "$PLATFORM" = success ] || [ "$PLATFORM" = skipped ]
+          fi
