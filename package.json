@@ -55,6 +55,7 @@
     "prepublishOnly": "pnpm typecheck && pnpm build"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "2.0.0",
     "@clack/prompts": "^1.4.0",
     "@larksuite/channel": "^0.7.1",
     "commander": "^12.1.0",

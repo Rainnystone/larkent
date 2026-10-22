@@ -31,20 +31,22 @@ export async function installControlledKindCli(root: string, kind: PinAgentKind,
     },
     async setScript(script) {
       // Preserve dialects, replacing only fixture identity and optional stale cwd.
+      const mapIdentity = (text: string) => text
+        .replaceAll('PINNED_ANSWER', answer)
+        .replaceAll('thread-pin-codex', resumeHandle)
+        .replaceAll('session_pin_kimi', resumeHandle)
+        .replaceAll('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', resumeHandle)
+        .replaceAll('c6b62c6f-7ead-4fd6-9922-e952131177ff', resumeHandle);
       const lines = script.lines.map(line => {
-        const mapped = JSON.parse(JSON.stringify(line)
-          .replaceAll('PINNED_ANSWER', answer)
-          .replaceAll('thread-pin-codex', resumeHandle)
-          .replaceAll('session_pin_kimi', resumeHandle)
-          .replaceAll('aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee', resumeHandle)
-          .replaceAll('c6b62c6f-7ead-4fd6-9922-e952131177ff', resumeHandle));
+        const mapped = typeof line === 'string' ? mapIdentity(line) : JSON.parse(mapIdentity(JSON.stringify(line)));
         if (mapped && typeof mapped === 'object' && mapped.cwd === '/tmp') delete mapped.cwd;
         return mapped;
       });
+      const exportSessionId = script.exportSessionId ? mapIdentity(script.exportSessionId) : undefined;
       await rm(readyPath, { force: true });
       await rm(releasePath, { force: true });
       await writeFile(fake.scriptPath, JSON.stringify({
-        ...script, lines, readyPath, releasePath, recordAppendPath: recordPath,
+        ...script, lines, ...(exportSessionId ? { exportSessionId } : {}), readyPath, releasePath, recordAppendPath: recordPath,
         ...(kind === 'codex' ? { codexStateRoot: root } : {}),
       }));
     },

@@ -7,6 +7,7 @@ import { CodexJsonlTranslator } from '../../../src/agent/codex/jsonl.js';
 import { CursorJsonlTranslator } from '../../../src/agent/cursor/jsonl.js';
 import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl.js';
 import { KimiJsonlTranslator } from '../../../src/agent/kimi/jsonl.js';
+import { DevinTranscriptTranslator } from '../../../src/agent/devin/transcript.js';
 import { AGENT_KINDS, type AgentKind } from '../../../src/agent/registry.js';
 import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../../../src/card/direct-im-send.js';
 import {
@@ -323,6 +324,15 @@ function eventsFromKindJsonl(kind: AgentKind, success: boolean): AgentEvent[] {
         { type: 'final_text', content: ANSWER },
         done(),
       ];
+    case 'devin': {
+      const translator = new DevinTranscriptTranslator();
+      return [
+        ...translator.translate({ sessionUpdate: 'tool_call', toolCallId: 'tool-1', kind: 'execute', rawInput: { command } }),
+        ...translator.translate({ sessionUpdate: 'tool_call_update', toolCallId: 'tool-1', status: success ? 'completed' : 'failed', rawOutput: output }),
+        ...translator.translate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ANSWER } }),
+        ...translator.finish('end_turn'),
+      ];
+    }
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);

@@ -11,5 +11,6 @@ export { AntigravityAdapter } from './antigravity/adapter';
 export { ClaudeAdapter } from './claude/adapter';
 export { CodexAdapter } from './codex/adapter';
 export { CursorAdapter } from './cursor/adapter';
+export { DevinAdapter } from './devin/adapter';
 export { GrokAdapter } from './grok/adapter';
 export { KimiAdapter } from './kimi/adapter';

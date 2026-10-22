@@ -25,7 +25,10 @@ import type { startChannel as sourceStartChannel } from '../../src/bot/channel';
 const NOW = Date.parse('2026-10-19T00:00:00Z');
 // Seven runtime turns and 90+ real client processes share a row. Hosted Windows
 // reached the final stop phase at the old 120s limit; individual request budgets stay unchanged.
-const CONTRACT_ROW_TIMEOUT_MS = 240_000;
+// Windows also spawns every client process several times slower than POSIX, so a
+// single turn can exceed the POSIX wait budget without anything being stuck.
+const CONTRACT_TURN_TIMEOUT_MS = process.platform === 'win32' ? 90_000 : 30_000;
+const CONTRACT_ROW_TIMEOUT_MS = process.platform === 'win32' ? 600_000 : 240_000;
 const CORRECTED_PREVIEW = [
   { category: 'needs-input', code: 'missing-end-at' },
   { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } },
@@ -40,8 +43,14 @@ beforeAll(async () => {
 afterAll(async () => { await client?.cleanup(); });
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); sdk.channel = undefined; vi.restoreAllMocks(); });
 
-function expectResumeArgv(kind: PinAgentKind, argv: string[], handle?: string) {
-  const flag = { claude: '--resume', codex: 'resume', kimi: '-S', grok: '-r', cursor: '--resume', antigravity: '--conversation' }[kind];
+function expectResumeArgv(kind: PinAgentKind, argv: string[], handle?: string, acp?: {method:string;params:{sessionId?:string}}) {
+  if (kind === 'devin') {
+    expect(argv).toContain('acp'); expect(argv).not.toContain('-r');
+    expect(acp?.method).toBe(handle ? 'session/load' : 'session/new');
+    expect(acp?.params.sessionId).toBe(handle);
+    return;
+  }
+  const flag = { claude: '--resume', codex: 'resume', kimi: '-S', grok: '-r', cursor: '--resume', antigravity: '--conversation', devin: '-r' }[kind];
   if (!handle) { expect(argv).not.toContain(flag); return; }
   expect(argv).toContain(flag);
   if (kind === 'codex') expect(argv.slice(-2)).toEqual([handle, '-']);
@@ -51,7 +60,7 @@ function expectResumeArgv(kind: PinAgentKind, argv: string[], handle?: string) {
 // This suite is unconditional on every CI OS. It proves adapter/control-process behavior,
 // not native CLI/model tool selection. The paid/live acceptance belongs to P09.
 it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/resumed IM, automatic runs and stop', async kind => {
-  const tmp = await createTmpProfile(`six cli & ${kind}-`); cleanup.push(tmp.cleanup);
+  const tmp = await createTmpProfile(`seven cli & ${kind}-`); cleanup.push(tmp.cleanup);
   let now = NOW;
   vi.spyOn(Date, 'now').mockImplementation(() => now);
   const runtime = await installBridgeContractCli(tmp.root, kind);
@@ -89,7 +98,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
   let message = 0;
   const send = (content = 'Run the synthetic contract', replyTo?: string) => channel.handlers.message?.({ messageId: `om_contract_${++message}`, content, chatId: 'oc_synthetic', chatType: 'group', senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: now,
     ...(replyTo ? { threadId: replyTo, rootId: replyTo, replyToMessageId: replyTo } : {}), raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
-  const wait = (assertion: () => void | Promise<void>) => vi.waitFor(assertion, { timeout: 30000 });
+  const wait = (assertion: () => void | Promise<void>) => vi.waitFor(assertion, { timeout: CONTRACT_TURN_TIMEOUT_MS });
   const finish = async (value = 42) => {
     await wait(async () => { expect((await runtime.report()).connected).toBe(true); });
     await wait(() => expect(journal.list().at(-1)?.reply?.state).toBe('sent'));
@@ -119,7 +128,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
 
   await runtime.plan({ mode: 'create', now }); await send();
   const created = await finish();
-  expectResumeArgv(kind, created.argv);
+  expectResumeArgv(kind, created.argv, undefined, created.acpSessionRequest);
   expect(runs[0]!.resumeHandle).toBeUndefined();
   expect(calls(created, 'automation.create')).toMatchObject([{ category: 'validation-failed', code: 'invalid-params' }, { category: 'waiting-confirmation' }, { category: 'waiting-confirmation' }]);
   expect(calls(created, 'automation.preview')).toMatchObject(CORRECTED_PREVIEW);
@@ -130,7 +139,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
 
   await runtime.plan({ mode: 'manage', now, operationId }); await send();
   const managed = await finish();
-  expectResumeArgv(kind, managed.argv, created.session);
+  expectResumeArgv(kind, managed.argv, created.session, managed.acpSessionRequest);
   expect(runs[1]!.resumeHandle).toBe(created.session);
   expect(calls(managed, 'automation.operation.get')).toMatchObject([{ category: 'applied', data: { executedCount: 0 } }, { category: 'applied' }]);
   expect(calls(managed, 'automation.pause')[0].category).toBe('applied');
@@ -147,7 +156,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
     const fireKey = `${store.list()[0]!.id}@${fireAt}`;
     await bridge.wakeAutomation(fireKey);
     const automatic = await finish();
-    expectResumeArgv(kind, automatic.argv);
+    expectResumeArgv(kind, automatic.argv, undefined, automatic.acpSessionRequest);
     expect(runs.at(-1)!.promptVariant).toBe('automation');
     // Scheduled fires intentionally start fresh; they must never reuse an IM or prior-fire handle.
     expect(runs.at(-1)!.resumeHandle).toBeUndefined();
@@ -161,7 +170,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
   expect(new Set(runs.map(run => run.toolEnv!.LARK_BRIDGE_TOOL_TOKEN)).size).toBe(4);
   await runtime.plan({ mode: 'delete', now, operationId: replacementId }); await send('Inspect results and delete', automaticReply);
   const deleted = await finish();
-  expectResumeArgv(kind, deleted.argv, automaticSession);
+  expectResumeArgv(kind, deleted.argv, automaticSession, deleted.acpSessionRequest);
   expect(runs.at(-1)!.resumeHandle).toBe(automaticSession);
   expect(calls(deleted, 'automation.operation.get')[0]).toMatchObject({ category: 'applied', data: { executedCount: 2, deliveredCount: 2, lastExecution: 'ok', lastDelivery: 'sent' } });
   expect(calls(deleted, 'automation.delete')[0]).toMatchObject({ category: 'waiting-confirmation' });
@@ -173,7 +182,7 @@ it.each(PIN_AGENT_KINDS)('%s carries the complete shared contract through new/re
   await bridge.disconnect(); bridge = await start();
   await runtime.plan({ mode: 'read', now, reference }); await send('Read the current plugin version');
   const updated = await finish(7);
-  expectResumeArgv(kind, updated.argv, managed.session);
+  expectResumeArgv(kind, updated.argv, managed.session, updated.acpSessionRequest);
   expect(runs.at(-1)!.resumeHandle).toBe(managed.session);
   expect(updated.instructions).toContain('"version":"2.0.0"');
   expect(calls(updated, 'plugins.read').at(-1)).toMatchObject({ category: 'unavailable', code: 'stale-plugin-reference' });

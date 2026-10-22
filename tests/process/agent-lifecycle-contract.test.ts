@@ -174,12 +174,15 @@ describe('shared real adapter lifecycle', () => {
       await fake.waitReady();
       const pid = await readyPid(fake.readyPath);
       await fake.release();
+      // ACP terminal delivery waits for process reclamation; inspect ownership
+      // immediately after releasing the controlled prompt response.
+      if (kind === 'devin') observed.resolve();
       await observed.promise;
       expect(alive(pid)).toBe(true);
       expect(pool.snapshot().active).toBe(1);
       expect(activeRuns.get('scope')).toBeDefined();
       expect(await execution.run.waitForExit(20)).toBe(false);
-      if (kind === 'kimi') {
+      if (kind === 'kimi' || kind === 'devin') {
         expect(events.some(e => e.type === 'done')).toBe(false);
         await execution.stop();
       }
@@ -189,7 +192,12 @@ describe('shared real adapter lifecycle', () => {
       expect(alive(pid)).toBe(false);
       expect(pool.snapshot().active).toBe(0);
       expect(activeRuns.get('scope')).toBeUndefined();
-      if (kind !== 'kimi') {
+      if (kind === 'devin') {
+        // The interrupted finish still emits exactly one done; no post-done
+        // grace warning since done only appears after the child exits.
+        expect(events.filter(e => e.type === 'done')).toHaveLength(1);
+        expect(warnings).not.toHaveBeenCalledWith('run', 'post-done-exit-timeout', expect.anything());
+      } else if (kind !== 'kimi') {
         expect(events.filter(e => e.type === 'done')).toHaveLength(1);
         expect(warnings).toHaveBeenCalledWith('run', 'post-done-exit-timeout', expect.objectContaining({ agent: kind, graceMs: 150 }));
       } else {
@@ -255,7 +263,10 @@ describe('shared real adapter lifecycle', () => {
     expect(process.env).toEqual(parentEnv);
   });
 
-  it.each(PIN_AGENT_KINDS)('%s waitForExit waits for real runner cleanup after terminal', async kind => {
+  // This gate injects the JSONL runner's file-cleanup callback. ACP owns no
+  // temporary export files; its process settlement is tested above and in
+  // devin-acp-contract.test.ts rather than bypassing the real ACP runner here.
+  it.each(PIN_AGENT_KINDS.filter(kind => kind !== 'devin'))('%s waitForExit waits for real runner cleanup after terminal', async kind => {
     const { fake, agent, tmp } = await fixture(kind);
     const cleanupEntered = deferred();
     const releaseCleanup = deferred();
