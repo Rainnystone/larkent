@@ -7,7 +7,6 @@ on:
   push:
     branches: [master, 'release/*']
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled, unlabeled]
   merge_group:
   schedule:
     - cron: '0 18 * * *'
@@ -131,7 +130,7 @@ jobs:
       github.event_name == 'merge_group' ||
       github.event_name == 'schedule' ||
       (github.event_name == 'pull_request' &&
-        contains(github.event.pull_request.labels.*.name, 'ci:macos')) ||
+        (github.base_ref == 'master' || startsWith(github.base_ref, 'release/'))) ||
       (github.event_name == 'push' &&
         (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/')))
     strategy:
