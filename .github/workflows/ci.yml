@@ -82,7 +82,7 @@ jobs:
         run: pnpm test:shard ${{ matrix.shard }}/2
 
   test-windows:
-    name: Test on windows-latest (shard ${{ matrix.shard }}/2)
+    name: Test on windows-latest (shard ${{ matrix.shard }}/3)
     needs: static
     if: >
       github.event_name == 'merge_group' ||
@@ -94,7 +94,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3]
     runs-on: windows-latest
     timeout-minutes: 25
 
@@ -121,7 +121,7 @@ jobs:
         run: pnpm build:ci
 
       - name: Test
-        run: pnpm test:shard ${{ matrix.shard }}/2
+        run: pnpm test:shard ${{ matrix.shard }}/3
 
   test-macos:
     name: Test on macos-latest (shard ${{ matrix.shard }}/2)
