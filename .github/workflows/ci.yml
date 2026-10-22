@@ -129,6 +129,8 @@ jobs:
     if: >
       github.event_name == 'merge_group' ||
       github.event_name == 'schedule' ||
+      (github.event_name == 'pull_request' &&
+        contains(github.event.pull_request.labels.*.name, 'ci:macos')) ||
       (github.event_name == 'push' &&
         (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/')))
     strategy:
@@ -187,4 +189,5 @@ jobs:
             [ "$MACOS" = success ]
           else
             [ "$WINDOWS" = success ] || [ "$WINDOWS" = skipped ]
+            [ "$MACOS" = success ] || [ "$MACOS" = skipped ]
           fi
