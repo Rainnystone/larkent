@@ -55,3 +55,6 @@ e2e/.local/
 
 # Local pnpm cache
 .pnpm-store/
+
+# Local CI scheduling observations and candidate timing snapshots
+.ci-timings/

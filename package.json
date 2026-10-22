@@ -46,6 +46,7 @@
     "test:unit": "vitest run tests/unit --passWithNoTests",
     "test:integration": "vitest run tests/integration --passWithNoTests",
     "test:process": "vitest run tests/process --passWithNoTests",
+    "ci:schedule": "tsx tests/helpers/ci/cli.ts",
     "ci:local": "git diff --check && pnpm test && pnpm typecheck && pnpm build",
     "e2e:up": "tsx e2e/test-bridge/cli.ts up",
     "e2e:down": "tsx e2e/test-bridge/cli.ts down",

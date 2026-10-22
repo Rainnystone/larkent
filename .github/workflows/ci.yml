@@ -81,6 +81,8 @@ jobs:
         run: pnpm build:ci
 
       - name: Test
+        env:
+          LARK_CI_SCHEDULER: weighted
         run: pnpm test:shard ${{ matrix.shard }}/2
 
   test-windows:
@@ -123,6 +125,8 @@ jobs:
         run: pnpm build:ci
 
       - name: Test
+        env:
+          LARK_CI_SCHEDULER: weighted
         run: pnpm test:shard ${{ matrix.shard }}/3
 
   test-macos:
@@ -165,6 +169,8 @@ jobs:
         run: pnpm build:ci
 
       - name: Test
+        env:
+          LARK_CI_SCHEDULER: weighted
         run: pnpm test:shard ${{ matrix.shard }}/2
 
   ci-success:
