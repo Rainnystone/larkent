@@ -81,23 +81,61 @@ jobs:
       - name: Test
         run: pnpm test:shard ${{ matrix.shard }}/2
 
-  test-platform:
-    name: Test on ${{ matrix.os }} (shard ${{ matrix.shard }}/2)
+  test-windows:
+    name: Test on windows-latest (shard ${{ matrix.shard }}/2)
     needs: static
     if: >
       github.event_name == 'merge_group' ||
       github.event_name == 'schedule' ||
       (github.event_name == 'pull_request' &&
-        (github.base_ref == 'master' || startsWith(github.base_ref, 'release/')) &&
-        matrix.os == 'windows-latest') ||
+        (github.base_ref == 'master' || startsWith(github.base_ref, 'release/'))) ||
       (github.event_name == 'push' &&
         (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/')))
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, windows-latest]
         shard: [1, 2]
-    runs-on: ${{ matrix.os }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile --ignore-scripts && pnpm rebuild esbuild protobufjs
+
+      - name: Build web
+        run: pnpm build:web
+
+      - name: Build CLI
+        run: pnpm build:ci
+
+      - name: Test
+        run: pnpm test:shard ${{ matrix.shard }}/2
+
+  test-macos:
+    name: Test on macos-latest (shard ${{ matrix.shard }}/2)
+    needs: static
+    if: >
+      github.event_name == 'merge_group' ||
+      github.event_name == 'schedule' ||
+      (github.event_name == 'push' &&
+        (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/heads/release/')))
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    runs-on: macos-latest
     timeout-minutes: 25
 
     steps:
@@ -128,7 +166,7 @@ jobs:
   ci-success:
     name: CI success
     if: always()
-    needs: [static, test-ubuntu, test-platform]
+    needs: [static, test-ubuntu, test-windows, test-macos]
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
@@ -137,14 +175,16 @@ jobs:
         env:
           STATIC: ${{ needs.static.result }}
           UBUNTU: ${{ needs.test-ubuntu.result }}
-          PLATFORM: ${{ needs.test-platform.result }}
+          WINDOWS: ${{ needs.test-windows.result }}
+          MACOS: ${{ needs.test-macos.result }}
           EVENT: ${{ github.event_name }}
         run: |
           set -eu
           [ "$STATIC" = success ]
           [ "$UBUNTU" = success ]
           if [ "$EVENT" = merge_group ] || [ "$EVENT" = push ] || [ "$EVENT" = schedule ]; then
-            [ "$PLATFORM" = success ]
+            [ "$WINDOWS" = success ]
+            [ "$MACOS" = success ]
           else
-            [ "$PLATFORM" = success ] || [ "$PLATFORM" = skipped ]
+            [ "$WINDOWS" = success ] || [ "$WINDOWS" = skipped ]
           fi
