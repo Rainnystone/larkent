@@ -1,0 +1,24 @@
+import type { ConnectionBuilder, ConnectionContext, JsonRpcId, MaybePromise } from "./jsonrpc.js";
+/**
+ * Parser used by custom methods to validate or transform raw JSON-RPC params.
+ *
+ * A Zod schema can be passed directly because schemas expose a compatible
+ * `parse(...)` method.
+ */
+export type ParamsParser<Params> = {
+    /**
+     * Parses raw JSON-RPC params into the handler's typed params.
+     */
+    parse: (params: unknown) => Params;
+} | ((params: unknown) => Params);
+export declare function parseParams<Params>(parser: ParamsParser<Params> | undefined, params: unknown): Params;
+type MethodSpec<Params> = {
+    method: string;
+    params?: ParamsParser<Params>;
+};
+export declare function registerAppRequest<Params, HandlerResponse, Response, Context>(builder: ConnectionBuilder, spec: MethodSpec<Params>, context: (params: Params, cx: ConnectionContext, signal: AbortSignal, requestId: JsonRpcId, method: string) => Context, handler: (context: Context) => MaybePromise<HandlerResponse>, serializeResponse?: (response: HandlerResponse) => Response, lifecycle?: {
+    afterResponse(params: Params, response: Response, cx: ConnectionContext): void;
+    onError(cx: ConnectionContext, error: unknown): void;
+}): void;
+export declare function registerAppNotification<Params, Context>(builder: ConnectionBuilder, spec: MethodSpec<Params>, context: (params: Params, cx: ConnectionContext, signal: AbortSignal, method: string) => Context, handler: (context: Context) => MaybePromise<void>): void;
+export {};

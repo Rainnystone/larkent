@@ -1,0 +1,567 @@
+import * as acp from "../v1/unstable/acp.js";
+import type * as schema from "./schema/types.gen.js";
+export * from "../v1/unstable/acp.js";
+export type { SessionId } from "../v1/unstable/acp.js";
+export type * from "./schema/types.gen.js";
+export * as validate from "./schema/zod.gen.js";
+export declare const methods: {
+    readonly agent: {
+        readonly nes: {
+            readonly start: "nes/start";
+            readonly suggest: "nes/suggest";
+            readonly close: "nes/close";
+            readonly accept: "nes/accept";
+            readonly reject: "nes/reject";
+        };
+        readonly document: {
+            readonly didOpen: "document/didOpen";
+            readonly didChange: "document/didChange";
+            readonly didClose: "document/didClose";
+            readonly didSave: "document/didSave";
+            readonly didFocus: "document/didFocus";
+        };
+        readonly initialize: "initialize";
+        readonly authenticate: "authenticate";
+        readonly logout: "logout";
+        readonly providers: {
+            readonly list: "providers/list";
+            readonly set: "providers/set";
+            readonly disable: "providers/disable";
+        };
+        readonly session: {
+            readonly new: "session/new";
+            readonly load: "session/load";
+            readonly list: "session/list";
+            readonly delete: "session/delete";
+            readonly fork: "session/fork";
+            readonly resume: "session/resume";
+            readonly close: "session/close";
+            readonly setMode: "session/set_mode";
+            readonly setConfigOption: "session/set_config_option";
+            readonly prompt: "session/prompt";
+            readonly cancel: "session/cancel";
+        };
+    };
+    readonly client: {
+        readonly session: {
+            readonly requestPermission: "session/request_permission";
+            readonly update: "session/update";
+        };
+        readonly fs: {
+            readonly writeTextFile: "fs/write_text_file";
+            readonly readTextFile: "fs/read_text_file";
+        };
+        readonly terminal: {
+            readonly create: "terminal/create";
+            readonly output: "terminal/output";
+            readonly release: "terminal/release";
+            readonly waitForExit: "terminal/wait_for_exit";
+            readonly kill: "terminal/kill";
+        };
+        readonly elicitation: {
+            readonly create: "elicitation/create";
+            readonly complete: "elicitation/complete";
+        };
+    };
+    readonly protocol: {
+        readonly cancelRequest: "$/cancel_request";
+    };
+};
+export declare const AGENT_METHODS: {
+    readonly nes_start: "nes/start";
+    readonly nes_suggest: "nes/suggest";
+    readonly nes_close: "nes/close";
+    readonly nes_accept: "nes/accept";
+    readonly nes_reject: "nes/reject";
+    readonly document_did_open: "document/didOpen";
+    readonly document_did_change: "document/didChange";
+    readonly document_did_close: "document/didClose";
+    readonly document_did_save: "document/didSave";
+    readonly document_did_focus: "document/didFocus";
+    readonly initialize: "initialize";
+    readonly authenticate: "authenticate";
+    readonly providers_list: "providers/list";
+    readonly providers_set: "providers/set";
+    readonly providers_disable: "providers/disable";
+    readonly session_new: "session/new";
+    readonly session_load: "session/load";
+    readonly session_set_mode: "session/set_mode";
+    readonly session_set_config_option: "session/set_config_option";
+    readonly session_prompt: "session/prompt";
+    readonly session_cancel: "session/cancel";
+    readonly mcp_message: "mcp/message";
+    readonly session_list: "session/list";
+    readonly session_delete: "session/delete";
+    readonly session_fork: "session/fork";
+    readonly session_resume: "session/resume";
+    readonly session_close: "session/close";
+    readonly logout: "logout";
+};
+export type ClientCapabilities = acp.ClientCapabilities & {
+    nes?: schema.ClientNesCapabilities | null;
+    positionEncodings?: schema.PositionEncodingKind[];
+};
+export type AgentCapabilities = acp.AgentCapabilities & {
+    nes?: schema.NesCapabilities | null;
+    positionEncoding?: schema.PositionEncodingKind | null;
+};
+export type InitializeRequest = Omit<acp.InitializeRequest, "clientCapabilities"> & {
+    clientCapabilities?: ClientCapabilities;
+};
+export type InitializeResponse = Omit<acp.InitializeResponse, "agentCapabilities"> & {
+    agentCapabilities?: AgentCapabilities;
+};
+export declare const zClientCapabilities: import("zod/v4").ZodObject<{
+    fs: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        readTextFile: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        writeTextFile: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    terminal: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+    session: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        compaction: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        configOptions: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            boolean: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        notices: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    subagents: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    plan: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    auth: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        terminal: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    elicitation: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        form: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        url: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    nes: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        jump: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        rename: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        searchAndReplace: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    positionEncodings: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodPipe<import("zod/v4").ZodArray<import("zod/v4").ZodCatch<import("zod/v4").ZodUnion<readonly [import("zod/v4").ZodLiteral<"utf-16">, import("zod/v4").ZodLiteral<"utf-32">, import("zod/v4").ZodLiteral<"utf-8">]>>>, import("zod/v4").ZodTransform<("utf-16" | "utf-32" | "utf-8")[], ("utf-16" | "utf-32" | "utf-8")[]>>>>;
+}, import("zod/v4/core").$strip>;
+export declare const zAgentCapabilities: import("zod/v4").ZodObject<{
+    loadSession: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+    promptCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        image: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        audio: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        embeddedContext: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    mcpCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        http: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        sse: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        acp: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    sessionCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        list: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        delete: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        additionalDirectories: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        systemPrompt: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            mode: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                override: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        fork: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        resume: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        close: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    auth: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        logout: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    providers: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    nes: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        events: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            document: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                didOpen: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                didChange: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    syncKind: import("zod/v4").ZodUnion<readonly [import("zod/v4").ZodLiteral<"full">, import("zod/v4").ZodLiteral<"incremental">]>;
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                didClose: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                didSave: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                didFocus: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        context: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            recentFiles: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                maxCount: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodInt>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            relatedSnippets: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            editHistory: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                maxCount: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodInt>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            userActions: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                maxCount: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodInt>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            openFiles: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            diagnostics: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    positionEncoding: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodUnion<readonly [import("zod/v4").ZodLiteral<"utf-16">, import("zod/v4").ZodLiteral<"utf-32">, import("zod/v4").ZodLiteral<"utf-8">]>>>>;
+}, import("zod/v4/core").$strip>;
+export declare const zInitializeRequest: import("zod/v4").ZodObject<{
+    protocolVersion: import("zod/v4").ZodInt;
+    clientInfo: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        name: import("zod/v4").ZodString;
+        title: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodString>>>;
+        version: import("zod/v4").ZodString;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    clientCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        fs: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+            readTextFile: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            writeTextFile: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        terminal: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        session: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            compaction: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            configOptions: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                boolean: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            notices: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        subagents: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        plan: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        auth: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+            terminal: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        elicitation: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            form: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            url: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        nes: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            jump: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            rename: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            searchAndReplace: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        positionEncodings: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodPipe<import("zod/v4").ZodArray<import("zod/v4").ZodCatch<import("zod/v4").ZodUnion<readonly [import("zod/v4").ZodLiteral<"utf-16">, import("zod/v4").ZodLiteral<"utf-32">, import("zod/v4").ZodLiteral<"utf-8">]>>>, import("zod/v4").ZodTransform<("utf-16" | "utf-32" | "utf-8")[], ("utf-16" | "utf-32" | "utf-8")[]>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+}, import("zod/v4/core").$strip>;
+export declare const zInitializeResponse: import("zod/v4").ZodObject<{
+    protocolVersion: import("zod/v4").ZodInt;
+    authMethods: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodPipe<import("zod/v4").ZodArray<import("zod/v4").ZodCatch<import("zod/v4").ZodUnion<readonly [import("zod/v4").ZodIntersection<import("zod/v4").ZodObject<{
+        id: import("zod/v4").ZodString;
+        name: import("zod/v4").ZodString;
+        description: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodString>>>;
+        args: import("zod/v4").ZodOptional<import("zod/v4").ZodArray<import("zod/v4").ZodString>>;
+        env: import("zod/v4").ZodOptional<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodString>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>, import("zod/v4").ZodObject<{
+        type: import("zod/v4").ZodLiteral<"terminal">;
+    }, import("zod/v4/core").$strip>>, import("zod/v4").ZodObject<{
+        id: import("zod/v4").ZodString;
+        name: import("zod/v4").ZodString;
+        description: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodString>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>]>>>, import("zod/v4").ZodTransform<({
+        id: string;
+        name: string;
+        description?: string | null | undefined;
+        _meta?: Record<string, unknown> | null | undefined;
+    } | ({
+        id: string;
+        name: string;
+        description?: string | null | undefined;
+        args?: string[] | undefined;
+        env?: Record<string, string> | undefined;
+        _meta?: Record<string, unknown> | null | undefined;
+    } & {
+        type: "terminal";
+    }))[], ({
+        id: string;
+        name: string;
+        description?: string | null | undefined;
+        _meta?: Record<string, unknown> | null | undefined;
+    } | ({
+        id: string;
+        name: string;
+        description?: string | null | undefined;
+        args?: string[] | undefined;
+        env?: Record<string, string> | undefined;
+        _meta?: Record<string, unknown> | null | undefined;
+    } & {
+        type: "terminal";
+    }))[]>>>>>;
+    agentInfo: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+        name: import("zod/v4").ZodString;
+        title: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodString>>>;
+        version: import("zod/v4").ZodString;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+    agentCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+        loadSession: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+        promptCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+            image: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            audio: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            embeddedContext: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        mcpCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+            http: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            sse: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            acp: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodBoolean>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        sessionCapabilities: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+            list: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            delete: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            additionalDirectories: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            systemPrompt: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                mode: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    override: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                    }, import("zod/v4/core").$strip>>>>;
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            fork: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            resume: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            close: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        auth: import("zod/v4").ZodCatch<import("zod/v4").ZodDefault<import("zod/v4").ZodOptional<import("zod/v4").ZodObject<{
+            logout: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        providers: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        nes: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+            events: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                document: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    didOpen: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                    }, import("zod/v4/core").$strip>>>>;
+                    didChange: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                        syncKind: import("zod/v4").ZodUnion<readonly [import("zod/v4").ZodLiteral<"full">, import("zod/v4").ZodLiteral<"incremental">]>;
+                        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                    }, import("zod/v4/core").$strip>>>>;
+                    didClose: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                    }, import("zod/v4/core").$strip>>>>;
+                    didSave: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                    }, import("zod/v4/core").$strip>>>>;
+                    didFocus: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                        _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                    }, import("zod/v4/core").$strip>>>>;
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            context: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                recentFiles: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    maxCount: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodInt>>>;
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                relatedSnippets: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                editHistory: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    maxCount: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodInt>>>;
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                userActions: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    maxCount: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodInt>>>;
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                openFiles: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                diagnostics: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodObject<{
+                    _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+                }, import("zod/v4/core").$strip>>>>;
+                _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+            }, import("zod/v4/core").$strip>>>>;
+            _meta: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodRecord<import("zod/v4").ZodString, import("zod/v4").ZodUnknown>>>>;
+        }, import("zod/v4/core").$strip>>>>;
+        positionEncoding: import("zod/v4").ZodCatch<import("zod/v4").ZodOptional<import("zod/v4").ZodNullable<import("zod/v4").ZodUnion<readonly [import("zod/v4").ZodLiteral<"utf-16">, import("zod/v4").ZodLiteral<"utf-32">, import("zod/v4").ZodLiteral<"utf-8">]>>>>;
+    }, import("zod/v4/core").$strip>>>>;
+}, import("zod/v4/core").$strip>;
+export type AgentRequestHandlersByMethod = Omit<acp.AgentRequestHandlersByMethod, "initialize"> & {
+    initialize: acp.AgentRequestHandler<InitializeRequest, InitializeResponse>;
+    "nes/start": acp.AgentRequestHandler<schema.StartNesRequest, schema.StartNesResponse>;
+    "nes/suggest": acp.AgentRequestHandler<schema.SuggestNesRequest, schema.SuggestNesResponse>;
+    "nes/close": acp.AgentRequestHandler<schema.CloseNesRequest, schema.CloseNesResponse | void>;
+};
+export type AgentNotificationHandlersByMethod = acp.AgentNotificationHandlersByMethod & {
+    "nes/accept": acp.AgentNotificationHandler<schema.AcceptNesNotification>;
+    "nes/reject": acp.AgentNotificationHandler<schema.RejectNesNotification>;
+    "document/didOpen": acp.AgentNotificationHandler<schema.DidOpenDocumentNotification>;
+    "document/didChange": acp.AgentNotificationHandler<schema.DidChangeDocumentNotification>;
+    "document/didClose": acp.AgentNotificationHandler<schema.DidCloseDocumentNotification>;
+    "document/didSave": acp.AgentNotificationHandler<schema.DidSaveDocumentNotification>;
+    "document/didFocus": acp.AgentNotificationHandler<schema.DidFocusDocumentNotification>;
+};
+export type AgentRequestMethod = keyof AgentRequestHandlersByMethod;
+export type AgentNotificationMethod = keyof AgentNotificationHandlersByMethod;
+export type AgentRequestParamsByMethod = {
+    [Method in AgentRequestMethod]: Parameters<AgentRequestHandlersByMethod[Method]>[0]["params"];
+};
+export type AgentRequestResponsesByMethod = {
+    [Method in AgentRequestMethod]: Exclude<Awaited<ReturnType<AgentRequestHandlersByMethod[Method]>>, void>;
+};
+export type AgentNotificationParamsByMethod = {
+    [Method in AgentNotificationMethod]: Parameters<AgentNotificationHandlersByMethod[Method]>[0]["params"];
+};
+export declare function agent(options?: acp.AppOptions): AgentApp;
+export declare class AgentApp extends acp.AgentApp {
+    onRequest(method: "*", handler: acp.AgentRequestHandler<unknown, unknown>): this;
+    onRequest<Method extends AgentRequestMethod>(method: Method, handler: AgentRequestHandlersByMethod[Method]): this;
+    onRequest<Params, Response>(method: string, params: acp.ParamsParser<Params>, handler: acp.AgentRequestHandler<Params, Response>): this;
+    onNotification(method: "*", handler: acp.AgentNotificationHandler<unknown>): this;
+    onNotification<Method extends AgentNotificationMethod>(method: Method, handler: AgentNotificationHandlersByMethod[Method]): this;
+    onNotification<Params>(method: string, params: acp.ParamsParser<Params>, handler: acp.AgentNotificationHandler<Params>): this;
+}
+export declare const ClientContext: typeof acp.ClientContext;
+export interface ClientContext extends acp.ClientContext {
+    request<Method extends AgentRequestMethod>(method: Method, params: AgentRequestParamsByMethod[Method], options?: acp.SendRequestOptions): Promise<AgentRequestResponsesByMethod[Method]>;
+    request<Response = unknown, Params = unknown>(method: string, params?: Params, options?: acp.SendRequestOptions): Promise<Response>;
+    notify<Method extends AgentNotificationMethod>(method: Method, params: AgentNotificationParamsByMethod[Method]): Promise<void>;
+    notify<Params = unknown>(method: string, params?: Params): Promise<void>;
+}
+export interface ClientConnection extends acp.ClientConnection {
+    readonly agent: ClientContext;
+}
+export type ClientConnectHandler = (connection: ClientConnection) => acp.MaybePromise<void>;
+export type ClientHandlerContext<Params> = Omit<acp.ClientHandlerContext<Params>, "agent"> & {
+    agent: ClientContext;
+};
+export type ClientRequestContext<Params> = ClientHandlerContext<Params> & {
+    requestId: acp.JsonRpcId;
+};
+export type ClientNotificationContext<Params> = ClientHandlerContext<Params>;
+export type ClientRequestHandler<Params, Response> = (context: ClientRequestContext<Params>) => acp.MaybePromise<Response>;
+export type ClientNotificationHandler<Params> = (context: ClientNotificationContext<Params>) => acp.MaybePromise<void>;
+export type ClientRequestHandlersByMethod = {
+    [Method in acp.ClientRequestMethod]: (context: ClientRequestContext<acp.ClientRequestParamsByMethod[Method]>) => ReturnType<acp.ClientRequestHandlersByMethod[Method]>;
+};
+export type ClientNotificationHandlersByMethod = {
+    [Method in acp.ClientNotificationMethod]: ClientNotificationHandler<acp.ClientNotificationParamsByMethod[Method]>;
+};
+export declare function client(options?: acp.AppOptions): ClientApp;
+export interface ClientApp extends acp.ClientApp {
+    connect(target: acp.Stream | acp.AgentApp): ClientConnection;
+    connectWith<T>(target: acp.Stream | acp.AgentApp, op: (context: ClientContext) => acp.MaybePromise<T>): Promise<T>;
+    onConnect(handler: ClientConnectHandler): this;
+    onRequest(method: "*", handler: ClientRequestHandler<unknown, unknown>): this;
+    onRequest<Method extends acp.ClientRequestMethod>(method: Method, handler: ClientRequestHandlersByMethod[Method]): this;
+    onRequest<Params, Response>(method: string, params: acp.ParamsParser<Params>, handler: ClientRequestHandler<Params, Response>): this;
+    onNotification(method: "*", handler: ClientNotificationHandler<unknown>): this;
+    onNotification<Method extends acp.ClientNotificationMethod>(method: Method, handler: ClientNotificationHandlersByMethod[Method]): this;
+    onNotification<Params>(method: string, params: acp.ParamsParser<Params>, handler: ClientNotificationHandler<Params>): this;
+}
+export declare const ClientApp: {
+    new (options?: acp.AppOptions): ClientApp;
+    readonly prototype: ClientApp;
+};

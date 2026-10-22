@@ -1,0 +1,24 @@
+export type { AbsolutePath, AgentAuthCapabilities, AgentCapabilities, AgentMessage, AgentNotification, AgentRequest, AgentResponse, AgentThought, Annotations, AudioContent, AuthCapabilities, AuthMethod, AuthMethodAgent, AuthMethodId, AuthMethodTerminal, AvailableCommand, AvailableCommandInput, AvailableCommandsUpdate, BlobResourceContents, BooleanPropertySchema, CancelRequestNotification, CancelSessionNotification, ClientCapabilities, ClientNotification, ClientRequest, ClientResponse, CloseSessionRequest, CloseSessionResponse, CommandPermissionSubject, CompactionId, CompactionStatus, CompactionSummaryChunk, CompactionUpdate, CompleteElicitationNotification, ConfigOptionUpdate, Content, ContentBlock, ContentChunk, Cost, CreateElicitationRequest, CreateElicitationResponse, DeleteSessionRequest, DeleteSessionResponse, Diff, DiffChange, DiffFileType, DiffPatch, DiffPatchFormat, DiffPathChange, DiffPathPairChange, ElicitationAcceptAction, ElicitationCapabilities, ElicitationContentValue, ElicitationFormCapabilities, ElicitationFormMode, ElicitationId, ElicitationPropertySchema, ElicitationRequestScope, ElicitationSchema, ElicitationSchemaType, ElicitationSessionScope, ElicitationUrlCapabilities, ElicitationUrlMode, EmbeddedResource, EmbeddedResourceResource, EnumOption, EnvVariable, Error, ErrorCode, ErrorStopReason, ExtNotification, ExtRequest, ExtResponse, HttpHeader, Icon, IconTheme, IdleStateUpdate, ImageContent, Implementation, InitializeRequest, InitializeResponse, IntegerPropertySchema, ListSessionsRequest, ListSessionsResponse, LoginAuthRequest, LoginAuthResponse, LogoutAuthRequest, LogoutAuthResponse, McpCapabilities, McpHttpCapabilities, McpServer, McpServerHttp, McpServerStdio, McpStdioCapabilities, MediaType, MessageId, MultiSelectItems, MultiSelectPropertySchema, NewSessionRequest, NewSessionResponse, Notice, NoticeSeverity, NumberPropertySchema, PermissionOption, PermissionOptionId, PermissionOptionKind, PlanEntry, PlanEntryPriority, PlanEntryStatus, PlanId, PlanItems, PlanUpdate, PlanUpdateContent, PromptAudioCapabilities, PromptCapabilities, PromptEmbeddedContextCapabilities, PromptImageCapabilities, PromptRequest, PromptResponse, ProtocolLevelNotification, ProtocolVersion, ReplayFrom, ReplayFromStart, RequestId, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse, RequestPermissionSubject, RequiresActionStateUpdate, ResourceLink, ResumeSessionRequest, ResumeSessionResponse, Role, RunningStateUpdate, SelectedPermissionOutcome, SessionAdditionalDirectoriesCapabilities, SessionCapabilities, SessionConfigBoolean, SessionConfigGroupId, SessionConfigId, SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelect, SessionConfigSelectGroup, SessionConfigSelectOption, SessionConfigSelectOptions, SessionConfigValueId, SessionDeleteCapabilities, SessionId, SessionInfo, SessionInfoUpdate, SessionListCursor, SessionUpdate, SetSessionConfigOptionRequest, SetSessionConfigOptionResponse, StateUpdate, StringFormat, StringMultiSelectItems, StringPropertySchema, Terminal, TerminalAuthCapabilities, TerminalExitStatus, TerminalId, TerminalOutput, TerminalOutputChunk, TerminalUpdate, TextCommandInput, TextContent, TextResourceContents, TitledMultiSelectItems, ToolCallContent, ToolCallContentChunk, ToolCallId, ToolCallLocation, ToolCallPermissionSubject, ToolCallStatus, ToolCallUpdate, ToolKind, UpdateSessionNotification, UsageUpdate, UserMessage, } from "./types.gen.js";
+export declare const AGENT_METHODS: {
+    readonly initialize: "initialize";
+    readonly auth_login: "auth/login";
+    readonly session_new: "session/new";
+    readonly session_set_config_option: "session/set_config_option";
+    readonly session_prompt: "session/prompt";
+    readonly session_cancel: "session/cancel";
+    readonly session_list: "session/list";
+    readonly session_delete: "session/delete";
+    readonly session_resume: "session/resume";
+    readonly session_close: "session/close";
+    readonly auth_logout: "auth/logout";
+};
+export declare const CLIENT_METHODS: {
+    readonly session_request_permission: "session/request_permission";
+    readonly session_update: "session/update";
+    readonly elicitation_create: "elicitation/create";
+    readonly elicitation_complete: "elicitation/complete";
+};
+export declare const PROTOCOL_METHODS: {
+    readonly cancel_request: "$/cancel_request";
+};
+export declare const PROTOCOL_VERSION = 2;

@@ -1,0 +1,43 @@
+import type { AgentConnectOptions, AgentConnectionLifecycle, AgentConnector } from "./transports/connection.js";
+import type { WireStream as Stream } from "./core/stream.js";
+/**
+ * Routes a client connection to a version-specific ACP agent implementation,
+ * including the experimental draft ACP v2 API.
+ *
+ * The router consumes the first wire item, which must be an `initialize`
+ * request or a single-entry batch containing one. Endpoints exposing v2 select
+ * the highest configured version at or below the requested version. V1-only
+ * endpoints retain the legacy fallback to v1. Only initialize params and
+ * optional batch framing are normalized. Later wire items are forwarded unchanged.
+ *
+ * @experimental
+ */
+export declare class AgentProtocolRouter implements AgentConnector {
+    private v1?;
+    private v2?;
+    /** Configures the ACP v1 agent implementation. */
+    withV1(agent: AgentConnector): this;
+    /**
+     * Configures the experimental draft ACP v2 agent implementation.
+     *
+     * @experimental
+     */
+    withV2(agent: AgentConnector): this;
+    /**
+     * Routes one ACP transport connection.
+     *
+     * The returned `closed` always resolves once the routed connection ends,
+     * including when the client leaves before `initialize` or routing fails.
+     */
+    connect(stream: Stream, options?: AgentConnectOptions): AgentConnectionLifecycle & {
+        readonly closed: Promise<void>;
+    };
+    private route;
+    private selectProtocol;
+}
+/**
+ * Creates an empty agent protocol router with experimental ACP v2 support.
+ *
+ * @experimental
+ */
+export declare function agentProtocolRouter(): AgentProtocolRouter;

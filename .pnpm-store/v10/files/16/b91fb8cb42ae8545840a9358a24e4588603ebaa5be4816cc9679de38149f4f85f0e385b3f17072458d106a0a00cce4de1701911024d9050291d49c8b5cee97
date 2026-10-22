@@ -1,0 +1,6 @@
+import type { AnyMessage } from "../core/jsonrpc.js";
+export declare function serializeSseEvent(msg: AnyMessage): string;
+/** Frames a message's JSON text, which has no line breaks, as an SSE event. */
+export declare function serializeSseJson(json: string): string;
+export declare function serializeSseKeepAlive(): string;
+export declare function parseSseStream(body: ReadableStream<Uint8Array>, maxMessageBytes?: number): AsyncIterable<AnyMessage>;
