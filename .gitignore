@@ -52,3 +52,6 @@ draft_*_folder/
 
 # Isolated test-bridge secrets and tester tokens (never commit)
 e2e/.local/
+
+# Local pnpm cache
+.pnpm-store/
