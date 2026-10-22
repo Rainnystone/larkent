@@ -1,5 +1,6 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { DEVIN_ACP_FIXTURE_SOURCE } from './devin-acp-cli';
 
 export interface ScriptedJsonlExecutableOptions {
   lines?: readonly unknown[];
@@ -152,6 +153,8 @@ async function writeNodeSource(
     '  if (typeof script.exitCode === "number") exitCode = script.exitCode;',
     '  if (typeof script.hang === "boolean") hang = script.hang;',
     '}',
+    DEVIN_ACP_FIXTURE_SOURCE,
+    'if (argv.includes("acp")) { await serveDevinAcp(script, {recordPath}); await new Promise(() => {}); }',
     'if (script.recordAppendPath || script.readyPath || script.releasePath) {',
     '  let stdin = "";',
     '  for await (const chunk of process.stdin) stdin += chunk.toString();',
@@ -180,6 +183,10 @@ async function writeNodeSource(
     '  writeFileSync(recordPath, JSON.stringify({ ...record, stdin }));',
     '}',
     'if (script.readyPath) writeFileSync(script.readyPath, String(process.pid));',
+    'const exportAt = argv.indexOf("--export");',
+    'if (exportAt >= 0 && argv[exportAt + 1]) {',
+    '  writeFileSync(argv[exportAt + 1], JSON.stringify({ session_id: script.exportSessionId || "devin-export-session" }));',
+    '}',
     'if (script.releasePath) {',
     '  const deadline = Date.now() + 10000;',
     '  while (!existsSync(script.releasePath)) {',
@@ -187,7 +194,7 @@ async function writeNodeSource(
     '    await new Promise(resolve => setTimeout(resolve, 10));',
     '  }',
     '}',
-    'for (const line of lines) console.log(JSON.stringify(line));',
+    'for (const line of lines) console.log(typeof line === "string" ? line : JSON.stringify(line));',
     'if (script.closeStdoutAfterLines) process.stdout.end();',
     'if (stderr) process.stderr.write(stderr);',
     'if (hang || script.holdAfterLines) {',

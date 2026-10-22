@@ -5,6 +5,7 @@ import { createDefaultProfileConfig } from '../../src/config/profile-schema';
 import { createRuntimeAgent } from '../../src/runtime/agent-runtime';
 import { jsonlScript, PIN_AGENT_KINDS } from '../helpers/scripted-jsonl-cli';
 import { createTmpProfile, type TmpProfile } from '../helpers/tmp-profile';
+import { DEVIN_ACP_FIXTURE_SOURCE } from '../helpers/devin-acp-cli';
 
 // Synthetic configuration for a user's existing CLI, git and MCP integrations.
 const compatibilityEnv = {
@@ -66,7 +67,10 @@ if (argv.includes('--version')) { console.log('0.0.0-synthetic'); process.exit(0
 if (argv.includes('--help')) { console.log('Usage: agent --output-format stream-json --approve-mcps'); process.exit(0); }
 if (${JSON.stringify(kind)} === 'claude' || ${JSON.stringify(kind)} === 'codex') for await (const chunk of process.stdin) {}
 const answer = JSON.stringify(Object.fromEntries(${JSON.stringify(keys)}.map(key => [key, process.env[key]])));
+${DEVIN_ACP_FIXTURE_SOURCE}
+if (${JSON.stringify(kind)} === 'devin') { await serveDevinAcp({lines:[answer]}); await new Promise(() => {}); }
 for (const line of ${JSON.stringify(jsonlScript(kind, 'success').lines)}) {
+  if (typeof line === 'string') { console.log(line === 'PINNED_ANSWER' ? answer : line); continue; }
   console.log(JSON.stringify(line, (key, value) => key === 'cwd' ? undefined : value === 'PINNED_ANSWER' ? answer : value));
 }
 `);

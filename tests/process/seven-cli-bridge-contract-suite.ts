@@ -34,15 +34,21 @@ const CORRECTED_PREVIEW = [
   { category: 'ok', data: { totalCount: 3, local: { nextFires: ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00'] } } },
 ];
 
-function expectResumeArgv(kind: PinAgentKind, argv: string[], handle?: string) {
-  const flag = { claude: '--resume', codex: 'resume', kimi: '-S', grok: '-r', cursor: '--resume', antigravity: '--conversation' }[kind];
+function expectResumeArgv(kind: PinAgentKind, argv: string[], handle?: string, acp?: {method:string;params:{sessionId?:string}}) {
+  if (kind === 'devin') {
+    expect(argv).toContain('acp'); expect(argv).not.toContain('-r');
+    expect(acp?.method).toBe(handle ? 'session/load' : 'session/new');
+    expect(acp?.params.sessionId).toBe(handle);
+    return;
+  }
+  const flag = { claude: '--resume', codex: 'resume', kimi: '-S', grok: '-r', cursor: '--resume', antigravity: '--conversation', devin: '-r' }[kind];
   if (!handle) { expect(argv).not.toContain(flag); return; }
   expect(argv).toContain(flag);
   if (kind === 'codex') expect(argv.slice(-2)).toEqual([handle, '-']);
   else expect(argv[argv.indexOf(flag) + 1]).toBe(handle);
 }
 
-export interface SixCliContractDeps {
+export interface SevenCliContractDeps {
   kinds: readonly PinAgentKind[];
   getClient: () => Awaited<ReturnType<typeof buildToolProcess>>;
   getStartChannel: () => typeof sourceStartChannel;
@@ -52,13 +58,13 @@ export interface SixCliContractDeps {
 
 // This suite is unconditional on every CI OS. It proves adapter/control-process behavior,
 // not native CLI/model tool selection. The paid/live acceptance belongs to P09.
-export function registerSixCliContract(input: SixCliContractDeps): void {
+export function registerSevenCliContract(input: SevenCliContractDeps): void {
   it.each(input.kinds)('%s carries the complete shared contract through new/resumed IM, automatic runs and stop', async kind => {
     const client = input.getClient();
     const startChannel = input.getStartChannel();
     const cleanup = input.cleanup;
     const sdk = input.sdk;
-    const tmp = await createTmpProfile(`six cli & ${kind}-`); cleanup.push(tmp.cleanup);
+    const tmp = await createTmpProfile(`seven cli & ${kind}-`); cleanup.push(tmp.cleanup);
     let now = NOW;
     vi.spyOn(Date, 'now').mockImplementation(() => now);
     const runtime = await installBridgeContractCli(tmp.root, kind);
@@ -126,7 +132,7 @@ export function registerSixCliContract(input: SixCliContractDeps): void {
 
     await runtime.plan({ mode: 'create', now }); await send();
     const created = await finish();
-    expectResumeArgv(kind, created.argv);
+    expectResumeArgv(kind, created.argv, undefined, created.acpSessionRequest);
     expect(runs[0]!.resumeHandle).toBeUndefined();
     expect(calls(created, 'automation.create')).toMatchObject([{ category: 'validation-failed', code: 'invalid-params' }, { category: 'waiting-confirmation' }, { category: 'waiting-confirmation' }]);
     expect(calls(created, 'automation.preview')).toMatchObject(CORRECTED_PREVIEW);
@@ -137,7 +143,7 @@ export function registerSixCliContract(input: SixCliContractDeps): void {
 
     await runtime.plan({ mode: 'manage', now, operationId }); await send();
     const managed = await finish();
-    expectResumeArgv(kind, managed.argv, created.session);
+    expectResumeArgv(kind, managed.argv, created.session, managed.acpSessionRequest);
     expect(runs[1]!.resumeHandle).toBe(created.session);
     expect(calls(managed, 'automation.operation.get')).toMatchObject([{ category: 'applied', data: { executedCount: 0 } }, { category: 'applied' }]);
     expect(calls(managed, 'automation.pause')[0].category).toBe('applied');
@@ -154,7 +160,7 @@ export function registerSixCliContract(input: SixCliContractDeps): void {
       const fireKey = `${store.list()[0]!.id}@${fireAt}`;
       await bridge.wakeAutomation(fireKey);
       const automatic = await finish();
-      expectResumeArgv(kind, automatic.argv);
+      expectResumeArgv(kind, automatic.argv, undefined, automatic.acpSessionRequest);
       expect(runs.at(-1)!.promptVariant).toBe('automation');
       // Scheduled fires intentionally start fresh; they must never reuse an IM or prior-fire handle.
       expect(runs.at(-1)!.resumeHandle).toBeUndefined();
@@ -168,7 +174,7 @@ export function registerSixCliContract(input: SixCliContractDeps): void {
     expect(new Set(runs.map(run => run.toolEnv!.LARK_BRIDGE_TOOL_TOKEN)).size).toBe(4);
     await runtime.plan({ mode: 'delete', now, operationId: replacementId }); await send('Inspect results and delete', automaticReply);
     const deleted = await finish();
-    expectResumeArgv(kind, deleted.argv, automaticSession);
+    expectResumeArgv(kind, deleted.argv, automaticSession, deleted.acpSessionRequest);
     expect(runs.at(-1)!.resumeHandle).toBe(automaticSession);
     expect(calls(deleted, 'automation.operation.get')[0]).toMatchObject({ category: 'applied', data: { executedCount: 2, deliveredCount: 2, lastExecution: 'ok', lastDelivery: 'sent' } });
     expect(calls(deleted, 'automation.delete')[0]).toMatchObject({ category: 'waiting-confirmation' });
@@ -180,7 +186,7 @@ export function registerSixCliContract(input: SixCliContractDeps): void {
     await bridge.disconnect(); bridge = await start();
     await runtime.plan({ mode: 'read', now, reference }); await send('Read the current plugin version');
     const updated = await finish(7);
-    expectResumeArgv(kind, updated.argv, managed.session);
+    expectResumeArgv(kind, updated.argv, managed.session, updated.acpSessionRequest);
     expect(runs.at(-1)!.resumeHandle).toBe(managed.session);
     expect(updated.instructions).toContain('"version":"2.0.0"');
     expect(calls(updated, 'plugins.read').at(-1)).toMatchObject({ category: 'unavailable', code: 'stale-plugin-reference' });

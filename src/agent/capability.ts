@@ -3,6 +3,7 @@ import { antigravityCapability } from './antigravity/metadata';
 import { claudeCapability } from './claude/metadata';
 import { codexCapability } from './codex/metadata';
 import { cursorCapability } from './cursor/metadata';
+import { devinCapability } from './devin/metadata';
 import { grokCapability } from './grok/metadata';
 import { kimiCapability } from './kimi/metadata';
 import { descriptorFor, type AgentDescriptor } from './registry';
@@ -12,6 +13,7 @@ export {
   claudeCapability,
   codexCapability,
   cursorCapability,
+  devinCapability,
   grokCapability,
   kimiCapability,
 };

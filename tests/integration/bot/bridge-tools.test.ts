@@ -18,6 +18,10 @@ vi.mock('@larksuite/channel', async (original) => ({
 import { startChannel } from '../../../src/bot/channel';
 
 const NOW = Date.parse('2026-10-19T00:00:00Z'); // 08:00 Shanghai
+// Hosted Windows spawns each real client process several times slower than
+// POSIX; the POSIX budget stays tight so genuine hangs still fail fast.
+const EFFECT_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 12_000;
+const TEST_TIMEOUT_MS = process.platform === 'win32' ? 120_000 : 45_000;
 const cleanup: Array<() => Promise<unknown>> = [];
 afterEach(async () => { for (const fn of cleanup.splice(0).reverse()) await fn(); sdk.channel = undefined; });
 
@@ -100,7 +104,7 @@ it('discovers and reads automation, corrects real preview feedback in the same I
   });
   cleanup.push(() => bridge.disconnect());
   await channel.handlers.message?.({ messageId: 'om_synthetic', content: '今天、明天、后天每天 09:00，先预览', chatId: 'oc_synthetic', chatType: 'group', senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: NOW, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
-  await vi.waitFor(() => expect(channel.sent.some(s => JSON.stringify(s.content).includes('尚未创建')) || agentError).toBeTruthy(), { timeout: 12000 });
+  await vi.waitFor(() => expect(channel.sent.some(s => JSON.stringify(s.content).includes('尚未创建')) || agentError).toBeTruthy(), { timeout: EFFECT_TIMEOUT_MS });
   if (agentError) throw agentError;
   expect(captured?.prompt).toContain('automation');
   expect(captured?.prompt).not.toContain('automation_proposal');
@@ -115,7 +119,7 @@ it('discovers and reads automation, corrects real preview feedback in the same I
 
   const send = (messageId: string, content: string) => channel.handlers.message?.({ messageId, content, chatId: 'oc_synthetic', chatType: 'group', senderId: 'ou_synthetic', senderName: 'Synthetic', rawContentType: 'text', resources: [], mentionedBot: true, createTime: NOW, raw: { sender: { sender_type: 'user' } } } as unknown as NormalizedMessage);
   await send('om_resumed', '再预览');
-  await vi.waitFor(() => expect(channel.sent.filter(s => JSON.stringify(s.content).includes('尚未创建'))).toHaveLength(2), { timeout: 12000 });
+  await vi.waitFor(() => expect(channel.sent.filter(s => JSON.stringify(s.content).includes('尚未创建'))).toHaveLength(2), { timeout: EFFECT_TIMEOUT_MS });
   if (agentError) throw agentError;
   expect(runs[0]?.resumeHandle).toBeUndefined();
   expect(runs[1]?.resumeHandle).toBe('synthetic-thread');
@@ -128,5 +132,5 @@ it('discovers and reads automation, corrects real preview feedback in the same I
   await send('om_stop', '/stop');
   expect(JSON.parse((await processClient.call({ version: 1, operation: 'automation.list' }, stopEnv)).stdout)).toMatchObject({ category: 'unavailable', code: 'run-connection-closed' });
   expect(store.list()).toEqual([]); expect(store.listDrafts()).toEqual([]);
-  // Allow both 12-second full turns, a 10-second held client call, setup and stop.
-}, 45000);
+  // Allow both full turns, a 10-second held client call, setup and stop.
+}, TEST_TIMEOUT_MS);

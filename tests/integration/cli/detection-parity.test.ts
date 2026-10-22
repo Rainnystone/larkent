@@ -17,6 +17,7 @@ import { AntigravityAdapter } from '../../../src/agent/antigravity/adapter.js';
 import { ClaudeAdapter } from '../../../src/agent/claude/adapter.js';
 import { CodexAdapter } from '../../../src/agent/codex/adapter.js';
 import { CursorAdapter } from '../../../src/agent/cursor/adapter.js';
+import { DevinAdapter } from '../../../src/agent/devin/adapter.js';
 import { GrokAdapter } from '../../../src/agent/grok/adapter.js';
 import { KimiAdapter } from '../../../src/agent/kimi/adapter.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
@@ -241,6 +242,8 @@ async function missingAdapter(kind: PinAgentKind, root: string) {
       return new CursorAdapter({ binary: missing });
     case 'antigravity':
       return new AntigravityAdapter({ binary: missing });
+    case 'devin':
+      return new DevinAdapter({ binary: missing });
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -282,6 +285,7 @@ function missingDoctorEchoCheck(kind: PinAgentKind): string {
     case 'grok':
     case 'cursor':
     case 'antigravity':
+    case 'devin':
       return 'failed';
     default: {
       const _never: never = kind;

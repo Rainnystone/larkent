@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import { buildToolProcess } from '../helpers/bridge-tool-process';
 import { createRecordingLarkChannel } from '../helpers/recording-lark-channel';
 import type { PinAgentKind } from '../helpers/scripted-jsonl-cli';
-import { registerSixCliContract } from './six-cli-bridge-contract-suite';
+import { registerSevenCliContract } from './seven-cli-bridge-contract-suite';
 import type { startChannel as sourceStartChannel } from '../../src/bot/channel';
 
 const sdk = vi.hoisted(() => ({ channel: undefined as ReturnType<typeof createRecordingLarkChannel> | undefined }));
@@ -19,5 +19,5 @@ beforeAll(async () => {
 afterAll(async () => { await client?.cleanup(); });
 afterEach(async () => { for (const close of cleanup.splice(0).reverse()) await close(); sdk.channel = undefined; vi.restoreAllMocks(); });
 
-const KINDS: readonly PinAgentKind[] = ['cursor', 'antigravity'];
-registerSixCliContract({ kinds: KINDS, getClient: () => client, getStartChannel: () => startChannel, sdk, cleanup });
+const KINDS: readonly PinAgentKind[] = ['claude', 'codex'];
+registerSevenCliContract({ kinds: KINDS, getClient: () => client, getStartChannel: () => startChannel, sdk, cleanup });

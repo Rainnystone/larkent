@@ -1,7 +1,7 @@
 import { delimiter, join } from 'node:path';
 import { writeScriptedJsonlExecutable, type ScriptedJsonlExecutable } from './fake-executable.js';
 
-export const PIN_AGENT_KINDS = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'] as const;
+export const PIN_AGENT_KINDS = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity', 'devin'] as const;
 export type PinAgentKind = (typeof PIN_AGENT_KINDS)[number];
 
 export interface JsonlScript {
@@ -14,6 +14,8 @@ export interface JsonlScript {
   recordAppendPath?: string;
   holdAfterLines?: boolean;
   closeStdoutAfterLines?: boolean;
+  /** Devin ACP fixture session id (legacy property name for shared controls). */
+  exportSessionId?: string;
 }
 
 export interface KindCliInstall {
@@ -44,6 +46,7 @@ export function pinAgentKind(kind: PinAgentKind): PinAgentKind {
     case 'grok':
     case 'cursor':
     case 'antigravity':
+    case 'devin':
       return kind;
     default: {
       const _never: never = kind;
@@ -66,6 +69,8 @@ export function defaultBinaryName(kind: PinAgentKind): string {
       return 'cursor-agent';
     case 'antigravity':
       return 'agy';
+    case 'devin':
+      return 'devin';
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -87,6 +92,8 @@ export function envBinVarName(kind: PinAgentKind): string {
       return 'LARK_CHANNEL_CURSOR_BIN';
     case 'antigravity':
       return 'LARK_CHANNEL_ANTIGRAVITY_BIN';
+    case 'devin':
+      return 'LARK_CHANNEL_DEVIN_BIN';
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -108,6 +115,8 @@ export function adapterDisplayName(kind: PinAgentKind): string {
       return 'Cursor CLI';
     case 'antigravity':
       return 'Antigravity CLI';
+    case 'devin':
+      return 'Devin CLI';
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -229,6 +238,12 @@ export function jsonlScript(kind: PinAgentKind, scenario: 'success' | 'error'): 
           },
         ],
       };
+    case 'devin':
+      // The controlled executable encodes this answer and handle as ACP.
+      return {
+        lines: [PIN_ANSWER],
+        exportSessionId: PIN_SESSION,
+      };
     default: {
       const _never: never = kind;
       throw new Error(`unhandled agent kind: ${String(_never)}`);
@@ -249,10 +264,12 @@ export async function installKindCli(
   const version =
     options.version ??
     (kind === 'cursor' ? 'cursor-agent 0.0.0-pin' : `${binaryName} 0.0.0-pin`);
+  const success = jsonlScript(kind, 'success');
   const fake = await writeScriptedJsonlExecutable(root, binaryName, {
     version,
     helpText: kind === 'cursor' ? CURSOR_HELP : `Usage: ${binaryName}`,
-    lines: jsonlScript(kind, 'success').lines,
+    lines: success.lines,
+    ...(success.exportSessionId ? { exportSessionId: success.exportSessionId } : {}),
   });
   return { kind, fake, binaryName };
 }
