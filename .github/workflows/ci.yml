@@ -7,6 +7,8 @@ on:
   push:
     branches: [master, 'release/*']
   pull_request:
+    # Retargeting a PR can change which platform checks are required.
+    types: [opened, synchronize, reopened, edited]
   merge_group:
   schedule:
     - cron: '0 18 * * *'
@@ -179,12 +181,12 @@ jobs:
           UBUNTU: ${{ needs.test-ubuntu.result }}
           WINDOWS: ${{ needs.test-windows.result }}
           MACOS: ${{ needs.test-macos.result }}
-          EVENT: ${{ github.event_name }}
+          REQUIRE_FULL_MATRIX: ${{ github.event_name != 'pull_request' || github.base_ref == 'master' || startsWith(github.base_ref, 'release/') }}
         run: |
           set -eu
           [ "$STATIC" = success ]
           [ "$UBUNTU" = success ]
-          if [ "$EVENT" = merge_group ] || [ "$EVENT" = push ] || [ "$EVENT" = schedule ]; then
+          if [ "$REQUIRE_FULL_MATRIX" = true ]; then
             [ "$WINDOWS" = success ]
             [ "$MACOS" = success ]
           else
