@@ -9,6 +9,9 @@ import { log } from '../../src/core/logger';
 
 const dirs: string[] = [];
 const pids: number[] = [];
+// Windows spawns each fixture process several times slower than POSIX; keep
+// the POSIX budget tight so genuine hangs still fail fast.
+const TEST_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 15_000;
 
 afterEach(async () => {
   vi.restoreAllMocks();
@@ -74,7 +77,7 @@ describe('turn journal orphan reaper', () => {
     expect(info.mock.calls.filter(([phase, event]) => (
       phase === 'journal' && event === 'recovered'
     ))).toHaveLength(1);
-  });
+  }, TEST_TIMEOUT_MS);
 
   it.skipIf(process.platform === 'win32')(
     'leaves a detached child alive after SIGKILL of its parent, then reaps it on recover',
@@ -109,6 +112,7 @@ describe('turn journal orphan reaper', () => {
         phase === 'journal' && event === 'recovered'
       ))).toHaveLength(1);
     },
+    TEST_TIMEOUT_MS,
   );
 });
 

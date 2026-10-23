@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterAll, afterEach, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { openToolRun, type ToolRunContext } from '../../src/bridge-tools/server';
 import { AutomationsStore } from '../../src/automations/store';
 import { builtinPluginCatalog, PluginCatalog } from '../../src/plugins/catalog';
@@ -13,6 +13,8 @@ import { createTmpProfile } from '../helpers/tmp-profile';
 const NOW = Date.parse('2026-10-19T00:00:00Z');
 // Several sequential real Node clients need more than the default 5 seconds on hosted Windows.
 const MULTI_CLIENT_TIMEOUT_MS = 20_000;
+// Keep POSIX failures fast; give every case in this file the Windows process budget.
+vi.setConfig({ testTimeout: process.platform === 'win32' ? MULTI_CLIENT_TIMEOUT_MS : 5_000 });
 let client: Awaited<ReturnType<typeof buildToolProcess>>;
 const cleanup: Array<() => Promise<unknown>> = [];
 beforeAll(async () => { client = await buildToolProcess(); });

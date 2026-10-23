@@ -32,6 +32,7 @@ async function harness(chatMode: 'group' | 'topic' = 'group', agentTasks = true,
 }
 
 // Each effect may include the client's ten-second transport budget and actual child-process work.
+// Windows shards also run the process-heavy contract rows alongside this file.
 function waitForEffect(assertion: () => void | Promise<void>) {
   return vi.waitFor(assertion, { timeout: EFFECT_TIMEOUT_MS });
 }

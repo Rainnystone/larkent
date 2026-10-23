@@ -16,6 +16,10 @@ import { RunExecutor } from '../../src/runtime/run-executor';
 
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
+// Windows spawns each fixture process several times slower than POSIX; keep
+// the POSIX budget tight so genuine hangs still fail fast.
+const TEST_TIMEOUT_MS = process.platform === 'win32' ? 30_000 : 15_000;
+
 const policy: RunPolicyAllow = {
   ok: true, prompt: 'hello', requestedCwd: '/tmp', cwdRealpath: '/tmp',
   accessMode: 'workspace', sandbox: 'workspace-write', permissionMode: 'acceptEdits',
@@ -104,7 +108,7 @@ it('user stop kills a SIGTERM-resistant stdout-holding grandchild within the kil
     expect(liveTreeMembers(raw.pid!, pids)).toEqual([]);
     await rm(dir, { recursive: true, force: true });
   }
-}, 15000);
+}, TEST_TIMEOUT_MS);
 
 function liveTreeMembers(group: number, knownPids: number[]): number[] {
   if (process.platform === 'win32') {
@@ -249,14 +253,14 @@ type RealStopMode = typeof portableStops[number] | 'POSIX stop burst';
 
 it.each(portableStops)(
   '%s settles with a real stdout-inheriting descendant alive and preserves the produced burst',
-  runInheritedStdoutCase, 10000,
+  runInheritedStdoutCase, TEST_TIMEOUT_MS,
 );
 
 // Windows kill(SIGTERM) terminates abruptly; the six cases above establish
 // their writes before stop. Keep signal-handler output covered on POSIX too.
 it.skipIf(process.platform === 'win32')(
   'POSIX stop drains a large burst produced by the signal handler while a descendant holds stdout',
-  () => runInheritedStdoutCase('POSIX stop burst'), 10000,
+  () => runInheritedStdoutCase('POSIX stop burst'), TEST_TIMEOUT_MS,
 );
 
 async function waitForWritten(path: string): Promise<void> {
