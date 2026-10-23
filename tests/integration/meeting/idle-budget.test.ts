@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import type { LarkChannel } from '@larksuite/channel';
@@ -16,7 +15,7 @@ import { WorkspaceStore } from '../../../src/workspace/store';
 import { writeScriptedJsonlExecutable } from '../../helpers/fake-executable';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import { createTmpProfile } from '../../helpers/tmp-profile';
-import { waitForFile } from '../../helpers/wait-for-file';
+import { waitForPidFile } from '../../helpers/wait-for-file';
 
 const cleanups: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
@@ -114,8 +113,7 @@ async function harness(idleMinutes?: number) {
     await answering;
     await Promise.all([sessions.flush(), workspaces.flush()]);
   });
-  await waitForFile(readyPath, () => true, AbortSignal.timeout(10_000));
-  const pid = Number(await readFile(readyPath, 'utf8'));
+  const pid = await waitForPidFile(readyPath, AbortSignal.timeout(10_000));
   const scope = meetingScopeId(session.meetingId);
   const handle = activeRuns.get(scope)!;
   expect(handle.run.pid).toBe(pid);

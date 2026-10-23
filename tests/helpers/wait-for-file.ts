@@ -33,3 +33,16 @@ export function waitForFile(path: string, accepts: (content: string) => boolean 
     void check();
   });
 }
+
+/** Read the PID published by a scripted CLI fixture. */
+export async function waitForPidFile(path: string, signal?: AbortSignal): Promise<number> {
+  let pid = 0;
+  await waitForFile(path, content => {
+    const candidate = Number(content);
+    if (!/^[1-9]\d*$/.test(content) || !Number.isSafeInteger(candidate)) return false;
+    // Keep this accepted read: another read can observe a different file state.
+    pid = candidate;
+    return true;
+  }, signal);
+  return pid;
+}

@@ -48,6 +48,41 @@ afterEach(async () => {
 });
 
 describe('automation reminder delivery via Outbox', { timeout: 20_000 }, () => {
+  it('delivers a wake exactly once after its delayed journal flush completes', async () => {
+    const h = await harness({ nowMs: t0 - 1, seed: true });
+    const fireKey = formatFireKey(1, t0);
+    const turnId = `af:${fireKey}`;
+    await h.journal.flush();
+    const flush = h.journal.flush.bind(h.journal);
+    let entered!: () => void;
+    const flushing = new Promise<void>(resolve => { entered = resolve; });
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const delayedFlush = vi.spyOn(h.journal, 'flush').mockImplementationOnce(async () => {
+      entered();
+      await gate;
+      await flush();
+    });
+    cleanups.push(async () => { release(); delayedFlush.mockRestore(); });
+
+    h.setNow(t0);
+    await h.bridge.wakeAutomation(fireKey);
+    await flushing;
+    // Waking drains the scheduler and board, not the asynchronous outbox send.
+    expect(h.store.hasStarted(fireKey)).toBe(true);
+    expect(h.journal.get(turnId)?.reply?.state).toBe('staged');
+    expect(reminderBodies(h.channel)).toEqual([]);
+    await h.bridge.wakeAutomation(fireKey);
+    expect(h.journal.list().filter(entry => entry.turnId === turnId)).toHaveLength(1);
+    expect(reminderBodies(h.channel)).toEqual([]);
+
+    release();
+    await waitFor(() => h.journal.get(turnId)?.reply?.state === 'sent');
+    await h.bridge.wakeAutomation(fireKey);
+    expect(reminderBodies(h.channel)).toEqual(['⏰ hourly ping：ping']);
+    expect(outboxSends(h.channel)).toHaveLength(1);
+  });
+
   it('does not label a 50ms-late timer fire as 补跑 in chat, status, or automations log', async () => {
     const h = await harness({ nowMs: t0 + 50, seed: true });
 

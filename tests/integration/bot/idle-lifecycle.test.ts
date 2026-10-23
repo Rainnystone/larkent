@@ -7,6 +7,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { ActiveRuns, type RunHandle } from '../../../src/bot/active-runs';
+import { PendingQueue } from '../../../src/bot/pending-queue';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import { createTmpProfile } from '../../helpers/tmp-profile';
@@ -31,7 +32,7 @@ describe('bot idle and settlement lifecycle', () => {
     const h = await harness(false, 'unset');
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.waitForRun(1);
     const run = h.agent.manual[0]!;
     run.push({ type: 'text', delta: 'WORKING' });
     await waitFor(() => rendered(h.channel).includes('WORKING'));
@@ -41,13 +42,12 @@ describe('bot idle and settlement lifecycle', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('15 分钟无响应'));
+    await h.unblocked.waitFor(1);
+    expect(rendered(h.channel)).toContain('15 分钟无响应');
     expect(h.agent.runs[0]!.stopped).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(0);
-    await drainIO();
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.runOptions.length === 2);
+    await h.waitForRun(2);
     expect(h.agent.runOptions[1]!.prompt).toContain('queued request');
   });
 
@@ -55,7 +55,7 @@ describe('bot idle and settlement lifecycle', () => {
     const h = await harness(false, 'unset');
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.waitForRun(1);
     const run = h.agent.manual[0]!;
     run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
     await waitFor(() => rendered(h.channel).includes('long_tool'));
@@ -64,7 +64,8 @@ describe('bot idle and settlement lifecycle', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('60 分钟无响应'));
+    await h.unblocked.waitFor(1);
+    expect(rendered(h.channel)).toContain('60 分钟无响应');
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
@@ -75,7 +76,7 @@ describe('bot idle and settlement lifecycle', () => {
 
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.waitForRun(1);
     const run = h.agent.manual[0]!;
     run.push({ type: 'text', delta: 'WORKING' });
     await waitFor(() => rendered(h.channel).includes('WORKING'));
@@ -89,17 +90,16 @@ describe('bot idle and settlement lifecycle', () => {
     const h = await harness(false, 'unset');
     await h.channel.handlers.message?.(message('first', 'please talk to the model'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.waitForRun(1);
     await h.channel.handlers.message?.(message('second', 'queued after blackhole'));
 
     await vi.advanceTimersByTimeAsync(15 * 60_000);
-    await waitFor(() => rendered(h.channel).includes('15 分钟无响应'));
+    await h.unblocked.waitFor(1);
+    expect(rendered(h.channel)).toContain('15 分钟无响应');
     expect(h.agent.runs[0]!.stopped).toBe(true);
 
-    await vi.advanceTimersByTimeAsync(0);
-    await drainIO();
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.runOptions.length === 2);
+    await h.waitForRun(2);
     expect(h.agent.runOptions[1]!.prompt).toContain('queued after blackhole');
   });
 
@@ -119,7 +119,7 @@ describe('bot idle and settlement lifecycle', () => {
     const h = await harness(false, 'unset');
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => handles.length === 1);
+    await h.waitForRun(1);
     const handle = handles[0]!;
     expect(handle.lastEventAt).toEqual(expect.any(Number));
     const startedAt = handle.lastEventAt;
@@ -134,7 +134,7 @@ describe('bot idle and settlement lifecycle', () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.waitForRun(1);
     const run = h.agent.manual[0]!;
     run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
     await waitFor(() => rendered(h.channel).includes('long_tool'));
@@ -146,21 +146,87 @@ describe('bot idle and settlement lifecycle', () => {
     await vi.advanceTimersByTimeAsync(59_999);
     expect(h.agent.runs[0]!.stopped).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('超时'));
+    await h.unblocked.waitFor(1);
+    expect(rendered(h.channel)).toContain('超时');
     expect(h.agent.runs[0]!.stopped).toBe(true);
+  });
+
+  it('waits for delayed preparation without consuming the idle clock', async () => {
+    const h = await harness();
+    const preparing = deferred();
+    const release = deferred();
+    h.agent.prepareRun = async () => { preparing.resolve(); await release.promise; };
+    try {
+      await h.channel.handlers.message?.(message('first', 'delayed preparation'));
+      await vi.advanceTimersByTimeAsync(600);
+      await preparing.promise;
+      const idleClock = Date.now();
+      let started = false;
+      const ready = h.waitForRun(1).then(() => { started = true; });
+      void ready.catch(() => {});
+      // Exceed the old spin limit while preparation remains deliberately held.
+      for (let n = 0; n < 20_000; n++) await yieldIO();
+      expect(started).toBe(false);
+      expect(Date.now()).toBe(idleClock);
+      release.resolve();
+      await ready;
+      expect(h.agent.manual).toHaveLength(1);
+      expect(Date.now()).toBe(idleClock);
+    } finally { release.resolve(); }
+  });
+
+  it('waits for timeout publication to settle before advancing queued debounce', async () => {
+    const h = await harness(false, 'unset');
+    const publishing = deferred();
+    const release = deferred();
+    const send = h.channel.send.bind(h.channel);
+    vi.spyOn(h.channel, 'send').mockImplementation(async (...args) => {
+      const receipt = await send(...args);
+      if (JSON.stringify(args[1]).includes('15 分钟无响应')) {
+        publishing.resolve();
+        await release.promise;
+      }
+      return receipt;
+    });
+    try {
+      await h.channel.handlers.message?.(message('first', 'blackholed request'));
+      await vi.advanceTimersByTimeAsync(600);
+      await h.waitForRun(1);
+      await h.channel.handlers.message?.(message('second', 'queued after publication'));
+      await vi.advanceTimersByTimeAsync(15 * 60_000);
+      await publishing.promise;
+      expect(rendered(h.channel)).toContain('15 分钟无响应');
+      expect(h.agent.runs[0]!.stopped).toBe(true);
+
+      let unblocked = false;
+      const ready = h.unblocked.waitFor(1).then(() => { unblocked = true; });
+      const idleClock = Date.now();
+      await drainIO();
+      expect(unblocked).toBe(false);
+      expect(h.agent.runOptions).toHaveLength(1);
+      release.resolve();
+      await ready;
+      expect(Date.now()).toBe(idleClock);
+      await vi.advanceTimersByTimeAsync(599);
+      expect(h.agent.runOptions).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await h.waitForRun(2);
+      expect(h.agent.runOptions[1]!.prompt).toContain('queued after publication');
+    } finally { release.resolve(); }
   });
 
   it('keeps the next same-scope message queued until the previous stop and cleanup settle', async () => {
     const h = await harness(true);
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
+    await h.waitForRun(1);
     const run = h.agent.manual[0]!;
     run.push({ type: 'text', delta: 'FIRST_ANSWER' });
     await waitFor(() => rendered(h.channel).includes('FIRST_ANSWER'));
     await h.channel.handlers.message?.(message('second', 'second request'));
     run.push({ type: 'done', terminationReason: 'normal' });
     run.close();
+    await run.waitingForExit;
     await vi.advanceTimersByTimeAsync(2000);
     await waitFor(() => h.agent.runs[0]!.stopped);
     await vi.advanceTimersByTimeAsync(6000);
@@ -168,10 +234,9 @@ describe('bot idle and settlement lifecycle', () => {
     expect(h.agent.runOptions).toHaveLength(1);
 
     run.releaseCleanup();
-    await vi.advanceTimersByTimeAsync(0);
-    await drainIO();
+    await h.unblocked.waitFor(1);
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.runOptions.length === 2);
+    await h.waitForRun(2);
     expect(h.agent.runOptions[1]!.prompt).toContain('second request');
     const second = h.agent.manual[1]!;
     second.push({ type: 'text', delta: 'SECOND_ANSWER' });
@@ -199,6 +264,20 @@ async function harness(holdCleanup = false, idleMinutes: number | 'unset' = 1) {
   cfg.workspaces.default = tmp.workspace;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
+  const handles: RunHandle[] = [];
+  const register = ActiveRuns.prototype.register;
+  vi.spyOn(ActiveRuns.prototype, 'register').mockImplementation(function (this: ActiveRuns, scope, run) {
+    const handle = register.call(this, scope, run);
+    handles.push(handle);
+    return handle;
+  });
+  const unblocked = checkpoints();
+  const unblock = PendingQueue.prototype.unblock;
+  vi.spyOn(PendingQueue.prototype, 'unblock').mockImplementation(function (this: PendingQueue, scope) {
+    const wasBlocked = this.isBlocked(scope);
+    unblock.call(this, scope);
+    if (wasBlocked) unblocked.complete();
+  });
   const agent = new StreamingFakeAgent(holdCleanup);
   const channel = createRecordingLarkChannel();
   sdk.channel = channel;
@@ -217,24 +296,38 @@ async function harness(holdCleanup = false, idleMinutes: number | 'unset' = 1) {
     await Promise.all([sessions.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
-  return { channel, agent };
+  return {
+    channel, agent, unblocked,
+    async waitForRun(count: number) {
+      // Agent setup can await real filesystem/transport IO. Its completion is
+      // not bounded by a count of event-loop turns or by the fake idle clock.
+      await agent.started.waitFor(count);
+      expect(agent.manual).toHaveLength(count);
+      // Registration and watchdog setup follow run() in in-process promises.
+      await waitFor(() => handles[count - 1]?.armStallDeadline !== undefined);
+    },
+  };
 }
 
 // FakeAgentAdapter records the run/stop contract; this controlled stream adds
 // explicit event and cleanup readiness without real CLI or wall-clock sleeps.
 class StreamingFakeAgent extends FakeAgentAdapter {
   readonly manual: ReturnType<typeof manualRun>[] = [];
+  readonly started = checkpoints();
+  async prepareRun(): Promise<void> {}
   constructor(private readonly holdCleanup: boolean) { super({ id: 'claude' }); }
   override run(opts: AgentRunOptions): AgentRun {
     const recorded = super.run(opts);
     const manual = manualRun(recorded, this.holdCleanup);
     this.manual.push(manual);
+    this.started.complete();
     return manual.run;
   }
 }
 
 function manualRun(recorded: AgentRun, holdCleanup: boolean) {
   const queue: AgentEvent[] = [];
+  const waitingForExit = deferred();
   let notify: (() => void) | undefined;
   let closed = false;
   let cleaned = false;
@@ -261,13 +354,15 @@ function manualRun(recorded: AgentRun, holdCleanup: boolean) {
       if (cleaned) return true;
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        return await Promise.race([cleanup.then(() => true), new Promise<false>(resolve => {
+        const exited = Promise.race([cleanup.then(() => true), new Promise<false>(resolve => {
           timer = setTimeout(() => resolve(false), timeoutMs);
         })]);
+        waitingForExit.resolve();
+        return await exited;
       } finally { if (timer) clearTimeout(timer); }
     },
   };
-  return { run, close, releaseCleanup: release, push: (event: AgentEvent) => { queue.push(event); notify?.(); } };
+  return { run, close, waitingForExit: waitingForExit.promise, releaseCleanup: release, push: (event: AgentEvent) => { queue.push(event); notify?.(); } };
 }
 
 function rendered(channel: ReturnType<typeof createRecordingLarkChannel>) {
@@ -283,11 +378,37 @@ function message(messageId: string, content: string): NormalizedMessage {
 
 async function drainIO() { for (let n = 0; n < 50; n++) await yieldIO(); }
 async function waitFor(predicate: () => boolean) {
-  // Timer progression remains explicit in each test; let real temporary-file
-  // IO finish independently of the business-idle clock.
+  // Only in-process stream/stop progress uses this bounded drain. Filesystem,
+  // transport, and queue handoff readiness use explicit checkpoints above.
   for (let n = 0; n < 10_000; n++) {
     if (predicate()) return;
     await yieldIO();
   }
   throw new Error('expected lifecycle transition was not observed');
+}
+
+// Checkpoints retain already-observed completions, so registering an observer
+// after a fast run/unblock cannot lose its readiness signal.
+function checkpoints() {
+  let completed = 0;
+  const pending = new Map<number, ReturnType<typeof deferred>>();
+  return {
+    complete() {
+      completed++;
+      pending.get(completed)?.resolve();
+      pending.delete(completed);
+    },
+    waitFor(count: number) {
+      if (completed >= count) return Promise.resolve();
+      let next = pending.get(count);
+      if (!next) { next = deferred(); pending.set(count, next); }
+      return next.promise;
+    },
+  };
+}
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>(done => { resolve = done; });
+  return { promise, resolve };
 }
