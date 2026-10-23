@@ -140,6 +140,8 @@ it('resumes a paused reminder immediately, retains the original operation on ret
   });
   expect(h.store.listDrafts()).toHaveLength(0);
   h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`);
+  // A wake drains scheduling and board work, not the journal-backed delivery.
+  await vi.waitFor(() => expect(h.journal.get(`af:1@${FIRES[0]}`)?.reply?.state).toBe('sent'), { timeout: 8_000 });
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('⏰ Synthetic reminder'))).toHaveLength(1);
   await h.restart();
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { applied: true } }); });
