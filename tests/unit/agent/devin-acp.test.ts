@@ -6,8 +6,8 @@ const text = (value: string) => ({ sessionUpdate: 'agent_message_chunk', content
 describe('Devin ACP translation', () => {
   it('preserves paragraph whitespace and code indentation across chunks', () => {
     const t = new DevinTranscriptTranslator();
-    expect([...t.translate(text('Intro\n\n```python\n'))]).toEqual([]);
-    expect([...t.translate(text('if True:\n    print("hello")\n```\n'))]).toEqual([]);
+    expect([...t.translate(text('Intro\n\n```python\n'))]).toEqual([{ type: 'system' }]);
+    expect([...t.translate(text('if True:\n    print("hello")\n```\n'))]).toEqual([{ type: 'system' }]);
     expect([...t.finish('end_turn')]).toEqual([
       { type: 'final_text', content: 'Intro\n\n```python\nif True:\n    print("hello")\n```\n' },
       { type: 'done', terminationReason: 'normal' },
@@ -69,8 +69,8 @@ describe('Devin ACP translation', () => {
 
   it('holds back the answer and emits it once as final_text at end_turn', () => {
     const t = new DevinTranscriptTranslator();
-    expect([...t.translate(text('The answer '))]).toEqual([]);
-    expect([...t.translate(text('is 4.'))]).toEqual([]);
+    expect([...t.translate(text('The answer '))]).toEqual([{ type: 'system' }]);
+    expect([...t.translate(text('is 4.'))]).toEqual([{ type: 'system' }]);
     expect([...t.finish('end_turn')]).toEqual([
       { type: 'final_text', content: 'The answer is 4.' },
       { type: 'done', terminationReason: 'normal' },
@@ -80,22 +80,33 @@ describe('Devin ACP translation', () => {
   it('flushes the previous message as progress text when the message id changes', () => {
     const t = new DevinTranscriptTranslator();
     const chunk = (value: string, id: string) => ({ ...text(value), _meta: { 'cognition.ai/messageId': id } });
-    expect([...t.translate(chunk('First ', 'm1'))]).toEqual([]);
-    expect([...t.translate(chunk('thought.', 'm1'))]).toEqual([]);
-    expect([...t.translate(chunk('Second.', 'm2'))]).toEqual([{ type: 'text', delta: 'First thought.\n\n' }]);
+    expect([...t.translate(chunk('First ', 'm1'))]).toEqual([{ type: 'system' }]);
+    expect([...t.translate(chunk('thought.', 'm1'))]).toEqual([{ type: 'system' }]);
+    expect([...t.translate(chunk('Second.', 'm2'))]).toEqual([
+      { type: 'text', delta: 'First thought.\n\n' },
+      { type: 'system' },
+    ]);
     expect([...t.finish('end_turn')]).toEqual([
       { type: 'final_text', content: 'Second.' },
       { type: 'done', terminationReason: 'normal' },
     ]);
   });
 
-  it('flushes held-back text as progress on cancel and withholds final_text', () => {
+  it('emits the held-back answer as final_text on cancel', () => {
     const t = new DevinTranscriptTranslator();
     t.translate(text('Partial answer'));
     expect([...t.finish('cancelled')]).toEqual([
-      { type: 'text', delta: 'Partial answer\n\n' },
+      { type: 'final_text', content: 'Partial answer' },
       { type: 'done', terminationReason: 'interrupted' },
     ]);
+  });
+
+  it('rearms activity only for accepted text chunks', () => {
+    const t = new DevinTranscriptTranslator();
+    expect([...t.translate(text('replayed'), true)]).toEqual([]);
+    expect([...t.translate({ sessionUpdate: 'agent_message_chunk', content: { type: 'image', data: 'x' } })]).toEqual([]);
+    t.finish('end_turn');
+    expect([...t.translate(text('late'))]).toEqual([]);
   });
 
   it('flushes held-back text before the error on failure', () => {

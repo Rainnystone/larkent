@@ -73,7 +73,9 @@ async function serveDevinAcp(script, hooks = {}) {
     for (const u of updates) update(u);
     if (custom !== undefined) update({sessionUpdate:'agent_message_chunk',content:{type:'text',text:custom}});
     if (script.malformed) { process.stdout.write('{invalid\n'); return; }
+    if (script.exitAfterUpdates !== undefined) { process.stdout.write('', () => process.exit(script.exitAfterUpdates)); return; }
     respond(m.id, {stopReason:script.stopReason || 'end_turn',usage:{inputTokens:12,outputTokens:3,totalTokens:15}});
+    if (script.exitAfterTurn !== undefined) { process.stdout.write('', () => process.exit(script.exitAfterTurn)); return; }
     if (script.closeStdoutAfterLines) { process.stdout.end(); if (script.holdAfterLines) setInterval(() => {},1000); return; }
     if (script.holdAfterLines) setInterval(() => {},1000);
   }

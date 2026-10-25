@@ -19,7 +19,7 @@ export class DevinTranscriptTranslator {
         const events = id !== undefined && this.messageId !== undefined && id !== this.messageId ? this.flush() : [];
         if (id !== undefined) this.messageId = id;
         this.pending += content.text;
-        return events;
+        return [...events, { type: 'system' }];
       }
       case 'agent_thought_chunk': {
         const c = record(u.content);
@@ -37,10 +37,9 @@ export class DevinTranscriptTranslator {
     if (this.terminal) return [];
     if (reason !== 'end_turn' && reason !== 'cancelled') return this.fail(`Devin stopped: ${reason}`);
     this.terminal = true;
-    if (reason === 'cancelled') return [...this.flush(), { type: 'done', terminationReason: 'interrupted' }];
     const events: AgentEvent[] = this.pending ? [{ type: 'final_text', content: this.pending }] : [];
     this.pending = '';
-    events.push({ type: 'done', terminationReason: 'normal' });
+    events.push({ type: 'done', terminationReason: reason === 'cancelled' ? 'interrupted' : 'normal' });
     return events;
   }
 
