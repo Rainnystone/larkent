@@ -6,8 +6,8 @@ const text = (value: string) => ({ sessionUpdate: 'agent_message_chunk', content
 describe('Devin ACP translation', () => {
   it('preserves paragraph whitespace and code indentation across chunks', () => {
     const t = new DevinTranscriptTranslator();
-    expect([...t.translate(text('Intro\n\n```python\n'))]).toEqual([{ type: 'text', delta: 'Intro\n\n```python\n' }]);
-    t.translate(text('if True:\n    print("hello")\n```\n'));
+    expect([...t.translate(text('Intro\n\n```python\n'))]).toEqual([]);
+    expect([...t.translate(text('if True:\n    print("hello")\n```\n'))]).toEqual([]);
     expect([...t.finish('end_turn')]).toEqual([
       { type: 'final_text', content: 'Intro\n\n```python\nif True:\n    print("hello")\n```\n' },
       { type: 'done', terminationReason: 'normal' },
@@ -17,7 +17,9 @@ describe('Devin ACP translation', () => {
   it('merges late tool input, deduplicates updates and preserves the command', () => {
     const t = new DevinTranscriptTranslator();
     t.translate(text('I will check.'));
-    expect([...t.translate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'Run command', kind: 'execute' })]).toEqual([]);
+    expect([...t.translate({ sessionUpdate: 'tool_call', toolCallId: 'a', title: 'Run command', kind: 'execute' })]).toEqual([
+      { type: 'text', delta: 'I will check.\n\n' },
+    ]);
     const use = { sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'in_progress', rawInput: { command: 'lark-cli im +send --chat-id oc_test' } };
     expect([...t.translate(use)]).toEqual([{ type: 'tool_use', id: 'a', name: 'execute', input: use.rawInput }]);
     expect([...t.translate(use)]).toEqual([]);
@@ -58,7 +60,56 @@ describe('Devin ACP translation', () => {
   it('does not publish pre-tool narration as a final answer', () => {
     const t = new DevinTranscriptTranslator();
     t.translate(text('Starting.'));
-    t.translate({ sessionUpdate: 'tool_call', toolCallId: 'c', kind: 'read', rawInput: {} });
+    expect([...t.translate({ sessionUpdate: 'tool_call', toolCallId: 'c', kind: 'read', rawInput: {} })]).toEqual([
+      { type: 'text', delta: 'Starting.\n\n' },
+      { type: 'tool_use', id: 'c', name: 'read', input: {} },
+    ]);
+    expect([...t.finish('end_turn')]).toEqual([{ type: 'done', terminationReason: 'normal' }]);
+  });
+
+  it('holds back the answer and emits it once as final_text at end_turn', () => {
+    const t = new DevinTranscriptTranslator();
+    expect([...t.translate(text('The answer '))]).toEqual([]);
+    expect([...t.translate(text('is 4.'))]).toEqual([]);
+    expect([...t.finish('end_turn')]).toEqual([
+      { type: 'final_text', content: 'The answer is 4.' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+  });
+
+  it('flushes the previous message as progress text when the message id changes', () => {
+    const t = new DevinTranscriptTranslator();
+    const chunk = (value: string, id: string) => ({ ...text(value), _meta: { 'cognition.ai/messageId': id } });
+    expect([...t.translate(chunk('First ', 'm1'))]).toEqual([]);
+    expect([...t.translate(chunk('thought.', 'm1'))]).toEqual([]);
+    expect([...t.translate(chunk('Second.', 'm2'))]).toEqual([{ type: 'text', delta: 'First thought.\n\n' }]);
+    expect([...t.finish('end_turn')]).toEqual([
+      { type: 'final_text', content: 'Second.' },
+      { type: 'done', terminationReason: 'normal' },
+    ]);
+  });
+
+  it('flushes held-back text as progress on cancel and withholds final_text', () => {
+    const t = new DevinTranscriptTranslator();
+    t.translate(text('Partial answer'));
+    expect([...t.finish('cancelled')]).toEqual([
+      { type: 'text', delta: 'Partial answer\n\n' },
+      { type: 'done', terminationReason: 'interrupted' },
+    ]);
+  });
+
+  it('flushes held-back text before the error on failure', () => {
+    const t = new DevinTranscriptTranslator();
+    t.translate(text('Partial answer'));
+    expect([...t.fail(new Error('connection lost'))]).toEqual([
+      { type: 'text', delta: 'Partial answer\n\n' },
+      { type: 'error', message: 'connection lost', terminationReason: 'failed' },
+    ]);
+    expect([...t.finish('end_turn')]).toEqual([]);
+  });
+
+  it('emits no final_text for an empty answer', () => {
+    const t = new DevinTranscriptTranslator();
     expect([...t.finish('end_turn')]).toEqual([{ type: 'done', terminationReason: 'normal' }]);
   });
 
