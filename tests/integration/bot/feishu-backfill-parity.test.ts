@@ -1,12 +1,13 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { AGENT_KINDS, type AgentKind } from '../../../src/agent/registry.js';
+import { BACKFILL_DELAY_LINE } from '../../../src/bot/backfill.js';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
 import { FakeAgentAdapter } from '../../helpers/fake-agent.js';
-import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel.js';
+import { createRecordingLarkChannel, isBackfillDelayLine } from '../../helpers/recording-lark-channel.js';
 import { createTmpProfile } from '../../helpers/tmp-profile.js';
 
 const sdk = vi.hoisted(() => ({
@@ -34,7 +35,7 @@ const MSG = 'om_missed';
 const THREAD = 'omt_1';
 const TEXT = 'please answer the missed mention';
 const ANSWER = 'PINNED_ANSWER';
-const HINT = '以下用户消息是在 bot 离线期间发出的';
+const HINT = '以下用户消息发于';
 
 const cleanups: Array<() => Promise<void>> = [];
 
@@ -53,6 +54,10 @@ describe('Feishu live vs backfill parity', () => {
       const backfilled = await runOnce({ kind, path: 'backfill', chatMode: 'group', createTime });
 
       expect(backfilled.outbound).toEqual(live.outbound);
+      expect(live.delayLines).toEqual([]);
+      expect(backfilled.delayLines).toEqual([
+        { chatId: GROUP, content: { text: BACKFILL_DELAY_LINE }, options: { replyTo: MSG } },
+      ]);
       expect(hintCount(live.prompt)).toBe(0);
       expect(hintCount(backfilled.prompt)).toBe(1);
       expect(stripHint(backfilled.prompt)).toEqual(live.prompt);
@@ -82,6 +87,10 @@ describe('Feishu live vs backfill parity', () => {
       });
 
       expect(backfilled.outbound).toEqual(live.outbound);
+      expect(live.delayLines).toEqual([]);
+      expect(backfilled.delayLines).toEqual([
+        { chatId: TOPIC, content: { text: BACKFILL_DELAY_LINE }, options: { replyTo: MSG, replyInThread: true } },
+      ]);
       expect(hintCount(live.prompt)).toBe(0);
       expect(hintCount(backfilled.prompt)).toBe(1);
       expect(stripHint(backfilled.prompt)).toEqual(live.prompt);
@@ -103,6 +112,7 @@ async function runOnce(opts: {
 }): Promise<{
   prompt: string;
   outbound: unknown[];
+  delayLines: unknown[];
   replyTo: string | undefined;
   replyInThread: boolean;
 }> {
@@ -181,12 +191,17 @@ async function runOnce(opts: {
 
   await waitForDebounce();
   await waitFor(() => agent.runOptions.length === 1);
-  await waitFor(() => channel.streams.length + channel.sent.length > 0);
+  await waitFor(() => outboundSequence(channel).length > 0);
 
   const reply = replyTarget(channel);
   return {
     prompt: normalizeWorkspaceFact(agent.runOptions[0]!.prompt, tmp.workspace),
     outbound: outboundSequence(channel),
+    delayLines: channel.sent.filter(isBackfillDelayLine).map((row) => ({
+      chatId: row.chatId,
+      content: row.content,
+      options: row.options,
+    })),
     replyTo: reply.replyTo,
     replyInThread: reply.replyInThread,
   };
@@ -256,7 +271,7 @@ function outboundSequence(
       markdownContents: row.markdownContents,
       options: row.options,
     })),
-    ...channel.sent.map((row) => ({
+    ...channel.sent.filter((row) => !isBackfillDelayLine(row)).map((row) => ({
       op: 'send',
       chatId: row.chatId,
       content: row.content,
@@ -269,7 +284,7 @@ function replyTarget(channel: ReturnType<typeof createRecordingLarkChannel>): {
   replyTo: string | undefined;
   replyInThread: boolean;
 } {
-  const options = channel.streams.at(0)?.options ?? channel.sent.at(0)?.options;
+  const options = channel.streams.at(0)?.options ?? channel.sent.find((row) => !isBackfillDelayLine(row))?.options;
   const record = isRecord(options) ? options : {};
   return {
     replyTo: typeof record.replyTo === 'string' ? record.replyTo : undefined,
@@ -282,7 +297,7 @@ function hintCount(prompt: string): number {
 }
 
 function stripHint(prompt: string): string {
-  return prompt.replace(/,?\s*"以下用户消息是在 bot 离线期间发出的[^"]*"/g, '');
+  return prompt.replace(/,?\s*"以下用户消息发于[^"]*"/g, '');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

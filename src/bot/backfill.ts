@@ -1,4 +1,5 @@
 import { normalize, type LarkChannel, type NormalizedMessage, type RawMessageEvent } from '@larksuite/channel';
+import { formatZonedDateTime } from '../automations/confirm-card';
 import { isRegisteredSlashCommand } from '../commands';
 import type { BackfillPreferences } from '../config/schema';
 import type { ProfileMode } from '../config/profile-schema';
@@ -10,6 +11,8 @@ import { createMergeForwardFetch } from './quote';
 import { isSelfSender } from './self-message';
 
 export const WATERMARK_MARGIN_MS = 120_000;
+
+export const BACKFILL_DELAY_LINE = 'bot 刚恢复在线，正在补回复离线期间收到的消息。';
 
 export interface BackfillMark {
   detectedAt: number;
@@ -49,6 +52,7 @@ export interface RunBackfillDeps {
   sessionChatIds?: string[];
   botAppId?: string;
   requireMentionForChat?: (chatId: string) => boolean;
+  postDelayLine?: (target: NormalizedMessage, text: string) => Promise<void>;
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -68,15 +72,16 @@ export function resolveBackfillWindow(input: {
 export function formatBackfillLatenessHint(input: {
   createTimeMs: number;
   nowMs: number;
+  timeZone: string;
 }): string {
   const ageMs = Math.max(0, input.nowMs - input.createTimeMs);
   const minutes = Math.max(1, Math.round(ageMs / 60_000));
-  const when = new Date(input.createTimeMs);
-  const hh = String(when.getHours()).padStart(2, '0');
-  const mm = String(when.getMinutes()).padStart(2, '0');
+  const sent = formatZonedDateTime(input.timeZone, input.createTimeMs);
+  const today = formatZonedDateTime(input.timeZone, input.nowMs);
+  const sentAt = sent.slice(0, 10) === today.slice(0, 10) ? sent.slice(11) : sent;
   return (
-    `以下用户消息是在 bot 离线期间发出的（约 ${minutes} 分钟前，${hh}:${mm}），` +
-    'bridge 重连后才补处理。如需，可先简短说明延迟原因再回答。'
+    `以下用户消息发于 ${sentAt}（约 ${minutes} 分钟前），bot 离线期间未处理；消息中的相对时间按发送时刻理解。` +
+    'bridge 已自行告知延迟，直接回答用户请求。'
   );
 }
 
@@ -333,6 +338,7 @@ async function scanChat(input: {
     ? Math.min(...truncated.map((msg) => msg.createTime))
     : undefined;
   let enqueued = 0;
+  const delayAnnounced = new Set<string>();
   for (const msg of survivors) {
     if (deps.isClosing?.()) return 'aborted';
     const scope = msg.threadId ? `${msg.chatId}:${msg.threadId}` : msg.chatId;
@@ -346,6 +352,10 @@ async function scanChat(input: {
       log.info('backfill', 'would-enqueue', fields);
       enqueued += 1;
       continue;
+    }
+    if (!delayAnnounced.has(scope) && !deps.marks.has(msg.messageId)) {
+      delayAnnounced.add(scope);
+      await postDelayLine(deps, msg);
     }
     deps.marks.set(msg.messageId, { detectedAt: now });
     log.info('backfill', 'enqueued', fields);
@@ -363,6 +373,19 @@ async function scanChat(input: {
     truncated: truncated.length,
   });
   return { enqueued, ...(truncatedFrom !== undefined ? { truncatedFrom } : {}) };
+}
+
+async function postDelayLine(deps: RunBackfillDeps, target: NormalizedMessage): Promise<void> {
+  if (!deps.postDelayLine) return;
+  try {
+    await deps.postDelayLine(target, BACKFILL_DELAY_LINE);
+  } catch (error) {
+    log.warn('backfill', 'delay-line-failed', {
+      chatId: target.chatId,
+      msgId: target.messageId,
+      err: errorMessage(error),
+    });
+  }
 }
 
 async function filterHistoryItem(

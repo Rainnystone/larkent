@@ -7,7 +7,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
-import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { createRecordingLarkChannel, isBackfillDelayLine } from '../../helpers/recording-lark-channel';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -24,6 +24,7 @@ const BOT = 'ou_bot';
 const USER = 'ou_user';
 const CHAT = 'oc_group';
 const TOPIC = 'oc_topic';
+const PROFILE_TZ = 'Europe/Berlin';
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -59,11 +60,19 @@ describe('backfill on connect', () => {
     await waitFor(() => h.agent.runOptions.length === 1);
 
     const prompt = h.agent.runOptions[0]!.prompt;
-    const hint = formatBackfillLatenessHint({ createTimeMs: first, nowMs: Date.now() });
-    expect(prompt.split('以下用户消息是在 bot 离线期间发出的').length - 1).toBe(1);
+    const hint = formatBackfillLatenessHint({ createTimeMs: first, nowMs: Date.now(), timeZone: PROFILE_TZ });
+    expect(prompt.split('以下用户消息发于').length - 1).toBe(1);
     expect(prompt).toContain('first missed');
     expect(prompt).toContain('second missed');
-    expect(prompt).toContain(hint.slice(0, 20));
+    expect(prompt).toContain(hint.slice(0, hint.indexOf('（')));
+    const delayLines = h.channel.callLog.filter((call) => (
+      call.op === 'send' && isBackfillDelayLine(call)
+    ));
+    expect(delayLines).toEqual([
+      expect.objectContaining({ chatId: CHAT, options: expect.objectContaining({ replyTo: 'om_late_1' }) }),
+    ]);
+    expect(h.channel.callLog.findIndex((call) => call.op === 'send' || call.op === 'stream'))
+      .toBe(h.channel.callLog.indexOf(delayLines[0]!));
     expect(info.mock.calls).toContainEqual([
       'prompt',
       'built',
@@ -73,7 +82,7 @@ describe('backfill on connect', () => {
 
   it('replies in-thread for a topic-group backfill', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
-    await startHarness({
+    const h = await startHarness({
       lastLiveAt: NOW - 5 * 60_000,
       chatMode: 'topic',
       chats: [{ id: TOPIC, name: 'Topic' }],
@@ -93,6 +102,14 @@ describe('backfill on connect', () => {
         threadId: 'omt_1',
         replyTo: 'om_topic',
         replyInThread: true,
+      }),
+    ]);
+    expect(h.channel.callLog.filter((call) => (
+      call.op === 'send' && isBackfillDelayLine(call)
+    ))).toEqual([
+      expect.objectContaining({
+        chatId: TOPIC,
+        options: expect.objectContaining({ replyTo: 'om_topic', replyInThread: true }),
       }),
     ]);
   });
@@ -144,6 +161,7 @@ async function startHarness(opts: {
     },
   });
   cfg.workspaces.default = tmp.workspace;
+  cfg.automations.timezone = PROFILE_TZ;
   const sessions = new SessionStore(`${tmp.profile}/sessions.json`);
   const workspaces = new WorkspaceStore(`${tmp.profile}/workspaces.json`);
   const agent = new FakeAgentAdapter({

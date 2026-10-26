@@ -11,7 +11,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
-import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { createRecordingLarkChannel, isBackfillDelayLine } from '../../helpers/recording-lark-channel';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -75,6 +75,7 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions).toHaveLength(1);
     expect(h.agent.runOptions[0]!.prompt).toContain('hello during rest outage');
     expect(answerSends(h.channel)).toHaveLength(1);
+    expect(delayLines(h.channel)).toHaveLength(1);
     expect(h.ledger.has('om_first')).toBe(true);
   });
 
@@ -389,7 +390,13 @@ function mentionItem(messageId: string, text: string, createTime: number): Recor
 }
 
 function answerSends(channel: ReturnType<typeof createRecordingLarkChannel>) {
-  return channel.snapshotCalls().filter((call) => call.op === 'send' || call.op === 'stream');
+  return channel.snapshotCalls().filter((call) => (
+    call.op === 'stream' || (call.op === 'send' && !isBackfillDelayLine(call))
+  ));
+}
+
+function delayLines(channel: ReturnType<typeof createRecordingLarkChannel>) {
+  return channel.snapshotCalls().filter((call) => call.op === 'send' && isBackfillDelayLine(call));
 }
 
 function noticeCards(channel: ReturnType<typeof createRecordingLarkChannel>) {
@@ -484,7 +491,9 @@ function waitUntilAnswered(channel: ReturnType<typeof createRecordingLarkChannel
   const previousSend = channel.send.bind(channel);
   const previousStream = channel.stream.bind(channel);
   return new Promise((resolve) => {
-    const finish = (): void => resolve();
+    const finish = (): void => {
+      if (answerSends(channel).length >= 1) resolve();
+    };
     channel.send = ((...args: Parameters<typeof channel.send>) => {
       const pending = previousSend(...args);
       void pending.then(finish, finish);

@@ -1,4 +1,5 @@
 import { writeFile } from 'node:fs/promises';
+import { BACKFILL_DELAY_LINE } from '../../src/bot/backfill';
 import { createFakeChannel, type FakeChannel } from './fake-channel.js';
 
 export interface RecordingLarkChannel extends FakeChannel {
@@ -199,6 +200,10 @@ export function createRecordingLarkChannel(options: {
   };
 
   return channel;
+}
+
+export function isBackfillDelayLine(row: { content: unknown }): boolean {
+  return JSON.stringify(row.content).includes(BACKFILL_DELAY_LINE);
 }
 
 function extractContainerId(params: unknown): string | undefined {

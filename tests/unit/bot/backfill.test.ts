@@ -1,10 +1,11 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import {
+  BACKFILL_DELAY_LINE,
   WATERMARK_MARGIN_MS,
   createBackfillRun,
   formatBackfillLatenessHint,
@@ -1405,6 +1406,109 @@ describe('runBackfill', () => {
   });
 });
 
+describe('runBackfill delay line', () => {
+  it('posts one fixed delay line per non-empty batch before dispatch, none for an empty batch', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }, { id: CHAT_B, name: 'B' }],
+      messages: {
+        [CHAT_A]: [
+          mentionItem('om_a1', CHAT_A, 'first', NOW - 20_000),
+          mentionItem('om_a2', CHAT_A, 'second', NOW - 10_000),
+        ],
+        [CHAT_B]: [chatterItem('om_b1', CHAT_B, NOW - 15_000)],
+      },
+    });
+    const order: string[] = [];
+    await runBackfill(await deps({
+      ...h,
+      onIntake: (msg) => order.push(`intake:${msg.messageId}`),
+      postDelayLine: async (target, text) => {
+        order.push(`delay:${target.chatId}:${target.messageId}:${text}`);
+      },
+    }));
+    expect(BACKFILL_DELAY_LINE).toBe('bot 刚恢复在线，正在补回复离线期间收到的消息。');
+    expect(order).toEqual([
+      `delay:${CHAT_A}:om_a1:${BACKFILL_DELAY_LINE}`,
+      'intake:om_a1',
+      'intake:om_a2',
+    ]);
+  });
+
+  it('posts one delay line per topic thread, since each thread is its own batch', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          mentionItem('om_t1a', CHAT_A, 'first', NOW - 30_000, { threadId: 'omt_1' }),
+          mentionItem('om_t2a', CHAT_A, 'second', NOW - 20_000, { threadId: 'omt_2' }),
+          mentionItem('om_t1b', CHAT_A, 'third', NOW - 10_000, { threadId: 'omt_1' }),
+        ],
+      },
+    });
+    const posted: string[] = [];
+    await runBackfill(await deps({
+      ...h,
+      postDelayLine: async (target) => {
+        posted.push(target.messageId);
+      },
+    }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_t1a', 'om_t2a', 'om_t1b']);
+    expect(posted).toEqual(['om_t1a', 'om_t2a']);
+  });
+
+  it('still dispatches the batch when posting the delay line fails', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_a1', CHAT_A, 'first', NOW - 10_000)] },
+    });
+    const warn = spyWarn();
+    const ok = await runBackfill(await deps({
+      ...h,
+      postDelayLine: async () => {
+        throw new Error('send failed');
+      },
+    }));
+    expect(ok).toBe(true);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a1']);
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({ event: 'delay-line-failed', chatId: CHAT_A, msgId: 'om_a1' }),
+    );
+  });
+
+  it('posts no second delay line when a re-scan finds only messages an earlier scan already enqueued', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_a1', CHAT_A, 'first', NOW - 10_000)] },
+    });
+    const marks = new Map<string, { detectedAt: number }>();
+    const posted: string[] = [];
+    const postDelayLine = async (target: NormalizedMessage) => {
+      posted.push(target.messageId);
+    };
+    await runBackfill(await deps({ ...h, marks, postDelayLine }));
+    h.ledger.unrecord('om_a1');
+    await runBackfill(await deps({ ...h, marks, postDelayLine }));
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a1', 'om_a1']);
+    expect(posted).toEqual(['om_a1']);
+  });
+
+  it('posts no delay line in dryRun', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_a1', CHAT_A, 'first', NOW - 10_000)] },
+    });
+    const posted: string[] = [];
+    await runBackfill(await deps({
+      ...h,
+      prefs: { ...DEFAULT_BACKFILL_PREFERENCES, dryRun: true },
+      postDelayLine: async (target) => {
+        posted.push(target.messageId);
+      },
+    }));
+    expect(posted).toEqual([]);
+  });
+});
+
 describe('createBackfillRun coalescing mutex', () => {
   it('returns the in-flight promise and logs coalesced for overlapping triggers', async () => {
     let release: () => void = () => {};
@@ -1560,18 +1664,42 @@ describe('backfill sender type for automation', () => {
 });
 
 describe('formatBackfillLatenessHint', () => {
-  it('names the delay once from the oldest marked create time', () => {
+  const HOST_TZ = 'America/New_York';
+  const PROFILE_TZ = 'Europe/Berlin';
+  let previousTz: string | undefined;
+
+  beforeEach(() => {
+    previousTz = process.env.TZ;
+    process.env.TZ = HOST_TZ;
+  });
+
+  afterEach(() => {
+    if (previousTz === undefined) delete process.env.TZ;
+    else process.env.TZ = previousTz;
+  });
+
+  it('formats a same-day send time in the profile time zone, not the host one', () => {
     const createTimeMs = Date.UTC(2026, 8, 11, 4, 7, 0);
-    const hint = formatBackfillLatenessHint({
+    expect(formatBackfillLatenessHint({
       createTimeMs,
       nowMs: createTimeMs + 12 * 60_000,
-    });
-    expect(hint).toMatch(/约 12 分钟前/);
-    expect(hint).toContain('bridge 重连后才补处理');
-    expect(hint).toBe(formatBackfillLatenessHint({
+      timeZone: PROFILE_TZ,
+    })).toBe(
+      '以下用户消息发于 06:07（约 12 分钟前），bot 离线期间未处理；消息中的相对时间按发送时刻理解。' +
+        'bridge 已自行告知延迟，直接回答用户请求。',
+    );
+  });
+
+  it('includes the date when the send time falls on an earlier profile-local day', () => {
+    const createTimeMs = Date.UTC(2026, 8, 10, 21, 50, 0);
+    expect(formatBackfillLatenessHint({
       createTimeMs,
-      nowMs: createTimeMs + 12 * 60_000,
-    }));
+      nowMs: createTimeMs + 30 * 60_000,
+      timeZone: PROFILE_TZ,
+    })).toBe(
+      '以下用户消息发于 2026-09-10 23:50（约 30 分钟前），bot 离线期间未处理；消息中的相对时间按发送时刻理解。' +
+        'bridge 已自行告知延迟，直接回答用户请求。',
+    );
   });
 });
 
@@ -1636,6 +1764,8 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
   refreshKnownChats?: (chats: Array<{ id: string; name: string }>) => void;
   isClosing?: () => boolean;
   onIntake?: (msg: NormalizedMessage) => void;
+  postDelayLine?: RunBackfillDeps['postDelayLine'];
+  marks?: RunBackfillDeps['marks'];
   sessionChatIds?: string[];
   chatModes?: Record<string, 'p2p' | 'group' | 'topic'>;
   chatModeErrors?: Record<string, Error>;
@@ -1662,7 +1792,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     listMessagesHold: input.listMessagesHold,
     onListMessages: input.onListMessages,
   });
-  const marks = new Map<string, { detectedAt: number }>();
+  const marks = input.marks ?? new Map<string, { detectedAt: number }>();
   const now = input.now ?? (() => NOW);
   const since = input.since ?? input.ledger.getLiveAt() ?? now();
   const fromMs = input.fromMs ?? resolveBackfillWindow({
@@ -1685,6 +1815,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     sessionChatIds: input.sessionChatIds,
     ...(input.botAppId !== undefined ? { botAppId: input.botAppId } : {}),
     ...(input.requireMentionForChat ? { requireMentionForChat: input.requireMentionForChat } : {}),
+    ...(input.postDelayLine ? { postDelayLine: input.postDelayLine } : {}),
     intake: async (msg) => {
       input.intake.push(msg);
       input.onIntake?.(msg);

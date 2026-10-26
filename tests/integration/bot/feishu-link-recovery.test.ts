@@ -10,7 +10,7 @@ import { log } from '../../../src/core/logger';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
-import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { createRecordingLarkChannel, isBackfillDelayLine } from '../../helpers/recording-lark-channel';
 import { axiosHttpError } from '../../helpers/sdk-feishu-errors';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
@@ -87,8 +87,11 @@ describe('FeishuLink recovery through the bridge', () => {
     await waitForDebounce();
     await until(() => h.agent.runOptions.length === 1);
     expect(h.agent.runOptions[0]!.prompt).toContain('missed while REST was down');
-    const replies = h.channel.snapshotCalls().filter((call) => call.op === 'send' || call.op === 'stream');
+    const calls = h.channel.snapshotCalls();
+    const isDelayLine = (call: (typeof calls)[number]): boolean => call.op === 'send' && isBackfillDelayLine(call);
+    const replies = calls.filter((call) => (call.op === 'send' || call.op === 'stream') && !isDelayLine(call));
     expect(replies).toHaveLength(1);
+    expect(calls.filter(isDelayLine)).toHaveLength(1);
   });
 
   it('resends a staged reply exactly once after recovery and never while up', async () => {

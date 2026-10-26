@@ -65,7 +65,7 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
       opts.prompt.includes('first queued') || opts.prompt.includes('second queued')
     ));
     expect(recovered.length).toBeGreaterThan(0);
-    expect(recovered.every((opts) => opts.prompt.includes('bridge 重连后才补处理'))).toBe(true);
+    expect(recovered.every((opts) => opts.prompt.includes('bot 离线期间未处理'))).toBe(true);
     expect(recovered.filter((opts) => opts.prompt.includes('first queued'))).toHaveLength(1);
     expect(recovered.filter((opts) => opts.prompt.includes('second queued'))).toHaveLength(1);
     expect(info.mock.calls.some((call) => call[0] === 'pending' && call[1] === 'handoff')).toBe(true);
@@ -122,7 +122,7 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     const recovered = h.agent.runOptions.filter((opts) => (
       opts.prompt.includes('queued during run') || opts.prompt.includes('arrived while closing')
     ));
-    expect(recovered.every((opts) => opts.prompt.includes('bridge 重连后才补处理'))).toBe(true);
+    expect(recovered.every((opts) => opts.prompt.includes('bot 离线期间未处理'))).toBe(true);
     expect(info.mock.calls.some((call) => call[0] === 'pending' && call[1] === 'handoff')).toBe(true);
     release();
   });
@@ -163,7 +163,7 @@ describe('lost-message recovery', { timeout: 20_000 }, () => {
     cleanups.push(async () => { await second.disconnect().catch(() => {}); });
     await waitFor(() => h.agent.runOptions.some((opts) => opts.prompt.includes('survive restart')));
     expect(h.agent.runOptions.filter((opts) => opts.prompt.includes('survive restart'))).toHaveLength(1);
-    expect(h.agent.runOptions.at(-1)?.prompt).toContain('bridge 重连后才补处理');
+    expect(h.agent.runOptions.at(-1)?.prompt).toContain('bot 离线期间未处理');
   });
 
   it('answers a mention posted during a 25s disconnect instead of skipping the gap', async () => {

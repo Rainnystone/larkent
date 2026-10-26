@@ -106,6 +106,7 @@ import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, noteRunEvent, type RunHandle } from './active-runs';
 import {
+  BACKFILL_DELAY_LINE,
   createBackfillRun,
   formatBackfillLatenessHint,
   type BackfillChannel,
@@ -666,6 +667,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ...(sessionCatalog?.entries().map((entry) => entry.scopeId) ?? []),
       ],
       intake: (msg) => handOffIntake(msg, 'backfill'),
+      postDelayLine: async (target, text) => {
+        await channel.send(target.chatId, { text }, {
+          replyTo: target.messageId,
+          ...(target.threadId ? { replyInThread: true } : {}),
+        });
+      },
       requireMentionForChat: (chatId) => (
         requireMentionForChat(controls.profileConfig, controls.cfg, chatId)
       ),
@@ -1797,10 +1804,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     : undefined;
   if (mode === 'topic' && threadId && !topicResumeHandle) {
     const exclude = new Set([...batchIds, ...quoteTargets]);
-    topicContext = await fetchTopicContext(channel, threadId, {
+    topicContext = (await fetchTopicContext(channel, threadId, {
       maxMessages: 40,
       excludeIds: exclude,
-    });
+    })).filter((item) => !(item.senderType === 'bot' && item.content === BACKFILL_DELAY_LINE));
     if (topicContext.length > 0) {
       log.info('topic', 'context-fetched', {
         scope,
@@ -1855,7 +1862,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     ));
     extraInstructions.push(formatBackfillLatenessHint({
       createTimeMs: oldest.createTime,
-      nowMs: Date.now(),
+      nowMs: (now ?? Date.now)(),
+      timeZone: controls.profileConfig.automations.timezone,
     }));
   }
 
