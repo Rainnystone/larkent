@@ -48,13 +48,24 @@ it('uses the card remaining-fire function for preview occurrenceCount after the 
 });
 
 
-it('tells the model to cite occurrenceCount and paraphrase status codes', async () => {
+it('tells the model to cite occurrenceCount only for card-free results and paraphrase status codes', async () => {
   const skill = await readFile(join(process.cwd(), 'plugins/automation/skills/automations/SKILL.md'), 'utf8');
-  expect(skill).toContain('occurrenceCount');
-  expect(skill).toContain('还需选择结束日期');
-  expect(skill).toContain('等待在卡上确认');
+  expect(skill).toMatch(/没有确认卡的结果才在回复中写出排期[^\n]*`occurrenceCount`/);
   expect(skill).toMatch(/needs-input[\s\S]{0,80}还需选择结束日期|还需选择结束日期[\s\S]{0,80}needs-input/);
-  expect(skill).toMatch(/waiting-confirmation[\s\S]{0,80}等待在卡上确认|等待在卡上确认[\s\S]{0,80}waiting-confirmation/);
+  expect(skill).toContain('| `waiting-confirmation` | 用一句话指向确认卡，例如「已发确认卡，请在卡上确认。」');
+});
+
+it('points at the confirmation card instead of restating its schedule or status', async () => {
+  const skill = await readFile(join(process.cwd(), 'plugins/automation/skills/automations/SKILL.md'), 'utf8');
+  expect(skill).toContain('发出确认卡后，回复用一句话指向确认卡，排期详情和确认状态都由确认卡表达。');
+  expect(skill).toContain('确认卡此后的变化由确认卡自身显示');
+  expect(skill).toContain('在提交创建或替换前问清，使确认卡上的内容就是最终内容');
+  expect(skill).not.toContain('回复时展示时区');
+  expect(skill).not.toContain('才能说等待确认');
+  expect(skill).not.toContain('最终回复以发送前的最新状态为准');
+  const stale = skill.split('\n').filter(line => line.includes('现在尚未生效'));
+  expect(stale).toHaveLength(1);
+  expect(stale[0]).toMatch(/反例：「已发确认卡，点「是」后生效；现在尚未生效。/);
 });
 
 async function toolContext(now: number) {
