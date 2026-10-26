@@ -123,7 +123,7 @@ describe('GrokJsonlTranslator', () => {
     ]);
   });
 
-  it('keeps pre-tool text buffered and separates it from the later answer', () => {
+  it('emits pre-tool text as progress before the tool and keeps it out of the answer', () => {
     const t = new GrokJsonlTranslator();
     expect(t.translate({ type: 'text', data: 'Let me check.' })).toEqual([{ type: 'system' }]);
     expect(t.translate({
@@ -133,6 +133,7 @@ describe('GrokJsonlTranslator', () => {
       status: 'in_progress',
       rawInput: { path: 'a.ts' },
     })).toEqual([
+      { type: 'text', delta: 'Let me check.\n\n' },
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
     ]);
     expect(t.translate({ type: 'text', data: 'Done.' })).toEqual([{ type: 'system' }]);
@@ -140,11 +141,52 @@ describe('GrokJsonlTranslator', () => {
     expect(end.filter((event) => event.type === 'text')).toEqual([]);
     expect(end.find((event) => event.type === 'final_text')).toEqual({
       type: 'final_text',
-      content: 'Let me check.\n\nDone.',
+      content: 'Done.',
     });
   });
 
-  it('keeps pre-tool commentary in the final answer and maps thoughts to thinking', () => {
+  it('shows every pre-tool segment as progress and answers with the text after the last tool', () => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      { type: 'text', data: 'First ' },
+      { type: 'text', data: 'look.' },
+      { type: 'tool_call', toolCallId: 'call_1', toolName: 'read_file', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'call_1', status: 'completed', rawOutput: 'a' },
+      { type: 'text', data: 'Second look.' },
+      { type: 'tool_call', toolCallId: 'call_2', toolName: 'read_file', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'call_2', status: 'completed', rawOutput: 'b' },
+      { type: 'text', data: 'The answer.' },
+      { type: 'end', sessionId: SESSION },
+    ]);
+    expect(events.filter((event) => event.type === 'text')).toEqual([
+      { type: 'text', delta: 'First look.\n\n' },
+      { type: 'text', delta: 'Second look.\n\n' },
+    ]);
+    expect(events.filter((event) => event.type === 'final_text')).toEqual([
+      { type: 'final_text', content: 'The answer.' },
+    ]);
+  });
+
+  it('answers with the last non-empty pre-tool segment when no text follows the last tool', () => {
+    const t = new GrokJsonlTranslator();
+    const events = collect(t, [
+      { type: 'text', data: 'Checking the schedule.' },
+      { type: 'tool_call', toolCallId: 'call_1', toolName: 'read_file', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'call_1', status: 'completed', rawOutput: 'a' },
+      { type: 'tool_call', toolCallId: 'call_2', toolName: 'read_file', status: 'in_progress' },
+      { type: 'tool_call_update', toolCallId: 'call_2', status: 'completed', rawOutput: 'b' },
+      { type: 'text', data: '  \n' },
+      { type: 'end', sessionId: SESSION },
+    ]);
+    expect(events.filter((event) => event.type === 'text')).toEqual([
+      { type: 'text', delta: 'Checking the schedule.\n\n' },
+    ]);
+    expect(events.filter((event) => event.type === 'final_text')).toEqual([
+      { type: 'final_text', content: 'Checking the schedule.' },
+    ]);
+  });
+
+  it('shows pre-tool commentary as progress and maps thoughts to thinking', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [
       { type: 'thought', data: 'looking' },
@@ -168,11 +210,12 @@ describe('GrokJsonlTranslator', () => {
     expect(events).toEqual([
       { type: 'thinking', delta: 'looking' },
       { type: 'system' },
+      { type: 'text', delta: 'Let me check.\n\n' },
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
       { type: 'tool_result', id: 'call_1', output: '{"lines":3}', isError: false },
       { type: 'system' },
       { type: 'system', resumeHandle: SESSION },
-      { type: 'final_text', content: 'Let me check.\n\nDone.' },
+      { type: 'final_text', content: 'Done.' },
       { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
     ]);
   });

@@ -52,7 +52,7 @@ describe('buffered answers after stop', () => {
     expect(card).toContain('answer before stop');
   });
 
-  it('keeps text that arrived before a tool call', () => {
+  it('shows text that arrived before a tool call as progress, not as the answer', () => {
     const translator = new GrokJsonlTranslator();
     const events = [
       ...translator.translate({ type: 'text', data: 'before the tool' }),
@@ -66,8 +66,29 @@ describe('buffered answers after stop', () => {
       ...translator.translate({ type: 'text', data: 'after' }),
       ...translator.translate({ type: 'end', sessionId: 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee' }),
     ];
+    const progress = events.filter((event) => event.type === 'text');
+    expect(progress).toEqual([{ type: 'text', delta: 'before the tool\n\n' }]);
     const final = events.find((event) => event.type === 'final_text');
-    expect(final).toEqual({ type: 'final_text', content: 'before the tool\n\nafter' });
+    expect(final).toEqual({ type: 'final_text', content: 'after' });
+  });
+
+  it('answers with the last pre-tool text after a user stop with no text after the tool', () => {
+    const translator = new GrokJsonlTranslator();
+    translator.translate({ type: 'text', data: 'checking the file' });
+    translator.translate({
+      type: 'tool_call',
+      toolCallId: 'call_1',
+      toolName: 'read_file',
+      status: 'in_progress',
+      rawInput: { path: 'a.ts' },
+    });
+    const events = translator.finish('interrupted');
+    expect(events.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: 'checking the file',
+    });
+    const card = JSON.stringify(renderCard(cardAfterStop(events, { type: 'user-stop' })));
+    expect(card).toContain('checking the file');
   });
 
   it('suppresses text deltas after a user stop while retaining the buffered final answer', () => {
