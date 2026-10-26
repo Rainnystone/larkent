@@ -134,8 +134,12 @@ export function runDevinAcp(input: {
       try { await shutdown(); }
       catch (error) { cleanupError = error; }
       if (!stopping && (processError || (exit !== null && exit !== 0))) {
+        const kept = terminal.flatMap(e =>
+          e.type === 'text' ? [e]
+            : e.type === 'final_text' ? [{ type: 'text' as const, delta: e.content }]
+              : []);
         // Error detail retains the tail too, where transport signatures often occur.
-        terminal = [{ type: 'error', terminationReason: 'failed', message: `Devin ${processError?.message ?? `exited with code ${exit}`}: ${stderr.snapshot().slice(-4096)}` }];
+        terminal = [...kept, { type: 'error', terminationReason: 'failed', message: `Devin ${processError?.message ?? `exited with code ${exit}`}: ${stderr.snapshot().slice(-4096)}` }];
       }
       if (stopping && terminal.length === 0) terminal = translator.finish('cancelled');
       push(terminal.map(e => e.type === 'done' ? { ...e, resumeHandle: sessionId } : e));

@@ -3,7 +3,7 @@ type Tool = { name: string; input?: unknown; output?: unknown; content?: unknown
 
 /** Per-prompt ACP state. History replay is deliberately excluded by the caller. */
 export class DevinTranscriptTranslator {
-  private answer = '';
+  private pending = '';
   private messageId: unknown;
   private terminal = false;
   private readonly tools = new Map<string, Tool>();
@@ -16,10 +16,10 @@ export class DevinTranscriptTranslator {
         const content = record(u.content);
         if (content.type !== 'text' || typeof content.text !== 'string') return [];
         const id = record(u._meta)['cognition.ai/messageId'] ?? u.messageId;
-        if (id !== undefined && this.messageId !== undefined && id !== this.messageId) this.answer = '';
+        const events = id !== undefined && this.messageId !== undefined && id !== this.messageId ? this.flush() : [];
         if (id !== undefined) this.messageId = id;
-        this.answer += content.text;
-        return [{ type: 'text', delta: content.text }];
+        this.pending += content.text;
+        return [...events, { type: 'system' }];
       }
       case 'agent_thought_chunk': {
         const c = record(u.content);
@@ -37,8 +37,8 @@ export class DevinTranscriptTranslator {
     if (this.terminal) return [];
     if (reason !== 'end_turn' && reason !== 'cancelled') return this.fail(`Devin stopped: ${reason}`);
     this.terminal = true;
-    const events: AgentEvent[] = [];
-    if (this.answer && reason === 'end_turn') events.push({ type: 'final_text', content: this.answer });
+    const events: AgentEvent[] = this.pending ? [{ type: 'final_text', content: this.pending }] : [];
+    this.pending = '';
     events.push({ type: 'done', terminationReason: reason === 'cancelled' ? 'interrupted' : 'normal' });
     return events;
   }
@@ -47,7 +47,7 @@ export class DevinTranscriptTranslator {
     if (this.terminal) return [];
     this.terminal = true;
     const message = error instanceof Error ? error.message : String(error);
-    return [{ type: 'error', message: message.slice(0, 4096), terminationReason: 'failed' }];
+    return [...this.flush(), { type: 'error', message: message.slice(0, 4096), terminationReason: 'failed' }];
   }
 
   terminalEmitted(): boolean {
@@ -58,10 +58,11 @@ export class DevinTranscriptTranslator {
     const id = u.toolCallId;
     if (typeof id !== 'string' || !id) return this.fail('Devin tool update has no toolCallId');
     let tool = this.tools.get(id);
+    const events: AgentEvent[] = [];
     if (!tool) {
       tool = { name: typeof u.kind === 'string' ? u.kind : 'tool', used: false, finished: false };
       this.tools.set(id, tool);
-      this.answer = '';
+      events.push(...this.flush());
       this.messageId = undefined;
     }
     if (tool.finished) return [];
@@ -75,7 +76,6 @@ export class DevinTranscriptTranslator {
     if (u.rawOutput != null) tool.output = u.rawOutput;
     if (u.content != null) tool.content = u.content;
     const terminal = u.status === 'completed' || u.status === 'failed';
-    const events: AgentEvent[] = [];
     const command = record(tool.input).command ?? record(tool.input).cmd ?? tool.input;
     const inputReady = tool.name !== 'execute'
       || (typeof command === 'string' && command.trim().length > 0)
@@ -89,6 +89,12 @@ export class DevinTranscriptTranslator {
       events.push({ type: 'tool_result', id, output: tool.output === undefined ? toolText(tool.content) : stringify(tool.output), isError: u.status === 'failed' });
     }
     return events;
+  }
+
+  private flush(): AgentEvent[] {
+    const text = this.pending;
+    this.pending = '';
+    return text ? [{ type: 'text', delta: text.endsWith('\n') ? text : `${text}\n\n` }] : [];
   }
 }
 

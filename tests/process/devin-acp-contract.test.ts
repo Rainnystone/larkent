@@ -122,6 +122,18 @@ describe('DEVIN ACP adapter contract', () => {
     expect(events.at(-1)).toMatchObject({ type: 'error', terminationReason: 'failed', message: expect.stringMatching(/permission/i) });
     expect((await f.report()).permissionResponse.result.outcome).toEqual({ outcome: 'selected', optionId: 'no' });
   });
+  it('keeps the buffered answer before the exit error when the agent dies mid-turn', async () => {
+    const f = await fixture({ lines: ['Partial answer'], exitAfterUpdates: 17 });
+    const events = await collect(f.run());
+    expect(events).toContainEqual({ type: 'text', delta: 'Partial answer\n\n' });
+    expect(events.at(-1)).toMatchObject({ type: 'error', terminationReason: 'failed', message: expect.stringMatching(/exited with code 17/) });
+  });
+  it('keeps the final answer as text before the exit error when the agent dies after end_turn', async () => {
+    const f = await fixture({ lines: ['Partial answer'], exitAfterTurn: 17 });
+    const events = await collect(f.run());
+    expect(events).toContainEqual({ type: 'text', delta: 'Partial answer' });
+    expect(events.at(-1)).toMatchObject({ type: 'error', terminationReason: 'failed', message: expect.stringMatching(/exited with code 17/) });
+  });
   it('keeps stderr and exit status live after an abnormal exit', async () => {
     const f = await fixture({ stderr: 'x'.repeat(700) + 'ECONNRESET', exitCode: 17 }); const r = f.run();
     expect(r.exit).toBeUndefined(); await collect(r); expect(await r.waitForExit(1000)).toBe(true);
