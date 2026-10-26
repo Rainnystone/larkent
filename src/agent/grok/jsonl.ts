@@ -25,9 +25,10 @@ export interface ProtocolDriftState {
  * `text` lines are incremental chunks of the same answer, not complete
  * messages. They are concatenated and held back as `final_text` on `end`
  * (same hold-back as kimi/codex, so showToolCalls:false sends one reply).
- * Text that arrived before a tool call is kept and separated from the later
- * answer. `thought` lines become `thinking` deltas and are not part of that
- * answer.
+ * Each non-empty chunk also emits a bare `system` event so the idle
+ * watchdog stays armed while that answer is held back. Text that arrived
+ * before a tool call is kept and separated from the later answer. `thought`
+ * lines become `thinking` deltas and are not part of that answer.
  */
 export class GrokJsonlTranslator {
   private sessionId: string | undefined;
@@ -111,7 +112,8 @@ export class GrokJsonlTranslator {
   private queueText(message: string | undefined): AgentEvent[] {
     if (!message) return [];
     this.pendingText += message;
-    return [];
+    // Liveness only. The channel rearms the idle watchdog and renders nothing.
+    return [{ type: 'system' }];
   }
 
   /** Keep commentary that arrived before a tool instead of dropping it. */

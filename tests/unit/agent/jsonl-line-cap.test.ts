@@ -48,9 +48,9 @@ describe('jsonl line cap', () => {
           break;
       }
       const events = await runChunks(chunks);
-      expect(events.map(event => event.type)).toEqual(['final_text', 'done']);
-      expect(events[0]).toEqual({ type: 'final_text', content });
-      expect(events[1]).toMatchObject({ terminationReason: 'normal' });
+      expect(events.map(event => event.type)).toEqual(['system', 'final_text', 'done']);
+      expect(events[1]).toEqual({ type: 'final_text', content });
+      expect(events[2]).toMatchObject({ terminationReason: 'normal' });
     });
   });
 
@@ -78,7 +78,7 @@ describe('jsonl line cap', () => {
   it('counts CR and whitespace before trimming, excluding only the LF delimiter', async () => {
     const line = `{"type":"text","data":"${'中'.repeat(2_796_194)}"}`;
     const accepted = await runChunks([Buffer.from(`${line}\r\n`)]);
-    expect(accepted.map(event => event.type)).toEqual(['final_text', 'done']);
+    expect(accepted.map(event => event.type)).toEqual(['system', 'final_text', 'done']);
     const rejected = await runChunks([Buffer.from(`${line} \r\n`)]);
     expect(rejected.map(event => event.type)).toEqual(['error']);
     expect(JSON.stringify(rejected)).toContain('exceeded 8388608 bytes');
@@ -87,8 +87,8 @@ describe('jsonl line cap', () => {
   it('applies the cap per line when several valid records share a chunk', async () => {
     const line = `{"type":"text","data":"${'中'.repeat(1_398_097)}"}\n`;
     const events = await runChunks([Buffer.from(line.repeat(2))]);
-    expect(events.map(event => event.type)).toEqual(['final_text', 'done']);
-    expect(events[0]).toEqual({ type: 'final_text', content: '中'.repeat(2_796_194) });
+    expect(events.map(event => event.type)).toEqual(['system', 'system', 'final_text', 'done']);
+    expect(events[2]).toEqual({ type: 'final_text', content: '中'.repeat(2_796_194) });
   });
 
   it('fails the run when one line exceeds the cap and does not keep the line', async () => {
