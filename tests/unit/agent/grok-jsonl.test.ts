@@ -22,6 +22,7 @@ describe('GrokJsonlTranslator', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [{ type: 'text', data: 'OK' }, END]);
     expect(events).toEqual([
+      { type: 'system' },
       { type: 'system', resumeHandle: SESSION },
       {
         type: 'usage',
@@ -92,6 +93,57 @@ describe('GrokJsonlTranslator', () => {
     });
   });
 
+  it('emits one bare system event per non-empty text chunk and none for an empty chunk', () => {
+    const t = new GrokJsonlTranslator();
+    expect(t.translate({ type: 'text', data: 'Hel' })).toEqual([{ type: 'system' }]);
+    expect(t.translate({ type: 'text', data: 'lo' })).toEqual([{ type: 'system' }]);
+    expect(t.translate({ type: 'text', text: '!' })).toEqual([{ type: 'system' }]);
+    expect(t.translate({ type: 'text', data: '' })).toEqual([]);
+    expect(t.translate({ type: 'text' })).toEqual([]);
+    const end = t.translate({ type: 'end', sessionId: SESSION });
+    expect(end.filter((event) => event.type === 'text')).toEqual([]);
+    expect(end.filter((event) => event.type === 'final_text')).toEqual([
+      { type: 'final_text', content: 'Hello!' },
+    ]);
+  });
+
+  it('flushes buffered text before an error and before fail', () => {
+    const errored = new GrokJsonlTranslator();
+    expect(errored.translate({ type: 'text', data: 'partial' })).toEqual([{ type: 'system' }]);
+    expect(errored.translate({ type: 'error', message: 'boom' })).toEqual([
+      { type: 'text', delta: 'partial\n\n' },
+      { type: 'error', message: 'boom', terminationReason: 'failed' },
+    ]);
+
+    const failed = new GrokJsonlTranslator();
+    expect(failed.translate({ type: 'text', data: 'partial' })).toEqual([{ type: 'system' }]);
+    expect(failed.fail('connection lost')).toEqual([
+      { type: 'text', delta: 'partial\n\n' },
+      { type: 'error', message: 'connection lost', terminationReason: 'failed' },
+    ]);
+  });
+
+  it('keeps pre-tool text buffered and separates it from the later answer', () => {
+    const t = new GrokJsonlTranslator();
+    expect(t.translate({ type: 'text', data: 'Let me check.' })).toEqual([{ type: 'system' }]);
+    expect(t.translate({
+      type: 'tool_call',
+      toolCallId: 'call_1',
+      toolName: 'read_file',
+      status: 'in_progress',
+      rawInput: { path: 'a.ts' },
+    })).toEqual([
+      { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
+    ]);
+    expect(t.translate({ type: 'text', data: 'Done.' })).toEqual([{ type: 'system' }]);
+    const end = t.translate({ type: 'end', sessionId: SESSION });
+    expect(end.filter((event) => event.type === 'text')).toEqual([]);
+    expect(end.find((event) => event.type === 'final_text')).toEqual({
+      type: 'final_text',
+      content: 'Let me check.\n\nDone.',
+    });
+  });
+
   it('keeps pre-tool commentary in the final answer and maps thoughts to thinking', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [
@@ -115,8 +167,10 @@ describe('GrokJsonlTranslator', () => {
     ]);
     expect(events).toEqual([
       { type: 'thinking', delta: 'looking' },
+      { type: 'system' },
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
       { type: 'tool_result', id: 'call_1', output: '{"lines":3}', isError: false },
+      { type: 'system' },
       { type: 'system', resumeHandle: SESSION },
       { type: 'final_text', content: 'Let me check.\n\nDone.' },
       { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
