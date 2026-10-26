@@ -6,7 +6,7 @@ import { card2, md } from '../card/v2';
 import { log } from '../core/logger';
 import { renderSettledCard } from './card-body';
 import { monotonicCardSequence } from './card-sequence';
-import type { AutomationDraft, AutomationsStore } from './store';
+import type { AutomationDraft, AutomationDraftBase, AutomationsStore } from './store';
 
 export const DRAFT_SETTLED_SUPERSEDED = '已被新卡取代';
 export const DRAFT_SETTLED_CANCELLED = '已取消';
@@ -47,7 +47,9 @@ export function automationSettledCard(status: string): object {
   });
 }
 
-export type DraftCardRef = Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence' | 'cardBody'>;
+export type DraftCardRef = Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence' | 'cardBody'>
+  & Partial<Pick<AutomationDraftBase, 'operationId' | 'chatId' | 'cardReply'>>
+  & { op?: AutomationDraft['op']; targetId?: number };
 
 export async function settleDraftCard(
   channel: LarkChannel,
@@ -55,6 +57,21 @@ export async function settleDraftCard(
   status: string,
   store?: AutomationsStore,
   now: () => number = Date.now,
+): Promise<void> {
+  try {
+    await updateSettledCard(channel, draft, status, store, now);
+  } catch (error) {
+    await replyCardUpdateFallback(channel, draft, store);
+    throw error;
+  }
+}
+
+async function updateSettledCard(
+  channel: LarkChannel,
+  draft: DraftCardRef,
+  status: string,
+  store: AutomationsStore | undefined,
+  now: () => number,
 ): Promise<void> {
   if (!draft.cardMessageId) return;
   const card = draft.cardBody ? renderSettledCard(draft.cardBody, status) : automationSettledCard(status);
@@ -109,15 +126,43 @@ async function settleDraftCardWithRetry(
 ): Promise<void> {
   for (let attempt = 0; attempt < DRAFT_SETTLE_RETRY_ATTEMPTS; attempt += 1) {
     try {
-      await settleDraftCard(channel, draft, status, store);
+      await updateSettledCard(channel, draft, status, store, Date.now);
       return;
     } catch (error) {
       if (isPermanentDraftCardError(error) || attempt === DRAFT_SETTLE_RETRY_ATTEMPTS - 1) {
         logDraftCardFail(draft.draftId, error);
+        await replyCardUpdateFallback(channel, draft, store);
         return;
       }
       await wait(DRAFT_SETTLE_RETRY_MIN_MS * (2 ** attempt));
     }
+  }
+}
+
+async function replyCardUpdateFallback(
+  channel: LarkChannel,
+  draft: DraftCardRef,
+  store: AutomationsStore | undefined,
+): Promise<void> {
+  if (!store || !draft.operationId || !draft.cardMessageId || !draft.chatId) return;
+  try {
+    const operation = store.getOperation(draft.operationId);
+    if (operation?.state !== 'applied' || !operation.taskId) return;
+    const status = draft.op === 'replace' && draft.targetId !== undefined ? draftReplacedStatus(draft.targetId, operation.taskId)
+      : draft.op === 'delete' && draft.targetId !== undefined ? draftDeletedStatus(draft.targetId)
+        : draftConfirmedStatus(operation.taskId);
+    // Claim before sending: at most one fallback per operation, never a retry loop.
+    if (!await store.claimCardFallback(operation.operationId)) return;
+    await channel.send(draft.chatId, { markdown: `确认卡未能更新：${status}` }, {
+      replyTo: draft.cardMessageId,
+      ...(draft.cardReply?.replyInThread ? { replyInThread: true } : {}),
+    });
+    log.warn('auto', 'draft-card-fallback-sent', { draftId: draft.draftId, operationId: operation.operationId });
+  } catch (error) {
+    log.warn('auto', 'draft-card-fallback-failed', {
+      draftId: draft.draftId,
+      err: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 

@@ -493,7 +493,7 @@ async function dispatchAutoAction(
     try {
       const result = await confirmAutomationDraft({ automations: deps.automations, automationsScheduler: deps.automationsScheduler, onAutomationConfirmed: deps.onAutomationConfirmed, now: deps.now }, registered);
       if (result.ok) deps.autoAuth.consume(verified.payload.nonce);
-      scheduleDraftCardSettle(deps.channel, registered, result.status);
+      scheduleDraftCardSettle(deps.channel, registered, result.status, deps.automations);
       return actionToast(result.ok ? 'success' : 'error', result.toast);
     } finally { deps.autoAuth.releaseNonce(verified.payload.nonce); }
   }
@@ -518,7 +518,7 @@ async function dispatchAutoAction(
         onAutomationConfirmed: deps.onAutomationConfirmed,
         now: deps.now,
       }, taken);
-      scheduleDraftCardSettle(deps.channel, taken, result.status);
+      scheduleDraftCardSettle(deps.channel, taken, result.status, deps.automations);
       return actionToast(result.ok ? 'success' : 'error', result.toast);
     }
     default: {
