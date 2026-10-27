@@ -346,7 +346,7 @@ async function createHarness(): Promise<Harness> {
     const chatId = overrides.chatId ?? 'chat-1';
     const scope = overrides.scope ?? chatId;
     return tryHandleCommand({
-        origin: 'slash',
+      origin: 'slash',
       resumeCandidates,
       channel: channel as unknown as UserActionContext['channel'],
       msg: message(content, {

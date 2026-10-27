@@ -622,8 +622,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   const handOffIntake = (msg: NormalizedMessage, source: IntakeSource): Promise<void> =>
     withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
-      intakeMessage({ actions: userActionRuntime, msg, intakeSource: source, logThreadModeOverride
-      }),
+      intakeMessage({ actions: userActionRuntime, msg, intakeSource: source, logThreadModeOverride }),
     ).catch((err) => {
       log.fail('intake', err);
     });

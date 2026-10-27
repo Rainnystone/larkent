@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { handleCardAction } from '../../../src/card/dispatcher';
 import type { FakeAgentRun } from '../../helpers/fake-agent';
 import { createUserActionHarness, userActionEvent } from '../../helpers/user-action-context';
@@ -64,6 +66,34 @@ describe('signed card callback dispatch', () => {
     expect(queued).toHaveLength(1);
     expect(queued[0]?.content).toBe('[card-click] {"choice":"a","form_value":{"note":"from form"}}');
     expect(queued[0]?.chatType).toBe('group');
+  });
+
+  it('queues a valid bridge callback while the configured workspace cannot answer', async () => {
+    const h = await createHarness();
+    h.controls.profileConfig.workspaces.default = h.tmp.workspace;
+    h.activeRuns.register('oc_group', h.agent.run({ runId: 'run-active', prompt: 'running' }));
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const realpath = fs.realpath;
+    const lookup = vi.spyOn(fs, 'realpath').mockImplementation(async (path, ...options) => {
+      if (path === h.tmp.workspace) await blocked;
+      return realpath(path, ...options);
+    });
+    syncBuiltinESMExports();
+    const dispatch = h.dispatch({ __bridge_cb: true, bridge_token: h.token('agent_callback'), choice: 'a' });
+    try {
+      const result = await Promise.race([
+        dispatch.then(() => 'queued'),
+        new Promise<string>(resolve => setImmediate(() => resolve('waiting-for-workspace'))),
+      ]);
+      expect(result).toBe('queued');
+      expect(h.pending.cancel('oc_group').map(msg => msg.content)).toEqual(['[card-click] {"choice":"a"}']);
+    } finally {
+      release();
+      await dispatch;
+      lookup.mockRestore();
+      syncBuiltinESMExports();
+    }
   });
 
   it('drops legacy Claude callback markers before command dispatch', async () => {

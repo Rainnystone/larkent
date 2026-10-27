@@ -36,7 +36,7 @@ export async function handleCardAction(
     return await action.invoke({
       ...deps, msg, scope, chatMode: mode, origin: 'card',
       formValue: raw?.action?.form_value,
-      sessionCatalogIdentity: await commandSessionCatalogIdentity({
+      resolveSessionCatalogIdentity: () => commandSessionCatalogIdentity({
         msg, scope, mode, workspaces: deps.workspaces, controls: deps.controls, access,
       }),
     }, payload);

@@ -66,7 +66,8 @@ describe('static architecture contracts', () => {
     const sharedFiles = [
       ...collectTsFiles('src/bot'),
       ...collectTsFiles('src/card'),
-      'src/commands/index.ts',
+      ...collectTsFiles('src/commands'),
+      ...collectTsFiles('src/user-actions'),
     ];
     for (const file of sharedFiles) {
       expect(read(file), file).not.toMatch(/agent\/codex/);

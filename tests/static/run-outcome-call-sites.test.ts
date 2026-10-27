@@ -6,7 +6,7 @@ const read = (rel: string) => readFileSync(join(process.cwd(), rel), 'utf8');
 
 describe('stop request call sites', () => {
   it('sets a first-writer-wins reason at every production stop site', () => {
-    const commands = read('src/commands/index.ts');
+    const commands = read('src/commands/handlers.ts');
     const channel = read('src/bot/channel.ts');
     const meeting = read('src/meeting/orchestrator.ts');
     const executor = read('src/runtime/run-executor.ts');

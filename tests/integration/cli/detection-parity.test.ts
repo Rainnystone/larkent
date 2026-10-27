@@ -203,7 +203,7 @@ async function createDoctorHarness(
   });
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
-        origin: 'slash',
+      origin: 'slash',
       resumeCandidates,
       channel: channel as unknown as UserActionContext['channel'],
       msg: message(content, `${kind}-${mode}`),

@@ -16,13 +16,15 @@ type CommandHandler = (args: string, ctx: UserActionContext) => Promise<void>;
 function command(handler: CommandHandler, admin = false): UserAction {
   return fenceOnlyAction(async (ctx, payload) => {
     const name = String(payload.command ?? '');
+    const invocation = ctx.resolveSessionCatalogIdentity
+      ? { ...ctx, sessionCatalogIdentity: await ctx.resolveSessionCatalogIdentity() } : ctx;
     if (admin && !canRunAdminCommand(ctx.controls.profileConfig, ctx.controls, ctx.msg.senderId).ok) {
       log.info('command', 'admin-deny', { cmd: name, sender: ctx.msg.senderId.slice(-6), ...(ctx.origin === 'card' ? { via: 'card' } : {}) });
       if (ctx.origin !== 'card') await commands.reply(ctx, '❌ 此命令仅管理员可用。');
       return;
     }
     try {
-      await handler(typeof payload.args === 'string' ? payload.args : '', ctx);
+      await handler(typeof payload.args === 'string' ? payload.args : '', invocation);
     } catch (error) {
       log.fail('command', error, { cmd: name });
       reportMetric('command_fail', 1, { step: ctx.origin === 'card' ? 'handler' : 'dispatch' });

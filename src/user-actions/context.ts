@@ -99,6 +99,9 @@ export interface UserActionContext extends UserActionRuntime {
   chatMode: 'p2p' | 'group' | 'topic';
   origin: 'slash' | 'card';
   sessionCatalogIdentity?: SessionCatalogIdentity;
+  /** Card commands and verified notices resolve this on demand. Other signed
+   * actions must remain independent of workspace filesystem availability. */
+  resolveSessionCatalogIdentity?: () => Promise<SessionCatalogIdentity | undefined>;
   /** Set when invoked from a CardKit 2.0 form submit. Keys are input `name`s. */
   formValue?: Record<string, unknown>;
 }

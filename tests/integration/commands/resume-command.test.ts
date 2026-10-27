@@ -496,7 +496,7 @@ async function createHarness(
     runOptions: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' } = {},
   ): Promise<boolean> =>
     tryHandleCommand({
-        origin: 'slash',
+      origin: 'slash',
       channel: channel as unknown as UserActionContext['channel'],
       msg: message(content),
       scope: 'chat-1',

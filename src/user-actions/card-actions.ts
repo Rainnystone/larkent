@@ -52,10 +52,11 @@ export function verifyNoticeAction(ctx: UserActionContext, payload: ActionPayloa
 export async function handleNoticeAction(ctx: UserActionContext, _payload: ActionPayload, claims: NoticePayload): Promise<void> {
   const entry = ctx.journal?.get(claims.turnId);
   if (!entry || entry.noticeInvalidated || entry.status === 'voided'
-    || (entry.policyFingerprint && entry.policyFingerprint !== claims.policyFingerprint)
-    || (ctx.sessionCatalogIdentity && ctx.sessionCatalogIdentity.policyFingerprint !== claims.policyFingerprint)) {
+    || (entry.policyFingerprint && entry.policyFingerprint !== claims.policyFingerprint)) {
     return sendNoticeInvalid(ctx);
   }
+  const identity = ctx.resolveSessionCatalogIdentity ? await ctx.resolveSessionCatalogIdentity() : ctx.sessionCatalogIdentity;
+  if (identity && identity.policyFingerprint !== claims.policyFingerprint) return sendNoticeInvalid(ctx);
   if (claims.action === 'notice.continue' && ctx.continuations && !ctx.continuations.click(entry.turnId)) {
     return sendNoticeInvalid(ctx);
   }
