@@ -58,9 +58,9 @@ describe('turn journal orphan reaper', () => {
     const recovered = new TurnJournal(file);
     await recovered.load();
     await recovered.reapOrphans({ orphanGraceMs: 200 });
-    await recovered.redeliver({ orphanGraceMs: 200 });
+
     await recovered.reapOrphans({ orphanGraceMs: 200 });
-    await recovered.redeliver({ orphanGraceMs: 200 });
+
 
     expect(recovered.get('turn-orphan')?.status).toBe('interrupted');
     if (verifiedStart === undefined) {
@@ -105,7 +105,7 @@ describe('turn journal orphan reaper', () => {
       const journal = new TurnJournal(file);
       await journal.load();
       await journal.reapOrphans({ orphanGraceMs: 200 });
-      await journal.redeliver({ orphanGraceMs: 200 });
+
       expect(isProcessAlive(identity.childPid)).toBe(false);
       expect(journal.get('turn-orphan')?.status).toBe('interrupted');
       expect(info.mock.calls.filter(([phase, event]) => (

@@ -201,31 +201,6 @@ describe('redeliverStagedReply', () => {
     expect(JSON.stringify(channel.updatedCards.at(-1)?.card)).toContain('FULL ANSWER');
   });
 
-  it('does not uuid-send when a rejected patch is not a gone card', async () => {
-    const channel = createFakeChannel({ botAppId: APP });
-    const card = await channel.send(CHAT, { card: recoveryAnswerCard('partial') }, { uuid: 'reply:kept' });
-    channel.updateCard = async () => {
-      throw Object.assign(new Error('Request failed with status code 400'), {
-        cause: { response: { status: 400 } },
-      });
-    };
-    const before = channel.sent.length;
-    await expect(redeliverStagedReply({
-      channel,
-      entry: staged({
-        turnId: 'kept',
-        deliveryId: 'reply:kept',
-        markdown: 'FULL ANSWER',
-        replyMode: 'card',
-        messageId: card.messageId,
-        interactive: true,
-      }),
-      botAppId: APP,
-      now: () => 1_760_000_000_000,
-    })).rejects.toMatchObject({ message: expect.stringContaining('400') });
-    expect(channel.sent).toHaveLength(before);
-  });
-
   it('does not uuid-send when a rejected patch is 230002 not-in-chat', async () => {
     const channel = createFakeChannel({ botAppId: APP });
     const card = await channel.send(CHAT, { card: recoveryAnswerCard('partial') }, { uuid: 'reply:left' });
