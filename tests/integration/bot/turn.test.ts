@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import type { LarkChannel } from '@larksuite/channel';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, expectTypeOf, it, vi } from 'vitest';
 import type { AgentEvent } from '../../../src/agent/types';
 import { CotClient } from '../../../src/bot/cot';
 import { createContinuations } from '../../../src/bot/continuation';
@@ -9,7 +9,7 @@ import { capabilityForProfile } from '../../../src/agent/capability';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { Outbox } from '../../../src/bot/outbox';
 import { ProcessPool } from '../../../src/bot/process-pool';
-import { executeTurn, turnStderrSignatures } from '../../../src/bot/turn';
+import { executeTurn, turnStderrSignatures, type TurnResult } from '../../../src/bot/turn';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { RunExecutor } from '../../../src/runtime/run-executor';
@@ -28,6 +28,7 @@ afterEach(async () => {
 });
 
 it('delivers a captured final-only chat answer once without opening progress', async () => {
+  expectTypeOf<Extract<TurnResult, { ok: true }>>().not.toHaveProperty('execution');
   const h = await fixture();
   const result = await executeTurn({ run: h.run, delivery: h.delivery });
   expect(result.ok && result.state.terminal).toBe('done');
@@ -118,7 +119,7 @@ it('observes a policy tool before settlement even when a normal terminal is alre
   const result = await executeTurn({ run: { ...h.run, promptVariant: 'automation' }, delivery: automationDelivery(h),
     onToolUse: () => ({ type: 'policy-guard', code: 'auth-config' }),
   });
-  expect(result.ok && result.execution.handle.outcome).toEqual({
+  expect(result.ok && result.handle.outcome).toEqual({
     kind: 'interrupted', reason: { type: 'policy-guard', code: 'auth-config' }, retriable: false, needsHuman: false,
   });
   expect(result.ok && result.state.terminal).toBe('interrupted');
@@ -139,11 +140,11 @@ it('uses the settled outage overlap for the automation state, result and journal
   epoch++;
   release();
   const result = await pending;
-  expect(result.ok && result.execution.handle.outcome).toEqual({
+  expect(result.ok && result.handle.outcome).toEqual({
     kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false,
   });
   expect(result.ok && result.state.terminal).toBe('error');
-  expect(h.journal.get('turn')?.outcome).toEqual(result.ok && result.execution.handle.outcome);
+  expect(h.journal.get('turn')?.outcome).toEqual(result.ok && result.handle.outcome);
   expect(h.channel.sent.map(row => row.content)).toEqual([{ markdown: 'failed: 上游网络中断' }]);
 });
 
@@ -157,7 +158,7 @@ it('stops a silent chat on its idle bound and delivers its continuation notice',
   await vi.advanceTimersByTimeAsync(60_000);
   const result = await pending;
   expect(result.ok && result.state.terminal).toBe('idle_timeout');
-  expect(result.ok && result.execution.handle.outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'bridge-idle-watchdog' } });
+  expect(result.ok && result.handle.outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'bridge-idle-watchdog' } });
   expect(JSON.stringify(h.channel.sent.map(row => row.content))).toContain('空闲超时');
   expect(h.journal.get('turn')?.continuation?.status).toBe('offered');
 });
@@ -169,7 +170,7 @@ it('keeps an explicit user stop distinct from an idle interruption', async () =>
   h.activeRuns.interrupt('chat', { type: 'user-stop' });
   const result = await pending;
   expect(result.ok && result.state.terminal).toBe('interrupted');
-  expect(result.ok && result.execution.handle.outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'user-stop' } });
+  expect(result.ok && result.handle.outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'user-stop' } });
   expect(h.journal.get('turn')?.continuation).toBeUndefined();
 });
 
@@ -188,7 +189,7 @@ it('updates the returned handle activity time when a liveness event arrives', as
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-10-27T13:00:00Z'));
   const result = await executeTurn({ run: h.run, delivery: h.delivery });
-  expect(result.ok && result.execution.handle.lastEventAt).toBe(Date.parse('2026-10-27T13:00:01Z'));
+  expect(result.ok && result.handle.lastEventAt).toBe(Date.parse('2026-10-27T13:00:01Z'));
 });
 
 function automationDelivery(h: Awaited<ReturnType<typeof fixture>>) {

@@ -67,11 +67,13 @@ export interface TurnInput {
   onToolUse?: (event: Extract<AgentEvent, { type: 'tool_use' }>) => StopRequest | undefined;
 }
 
-export type TurnResult = Exclude<StartRunFlowResult, { ok: true }> | (StartedFlow & {
+export type TurnResult = Exclude<StartRunFlowResult, { ok: true }> | {
+  ok: true;
   state: RunState;
+  handle: RunHandle;
   /** A normal result (or CLI-owned send), including a partial answer; delivery may be staged. */
   replyOk: boolean;
-});
+};
 
 /** A launch error is distinct from event consumption or child settlement failure. */
 export class TurnStartFailed extends Error {
@@ -122,7 +124,7 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
   delivery.activePolicyFingerprints?.set(run.scopeId, flow.policy.policyFingerprint);
   try {
     const state = await deliverChatTurn(input, flow, delivery, recordSession);
-    return { ...flow, state, replyOk: true };
+    return { ok: true, state, handle: flow.execution.handle, replyOk: true };
   } finally {
     delivery.activePolicyFingerprints?.delete(run.scopeId);
   }
@@ -150,7 +152,7 @@ async function deliverAutomationTurn(
       await journal.flush();
     }
     log.info('outbound', 'skip-cli-already-sent', { scope, chatId, mode: 'text' });
-    return { ...flow, state, replyOk: true };
+    return { ok: true, state, handle: flow.execution.handle, replyOk: true };
   }
   let body: string;
   let followUp = false;
@@ -169,7 +171,7 @@ async function deliverAutomationTurn(
   if (journal && turnId) await delivery.outbox.deliverAutomation({
     kind: 'result', turnId, chatId, scope, actor: delivery.actor, markdown: delivery.formatPost(body, followUp),
   });
-  return { ...flow, state, replyOk: followUp };
+  return { ok: true, state, handle: flow.execution.handle, replyOk: followUp };
 }
 
 async function deliverChatTurn(
