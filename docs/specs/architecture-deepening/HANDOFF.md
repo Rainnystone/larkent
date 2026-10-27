@@ -4,13 +4,13 @@ Start here, then read `docs/specs/architecture-deepening.md` and `tickets/README
 
 ## Goal
 
-Give each of five rules one owner and one test surface (Outbox, agent event contract, run outcome, action token + user action entry, draft confirmation + mutation policy) without changing what a Feishu user sees. Origin: an `improve-codebase-architecture` review of `master @ d0a25868`; decisions D1 to D13 were locked with the owner.
+Give each of six rules one owner and one test surface (Outbox, agent event contract, run outcome, action token + user action entry, draft confirmation + mutation policy, turn execution) without changing what a Feishu user sees. Origin: an `improve-codebase-architecture` review of `master @ d0a25868`; decisions D1 to D15 were locked with the owner.
 
 ## State
 
-- Spec and tickets D01 to D09: ready. Implementation starts only after the owner approves the Spec on this PR.
-- Code track: `feat/architecture-deepening` (draft code PR). One code PR collects every ticket commit; no PR per ticket.
-- Out of scope: `runAgentBatch` split, real Feishu acceptance (recorded as unverified in the code PR).
+- Spec and tickets D01 to D11: ready. Implementation starts only after the owner approves the Spec on this PR.
+- Code track: `feat/architecture-deepening` (draft code PR #65). One code PR collects every ticket commit; no PR per ticket.
+- D11 real Feishu acceptance is run by Grokbot after D01 to D10, per the workspace `feishu-agent-test-guide.md`.
 
 ## How to claim
 
@@ -35,6 +35,8 @@ git show origin/docs/architecture-deepening:docs/specs/architecture-deepening/ti
 | Agent events (D03, D04) | `CONTEXT.md` › Agents; `src/agent/types.ts`; `src/agent/*/jsonl.ts`; `src/agent/devin/transcript.ts`; `src/bot/idle-watchdog.ts` | `pnpm test:process`; `tests/unit/agent/*`; opt-in `*_REAL_SMOKE=1` |
 | Run outcome (D05) | `src/bot/run-outcome.ts`; `src/runtime/run-executor.ts` | files listed in D05 |
 | Tokens and actions (D06, D09) | `src/card/dispatcher.ts`; `src/commands/index.ts`; the four auth modules | `tests/unit/card/*`; `tests/integration/card/*`; `tests/static/contracts.test.ts` |
+| Turn execution (D10) | `src/bot/channel.ts` `runAgentBatch` / `processAgentStream`; `src/automations/agent-run.ts`; `src/bot/cot.ts` | files listed in D10 |
+| Real Feishu (D11) | workspace `feishu-agent-test-guide.md` | scenarios S1-S12 in D11 |
 | Automations (D07, D08) | `CONTEXT.md` › automations; `src/automations/command.ts`; `store.ts`; `scheduler.ts` | `pnpm exec vitest run tests/unit/automations tests/integration/bot/auto-*.test.ts tests/integration/bot/reminder-tools` |
 
 Full gate: `pnpm ci:local`. CI must be green on the code PR head (`gh pr checks`).

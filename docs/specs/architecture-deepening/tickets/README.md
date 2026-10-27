@@ -16,9 +16,11 @@ Read this README (shared interfaces and invariants) and the ticket before starti
 | D07 | Draft confirmation module | D02, D06 | ready |
 | D08 | Automation mutation policy in one module | D07 | ready |
 | D09 | One user action entry for commands and card actions | D06, D07 | ready |
+| D10 | Turn execution module (chat batches + automation fires) | D01, D02, D04, D05 | ready |
+| D11 | Real Feishu acceptance (Grokbot, operator-run) | D01-D10 | ready |
 
-Frontier: D01, D03, D06 (parallel in separate worktrees). Then D02 and D04, then D05 and D07, then D08 and D09.
-Suggested integration order into `feat/architecture-deepening`: D03 → D06 → D01 → D04 → D02 → D05 → D07 → D08 → D09.
+Frontier: D01, D03, D06 (parallel in separate worktrees). Then D02 and D04, then D05 and D07, then D08, D09 and D10, then D11.
+Suggested integration order into `feat/architecture-deepening`: D03 → D06 → D01 → D04 → D02 → D05 → D07 → D08 → D09 → D10 → D11.
 
 ## Shared interfaces and invariants
 
@@ -29,6 +31,7 @@ Suggested integration order into `feat/architecture-deepening`: D03 → D06 → 
 - **Run outcome** (D05). Derived once at settlement by the executor; `handle.outcome` is the only read path.
 - **Action token** (D06). `sign(purpose, claims, ttl)` / `verify(token, purpose, context)` returning typed claims or a typed invalid reason. Nonce policy per purpose: `none`, `consume-on-verify`, `deferred` (verify, then claim / release / consume explicitly). Purposes today: bridge callback, interruption notice, automation confirm, automation board.
 - **User action registry** (D09). Each action declares its auth (`signed(purpose)` or `fence-only`), its handler and its invalid response. `config.*`, `account.*`, `ws.*` are declared `fence-only` (D2).
+- **Turn execution** (D10). Input: run options, a delivery target, optional hooks (policy-guard on `tool_use`). Output: a delivered final run state with `handle.outcome`. Owns executor call, event loop, idle watchdog, progress stream and handoff to the Outbox. Callers own input preparation.
 - **Mutation policy** (D08). Human direct (slash, board) applies immediately; model via tool goes through a confirmation card (D3).
 - **Ground truth** (D12). Protocol claims cite a captured transcript under `tests/fixtures/transcripts/<kind>/`. New Feishu assumptions cite `lark-cli` evidence from the test bot.
 
