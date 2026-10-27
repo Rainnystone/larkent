@@ -2,7 +2,7 @@ import type { BoardPayload } from '../automations/board-auth';
 import { handleDraftAction } from '../automations/draft-confirmation';
 import { AUTO_BOARD_UPDATED_HINT, AUTO_INVALID_HINT, AUTO_UNKNOWN_ID } from '../automations/command';
 import { mutateAutomationTask, taskMutationLabels } from '../automations/task-mutation';
-import { resolveInterruptionNotice, type NoticePayload } from '../bot/interruption-notice';
+import { resolvedNoticeCard, resolveInterruptionNotice, type NoticePayload } from '../bot/interruption-notice';
 import { log } from '../core/logger';
 import type { UserActionContext } from './context';
 import type { ActionPayload, ActionResponse } from './definition';
@@ -49,7 +49,9 @@ export function verifyNoticeAction(ctx: UserActionContext, payload: ActionPayloa
   return result?.ok ? result.payload : undefined;
 }
 
-export async function handleNoticeAction(ctx: UserActionContext, _payload: ActionPayload, claims: NoticePayload): Promise<void> {
+const NOTICE_RESOLVE_FALLBACK_MS = 1_500;
+
+export async function handleNoticeAction(ctx: UserActionContext, _payload: ActionPayload, claims: NoticePayload): Promise<ActionResponse> {
   const entry = ctx.journal?.get(claims.turnId);
   if (!entry || entry.noticeInvalidated || entry.status === 'voided'
     || (entry.policyFingerprint && entry.policyFingerprint !== claims.policyFingerprint)) {
@@ -63,12 +65,14 @@ export async function handleNoticeAction(ctx: UserActionContext, _payload: Actio
   if (claims.action === 'notice.dismiss') {
     if (ctx.continuations) ctx.continuations.dismiss(entry.turnId);
     else ctx.journal?.invalidateNotice(entry.turnId);
-    if (ctx.journal) await resolveInterruptionNotice({
-      journal: ctx.journal, turnId: entry.turnId, resolution: 'dismissed',
-      updateCard: (id, card) => ctx.channel.updateCard(id, card),
-    });
     log.info('notice', 'dismissed', { turnId: entry.turnId, scope: ctx.scope });
-    return;
+    const journal = ctx.journal;
+    if (!journal || !entry.notice?.includeButtons) return;
+    setTimeout(() => void resolveInterruptionNotice({
+      journal, turnId: entry.turnId, resolution: 'dismissed',
+      updateCard: (id, card) => ctx.channel.updateCard(id, card),
+    }), NOTICE_RESOLVE_FALLBACK_MS).unref();
+    return { card: { type: 'raw', data: resolvedNoticeCard('dismissed') } };
   }
   enqueueActionMessage(ctx.pending, ctx.scope, ctx.msg, {
     messageId: ctx.msg.messageId || entry.messageIds.at(-1) || `notice-continue-${entry.turnId}`,

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handleCardAction } from '../../../src/card/dispatcher';
 import { createUserActionHarness, userActionEvent } from '../../helpers/user-action-context';
 
@@ -55,9 +55,57 @@ describe('notice card dispatch', () => {
     expect(h.actions).toEqual([]);
     expect(JSON.stringify(h.channel.sent)).toMatch(/失效/);
   });
+
+  describe('暂不 (dismiss)', () => {
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('settles the clicked card through the callback response', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const h = await harness({ buttons: true });
+      const response = await h.dispatch('ou_user', h.token({ action: 'notice.dismiss' }), 'notice.dismiss');
+      const card = (response as { card?: { type?: unknown; data?: unknown } } | undefined)?.card;
+      expect(card?.type).toBe('raw');
+      const data = JSON.stringify(card?.data);
+      expect(data).toContain('已忽略');
+      expect(data).not.toContain('暂不');
+      expect(data).not.toContain('notice.continue');
+      expect(data).not.toContain('notice.dismiss');
+      expect(h.actions).toEqual([]);
+    });
+
+    it('acknowledges without waiting on a card patch', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const h = await harness({ buttons: true });
+      const patches: string[] = [];
+      h.channel.updateCard = (messageId: string) => {
+        patches.push(messageId);
+        return new Promise<void>(() => {});
+      };
+      const response = await h.dispatch('ou_user', h.token({ action: 'notice.dismiss' }), 'notice.dismiss');
+      expect(patches).toEqual([]);
+      expect(JSON.stringify(response)).toContain('已忽略');
+    });
+
+    it('patches the notice to 已忽略 once, after the callback was acknowledged', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const h = await harness({ buttons: true });
+      await h.dispatch('ou_user', h.token({ action: 'notice.dismiss' }), 'notice.dismiss');
+      expect(h.channel.updatedCards).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1_499);
+      expect(h.channel.updatedCards).toEqual([]);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(h.channel.updatedCards).toHaveLength(1);
+      expect(h.channel.updatedCards[0]?.messageId).toBe('om_card');
+      expect(JSON.stringify(h.channel.updatedCards[0]?.card)).toContain('已忽略');
+      expect(JSON.stringify(h.channel.updatedCards[0]?.card)).not.toContain('notice.dismiss');
+    });
+  });
 });
 
-async function harness(opts: { fence?: boolean } = {}) {
+async function harness(opts: { fence?: boolean; buttons?: boolean } = {}) {
   const h = await createUserActionHarness();
   h.controls.profileConfig.access.fence = { enabled: opts.fence ?? false };
   h.controls.profileConfig.access.allowedUsers = ['ou_user', 'ou_mate'];
@@ -65,20 +113,26 @@ async function harness(opts: { fence?: boolean } = {}) {
     turnId: 'turn-1', scope: 'oc_group', chatId: 'oc_group', messageIds: ['om_1'], senderId: 'ou_user',
     initiatorId: 'ou_user', status: 'notice-delivered', policyFingerprint: 'fp-1',
   });
+  if (opts.buttons) {
+    h.journal.recordNotice('turn-1', {
+      kind: 'continue', recipientChatId: 'oc_group', markdown: '中断', includeButtons: true, messageId: 'om_card',
+    });
+  }
   cleanups.push(h.cleanup);
   const actions: string[] = [];
   const state = {
     ...h, actions, onNotice: (_operatorId: string) => {},
-    token(_overrides: { nonce?: string } = {}) {
+    token(overrides: { nonce?: string; action?: 'notice.continue' | 'notice.dismiss' } = {}) {
       return h.runtime.noticeAuth!.sign({ turnId: 'turn-1', scope: 'oc_group', chatId: 'oc_group',
-        action: 'notice.continue', policyFingerprint: 'fp-1', ttlMs: 60_000 });
+        action: overrides.action ?? 'notice.continue', policyFingerprint: 'fp-1', ttlMs: 60_000 });
     },
     async dispatch(operatorId: string, token: string, cmd = 'notice.continue') {
-      await handleCardAction({ ...h.runtime, evt: userActionEvent({ cmd, notice_token: token }, undefined, operatorId) });
+      const response = await handleCardAction({ ...h.runtime, evt: userActionEvent({ cmd, notice_token: token }, undefined, operatorId) });
       for (const message of h.pending.cancel('oc_group')) {
         actions.push(message.senderId);
         state.onNotice(message.senderId);
       }
+      return response;
     },
   };
   return state;
