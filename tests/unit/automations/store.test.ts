@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -504,7 +505,7 @@ describe('AutomationsStore', () => {
 
     const restarted = new AutomationsStore({ path, logPath, statusPath, now: () => now.t });
     await restarted.load();
-    expect(restarted.findDraftByCardMessageId('om_card')?.cardId).toBe('card_1');
+    expect(restarted.findDraftByCardMessageId('om_card')?.draftId).toBe(draft.draftId);
     expect(await restarted.takeDraft(draft.draftId)).toMatchObject({ cardMessageId: 'om_card' });
     expect(restarted.listDrafts()).toEqual([]);
     expect(restarted.listExpiredDrafts()).toEqual([]);
@@ -515,7 +516,7 @@ describe('AutomationsStore', () => {
     await store.load();
     const draft = await store.saveDraft(reminderInput({ name: 'bind' }));
     expect(await store.bindDraftCard(draft.draftId, 'om_card')).toBe(true);
-    expect(store.getDraft(draft.draftId)?.cardMessageId).toBe('om_card');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).messageId).toBe('om_card');
     expect(store.findDraftByCardMessageId('om_card')?.draftId).toBe(draft.draftId);
     expect(store.findDraftByCardMessageId('om_other')).toBeUndefined();
 
@@ -524,7 +525,7 @@ describe('AutomationsStore', () => {
     expect(restarted.findDraftByCardMessageId('om_card')?.draftId).toBe(draft.draftId);
 
     const taken = await restarted.takeDraft(draft.draftId);
-    expect(taken?.cardMessageId).toBe('om_card');
+    expect(draftConfirmationDelivery(taken).messageId).toBe('om_card');
     expect(restarted.getDraft(draft.draftId)).toBeUndefined();
     expect(await restarted.takeDraft(draft.draftId)).toBeUndefined();
   });

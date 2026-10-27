@@ -2,7 +2,7 @@ import { manageAutomationOperation } from './manage-operation';
 import { AUTOMATION_OPERATION_TTL_MS } from './operation-id';
 import type { TurnJournal } from '../bot/turn-journal';
 import { createAutomationOperation, getAutomationOperation, serializeAutomationWrite } from './operation';
-import type { DraftFlushContext } from './command';
+import type { DraftConfirmationContext } from './draft-confirmation';
 import { formatZonedDateTime } from './confirm-card';
 import { fireTurnId } from './delivery';
 import { policyGuardReasonLabel } from './policy-guard';
@@ -20,7 +20,7 @@ export interface AutomationToolContext {
   /** Bound at intake, never derived from model arguments. Rechecked on every call. */
   availability(): string | undefined;
   store?: AutomationsStore;
-  drafts?: DraftFlushContext;
+  drafts?: DraftConfirmationContext;
   journal?: TurnJournal;
   cardReply?: DraftCardReply;
   timezone: string;

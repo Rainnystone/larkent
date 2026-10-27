@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir, readFile, readdir, rename, writeFile } from 'node:fs/promises';
 import { once } from 'node:events';
 import { delimiter, join } from 'node:path';
@@ -124,7 +125,7 @@ it.each(['bot', 'user', 'denied', 'missing-cli', 'direct-send'] as const)('creat
     for (const child of Object.values(value)) { const found = findButton(child); if (found) return found; }
   };
   const card = h.channel.sent.find(row => JSON.stringify(row.content).includes('auto.confirm'))!.content;
-  expect(await h.channel.handlers.cardAction?.({ messageId: draft.cardMessageId, chatId: CHAT, operator: { openId: CREATOR }, action: { tag: 'button', value: findButton(card) } })).toMatchObject({ toast: { type: 'success' } });
+  expect(await h.channel.handlers.cardAction?.({ messageId: draftConfirmationDelivery(draft).messageId, chatId: CHAT, operator: { openId: CREATOR }, action: { tag: 'button', value: findButton(card) } })).toMatchObject({ toast: { type: 'success' } });
   if (identity === 'missing-cli') await rename(h.cli.agent, `${h.cli.agent}.moved`);
   await h.fire(); await h.settled();
   if (identity === 'missing-cli') {

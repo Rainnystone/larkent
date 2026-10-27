@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { createAutomationToolHarness, automationButton as button, automationClick as click } from '../../helpers/automation-tool-harness';
 import { writeExternalPlugin } from '../../helpers/external-plugin';
 import { execFile } from 'node:child_process';
@@ -52,7 +53,7 @@ it.each(['group', 'topic'] as const)('creates an agent task through the real cli
   const draft = h.store.listDrafts()[0]!;
   expect(await realpath(draft.op === 'delete' ? '' : draft.cwd!)).toBe(await realpath(h.tmp.workspace));
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+  expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: 1, executedCount: 0 } });
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, taskType: 'agent', name: task.name, schedule }]);
@@ -69,7 +70,7 @@ it('fires confirmed agent tasks with fresh credentials and on-demand plugin read
   });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   const credentials = [manual.LARK_BRIDGE_TOOL_TOKEN]; const automatic: NodeJS.ProcessEnv[] = [];
   h.setScript(async (call, opts) => {
     expect(opts.promptVariant).toBe('automation');
@@ -118,7 +119,7 @@ it('keeps creation applied when a run fails and reports runtime failure separate
   await h.turn(async call => { operationId = (await call('automation.create', { ...reminder, taskType: 'agent' })).data.operationId; });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   h.setScript(async call => {
     expect((await call('plugins.read', { skill: 'automations' })).category).toBe('ok');
     return [{ type: 'error', message: 'synthetic authorization denied', terminationReason: 'failed' }];
@@ -199,7 +200,7 @@ it('reports an empty successful run before delivery and recovers its staged resu
   await h.turn(async call => { operationId = (await call('automation.create', { ...reminder, taskType: 'agent' })).data.operationId; });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   const send = h.channel.send.bind(h.channel);
   h.channel.send = async (chat, content, options) => {
     if (JSON.stringify(content).includes('agent 没有给出文字结果')) throw Object.assign(new Error('synthetic delivery disconnected'), { code: 'ENETUNREACH' });
@@ -228,7 +229,7 @@ it('exposes a running automatic task then revokes its client on stop and preserv
   await h.turn(async call => { operationId = (await call('automation.create', { ...reminder, taskType: 'agent' })).data.operationId; });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   let ready = false;
   h.setScript(async (call, opts, stopped) => {
     automatic = opts.toolEnv!;
@@ -275,7 +276,7 @@ it('uses the deployment plugin snapshot for automatic fires and loads a new vers
   });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   await writeFile(join(h.tmp.root, 'plugins.json'), JSON.stringify({ schemaVersion: 1, packages: [next] }));
   const runWithVersion = (version: string, expected: { result: number; doubled: number }) => h.setScript(async (call, opts) => {
     expect(opts.prompt).toContain('Calculate a synthetic fixture value');

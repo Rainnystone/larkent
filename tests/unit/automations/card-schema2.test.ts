@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { automationBoardCard } from '../../../src/automations/board-card';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
-import { automationSettledCard } from '../../../src/automations/draft-card';
+import { automationSettledCard } from '../../../src/automations/draft-confirmation/settlement';
 import { automationEndCard, type EndCardTokens } from '../../../src/automations/end-card';
 import type { AutomationItem } from '../../../src/automations/store';
 import { assertCardSchema2 } from '../../helpers/card-schema2';

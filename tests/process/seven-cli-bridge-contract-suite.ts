@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../src/automations/draft-confirmation';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
@@ -127,7 +128,7 @@ export function registerSevenCliContract(input: SevenCliContractDeps): void {
     const confirm = async (op: string) => {
       const draft = store.listDrafts()[0]!;
       const card = [...channel.sent].reverse().find(item => JSON.stringify(item.content).includes('auto.confirm'))!;
-      expect(await channel.handlers.cardAction?.(automationClick(draft.cardMessageId!, automationButton(card.content, op)))).toMatchObject({ toast: { type: 'success' } });
+      expect(await channel.handlers.cardAction?.(automationClick(draftConfirmationDelivery(draft).messageId!, automationButton(card.content, op)))).toMatchObject({ toast: { type: 'success' } });
     };
 
     await runtime.plan({ mode: 'create', now }); await send();

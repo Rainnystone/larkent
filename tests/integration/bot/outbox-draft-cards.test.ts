@@ -1,12 +1,13 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { seedDraftDelivery } from '../../helpers/draft-delivery-fixture';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { confirmAutomationDraft } from '../../../src/automations/command';
+import { confirmAutomationDraft } from '../../helpers/draft-confirmation';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
-import { reconcileDraftCard, sendAutomationDraftCard } from '../../../src/automations/draft-delivery';
+import { reconcileDraftCard, sendAutomationDraftCard } from '../../../src/automations/draft-confirmation/delivery';
 import { automationEndCard } from '../../../src/automations/end-card';
 import { automationOperationScope, newAutomationOperationId } from '../../../src/automations/operation-id';
 import { AutomationsStore } from '../../../src/automations/store';
@@ -39,8 +40,8 @@ describe('Outbox draft send evidence', () => {
       confirmCard(),
       {},
     )).rejects.toMatchObject({ response: { data: { code: 230099 } } });
-    expect(store.getDraft(draft.draftId)?.delivery?.state).toBe('sending');
-    expect(store.getDraft(draft.draftId)?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).state).toBe('sending');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).messageId).toBeUndefined();
   });
 
   it('still marks a generic 4xx send as rejected', async () => {
@@ -57,7 +58,7 @@ describe('Outbox draft send evidence', () => {
       confirmCard(),
       {},
     )).rejects.toMatchObject({ response: { data: { code: 200001 } } });
-    expect(store.getDraft(draft.draftId)?.delivery?.state).toBe('rejected');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).state).toBe('rejected');
   });
 });
 
@@ -100,8 +101,8 @@ describe('reconcileDraftCard', () => {
       return page([matchItem('om_test_1', marker)]);
     });
     expect(listed[0]?.card_msg_content_type).toBe('user_card_content');
-    expect(store.getDraft(draft.draftId)?.cardMessageId).toBe('om_test_1');
-    expect(store.getDraft(draft.draftId)?.delivery?.state).toBe('sent');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).messageId).toBe('om_test_1');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).state).toBe('sent');
     expect(store.findDraftByCardMessageId('om_test_1')?.draftId).toBe(draft.draftId);
   });
 
@@ -165,7 +166,7 @@ describe('reconcileDraftCard', () => {
     });
     expect(listed).toHaveLength(2);
     expect(listed[0]?.card_msg_content_type).toBe('user_card_content');
-    expect(store.getDraft(draft.draftId)?.cardMessageId).toBe('om_test_1');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).messageId).toBe('om_test_1');
   });
 });
 
@@ -182,10 +183,10 @@ it.each(['confirm', 'end'] as const)('binds a landed %s card after a lost receip
     {},
   )).rejects.toThrow('lost receipt');
   const live = store.getDraft(draft.draftId)!;
-  expect(live.delivery?.state).toBe('sending');
-  expect(live.cardMessageId).toBeUndefined();
+  expect(draftConfirmationDelivery(live).state).toBe('sending');
+  expect(draftConfirmationDelivery(live).messageId).toBeUndefined();
   const marker = `lbd${deliveryIdFor(draft.operationId!, phase).slice(0, 17)}`;
-  const listedCard = asUserCardContent(live.delivery!.card);
+  const listedCard = asUserCardContent(store.outboxJournal.getDraftCard(store.getDraftCardReceipt(live.draftId)!.deliveryId!)!.payload.card);
   expect(JSON.stringify(listedCard)).not.toContain('auto_token');
   expect(JSON.stringify(listedCard)).toContain(marker);
   channel.rawClient.im.v1.message.list = async (params: unknown) => {
@@ -263,8 +264,8 @@ async function reconcileWith(
 }
 
 function expectUnbound(store: AutomationsStore, draftId: string): void {
-  expect(store.getDraft(draftId)?.cardMessageId).toBeUndefined();
-  expect(store.getDraft(draftId)?.delivery?.state).toBe('sending');
+  expect(draftConfirmationDelivery(store.getDraft(draftId)).messageId).toBeUndefined();
+  expect(draftConfirmationDelivery(store.getDraft(draftId)).state).toBe('sending');
 }
 
 function confirmCard(): object {

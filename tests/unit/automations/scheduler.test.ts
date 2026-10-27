@@ -15,7 +15,7 @@ import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { automationBoardCard } from '../../../src/automations/board-card';
 import { draftCardBodyFromCard } from '../../../src/automations/card-body';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
-import { expireDueDraftCards } from '../../../src/automations/draft-card';
+import { expireDraftConfirmations } from '../../../src/automations/draft-confirmation';
 import { createFakeChannel } from '../../helpers/fake-channel';
 import { expectSettledKeepsBody } from '../../helpers/settled-oneshot';
 import { simplifiedBoardRender } from '../../../src/automations/status-block';
@@ -316,7 +316,7 @@ describe('automation scheduler', () => {
       rejectToken: 'auto_cb.v1.reject-secret',
     });
     const h = await harness(t0, {
-      onExpireDrafts: () => expireDueDraftCards({ store: h.store, channel: channel as never }),
+      onExpireDrafts: () => expireDraftConfirmations({ store: h.store, channel: channel as never }),
     });
     const draft = await h.store.saveDraft(reminderInput({
       nextFireAt: t0 + 10 * HOUR,

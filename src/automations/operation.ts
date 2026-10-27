@@ -2,12 +2,11 @@ import { replyState } from '../bot/turn-journal';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
-import { flushDraftCardOnce } from './command';
+import { flushDraftConfirmations, submitDraft, draftConfirmationDelivery } from './draft-confirmation';
 import { AUTOMATION_OPERATION_TTL_MS, automationOperationScope, readAutomationOperationId } from './operation-id';
 import { nextFireAfter, readSchedule, scheduleOccurrenceCount } from './schedule';
 import { normalizeAutomationSchedule } from './schedule-input';
 import { DraftSupersessionConflict, type AutomationOperation, type AutomationsStore } from './store';
-import { DRAFT_SETTLED_SUPERSEDED, scheduleDraftCardSettle } from './draft-card';
 import type { AutomationToolContext } from './tools';
 
 const writeTails = new WeakMap<AutomationsStore, Promise<unknown>>();
@@ -25,7 +24,7 @@ export async function getAutomationOperation(operationId: unknown, context: Auto
     const operation = context.store!.getOperation(operationId as string);
     if (!operation) return toolResult('execution-failed', 'operation-not-found', { operationId, state: 'not-applied', applied: false });
     if (operation.profile !== context.profile || operation.chatId !== context.chatId) return toolResult('unauthorized', 'operation-scope-mismatch');
-    if (context.drafts) await flushDraftCardOnce(context.drafts, operation.draftId, (context.now ?? Date.now)());
+    if (context.drafts) await flushDraftConfirmations(context.drafts, operation.draftId);
     return automationOperationResult(operation, context);
   } catch {
     try { const operation = context.store!.getOperation(operationId as string); if (operation) return automationOperationResult(operation, context); } catch {}
@@ -86,13 +85,7 @@ export async function createAutomationOperation(params: Record<string, unknown>,
       const nextFireAt = schedule ? nextFireAfter(schedule, at) : 0;
       if (schedule && !nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
       const name = (params.name as string).trim();
-      const staleDrafts = new Map(context.store!.listDrafts()
-        .filter(entry => entry.op === 'create' && entry.createdBy === context.actorId && entry.chatId === context.chatId && entry.name.trim() === name)
-        .map(entry => [entry.draftId, entry]));
-      const superseded = typeof params.supersedesOperationId === 'string' ? context.store!.getOperation(params.supersedesOperationId) : undefined;
-      const explicitOld = superseded ? context.store!.getOperationDraft(superseded.draftId) : undefined;
-      if (explicitOld) staleDrafts.set(explicitOld.draftId, explicitOld);
-      const draft = await context.store!.saveDraft({
+      const draft = await submitDraft(context.drafts!, {
         taskType: params.taskType, ...(cwd ? { cwd } : {}), operationId: operationId as string, cardReply: context.cardReply, schedule: pending ?? schedule!, timezone,
         startAt,
         ...(pending ? { pendingRecurring: pending } : { endAt }),
@@ -100,12 +93,6 @@ export async function createAutomationOperation(params: Record<string, unknown>,
       }, { operationId: operationId as string, profile: context.profile, chatId: context.chatId, fingerprint,
         ...(typeof params.supersedesOperationId === 'string' ? { supersedesOperationId: params.supersedesOperationId } : {}),
       });
-      for (const oldDraft of staleDrafts.values()) {
-        if (oldDraft.cardMessageId && !context.store!.getDraft(oldDraft.draftId)) {
-          scheduleDraftCardSettle(context.drafts!.channel, oldDraft, DRAFT_SETTLED_SUPERSEDED);
-        }
-      }
-      await flushDraftCardOnce(context.drafts!, draft.draftId, at);
       return automationOperationResult(context.store!.getOperation(operationId as string)!, context);
     } catch (error) {
       if (error instanceof DraftSupersessionConflict) return toolResult('validation-failed', 'draft-supersession-conflict', { operationId });
@@ -154,14 +141,14 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });
   const draft = liveDraft;
-  if (draft?.delivery?.state === 'sending') return unknownAutomationOperation(current.operationId, 'card-delivery-unknown', base);
+  if (draftConfirmationDelivery(draft).state === 'sending') return unknownAutomationOperation(current.operationId, 'card-delivery-unknown', base);
   if (!draft || draft.createdAt + AUTOMATION_OPERATION_TTL_MS <= now) return toolResult('execution-failed', 'draft-expired', { ...base, state: 'not-applied', applied: false });
   const needsEnd = draft.op !== 'delete' && Boolean(draft.pendingRecurring);
-  if (draft.cardMessageId) return toolResult(needsEnd ? 'needs-input' : 'waiting-confirmation', needsEnd ? 'missing-end-at' : 'waiting-confirmation', {
-    ...base, state: needsEnd ? 'needs-input' : 'waiting-confirmation', applied: false, cardMessageId: draft.cardMessageId,
+  if (draftConfirmationDelivery(draft).messageId) return toolResult(needsEnd ? 'needs-input' : 'waiting-confirmation', needsEnd ? 'missing-end-at' : 'waiting-confirmation', {
+    ...base, state: needsEnd ? 'needs-input' : 'waiting-confirmation', applied: false, cardMessageId: draftConfirmationDelivery(draft).messageId,
     ...(needsEnd ? { fields: ['schedule.endAt'] } : {}),
   });
-  if (draft.delivery?.state === 'rejected') return toolResult('execution-failed', 'card-send-failed', { ...base, state: 'not-applied', applied: false });
+  if (draftConfirmationDelivery(draft).state === 'rejected') return toolResult('execution-failed', 'card-send-failed', { ...base, state: 'not-applied', applied: false });
   return unknownAutomationOperation(current.operationId, 'card-not-sent', base);
 }
 export function validateAutomationOperationId(value: unknown, context: AutomationToolContext): ToolResult | undefined {

@@ -4,12 +4,8 @@ import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
-import {
-  assessAutomationSchedule,
-  completeDraftEnd,
-  handleAutoCommand,
-  submitAutomationCommand,
-} from '../../../src/automations/command';
+import { assessAutomationSchedule, handleAutoCommand, submitAutomationCommand } from '../../../src/automations/command';
+import { completeDraftEnd } from '../../helpers/draft-confirmation';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
@@ -41,7 +37,7 @@ describe('manual schedule acceptance', () => {
     expect(h.store.listDrafts()).toHaveLength(1);
     const draft = scheduleDraft(h.store.listDrafts()[0]);
     expect(draft.nextFireAt).toBe(Date.UTC(2026, 9, 18, 7, 50, 0));
-    const card = JSON.stringify(draft.cardBody);
+    const card = JSON.stringify(h.channel.sent.at(-1)?.content);
     expect(card).toContain('一次性 2026-10-18 15:50');
     expect(markdowns(h.channel)).toEqual([]);
   });
@@ -53,7 +49,7 @@ describe('manual schedule acceptance', () => {
     const draft = scheduleDraft(h.store.listDrafts()[0]);
     expect(draft.startAt).toBe(Date.UTC(2026, 9, 19, 7, 40, 0));
     expect(draft.nextFireAt).toBe(Date.UTC(2026, 9, 19, 7, 40, 0));
-    const card = JSON.stringify(draft.cardBody);
+    const card = JSON.stringify(h.channel.sent.at(-1)?.content);
     const scheduleAt = card.indexOf('时间表');
     const startLine = card.indexOf('从 2026-10-19 15:40 开始');
     expect(startLine).toBeGreaterThan(scheduleAt);

@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../../src/automations/draft-confirmation';
 import type { AgentRunOptions } from '../../../../src/agent/types';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -37,7 +38,7 @@ it('corrects invalid input in one real client turn, confirms as a human and fire
   expect(draft).toMatchObject({ schedule, endAt: END, nextFireAt: FIRES[0], createdBy: 'ou_synthetic' });
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   for (const text of ['2026-10-19 09:00', '2026-10-20 09:00', '2026-10-21 09:00', '2026-10-22 00:00', '共 3 次']) expect(JSON.stringify(card)).toContain(text);
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: 1, applied: true, executedCount: 0 } }); });
   for (const fireAt of FIRES) { h.setNow(fireAt); await h.bridge.wakeAutomation(`1@${fireAt}`); }
   h.setNow(END); await h.bridge.wakeAutomation(`1@${END}`);
@@ -83,13 +84,13 @@ it('completes a missing end through the existing scripted card before human conf
   });
   let draft = h.store.listDrafts()[0]!;
   const endCard = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.end.custom'))!.content;
-  const action = click(draft.cardMessageId!, { ...button(endCard, 'auto.end.custom'), end_at: '2026-10-21' });
+  const action = click(draftConfirmationDelivery(draft).messageId!, { ...button(endCard, 'auto.end.custom'), end_at: '2026-10-21' });
   expect(await h.channel.handlers.cardAction?.(action)).toMatchObject({ toast: { type: 'success' } });
   draft = h.store.listDrafts()[0]!;
   expect(draft).toMatchObject({ schedule, endAt: END, nextFireAt: FIRES[0] });
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation' }); });
   const confirmCard = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(confirmCard, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(confirmCard, 'auto.confirm')));
   expect(h.store.list()).toHaveLength(1); expect(h.store.listDrafts()).toHaveLength(0);
   expect(h.store.list()[0]).toMatchObject({ schedule, endAt: END });
 }, 30000);

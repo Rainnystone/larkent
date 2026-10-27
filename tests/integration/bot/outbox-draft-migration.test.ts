@@ -1,6 +1,10 @@
+import { AutoActionAuth } from '../../../src/automations/action-auth';
+import { CallbackNonceStore } from '../../../src/card/callback-store';
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
+import { completeDraftEnd } from '../../helpers/draft-confirmation';
 import { mkdtemp, readFile, writeFile, rm, mkdir, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import type { LarkChannel } from '@larksuite/channel';
 import { AutomationsStore } from '../../../src/automations/store';
@@ -72,7 +76,7 @@ it.each(['prepared', 'sending'] as const)('upgrades a v2 %s draft and binds exac
   cleanups.push(async () => recovered.stop());
   await recovered.redeliver();
   expect(h.channel.sent).toHaveLength(1);
-  expect(restarted.getDraft(h.draft.draftId)?.cardMessageId).toBe(bound.cardMessageId);
+  expect(draftConfirmationDelivery(restarted.getDraft(h.draft.draftId)).messageId).toBe(draftConfirmationDelivery(bound).messageId);
 });
 
 it('preserves the v2 source when the journal transfer cannot commit', async () => {
@@ -89,7 +93,7 @@ it('preserves the v2 source when the journal transfer cannot commit', async () =
   cleanups.push(async () => outbox.stop());
   await outbox.redeliver();
   expect(h.channel.sent).toHaveLength(1);
-  expect(restarted.getDraft(h.draft.draftId)?.cardMessageId).toBe('om_fake_1');
+  expect(draftConfirmationDelivery(restarted.getDraft(h.draft.draftId)).messageId).toBe('om_fake_1');
 });
 
 it('refuses a v3 draft whose durable delivery reference is missing, without replacing either file', async () => {
@@ -118,7 +122,7 @@ it('refuses explicit supersession of an unknown migrated card send', async () =>
     operationId, profile: 'profile', chatId: 'chat', fingerprint: 'cd'.repeat(32), supersedesOperationId: h.draft.operationId,
   })).rejects.toThrow();
   expect(store.getOperation(h.draft.operationId!)?.state).toBe('received');
-  expect(store.getDraft(h.draft.draftId)?.delivery?.state).toBe('sending');
+  expect(draftConfirmationDelivery(store.getDraft(h.draft.draftId)).state).toBe('sending');
   expect(store.getOperation(operationId)).toBeUndefined();
 });
 
@@ -137,7 +141,7 @@ it('commits the card entity before send and durably binds a lost receipt through
   const outbox = new Outbox({ channel: h.channel as unknown as LarkChannel, journal: store.outboxJournal, botAppId: 'cli_bot', draftCards: store });
   cleanups.push(async () => outbox.stop());
   await expect(outbox.reconcileDraftCard(h.deliveryId)).rejects.toThrow('lost receipt');
-  expect(store.getDraft(h.draft.draftId)?.cardMessageId).toBeUndefined();
+  expect(draftConfirmationDelivery(store.getDraft(h.draft.draftId)).messageId).toBeUndefined();
   const restarted = new AutomationsStore(h.options);
   await restarted.load();
   const recovered = new Outbox({ channel: h.channel as unknown as LarkChannel, journal: restarted.outboxJournal, botAppId: 'cli_bot', draftCards: restarted });
@@ -199,7 +203,7 @@ it('restores a stage-only draft association before recovery sends, preserving an
   await journal.flush();
   const restarted = new AutomationsStore(options);
   await restarted.load();
-  expect(restarted.getDraft(h.draft.draftId)?.deliveryId).toBe(h.deliveryId);
+  expect(restarted.getDraftCardReceipt(h.draft.draftId)?.deliveryId).toBe(h.deliveryId);
   const send = h.channel.send.bind(h.channel);
   h.channel.send = async (...args) => { await send(...args); throw new Error('lost receipt'); };
   const outbox = new Outbox({ channel: h.channel as unknown as LarkChannel, journal: restarted.outboxJournal, botAppId: 'cli_bot', draftCards: restarted });
@@ -208,11 +212,11 @@ it('restores a stage-only draft association before recovery sends, preserving an
   now += 25 * 60 * 60_000;
   const expired = new AutomationsStore(options);
   await expired.load();
-  expect(expired.getDraft(h.draft.draftId)?.delivery?.state).toBe('sending');
+  expect(draftConfirmationDelivery(expired.getDraft(h.draft.draftId)).state).toBe('sending');
   const recovered = new Outbox({ channel: h.channel as unknown as LarkChannel, journal: expired.outboxJournal, botAppId: 'cli_bot', draftCards: expired });
   cleanups.push(async () => recovered.stop());
   await recovered.redeliver();
-  expect(expired.getDraft(h.draft.draftId)?.cardMessageId).toBe('om_fake_1');
+  expect(draftConfirmationDelivery(expired.getDraft(h.draft.draftId)).messageId).toBe('om_fake_1');
   expect(h.channel.sent).toHaveLength(1);
 });
 
@@ -227,7 +231,10 @@ it('refuses to commit a phase change when the previous card cannot be durably vo
   const backup = `${h.journalPath}.backup`;
   await rename(h.journalPath, backup);
   await mkdir(h.journalPath);
-  await expect(store.updateDraft(h.draft.draftId, { pendingRecurring: null, cardMessageId: null })).rejects.toThrow();
+  const auth = new AutoActionAuth({ secret: 'test-secret', nonceStore: new CallbackNonceStore(join(dirname(h.options.path), 'nonces.json')) });
+  const draft = store.getDraft(h.draft.draftId)!;
+  if (draft.op === 'delete') throw new Error('expected end draft');
+  await expect(completeDraftEnd({ automations: store, channel: h.channel as never, autoAuth: auth, now: h.options.now }, draft, h.options.now() + 7 * 86400_000, 'om_fake_1')).rejects.toThrow();
   expect(await readFile(h.options.path, 'utf8')).toBe(before);
   await rm(h.journalPath, { recursive: true });
   await rename(backup, h.journalPath);

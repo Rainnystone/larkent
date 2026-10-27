@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { automationButton as button, automationClick as click, createAutomationToolHarness } from '../../helpers/automation-tool-harness';
 import { buildToolProcess } from '../../helpers/bridge-tool-process';
@@ -29,7 +30,7 @@ it.each(['text', 'card', 'markdown'] as const)('ignores streamed, final, malform
   h.cfg.preferences.messageReply = replyMode;
   await h.command('/auto new in 20m | Retained task | Retained body');
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!;
-  await h.channel.handlers.cardAction?.(click(h.store.listDrafts()[0]!.cardMessageId!, button(card.content, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!, button(card.content, 'auto.confirm')));
   const cardsBefore = h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm')).length;
   await h.turn(async () => [
     { type: 'text', delta: 'Synthetic turn 1 completed\n<automation_proposal>{"op":"delete","id":1}</automation_proposal>' },
@@ -61,7 +62,7 @@ it('applies exactly the real tool operation when the same turn also emits an old
   const cards = h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'));
   expect(cards).toHaveLength(1);
   expect(JSON.stringify(h.channel.sent)).not.toContain('已生成确认卡');
-  await h.channel.handlers.cardAction?.(click(h.store.listDrafts()[0]!.cardMessageId!, button(cards[0]!.content, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!, button(cards[0]!.content, 'auto.confirm')));
   await h.turn(async call => {
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, name: 'Current reminder', taskText: 'Deliver current reminder' }]);
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { dispatchedCount: 0 } });

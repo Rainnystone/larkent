@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { automationButton, automationClick, createAutomationToolHarness } from '../../helpers/automation-tool-harness';
 import { buildToolProcess } from '../../helpers/bridge-tool-process';
@@ -66,7 +67,7 @@ async function createConfirmedReminder(h: Awaited<ReturnType<typeof harness>>) {
   h.checkFailure();
   const initial = h.store.listDrafts()[0]!;
   const initialCard = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  expect(await h.channel.handlers.cardAction?.(automationClick(initial.cardMessageId!, automationButton(initialCard, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+  expect(await h.channel.handlers.cardAction?.(automationClick(draftConfirmationDelivery(initial).messageId!, automationButton(initialCard, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
 }
 
 it('sends the reply body byte-for-byte when a draft is confirmed during generation', async () => {
@@ -99,7 +100,7 @@ it('sends the reply body byte-for-byte when confirmation lands during reply pers
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.at(-1)!.content;
   try {
-    expect(await h.channel.handlers.cardAction?.(automationClick(draft.cardMessageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
+    expect(await h.channel.handlers.cardAction?.(automationClick(draftConfirmationDelivery(draft).messageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
   } finally { persisted.resolve(); }
   expect(await h.sent).toBe(BODY);
   h.checkFailure();
@@ -121,7 +122,7 @@ it('sends the reply body byte-for-byte when a replacement is confirmed before th
   await waiting.promise;
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.at(-1)!.content;
-  expect(await h.channel.handlers.cardAction?.(automationClick(draft.cardMessageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已替换 #1 → #2' } });
+  expect(await h.channel.handlers.cardAction?.(automationClick(draftConfirmationDelivery(draft).messageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已替换 #1 → #2' } });
   reply.resolve();
   expect(await h.sent).toBe(BODY);
   h.checkFailure();
@@ -169,7 +170,7 @@ it('sends the reply body byte-for-byte when confirmation lands between the progr
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   try {
-    expect(await h.channel.handlers.cardAction?.(automationClick(draft.cardMessageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
+    expect(await h.channel.handlers.cardAction?.(automationClick(draftConfirmationDelivery(draft).messageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
   } finally { releaseFinalSend.resolve(); }
   expect(await h.sent).toBe(BODY);
   h.checkFailure();
@@ -183,12 +184,13 @@ it('replies once to the confirmation card when a confirmed card cannot be update
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   const update = h.channel.rawClient.cardkit.v1.card.update.bind(h.channel.rawClient.cardkit.v1.card);
-  h.channel.rawClient.cardkit.v1.card.update = async params => (params as { path?: { card_id?: string } }).path?.card_id === draft.cardId
+  const cardId = h.store.getDraftCardReceipt(draft.draftId)?.cardId;
+  h.channel.rawClient.cardkit.v1.card.update = async params => (params as { path?: { card_id?: string } }).path?.card_id === cardId
     ? { code: 10004, msg: 'sequence invalid' } : update(params);
-  expect(await h.channel.handlers.cardAction?.(automationClick(draft.cardMessageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
+  expect(await h.channel.handlers.cardAction?.(automationClick(draftConfirmationDelivery(draft).messageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
   await vi.waitFor(() => {
     expect(h.channel.sent.filter(item => (item.content as { markdown?: string }).markdown === '确认卡未能更新：已确认 #1')
-      .map(item => (item.options as { replyTo?: string }).replyTo)).toEqual([draft.cardMessageId]);
+      .map(item => (item.options as { replyTo?: string }).replyTo)).toEqual([draftConfirmationDelivery(draft).messageId]);
   }, { timeout: 10000 }); // Transient update failures retry with 1 s + 2 s backoff first.
   h.checkFailure();
 }, 30000);
@@ -201,7 +203,7 @@ it('leaves a waiting card unchanged and does not send a correction for a later c
   const sentBeforeClick = h.channel.sent.map(item => structuredClone(item.content));
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  expect(await h.channel.handlers.cardAction?.(automationClick(draft.cardMessageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
+  expect(await h.channel.handlers.cardAction?.(automationClick(draftConfirmationDelivery(draft).messageId!, automationButton(card, 'auto.confirm')))).toMatchObject({ toast: { content: '已确认 #1' } });
   await h.bridge.wakeAutomation(`999@${NOW}`); // Drain the real deferred board refresh.
   await h.journal.flush();
   expect(h.channel.sent.slice(0, sentBeforeClick.length).map(item => item.content)).toEqual(sentBeforeClick);

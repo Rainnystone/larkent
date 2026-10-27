@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { setImmediate as yieldIO } from 'node:timers/promises';
@@ -7,7 +8,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
 import { createAutomationBoard } from '../../../src/automations/board';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
-import { completeDraftEnd, flushPendingDraftCards, handleAutoCommand } from '../../../src/automations/command';
+import { handleAutoCommand } from '../../../src/automations/command';
+import { flushDraftConfirmations } from '../../../src/automations/draft-confirmation';
+import { completeDraftEnd } from '../../helpers/draft-confirmation';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
@@ -38,9 +41,9 @@ describe('automation draft card delivery', () => {
     const clicking = (async () => {
       for (;;) {
         const draft = h.store.listDrafts()[0];
-        if (draft?.cardMessageId) {
+        if (draft && draftConfirmationDelivery(draft).messageId) {
           if (draft.op === 'delete') throw new Error('expected an end-date draft');
-          endMessageId = draft.cardMessageId;
+          endMessageId = draftConfirmationDelivery(draft).messageId!;
           return completeDraftEnd({ automations: h.store, autoAuth: h.autoAuth, channel: h.channel as never, now: () => NOW },
             draft, NOW + 7 * 24 * 60 * 60_000, endMessageId);
         }
@@ -53,8 +56,8 @@ describe('automation draft card delivery', () => {
     expect(current).toBeDefined();
     if (current.op === 'delete') throw new Error('expected a create draft');
     expect(current.pendingRecurring).toBeUndefined();
-    expect(current.cardMessageId).not.toBe(endMessageId);
-    expect(current.cardBody?.title).toBe('确认自动化');
+    expect(draftConfirmationDelivery(current).messageId).not.toBe(endMessageId);
+    expect(JSON.stringify(h.channel.sent.at(-1)?.content)).toContain('确认自动化');
     expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
   });
 
@@ -86,11 +89,11 @@ describe('automation draft card delivery', () => {
     await h.command('om_bad', 'new in 15m | 交周报 | 提醒交周报');
 
     expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeUndefined();
     expect(markdowns(h.channel)).toEqual([]);
 
     h.channel.cardErrors.create = new CardSchemaError();
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -108,17 +111,17 @@ describe('automation draft card delivery', () => {
     await h.command('om_down', 'new in 15m | 交周报 | 提醒交周报');
 
     expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeUndefined();
     expect(markdowns(h.channel)).toEqual([]);
     expect(await logEvents(h.logsDir, 'draft.card-deferred')).toHaveLength(1);
 
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
       now: () => NOW,
     });
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeTruthy();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeTruthy();
     expect(JSON.stringify(h.channel.sent)).toContain('auto.confirm');
     expect(markdowns(h.channel)).toEqual([]);
   });
@@ -128,9 +131,9 @@ describe('automation draft card delivery', () => {
     h.down = true;
     await h.command('om_late', 'new every 10m 11:00-11:20 until 2026-10-17 11:20 | 短窗 | 提醒');
     expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeUndefined();
 
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -185,7 +188,7 @@ describe('automation draft card delivery', () => {
       return orig();
     };
 
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -194,7 +197,7 @@ describe('automation draft card delivery', () => {
     await board.refresh();
 
     expect(h.store.listDrafts().map((draft) => draft.draftId)).toEqual([secondId]);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeTruthy();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeTruthy();
     expect(firstId).not.toBe(secondId);
     expect(markdowns(h.channel)).toContain('确认卡片发送失败（飞书错误 200610），未创建任务。请稍后重试。');
     expect(JSON.stringify(h.channel.sent)).toContain('auto.confirm');
@@ -229,7 +232,7 @@ describe('automation draft card delivery', () => {
       if (creates === 1) { enteredFirst(); await held; }
       return orig(card);
     };
-    const flush = () => flushPendingDraftCards({
+    const flush = () => flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -247,7 +250,7 @@ describe('automation draft card delivery', () => {
     await Promise.all([first, second]);
     expect(creates).toBe(1);
     expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toEqual(expect.any(String));
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toEqual(expect.any(String));
   });
 });
 
