@@ -6,17 +6,6 @@ const START_TIME_SKEW_MS = 5_000;
 export function isProcessAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
-    if (process.platform === 'linux') {
-      try {
-        const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
-        const state = stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0];
-        // A detached child may remain in /proc until the host's init reaps it.
-        // Its PID still exists, but it cannot run or own a runtime lock.
-        if (state === 'Z' || state === 'X') return false;
-      } catch {
-        // Keep the signal-based answer when /proc is unavailable.
-      }
-    }
     return true;
   } catch (err) {
     return (err as NodeJS.ErrnoException).code === 'EPERM';
