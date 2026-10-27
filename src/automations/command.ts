@@ -941,7 +941,7 @@ export async function completeDraftEnd(
     nextFireAt,
     pendingRecurring: null,
     cardMessageId: null,
-    ...(draft.operationId ? { cardReply: { ...(draft.cardReply ?? {}), replyTo } } : {}),
+    ...(draft.operationId || draft.cardReply ? { cardReply: { ...(draft.cardReply ?? {}), replyTo } } : {}),
   });
   if (!updated || updated.op === 'delete') return { ok: false, message: AUTO_INVALID_HINT };
   if (updated.operationId) {
@@ -953,8 +953,8 @@ export async function completeDraftEnd(
     automations: ctx.automations,
     autoAuth: ctx.autoAuth,
     automationsScheduler: ctx.automationsScheduler,
-    chatMode: ctx.chatMode ?? 'group',
-    msg: { chatId: draft.chatId, threadId: undefined },
+    chatMode: updated.cardReply?.replyInThread ? 'topic' : ctx.chatMode ?? 'group',
+    msg: { chatId: draft.chatId, threadId: updated.cardReply?.threadId },
   }, updated, parsed.schedule, now, replyTo);
   return { ok: true };
 }
@@ -1231,7 +1231,7 @@ async function postEndCard(
   try {
     sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo: ctx.msg.messageId,
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
   } catch (error) {
     if (draft.operationId) {
@@ -1315,7 +1315,7 @@ async function postConfirmCard(
   try {
     sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo,
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
   } catch (error) {
     if (draft.operationId) {
@@ -1366,7 +1366,7 @@ async function postDeleteCard(
   try {
     sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       ...(ctx.msg.messageId ? { replyTo: ctx.msg.messageId } : {}),
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
   } catch (error) {
     if (draft.operationId) {

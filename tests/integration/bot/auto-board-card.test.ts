@@ -520,7 +520,7 @@ async function harness(opts: {
   if (opts.rawCardFallback) {
     const origSend = channel.send.bind(channel);
     channel.send = (async (recipientId, content, sendOpts) => {
-      if (content && typeof content === 'object' && 'cardId' in content && !('card' in content)) {
+      if (content && typeof content === 'object' && 'cardId' in content && !('card' in content) && !(sendOpts as { replyTo?: string } | undefined)?.replyTo) {
         throw new Error('cardid is invalid');
       }
       return origSend(recipientId, content, sendOpts);

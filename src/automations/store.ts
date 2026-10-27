@@ -584,7 +584,7 @@ export class AutomationsStore {
       // human confirmation either wins first, or sees the invalidated receipt.
       const prior = this.operations.find(entry => entry.operationId === operation.supersedesOperationId || entry.aliases?.includes(operation.supersedesOperationId!));
       const oldDraft = this.drafts.find(entry => entry.draftId === prior?.draftId);
-      if (!canCloseCreateDraft(prior, oldDraft, draft, operation, createdAt)) throw new DraftSupersessionConflict();
+      if (!canCloseCreateDraft(prior, oldDraft ? this.draftView(oldDraft) : undefined, draft, operation, createdAt)) throw new DraftSupersessionConflict();
       this.closeSupersededDraft(prior!, oldDraft!);
       closed.push(prior!);
     }
@@ -678,6 +678,8 @@ export class AutomationsStore {
     const item = this.outboxJournal.getDraftCard(deliveryId);
     if (!draft || item?.payload.draftId !== draftId) throw new Error('Draft Outbox association unavailable');
     draft.deliveryId = deliveryId;
+    if (item.target.replyTo) draft.cardReply = { replyTo: item.target.replyTo,
+      ...(item.target.replyInThread ? { replyInThread: true } : {}), ...(item.target.threadId ? { threadId: item.target.threadId } : {}) };
     await this.persistNow();
   }
 

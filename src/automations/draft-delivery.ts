@@ -5,7 +5,7 @@ import type { ManagedCardSendResult } from '../card/managed';
 import type { AutomationDraft, AutomationsStore } from './store';
 
 export async function sendAutomationDraftCard(channel: LarkChannel, store: AutomationsStore, draft: AutomationDraft, card: object,
-  options: { replyTo?: string; replyInThread?: boolean }): Promise<ManagedCardSendResult> {
+  options: { replyTo?: string; replyInThread?: boolean; threadId?: string }): Promise<ManagedCardSendResult> {
   const phase = draft.op !== 'delete' && draft.pendingRecurring ? 'end' : 'confirm';
   const deliveryId = createHash('sha256').update(`${draft.operationId ?? draft.draftId}:${phase}`).digest('hex').slice(0, 32);
   const outbox = store.draftOutbox ?? new Outbox({ channel, journal: store.outboxJournal, botAppId: '', draftCards: store, liveSweep: false });
