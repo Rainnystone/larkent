@@ -80,6 +80,8 @@ export interface AutomationOperation {
   code?: string;
   /** Exact resolved confirmation-card title when confirmation was rejected. */
   cardStatus?: string;
+  /** The applied confirmation card could not be updated and its one fallback reply was claimed. */
+  cardFallbackSent?: true;
   taskId?: number;
   /** Wall time when the receipt became applied; used to tell leftovers from later independent creates. */
   appliedAt?: number;
@@ -878,6 +880,15 @@ export class AutomationsStore {
     await this.persistNow();
   }
 
+  async claimCardFallback(operationId: string): Promise<boolean> {
+    this.assertMutable();
+    const operation = this.operations.find(entry => entry.operationId === operationId);
+    if (!operation || operation.state !== 'applied' || operation.cardFallbackSent) return false;
+    operation.cardFallbackSent = true;
+    await this.persistNow();
+    return true;
+  }
+
   async rejectOperation(operationId: string, code: string, cardStatus?: string): Promise<void> {
     this.assertMutable();
     const operation = this.operations.find(entry => entry.operationId === operationId);
@@ -1202,6 +1213,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     || (raw.taskId !== undefined && !isPositiveInt(raw.taskId))
     || (raw.code !== undefined && typeof raw.code !== 'string')
     || (raw.cardStatus !== undefined && typeof raw.cardStatus !== 'string')
+    || (raw.cardFallbackSent !== undefined && raw.cardFallbackSent !== true)
     || (raw.supersedesOperationId !== undefined && (typeof raw.supersedesOperationId !== 'string' || readAutomationOperationId(raw.supersedesOperationId)?.scope !== automationOperationScope(raw.profile, raw.chatId)))
     || (raw.aliases !== undefined && !Array.isArray(raw.aliases))) throw new Error('Invalid automation operation receipt');
   const aliases = raw.aliases as unknown[] | undefined;
@@ -1217,6 +1229,7 @@ function parseOperation(raw: unknown): AutomationOperation {
     ...(raw.dispatchedCountKnown === false ? { dispatchedCountKnown: false } : {}),
     ...(aliases ? { aliases: aliases as string[] } : {}), ...(raw.taskId ? { taskId: raw.taskId as number } : {}), ...(raw.code ? { code: raw.code as string } : {}),
     ...(raw.cardStatus ? { cardStatus: raw.cardStatus as string } : {}),
+    ...(raw.cardFallbackSent === true ? { cardFallbackSent: true } : {}),
   };
 }
 

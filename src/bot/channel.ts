@@ -1,5 +1,4 @@
 import { bridgeToolInstructions } from '../bridge-tools/prompt';
-import { trackAutomationReply } from '../automations/reply-state';
 import type {
   LarkChannel,
   LarkChannelOptions,
@@ -94,7 +93,13 @@ import {
   toPolicyAttachment,
   toPromptAttachment,
 } from '../media/attachment';
-import { canUseDm, canUseGroup, evaluateAccess, requireMentionForChat } from '../policy/access';
+import {
+  canUseDm,
+  canUseGroup,
+  evaluateAccess,
+  requireMentionForChat,
+  type AccessDecision,
+} from '../policy/access';
 import { MeetingManager } from '../meeting/manager';
 import type { VcRequestClient } from '../meeting/api';
 import { attachMeetingAgent, summarizeEndedMeeting } from '../meeting/orchestrator';
@@ -107,6 +112,7 @@ import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { ActiveRuns, noteRunEvent, type RunHandle } from './active-runs';
 import {
+  BACKFILL_DELAY_LINE,
   createBackfillRun,
   formatBackfillLatenessHint,
   type BackfillChannel,
@@ -667,6 +673,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ...(sessionCatalog?.entries().map((entry) => entry.scopeId) ?? []),
       ],
       intake: (msg) => handOffIntake(msg, 'backfill'),
+      canRespond: (msg) => messageAccessDecision(controls, msg).ok,
+      resolveThreadId: async (msg) => (await resolveMessageThread(channel, chatModeCache, msg)).threadId,
+      postDelayLine: async (target, text) => {
+        await channel.send(target.chatId, { text }, {
+          replyTo: target.messageId,
+          ...(target.threadId ? { replyInThread: true } : {}),
+        });
+      },
       requireMentionForChat: (chatId) => (
         requireMentionForChat(controls.profileConfig, controls.cfg, chatId)
       ),
@@ -1428,25 +1442,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
   // downstream consumer keys off these.
-  const resolvedMode = await chatModeCache.resolve(channel, msg.chatId);
-  // Feishu delivers a sizable fraction of topic-group message events without a
-  // `thread_id` (notably the message that opens a new topic). We route topic
-  // replies (`replyInThread`) and isolate per-topic session scope off it, so a
-  // missing one makes the reply escape into a brand-new topic AND collapses the
-  // scope to the chat level. When getChatMode says this is a topic group but
-  // the event dropped `thread_id`, backfill it from the raw message — the same
-  // recovery the card-click path uses.
-  let threadId = msg.threadId;
-  if (!threadId && resolvedMode === 'topic') {
-    threadId = await lookupMessageThreadId(channel, msg.messageId);
-    if (threadId) {
-      log.info('intake', 'thread-id-backfilled', {
-        chatId: msg.chatId,
-        msgId: msg.messageId,
-        threadId,
-      });
-    }
-  }
+  const { resolvedMode, threadId } = await resolveMessageThread(channel, chatModeCache, msg);
   // Carry the (possibly backfilled) threadId on the message so the batched
   // flush — which reads `firstMsg.threadId` for reply routing and topic scope —
   // sees it.
@@ -1479,10 +1475,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     resources: msg.resources.length,
   });
 
-  const accessDecision =
-    msg.chatType === 'p2p'
-      ? canUseDm(controls.profileConfig, controls, msg.senderId, msg.chatId)
-      : canUseGroup(controls.profileConfig, controls, msg.chatId, msg.senderId);
+  const accessDecision = messageAccessDecision(controls, msg);
   if (!accessDecision.ok) {
     log.info('intake', 'skip-not-allowed-user', {
       scope,
@@ -1592,6 +1585,39 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
   const size = pending.push(scope, emsg);
   log.info('intake', 'queued', { scope, queueSize: size, debounceMs: DEBOUNCE_MS });
   recordAccepted(ledger, emsg);
+}
+
+async function resolveMessageThread(
+  channel: LarkChannel,
+  chatModeCache: ChatModeCache,
+  msg: NormalizedMessage,
+): Promise<{ resolvedMode: ChatMode; threadId: string | undefined }> {
+  const resolvedMode = await chatModeCache.resolve(channel, msg.chatId);
+  // Feishu delivers a sizable fraction of topic-group message events without a
+  // `thread_id` (notably the message that opens a new topic). We route topic
+  // replies (`replyInThread`) and isolate per-topic session scope off it, so a
+  // missing one makes the reply escape into a brand-new topic AND collapses the
+  // scope to the chat level. When getChatMode says this is a topic group but
+  // the event dropped `thread_id`, backfill it from the raw message — the same
+  // recovery the card-click path uses.
+  let threadId = msg.threadId;
+  if (!threadId && resolvedMode === 'topic') {
+    threadId = await lookupMessageThreadId(channel, msg.messageId);
+    if (threadId) {
+      log.info('intake', 'thread-id-backfilled', {
+        chatId: msg.chatId,
+        msgId: msg.messageId,
+        threadId,
+      });
+    }
+  }
+  return { resolvedMode, threadId };
+}
+
+function messageAccessDecision(controls: Controls, msg: NormalizedMessage): AccessDecision {
+  return msg.chatType === 'p2p'
+    ? canUseDm(controls.profileConfig, controls, msg.senderId, msg.chatId)
+    : canUseGroup(controls.profileConfig, controls, msg.chatId, msg.senderId);
 }
 
 function recordAccepted(ledger: BackfillLedger | undefined, msg: NormalizedMessage): void {
@@ -1771,10 +1797,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // skip the fetch, because resume will not reuse that handle.
   const agentKind = controls.profileConfig.agentKind;
   const capability = capabilityForProfile(controls.profileConfig);
-  const accessDecision =
-    firstMsg.chatType === 'p2p'
-      ? canUseDm(controls.profileConfig, controls, firstMsg.senderId, firstMsg.chatId)
-      : canUseGroup(controls.profileConfig, controls, firstMsg.chatId, firstMsg.senderId);
+  const accessDecision = messageAccessDecision(controls, firstMsg);
   let topicContext: QuotedContext[] = [];
   const topicResumeIdentity = mode === 'topic' && threadId
     ? await commandSessionCatalogIdentity({
@@ -1798,10 +1821,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     : undefined;
   if (mode === 'topic' && threadId && !topicResumeHandle) {
     const exclude = new Set([...batchIds, ...quoteTargets]);
-    topicContext = await fetchTopicContext(channel, threadId, {
+    topicContext = (await fetchTopicContext(channel, threadId, {
       maxMessages: 40,
       excludeIds: exclude,
-    });
+    })).filter((item) => !(item.senderType === 'bot' && item.content === BACKFILL_DELAY_LINE));
     if (topicContext.length > 0) {
       log.info('topic', 'context-fetched', {
         scope,
@@ -1831,9 +1854,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const automationPluginAvailable = await catalog.isAvailable('automation');
   const groupIm = firstMsg.chatType !== 'p2p' && mode !== 'p2p' && !scope.startsWith('meeting:');
   const senderUnavailable = automationUnavailableForSender(lastMsg);
-  const automationReply = trackAutomationReply({ store: automations, profile: controls.profile, chatId, now });
   const toolContext: ToolRunContext = {
-    onResult: automationReply.noteResult,
     catalog, profile: controls.profile, chatId, actorId: lastMsg.senderId,
     runType: 'im', store: automations,
     timezone: controls.profileConfig.automations.timezone, agentTasks: controls.profileConfig.automations.agentTasks,
@@ -1851,14 +1872,16 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
     );
   }
-  const backfilled = consumeBackfillMarks(batch, backfillMarks);
+  const { marked: backfilled, delayAnnounced } = consumeBackfillMarks(batch, backfillMarks);
   if (backfilled.length > 0) {
     const oldest = backfilled.reduce((current, msg) => (
       msg.createTime < current.createTime ? msg : current
     ));
     extraInstructions.push(formatBackfillLatenessHint({
       createTimeMs: oldest.createTime,
-      nowMs: Date.now(),
+      nowMs: (now ?? Date.now)(),
+      timeZone: controls.profileConfig.automations.timezone,
+      delayAnnounced,
     }));
   }
 
@@ -2058,8 +2081,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       : { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
     return stripLegacyAutomationTagsFromState(withoutTools);
   };
-  const streamedReplyState = (state: RunState): RunState => !finalAnswerOnly && state.terminal !== 'running'
-    ? appendOutcomeNotice(state, automationReply.notice()) : state;
   const cardRenderOptions = callbackAuth
     ? {
         signCallback: (action: string) =>
@@ -2132,7 +2153,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           chatId,
           scope,
           state: finalAnswerOnlyState(finalState),
-          automationNotice: automationReply.notice,
           skipFrom: finalState,
           replyMode,
           sendOpts,
@@ -2171,7 +2191,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
                 if (progress.abandoned()) return;
                 cardCtrl = ctrl;
                 const visible = filterForPrefs(latestState);
-                await ctrl.update(renderCard(streamedReplyState(visible), cardRenderOptions));
+                await ctrl.update(renderCard(visible, cardRenderOptions));
                 producerRendered = true;
                 await renderDone;
               },
@@ -2192,7 +2212,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (cardCtrl) {
             try {
               const visible = filterForPrefs(state);
-              await cardCtrl.update(renderCard(streamedReplyState(visible), cardRenderOptions));
+              await cardCtrl.update(renderCard(visible, cardRenderOptions));
             } catch (err) {
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
@@ -2219,7 +2239,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         chatId,
         scope,
         state: terminalState,
-        automationNotice: automationReply.notice,
         skipFrom: latestState,
         stream,
         dedicatedFinal: finalAnswerOnly,
@@ -2251,7 +2270,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
               if (progress.abandoned()) return;
               markdownCtrl = ctrl;
               const visible = filterForPrefs(latestState);
-              await ctrl.setContent(renderText(streamedReplyState(visible)));
+              await ctrl.setContent(renderText(visible));
               producerRendered = true;
               await renderDone;
             },
@@ -2271,7 +2290,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           if (markdownCtrl) {
             try {
               const visible = filterForPrefs(state);
-              await markdownCtrl.setContent(renderText(streamedReplyState(visible)));
+              await markdownCtrl.setContent(renderText(visible));
             } catch (err) {
               log.fail('stream', err, { mode: replyMode, step: 'render' });
             }
@@ -2298,7 +2317,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         chatId,
         scope,
         state: terminalState,
-        automationNotice: automationReply.notice,
         skipFrom: latestState,
         stream,
         dedicatedFinal: finalAnswerOnly,
@@ -2337,7 +2355,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           replyMode: finalAnswerOnly ? 'final-answer' : 'stream-deltas',
           streamed: false,
         }),
-        automationNotice: automationReply.notice,
         skipFrom: finalState,
         replyMode,
         sendOpts,
@@ -2533,7 +2550,6 @@ async function deliverFinalReply(input: {
   chatId: string;
   scope: string;
   state: RunState;
-  automationNotice?: () => string | undefined;
   skipFrom?: RunState;
   stream?: StreamDelivery;
   dedicatedFinal?: boolean;
@@ -2560,15 +2576,13 @@ async function deliverFinalReply(input: {
   }
   const state = stripLegacyAutomationTagsFromState(input.state);
   const skipFrom = input.skipFrom ? stripLegacyAutomationTagsFromState(input.skipFrom) : undefined;
-  const unaugmented = renderText(state);
-  const baseReplyState = unaugmented.trim() ? state : (skipFrom ?? state);
-  let automationNotice = input.automationNotice?.();
-  let replyState = appendOutcomeNotice(baseReplyState, automationNotice);
-  let visibleBody = renderText(replyState);
+  const stateText = renderText(state);
+  const replyState = stateText.trim() ? state : (skipFrom ?? state);
+  const visibleBody = renderText(replyState);
   const cliSent = input.cliSelfSent?.has(input.scope) === true
     && (input.skipFrom ?? input.state).terminal === 'done';
   const skipCli = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent;
-  const skip = skipCli || !renderText(baseReplyState).trim();
+  const skip = skipCli || !visibleBody.trim();
   if (input.journal && input.turnId && skipCli) {
     input.journal.noteCliAlreadySent(input.turnId);
   }
@@ -2580,7 +2594,7 @@ async function deliverFinalReply(input: {
     ? input.journal?.get(input.turnId)?.reply?.deliveryId ?? replyDeliveryKey(input.turnId)
     : undefined;
   const stream = input.stream ?? { kind: 'none' as const };
-  const dedicatedFinal = input.dedicatedFinal === true && Boolean(unaugmented.trim());
+  const dedicatedFinal = input.dedicatedFinal === true && Boolean(stateText.trim());
   const streamMessageId = stream.kind === 'none' ? undefined : stream.messageId;
   if (dedicatedFinal && streamMessageId && input.journal && input.turnId) {
     input.journal.noteNonAnswerId(input.turnId, streamMessageId);
@@ -2610,22 +2624,7 @@ async function deliverFinalReply(input: {
   // in-memory delivery mark so a slow fsync cannot leave readers on
   // `completed-undelivered` for the whole write.
   const deferJournalFlush = stream.kind === 'confirmed' && !dedicatedFinal;
-  // Cards may settle during persistence or receipt bookkeeping. Persist each
-  // updated intent, then invoke the outbound attempt without another await.
-  const withCurrentReply = async <T,>(deliver: () => Promise<T>): Promise<T> => {
-    for (;;) {
-      const latestNotice = input.automationNotice?.();
-      if (skip || latestNotice === automationNotice) return deliver();
-      automationNotice = latestNotice;
-      replyState = appendOutcomeNotice(baseReplyState, automationNotice);
-      visibleBody = renderText(replyState);
-      reply.markdown = visibleBody;
-      if (input.journal && input.turnId) input.journal.stageReply(input.turnId, reply);
-      if (input.journal && !deferJournalFlush) await input.journal.flush();
-    }
-  };
   if (input.journal && !deferJournalFlush) await input.journal.flush();
-  await withCurrentReply(async () => {});
   if (skipCli) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
@@ -2644,18 +2643,18 @@ async function deliverFinalReply(input: {
         stream,
         channel: input.channel,
         body: visibleBody,
-        send: () => withCurrentReply(() => sendFinalReply({
+        send: () => sendFinalReply({
           ...input,
           deliveryId,
           state: replyState,
-        })),
-        fallback: () => withCurrentReply(() => sendPlainTextReply({
+        }),
+        fallback: () => sendPlainTextReply({
           channel: input.channel,
           chatId: input.chatId,
           body: visibleBody,
           sendOpts: input.sendOpts,
           deliveryId,
-        })),
+        }),
         journal: input.journal,
         turnId: input.turnId,
         replyMode: input.replyMode,
@@ -3535,14 +3534,17 @@ function delay(ms: number): Promise<void> {
 function consumeBackfillMarks(
   batch: NormalizedMessage[],
   marks: Map<string, BackfillMark>,
-): NormalizedMessage[] {
+): { marked: NormalizedMessage[]; delayAnnounced: boolean } {
   const marked: NormalizedMessage[] = [];
+  let delayAnnounced = false;
   for (const msg of batch) {
-    if (!marks.has(msg.messageId)) continue;
+    const mark = marks.get(msg.messageId);
+    if (!mark) continue;
     marks.delete(msg.messageId);
     marked.push(msg);
+    delayAnnounced ||= mark.delayAnnounced;
   }
-  return marked;
+  return { marked, delayAnnounced };
 }
 
 function buildPrompt(

@@ -77,7 +77,7 @@ it('delivers user-language result guidance through packaged plugins.read', async
   expect(response).toMatchObject({ category: 'ok', data: { source: { plugin: 'automation' } } });
   const content = response.data.content;
   for (const guidance of [
-    '| `waiting-confirmation` | 已发确认卡，点「是」后生效；现在尚未生效。',
+    '| `waiting-confirmation` | 用一句话指向确认卡，例如「已发确认卡，请在卡上确认。」仅在本轮实际发卡成功时使用。 |',
     '| `applied` | 本次操作已生效；按实际操作说「任务已保存」「已暂停」「已恢复」或「已删除」。',
     '| `needs-input` | 还需要补充信息；用日常语言问清缺少的内容，例如「要提醒到哪一天？」',
     '| `validation-failed` | 说明具体问题并按原意修正，例如「这个时间不可用，请提供未来的时间。」',
@@ -85,10 +85,11 @@ it('delivers user-language result guidance through packaged plugins.read', async
     '| `execution-failed` | 这次操作未能完成；说明实际失败原因。',
     '普通回复不输出 JSON 字段名、状态代码或 true/false 等布尔值。',
     '仅在排查问题需要时简短提及 operationId，例如「操作编号末 6 位：a1b2c3」',
-    '最终回复以发送前的最新状态为准',
+    '确认卡是创建、替换和删除的唯一确认入口',
+    '回复陈述本轮工具结果中的事实，确认卡此后的变化由确认卡自身显示。',
     '生效、执行和送达分别按实际回执表述',
-    '正例：「已发确认卡，点「是」后生效；现在尚未生效。」',
-    '反例：「waiting-confirmation，applied: false，operationId: op1.…」',
+    '正例：「已发确认卡，请在卡上确认。」',
+    '反例：「已发确认卡，点「是」后生效；现在尚未生效。时区 Europe/London，后续 4 次：……」或「waiting-confirmation，applied: false，operationId: op1.…」',
     '正例：「任务已保存，将按排期运行。」',
     '反例：「applied: true，任务已执行并送达。」',
   ]) expect(content).toContain(guidance);

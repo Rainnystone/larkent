@@ -7,7 +7,7 @@ import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
-import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
+import { createRecordingLarkChannel, isBackfillDelayLine } from '../../helpers/recording-lark-channel';
 import { createTmpProfile } from '../../helpers/tmp-profile';
 
 const sdk = vi.hoisted(() => ({
@@ -24,6 +24,8 @@ const BOT = 'ou_bot';
 const USER = 'ou_user';
 const CHAT = 'oc_group';
 const TOPIC = 'oc_topic';
+const OUTSIDER = 'ou_outsider';
+const PROFILE_TZ = 'Europe/Berlin';
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -59,11 +61,22 @@ describe('backfill on connect', () => {
     await waitFor(() => h.agent.runOptions.length === 1);
 
     const prompt = h.agent.runOptions[0]!.prompt;
-    const hint = formatBackfillLatenessHint({ createTimeMs: first, nowMs: Date.now() });
-    expect(prompt.split('以下用户消息是在 bot 离线期间发出的').length - 1).toBe(1);
+    const hint = formatBackfillLatenessHint({
+      createTimeMs: first, nowMs: Date.now(), timeZone: PROFILE_TZ, delayAnnounced: true,
+    });
+    expect(prompt.split('以下用户消息发于').length - 1).toBe(1);
     expect(prompt).toContain('first missed');
     expect(prompt).toContain('second missed');
-    expect(prompt).toContain(hint.slice(0, 20));
+    expect(prompt).toContain(hint.slice(0, hint.indexOf('（')));
+    expect(prompt).toContain(hint.slice(hint.indexOf('理解。')));
+    const delayLines = h.channel.callLog.filter((call) => (
+      call.op === 'send' && isBackfillDelayLine(call)
+    ));
+    expect(delayLines).toEqual([
+      expect.objectContaining({ chatId: CHAT, options: expect.objectContaining({ replyTo: 'om_late_1' }) }),
+    ]);
+    expect(h.channel.callLog.findIndex((call) => call.op === 'send' || call.op === 'stream'))
+      .toBe(h.channel.callLog.indexOf(delayLines[0]!));
     expect(info.mock.calls).toContainEqual([
       'prompt',
       'built',
@@ -71,14 +84,35 @@ describe('backfill on connect', () => {
     ]);
   });
 
+  it('tells the agent to acknowledge the late reply itself when the delay line could not be posted', async () => {
+    const createTime = NOW - 12 * 60_000;
+    const h = await startHarness({
+      lastLiveAt: NOW - 5 * 60_000,
+      failFirstSend: true,
+      chats: [{ id: CHAT, name: 'Group' }],
+      messagesByChat: { [CHAT]: [mentionItem('om_late', CHAT, 'missed ask', createTime)] },
+    });
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+    await waitForDebounce();
+    await waitFor(() => h.agent.runOptions.length === 1);
+
+    const prompt = h.agent.runOptions[0]!.prompt;
+    const unannounced = formatBackfillLatenessHint({
+      createTimeMs: createTime, nowMs: Date.now(), timeZone: PROFILE_TZ, delayAnnounced: false,
+    });
+    expect(delayLines(h.channel)).toEqual([]);
+    expect(prompt).toContain(unannounced.slice(unannounced.indexOf('理解。')));
+    expect(prompt).not.toContain('bridge 已自行告知延迟');
+  });
+
   it('replies in-thread for a topic-group backfill', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
-    await startHarness({
+    const h = await startHarness({
       lastLiveAt: NOW - 5 * 60_000,
       chatMode: 'topic',
       chats: [{ id: TOPIC, name: 'Topic' }],
       messagesByChat: {
-        [TOPIC]: [mentionItem('om_topic', TOPIC, 'topic missed', NOW - 90_000, 'omt_1')],
+        [TOPIC]: [mentionItem('om_topic', TOPIC, 'topic missed', NOW - 90_000, { threadId: 'omt_1' })],
       },
     });
     await waitForDebounce();
@@ -94,6 +128,65 @@ describe('backfill on connect', () => {
         replyTo: 'om_topic',
         replyInThread: true,
       }),
+    ]);
+    expect(h.channel.callLog.filter((call) => (
+      call.op === 'send' && isBackfillDelayLine(call)
+    ))).toEqual([
+      expect.objectContaining({
+        chatId: TOPIC,
+        options: expect.objectContaining({ replyTo: 'om_topic', replyInThread: true }),
+      }),
+    ]);
+  });
+
+  it('threads the delay line under each topic opener whose thread only the raw lookup recovers', async () => {
+    const h = await startHarness({
+      lastLiveAt: NOW - 5 * 60_000,
+      chatMode: 'topic',
+      chats: [{ id: TOPIC, name: 'Topic' }],
+      messagesByChat: {
+        [TOPIC]: [
+          mentionItem('om_open_a', TOPIC, 'first topic', NOW - 90_000),
+          mentionItem('om_open_b', TOPIC, 'second topic', NOW - 80_000),
+        ],
+      },
+      rawThreadIds: { om_open_a: 'omt_a', om_open_b: 'omt_b' },
+    });
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+    await waitForDebounce();
+    await waitFor(() => h.agent.runOptions.length === 2);
+
+    expect(delayLines(h.channel)).toEqual([
+      expect.objectContaining({
+        chatId: TOPIC,
+        options: expect.objectContaining({ replyTo: 'om_open_a', replyInThread: true }),
+      }),
+      expect.objectContaining({
+        chatId: TOPIC,
+        options: expect.objectContaining({ replyTo: 'om_open_b', replyInThread: true }),
+      }),
+    ]);
+  });
+
+  it('posts the delay line only for a sender the access fence lets through', async () => {
+    const h = await startHarness({
+      lastLiveAt: NOW - 5 * 60_000,
+      fence: true,
+      chats: [{ id: CHAT, name: 'Group' }],
+      messagesByChat: {
+        [CHAT]: [
+          mentionItem('om_fenced', CHAT, 'outsider ask', NOW - 12 * 60_000, { senderId: OUTSIDER }),
+          mentionItem('om_allowed', CHAT, 'member ask', NOW - 11 * 60_000),
+        ],
+      },
+    });
+    await waitFor(() => h.ledger.getLastBackfillEnd() !== undefined);
+    await waitForDebounce();
+    await waitFor(() => h.agent.runOptions.length === 1);
+
+    expect(h.agent.runOptions[0]!.prompt).not.toContain('outsider ask');
+    expect(delayLines(h.channel)).toEqual([
+      expect.objectContaining({ chatId: CHAT, options: expect.objectContaining({ replyTo: 'om_allowed' }) }),
     ]);
   });
 
@@ -126,6 +219,9 @@ async function startHarness(opts: {
   chats?: Array<{ id: string; name: string }>;
   messagesByChat?: Record<string, unknown[]>;
   chatMode?: 'group' | 'topic';
+  fence?: boolean;
+  rawThreadIds?: Record<string, string>;
+  failFirstSend?: boolean;
 }) {
   const tmp = await createTmpProfile('backfill-connect-');
   const file = `${tmp.profile}/backfill-state.json`;
@@ -144,6 +240,11 @@ async function startHarness(opts: {
     },
   });
   cfg.workspaces.default = tmp.workspace;
+  cfg.automations.timezone = PROFILE_TZ;
+  if (opts.fence) {
+    cfg.access.allowedChats = [CHAT];
+    cfg.access.fence = { enabled: true };
+  }
   const sessions = new SessionStore(`${tmp.profile}/sessions.json`);
   const workspaces = new WorkspaceStore(`${tmp.profile}/workspaces.json`);
   const agent = new FakeAgentAdapter({
@@ -159,6 +260,10 @@ async function startHarness(opts: {
     messagesByChat: opts.messagesByChat,
     chatMode: opts.chatMode,
   });
+  for (const [messageId, threadId] of Object.entries(opts.rawThreadIds ?? {})) {
+    channel.rawThreadIds.set(messageId, threadId);
+  }
+  if (opts.failFirstSend) channel.sendErrors.send = new Error('send failed');
   sdk.channel = channel;
   const bridge = await startChannel({
     cfg,
@@ -191,7 +296,7 @@ function mentionItem(
   chatId: string,
   text: string,
   createTime: number,
-  threadId?: string,
+  extra: { threadId?: string; senderId?: string } = {},
 ): Record<string, unknown> {
   return {
     message_id: messageId,
@@ -199,11 +304,15 @@ function mentionItem(
     msg_type: 'text',
     create_time: String(createTime),
     deleted: false,
-    sender: { id: USER, id_type: 'open_id', sender_type: 'user' },
+    sender: { id: extra.senderId ?? USER, id_type: 'open_id', sender_type: 'user' },
     body: { content: JSON.stringify({ text: `@_user_1 ${text}` }) },
     mentions: [{ key: '@_user_1', id: BOT, id_type: 'open_id', name: 'Bot' }],
-    ...(threadId ? { thread_id: threadId } : {}),
+    ...(extra.threadId ? { thread_id: extra.threadId } : {}),
   };
+}
+
+function delayLines(channel: ReturnType<typeof createRecordingLarkChannel>) {
+  return channel.callLog.filter((call) => call.op === 'send' && isBackfillDelayLine(call));
 }
 
 async function waitForDebounce() {

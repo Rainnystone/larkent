@@ -1,4 +1,5 @@
 import { normalize, type LarkChannel, type NormalizedMessage, type RawMessageEvent } from '@larksuite/channel';
+import { formatZonedDateTime } from '../automations/confirm-card';
 import { isRegisteredSlashCommand } from '../commands';
 import type { BackfillPreferences } from '../config/schema';
 import type { ProfileMode } from '../config/profile-schema';
@@ -11,8 +12,11 @@ import { isSelfSender } from './self-message';
 
 export const WATERMARK_MARGIN_MS = 120_000;
 
+export const BACKFILL_DELAY_LINE = 'bot 刚恢复在线，正在补回复离线期间收到的消息。';
+
 export interface BackfillMark {
   detectedAt: number;
+  delayAnnounced: boolean;
 }
 
 export interface BackfillChannel {
@@ -49,6 +53,9 @@ export interface RunBackfillDeps {
   sessionChatIds?: string[];
   botAppId?: string;
   requireMentionForChat?: (chatId: string) => boolean;
+  canRespond?: (msg: NormalizedMessage) => boolean;
+  resolveThreadId?: (msg: NormalizedMessage) => Promise<string | undefined>;
+  postDelayLine?: (target: NormalizedMessage, text: string) => Promise<void>;
   intake: (msg: NormalizedMessage) => Promise<void>;
 }
 
@@ -68,15 +75,19 @@ export function resolveBackfillWindow(input: {
 export function formatBackfillLatenessHint(input: {
   createTimeMs: number;
   nowMs: number;
+  timeZone: string;
+  delayAnnounced: boolean;
 }): string {
   const ageMs = Math.max(0, input.nowMs - input.createTimeMs);
   const minutes = Math.max(1, Math.round(ageMs / 60_000));
-  const when = new Date(input.createTimeMs);
-  const hh = String(when.getHours()).padStart(2, '0');
-  const mm = String(when.getMinutes()).padStart(2, '0');
+  const sent = formatZonedDateTime(input.timeZone, input.createTimeMs);
+  const today = formatZonedDateTime(input.timeZone, input.nowMs);
+  const sentAt = sent.slice(0, 10) === today.slice(0, 10) ? sent.slice(11) : sent;
   return (
-    `以下用户消息是在 bot 离线期间发出的（约 ${minutes} 分钟前，${hh}:${mm}），` +
-    'bridge 重连后才补处理。如需，可先简短说明延迟原因再回答。'
+    `以下用户消息发于 ${sentAt}（约 ${minutes} 分钟前），bot 离线期间未处理；消息中的相对时间按发送时刻理解。` +
+    (input.delayAnnounced
+      ? 'bridge 已自行告知延迟，直接回答用户请求。'
+      : '回复开头先用一句话简短说明这是 bot 离线期间收到、较晚补上的回复，再回答用户请求。')
   );
 }
 
@@ -333,8 +344,13 @@ async function scanChat(input: {
     ? Math.min(...truncated.map((msg) => msg.createTime))
     : undefined;
   let enqueued = 0;
-  for (const msg of survivors) {
+  const delayAnnounced = new Set<string>();
+  for (const survivor of survivors) {
     if (deps.isClosing?.()) return 'aborted';
+    const announcedBefore = deps.marks.get(survivor.messageId)?.delayAnnounced === true;
+    const wantsDelayLine = !deps.prefs.dryRun && !announcedBefore && deps.canRespond?.(survivor) !== false;
+    const target = wantsDelayLine ? await resolveDelayTarget(deps, survivor) : undefined;
+    const msg = target ?? survivor;
     const scope = msg.threadId ? `${msg.chatId}:${msg.threadId}` : msg.chatId;
     const fields = {
       chatId,
@@ -347,7 +363,10 @@ async function scanChat(input: {
       enqueued += 1;
       continue;
     }
-    deps.marks.set(msg.messageId, { detectedAt: now });
+    if (target && !delayAnnounced.has(scope) && await postDelayLine(deps, target)) {
+      delayAnnounced.add(scope);
+    }
+    deps.marks.set(msg.messageId, { detectedAt: now, delayAnnounced: announcedBefore || delayAnnounced.has(scope) });
     log.info('backfill', 'enqueued', fields);
     await deps.intake(msg);
     enqueued += 1;
@@ -363,6 +382,39 @@ async function scanChat(input: {
     truncated: truncated.length,
   });
   return { enqueued, ...(truncatedFrom !== undefined ? { truncatedFrom } : {}) };
+}
+
+async function resolveDelayTarget(
+  deps: RunBackfillDeps,
+  msg: NormalizedMessage,
+): Promise<NormalizedMessage | undefined> {
+  if (msg.threadId || !deps.resolveThreadId) return msg;
+  try {
+    const threadId = await deps.resolveThreadId(msg);
+    return threadId ? { ...msg, threadId } : msg;
+  } catch (error) {
+    log.warn('backfill', 'delay-thread-resolve-failed', {
+      chatId: msg.chatId,
+      msgId: msg.messageId,
+      err: errorMessage(error),
+    });
+    return undefined;
+  }
+}
+
+async function postDelayLine(deps: RunBackfillDeps, target: NormalizedMessage): Promise<boolean> {
+  if (!deps.postDelayLine) return false;
+  try {
+    await deps.postDelayLine(target, BACKFILL_DELAY_LINE);
+    return true;
+  } catch (error) {
+    log.warn('backfill', 'delay-line-failed', {
+      chatId: target.chatId,
+      msgId: target.messageId,
+      err: errorMessage(error),
+    });
+    return false;
+  }
 }
 
 async function filterHistoryItem(

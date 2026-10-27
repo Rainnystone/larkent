@@ -61,6 +61,7 @@ export function runToolProcess(cli: string, input: string | readonly Uint8Array[
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, [cli, 'tool', ...args], { cwd, env: { ...process.env, LARK_BRIDGE_TOOL_ENDPOINT: '', LARK_BRIDGE_TOOL_TOKEN: '', ...env }, stdio: ['pipe', 'pipe', 'pipe'] });
     let stdout = ''; let stderr = '';
+    child.stdout.setEncoding('utf8'); child.stderr.setEncoding('utf8');
     child.stdout.on('data', chunk => { stdout += chunk; }); child.stderr.on('data', chunk => { stderr += chunk; });
     child.on('error', reject);
     child.on('close', code => resolveResult({ code, stdout, stderr }));

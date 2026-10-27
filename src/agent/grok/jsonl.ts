@@ -27,13 +27,16 @@ export interface ProtocolDriftState {
  * (same hold-back as kimi/codex, so showToolCalls:false sends one reply).
  * Each non-empty chunk also emits a bare `system` event so the idle
  * watchdog stays armed while that answer is held back. Text that arrived
- * before a tool call is kept and separated from the later answer. `thought`
- * lines become `thinking` deltas and are not part of that answer.
+ * before a tool call is emitted as a progress `text` delta and is not part of
+ * the answer; if no text follows the last tool, the last non-empty pre-tool
+ * segment becomes the answer. `thought` lines become `thinking` deltas and
+ * are not part of that answer.
  */
 export class GrokJsonlTranslator {
   private sessionId: string | undefined;
   private terminal = false;
   private pendingText = '';
+  private lastPreToolSegment: string | undefined;
   private readonly startedToolCalls = new Map<string, string>();
   private lastUsage: AgentEvent | undefined;
   private drift: ProtocolDriftState = {
@@ -57,8 +60,7 @@ export class GrokJsonlTranslator {
       case 'text':
         return this.queueText(stringValue(raw.data) ?? stringValue(raw.text));
       case 'tool_call':
-        this.keepPendingBeforeTool();
-        return this.translateToolCall(raw);
+        return [...this.takePreToolProgress(), ...this.translateToolCall(raw)];
       case 'tool_call_update':
         return this.translateToolCallUpdate(raw);
       case 'usage':
@@ -116,10 +118,21 @@ export class GrokJsonlTranslator {
     return [{ type: 'system' }];
   }
 
-  /** Keep commentary that arrived before a tool instead of dropping it. */
-  private keepPendingBeforeTool(): void {
-    if (!this.pendingText) return;
-    if (!/\n\s*$/.test(this.pendingText)) this.pendingText += '\n\n';
+  /**
+   * Commentary before a tool is progress, not the answer. The last non-empty
+   * segment is kept as the fallback answer when no text follows the last tool.
+   */
+  private takePreToolProgress(): AgentEvent[] {
+    const segment = this.takePendingText();
+    if (!hasAnswerText(segment)) return [];
+    this.lastPreToolSegment = segment;
+    return [progressEvent(segment)];
+  }
+
+  private takePendingText(): string {
+    const content = stripTerminalText(this.pendingText);
+    this.pendingText = '';
+    return content;
   }
 
   private translateToolCall(raw: Record<string, unknown>): AgentEvent[] {
@@ -264,8 +277,8 @@ export class GrokJsonlTranslator {
   }
 
   private finalTextEvents(): AgentEvent[] {
-    const content = stripTerminalText(this.pendingText);
-    this.pendingText = '';
+    const pending = this.takePendingText();
+    const content = !hasAnswerText(pending) && this.lastPreToolSegment ? this.lastPreToolSegment : pending;
     if (!content || isControlTokenOnly(content)) return [];
     return [{ type: 'final_text', content }];
   }
@@ -280,16 +293,24 @@ export class GrokJsonlTranslator {
 
   private flushPendingText(events: AgentEvent[]): AgentEvent[] {
     if (events.length === 0 || !this.pendingText) return events;
-    const pending = stripTerminalText(this.pendingText);
-    this.pendingText = '';
+    const pending = this.takePendingText();
     if (isControlTokenOnly(pending)) return events;
-    return [{ type: 'text', delta: pending.endsWith('\n') ? pending : `${pending}\n\n` }, ...events];
+    return [progressEvent(pending), ...events];
   }
+}
+
+/** Progress is a `text` delta ending in a line break, the shape the Devin transcript emits. */
+function progressEvent(text: string): AgentEvent {
+  return { type: 'text', delta: text.endsWith('\n') ? text : `${text}\n\n` };
 }
 
 /** A buffer that is only a Grok control token, such as `<|eos|>`, is not an answer. */
 function isControlTokenOnly(value: string): boolean {
   return /^<\|[a-z_]+\|>$/.test(value.trim());
+}
+
+function hasAnswerText(value: string): boolean {
+  return value.trim() !== '' && !isControlTokenOnly(value);
 }
 
 const UTF8_DECODER = new TextDecoder('utf-8');
