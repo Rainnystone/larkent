@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { ProcessPool } from '../../../src/bot/process-pool';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
 import { RunExecutor } from '../../../src/runtime/run-executor';
@@ -100,8 +100,9 @@ async function createHarness(): Promise<{
     logsDir,
     run: (content: string) =>
       tryHandleCommand({
+        origin: 'slash',
         resumeCandidates,
-        channel: channel as unknown as CommandContext['channel'],
+        channel: channel as unknown as UserActionContext['channel'],
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',

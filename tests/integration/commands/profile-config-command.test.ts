@@ -5,7 +5,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { resolveModelArg } from '../../../src/agent/models';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index';
 import { resolveAppPaths } from '../../../src/config/app-paths';
 import { getSecret, listSecretIds } from '../../../src/config/keystore';
 import {
@@ -309,7 +309,7 @@ async function createHarness(options: {
     command: (content: string, formValue?: Record<string, unknown>) =>
       tryHandleCommand({
         resumeCandidates,
-        channel: channel as unknown as CommandContext['channel'],
+        channel: channel as unknown as UserActionContext['channel'],
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',
@@ -319,7 +319,7 @@ async function createHarness(options: {
         activeRuns: new ActiveRuns(),
         controls,
         formValue,
-        fromCardAction: true,
+        origin: 'card',
       }),
   };
 }

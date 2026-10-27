@@ -22,7 +22,7 @@ import {
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
 import { parseScheduleText } from '../../../src/automations/command';
-import type { CommandContext } from '../../../src/commands';
+import type { UserActionContext } from '../../../src/commands';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { assertCardSchema2 } from '../../helpers/card-schema2';
@@ -538,7 +538,7 @@ async function harness() {
     autoAuth,
     automationsScheduler: scheduler,
     now: () => nowMs,
-  } as unknown as CommandContext);
+  } as unknown as UserActionContext);
   return {
     dir,
     logsDir,

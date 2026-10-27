@@ -5,7 +5,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { PendingQueue } from '../../../src/bot/pending-queue.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
@@ -255,8 +255,9 @@ async function createHarness(options: {
     controls,
     run: (content: string): Promise<boolean> =>
       tryHandleCommand({
+        origin: 'slash',
         resumeCandidates,
-        channel: channel as unknown as CommandContext['channel'],
+        channel: channel as unknown as UserActionContext['channel'],
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',

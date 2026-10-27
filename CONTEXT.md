@@ -87,6 +87,11 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **action token** (`ActionTokenCodec`, `src/card/action-token.ts`): the single signer and verifier for card actions. A purpose declares its claims schema, prefix and nonce policy. V2 tokens sign both the purpose prefix and payload; the codec owns key selection, TTL, context matching, signature verification and nonce handling. It signs with the newest active key and verifies retained previous keys, including retired keys. The profile runtime shares one codec across its four auth interfaces. Callers retain their domain claims and existing invalid-click responses; pre-deploy v1 buttons receive those same invalid responses.
 - **nonce policy**: bridge callbacks and interruption notices use `consume-on-verify`, after claims and expected context match. Automation confirmations use `deferred`: verify, then explicitly claim / release / consume after validation or successful mutation. Only one in-flight claim can win; releasing a validation failure keeps the token retryable. Used and revoked nonces persist in `CallbackNonceStore`; in-flight claims live only in the codec. Automation board actions use `none` so their signed buttons remain reusable until expiry.
 
+## User actions
+
+- **user action**: a user invoking a slash command or card action in a session scope. `src/user-actions/registry.ts` is the registration source. Every entry declares `fence-only` or `signed(purpose)` and keeps its surface's invalid response. Configuration, account and workspace buttons explicitly remain fence-only; a bridge-signed command also verifies its run, scope, actor and policy binding.
+- **invocation context** (`UserActionContext`): shared profile runtime dependencies plus the invocation's message, scope, chat mode and origin. `startChannel` assembles the runtime once for both entry paths. Group card commands carry `chatType: 'group'`, including topic groups. Bridge callbacks and notice continuation enqueue through the same synthetic-message helper. Draft confirmation retains its deferred nonce and durable transition lifecycle.
+
 ## Bridge plugins
 
 - **bridge plugin**: a host-prepared package of skills, resources, scripts and existing-command requirements, consumed through the shared catalog. It is separate from the native plugins managed by each CLI.

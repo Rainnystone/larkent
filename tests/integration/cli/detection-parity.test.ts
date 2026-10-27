@@ -7,7 +7,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { detectInstalledAgents } from '../../../src/cli/agent-detection.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
@@ -203,8 +203,9 @@ async function createDoctorHarness(
   });
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
+        origin: 'slash',
       resumeCandidates,
-      channel: channel as unknown as CommandContext['channel'],
+      channel: channel as unknown as UserActionContext['channel'],
       msg: message(content, `${kind}-${mode}`),
       scope: 'chat-1',
       chatMode: 'p2p',

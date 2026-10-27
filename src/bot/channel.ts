@@ -1,3 +1,4 @@
+import type { UserActionRuntime } from '../user-actions/context';
 import { flushDraftConfirmations, expireDraftConfirmations } from '../automations/draft-confirmation';
 import { bridgeToolInstructions } from '../bridge-tools/prompt';
 import type {
@@ -606,32 +607,22 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // Counter for stdout reconnect escalation; reset on `reconnected`.
   let consecutiveReconnects = 0;
 
+  const userActionRuntime: UserActionRuntime = {
+    channel, agent, sessions, sessionCatalog, resumeCandidates, workspaces, ledger,
+    activeRuns, pending, controls, chatModeCache, runExecutor: executor, processPool: pool,
+    callbackAuth, callbackPolicyFingerprintForScope: scope => activePolicyFingerprints.get(scope),
+    journal, noticeAuth, autoAuth, continuations,
+    automations: deps.automations,
+    get automationsScheduler() { return automationsCtl.scheduler; },
+    get boardAuth() { return automationsCtl.boardAuth; },
+    ...(deps.now ? { now: deps.now } : {}),
+    isLinkDown: () => closing || started.isDown(),
+    onAutomationConfirmed,
+  };
+
   const handOffIntake = (msg: NormalizedMessage, source: IntakeSource): Promise<void> =>
     withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
-      intakeMessage({
-        channel,
-        agent,
-        sessions,
-        sessionCatalog,
-        resumeCandidates,
-        workspaces,
-        ledger,
-        intakeSource: source,
-        activeRuns,
-        pending,
-        msg,
-        controls,
-        chatModeCache,
-        logThreadModeOverride,
-        executor,
-        pool,
-        automations: deps.automations,
-        autoAuth,
-        automationsScheduler: automationsCtl.scheduler,
-        journal,
-        ...(deps.now ? { now: deps.now } : {}),
-        isLinkDown: () => closing || started.isDown(),
-        onAutomationConfirmed,
+      intakeMessage({ actions: userActionRuntime, msg, intakeSource: source, logThreadModeOverride
       }),
     ).catch((err) => {
       log.fail('intake', err);
@@ -919,51 +910,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     cardAction: async (evt) => {
       if (closing) return;
       return withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
-        return handleCardAction({
-          channel,
-          evt,
-          sessions,
-          resumeCandidates,
-          sessionCatalog,
-          workspaces,
-          ledger,
-          activeRuns,
-          agent,
-          processPool: pool,
-          runExecutor: executor,
-          controls,
-          pending,
-          chatModeCache,
-          callbackAuth,
-          callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
-          journal,
-          noticeAuth,
-          autoAuth,
-          boardAuth: automationsCtl.boardAuth,
-          automations: deps.automations,
-          automationsScheduler: automationsCtl.scheduler,
-          ...(deps.now ? { now: deps.now } : {}),
-          onAutomationConfirmed,
-          continuations,
-          onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
-            if (action !== 'notice.continue') return;
-            pending.push(scope, {
-              messageId: messageId || entry.messageIds.at(-1) || `notice-continue-${entry.turnId}`,
-              chatId: entry.chatId,
-              chatType: mode === 'p2p' ? 'p2p' : 'group',
-              threadId,
-              senderId: operatorId,
-              senderName: '',
-              content: entry.resumeHandle ? '继续' : (entry.userInput ?? '继续'),
-              rawContentType: 'text',
-              resources: journalResourcesToMessage(entry.resources),
-              mentions: [],
-              mentionAll: false,
-              mentionedBot: true,
-              createTime: Date.now(),
-            });
-          },
-        });
+        return handleCardAction({ ...userActionRuntime, evt });
       }).catch((err) => log.fail('cardAction', err));
     },
     comment: async (evt) => {
@@ -1228,29 +1175,10 @@ async function sendForwardFetchFailedHint(
 }
 
 interface IntakeDeps {
-  channel: LarkChannel;
-  agent: AgentAdapter;
-  sessions: SessionStore;
-  resumeCandidates: ResumeCandidates;
-  sessionCatalog?: SessionCatalog;
-  workspaces: WorkspaceStore;
-  ledger?: BackfillLedger;
-  intakeSource?: IntakeSource;
-  activeRuns: ActiveRuns;
-  pending: PendingQueue;
+  actions: UserActionRuntime;
   msg: NormalizedMessage;
-  controls: Controls;
-  chatModeCache: ChatModeCache;
+  intakeSource?: IntakeSource;
   logThreadModeOverride: LogThreadModeOverride;
-  executor: RunExecutor;
-  pool: ProcessPool;
-  automations?: AutomationsStore;
-  autoAuth?: AutoActionAuth;
-  automationsScheduler?: AutomationScheduler;
-  journal?: TurnJournal;
-  now?: () => number;
-  isLinkDown?: () => boolean;
-  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 
 type LogThreadModeOverride = (input: {
@@ -1260,7 +1188,8 @@ type LogThreadModeOverride = (input: {
 }) => void;
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
-  const { ledger, msg } = deps;
+  const { msg } = deps;
+  const { ledger } = deps.actions;
   const source = deps.intakeSource ?? 'ws';
   const scopeHint = msg.threadId ? `${msg.chatId}:${msg.threadId}` : msg.chatId;
   if (ledger && !ledger.claim(msg.messageId)) {
@@ -1280,30 +1209,10 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
 }
 
 async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
-  const {
-    channel,
-    agent,
-    sessions,
-    sessionCatalog,
-    resumeCandidates,
-    workspaces,
-    ledger,
-    activeRuns,
-    pending,
-    msg,
-    controls,
-    chatModeCache,
-    logThreadModeOverride,
-    executor,
-    pool,
-    automations,
-    autoAuth,
-    automationsScheduler,
-    journal,
-    now,
-    isLinkDown,
-    onAutomationConfirmed,
-  } = deps;
+  const { msg, logThreadModeOverride } = deps;
+  const { channel, workspaces, ledger, controls, journal } = deps.actions;
+  const pending = deps.actions.pending!;
+  const chatModeCache = deps.actions.chatModeCache!;
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
   // downstream consumer keys off these.
@@ -1394,35 +1303,10 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
   }
 
   const handled = await tryHandleCommand({
-    channel,
-    msg: emsg,
-    scope,
-    chatMode,
-    sessions,
-    resumeCandidates,
-    workspaces,
-    ledger,
-    agent,
-    activeRuns,
-    sessionCatalog,
+    ...deps.actions, msg: emsg, scope, chatMode, origin: 'slash',
     sessionCatalogIdentity: await commandSessionCatalogIdentity({
-      msg: emsg,
-      scope,
-      mode: chatMode,
-      workspaces,
-      controls,
-      access: accessDecision,
+      msg: emsg, scope, mode: chatMode, workspaces, controls, access: accessDecision,
     }),
-    runExecutor: executor,
-    processPool: pool,
-    pending,
-    controls,
-    automations,
-    autoAuth,
-    automationsScheduler,
-    ...(now ? { now } : {}),
-    ...(isLinkDown ? { isLinkDown } : {}),
-    onAutomationConfirmed,
   });
   if (handled) {
     if (commandClearsPending(emsg.content)) {
@@ -2694,17 +2578,6 @@ function journalResources(batch: NormalizedMessage[]): { resources: TurnJournalR
     }
   }
   return resources.length > 0 ? { resources } : {};
-}
-
-function journalResourcesToMessage(
-  resources: TurnJournalResource[] | undefined,
-): NormalizedMessage['resources'] {
-  if (!resources?.length) return [];
-  return resources.map((item) => ({
-    type: item.type,
-    fileKey: item.fileKey,
-    sourceMessageId: item.sourceMessageId,
-  })) as NormalizedMessage['resources'];
 }
 
 function journalResourceSourceId(resource: unknown): string | undefined {

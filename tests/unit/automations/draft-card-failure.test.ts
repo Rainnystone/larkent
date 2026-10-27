@@ -14,7 +14,7 @@ import { completeDraftEnd } from '../../helpers/draft-confirmation';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
-import type { CommandContext } from '../../../src/commands';
+import type { UserActionContext } from '../../../src/commands';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { CardSchemaError } from '../../helpers/card-schema2';
@@ -301,7 +301,7 @@ async function harness() {
     autoAuth,
     now: () => NOW,
     isLinkDown: () => down,
-  } as unknown as CommandContext);
+  } as unknown as UserActionContext);
   return {
     dir,
     logsDir,
