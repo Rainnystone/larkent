@@ -112,6 +112,19 @@ describe('executor-owned run outcome', () => {
     await events.return?.();
   });
 
+  it('keeps native timeout precedence over a partial signature without a stream consumer', async () => {
+    const h = harness({ stderrSignatures: () => descriptorFor('antigravity').stderrSignatures }, {
+      terminal: { type: 'done', terminationReason: 'timeout' },
+      stderr: 'print timeout after 30s returning partial output',
+    });
+    const execution = await h.executor.submit({ scopeId: 'synthetic', policy });
+    h.settle();
+    await execution.finished;
+    expect(execution.handle.outcome).toEqual({
+      kind: 'interrupted', reason: { type: 'runner-timeout' }, retriable: true, needsHuman: false,
+    });
+  });
+
   it.each([
     { name: 'exit without terminal', terminal: null, exit: 17, signal: undefined,
       expected: { kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false } },

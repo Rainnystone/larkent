@@ -307,11 +307,13 @@ export class RunExecutor {
       input.onEvent?.(event, handle);
       if (isTerminalEvent(event)) terminalEvent = event;
     }), finish, () => {
+      const stopRequest = handle.stopRequest
+        ?? (terminalEvent ? stopRequestFromTerminal(terminalEvent) : undefined);
       const failure = cliFailureInput(rawRun.stderrSnapshot,
         terminalEvent?.type === 'error' ? terminalEvent.message : undefined,
         this.stderrSignatures?.(input.promptVariant));
       handle.outcome = deriveRunOutcome({
-        stopRequest: handle.stopRequest,
+        stopRequest,
         terminalEvent,
         ...failure,
         exit: rawRun.exit,
@@ -319,7 +321,6 @@ export class RunExecutor {
         outageOverlapped: runOverlappedOutage(this.getLink?.(), startedEpoch, startedDown),
       });
       if (terminalEvent?.type === 'error') {
-        const stopRequest = handle.stopRequest ?? stopRequestFromTerminal(terminalEvent);
         log.warn('run', 'failed', {
           ...dimensions,
           result: terminalEvent.terminationReason,
