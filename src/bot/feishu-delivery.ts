@@ -1,5 +1,5 @@
 import { replyDeliveryKey, type TurnJournalEntry, type TurnReply } from './turn-journal';
-import { classify, isGoneMessage } from './feishu-error';
+import { classify, isGoneMessage, isNotInChat, isFormatError } from './feishu-error';
 
 export const FEISHU_UUID_WINDOW_MS = 60 * 60 * 1000;
 export const FEISHU_LIST_VISIBILITY_LAG_MS = 2_000;
@@ -99,7 +99,10 @@ export async function redeliverStagedReply(input: {
         case 'link':
           throw err;
         case 'rejected':
-          if (!isGoneMessage(err)) throw err;
+          if (isNotInChat(err) || isFormatError(err)) throw err;
+          // The existing card still owns this reply. A permission or other
+          // non-format rejection must not create a second visible answer.
+          if (!isGoneMessage(err)) return { delivered: false, messageId: reply.messageId };
           break;
         case 'local':
           throw err;

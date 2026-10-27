@@ -536,4 +536,41 @@ describe('Outbox', () => {
     await pending;
     expect(h.channel.sent).toHaveLength(0);
   });
+  it.each([400, 403])(
+    'keeps a non-format rejected %s card patch staged with its receipt, then patches it on retry',
+    async (status) => {
+      const h = await fixture();
+      const update = h.channel.updateCard.bind(h.channel);
+      h.channel.updateCard = async () => {
+        throw axiosHttpError(status);
+      };
+      await h.outbox.stage({
+        kind: 'reply',
+        turnId: 'turn-1',
+        payload: {
+          markdown: 'answer',
+          replyTo: 'parent',
+          replyMode: 'card',
+          messageId: 'existing-card',
+          interactive: true,
+        },
+      });
+      await h.outbox.redeliver();
+      await h.outbox.redeliver();
+      expect(h.channel.sent).toHaveLength(0);
+      expect(h.journal.get('turn-1')?.reply).toMatchObject({
+        state: 'staged',
+        messageId: 'existing-card',
+      });
+      h.channel.updateCard = update;
+      await h.outbox.redeliver();
+      expect(h.channel.updatedCards.map((row) => row.messageId)).toEqual([
+        'existing-card',
+      ]);
+      expect(h.journal.get('turn-1')?.reply).toMatchObject({
+        state: 'sent',
+        messageId: 'existing-card',
+      });
+    },
+  );
 });

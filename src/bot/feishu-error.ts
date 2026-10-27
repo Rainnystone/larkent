@@ -181,6 +181,14 @@ export function isNotInChat(err: unknown): boolean {
   return false;
 }
 
+/** SDK-declared rendering rejection, for the existing plain-text fallback. */
+export function isFormatError(err: unknown): boolean {
+  for (const node of causeChain(err)) {
+    if (node instanceof LarkChannelError && node.code === 'format_error') return true;
+  }
+  return false;
+}
+
 function* causeChain(err: unknown): Generator<unknown> {
   const seen = new Set<unknown>();
   let current: unknown = err;
