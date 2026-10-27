@@ -80,6 +80,11 @@ Deployment hosts are separate from agent kinds. Claude Code, Codex CLI, Kimi Cod
 - **coalesce**: a second recovery signal while a scan is in-flight returns the same promise and logs `backfill.coalesced`.
 - **bridge-owned final reply**: one user turn has one authoritative post to the triggering chat, sent by the bridge. If the agent already IM-sent to that chat, the bridge skips (`outbound.skip-cli-already-sent`). An agent-task fire's result post is the same kind of authoritative post for that fire.
 
+## Card actions
+
+- **action token** (`ActionTokenCodec`, `src/card/action-token.ts`): the single signer and verifier for card actions. A purpose declares its claims schema, prefix and nonce policy. V2 tokens sign both the purpose prefix and payload; the codec owns key selection, TTL, context matching, signature verification and nonce handling. It signs with the newest active key and verifies retained previous keys, including retired keys. The profile runtime shares one codec across its four auth interfaces. Callers retain their domain claims and existing invalid-click responses; pre-deploy v1 buttons receive those same invalid responses.
+- **nonce policy**: bridge callbacks and interruption notices use `consume-on-verify`, after claims and expected context match. Automation confirmations use `deferred`: verify, then explicitly claim / release / consume after validation or successful mutation. Only one in-flight claim can win; releasing a validation failure keeps the token retryable. Used and revoked nonces persist in `CallbackNonceStore`; in-flight claims live only in the codec. Automation board actions use `none` so their signed buttons remain reusable until expiry.
+
 ## Bridge plugins
 
 - **bridge plugin**: a host-prepared package of skills, resources, scripts and existing-command requirements, consumed through the shared catalog. It is separate from the native plugins managed by each CLI.

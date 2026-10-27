@@ -344,17 +344,13 @@ async function dispatchNoticeAction(
     await sendNoticeInvalid(deps);
     return;
   }
-  const verified = deps.noticeAuth.verify(token);
+  const verified = deps.noticeAuth.verify(token, { scope, chatId: deps.evt.chatId, action: cmd });
   if (!verified.ok || verified.payload.action !== cmd) {
     log.info('cardAction', 'skip-notice-auth-failed', {
       scope,
       cmd,
       reason: verified.ok ? 'action-mismatch' : verified.reason,
     });
-    await sendNoticeInvalid(deps);
-    return;
-  }
-  if (verified.payload.scope !== scope || verified.payload.chatId !== deps.evt.chatId) {
     await sendNoticeInvalid(deps);
     return;
   }
@@ -433,7 +429,9 @@ async function dispatchAutoAction(
   if (!deps.controls.profileConfig.automations.enabled) {
     return actionToast('error', AUTO_INVALID_HINT);
   }
-  const verified = deps.autoAuth.verify(token, { consume: !isAutoEndAction(cmd) && !registered.operationId });
+  const verified = deps.autoAuth.verify(token, {
+    chatId: deps.evt.chatId, draftId: registered.draftId, action: cmd,
+  });
   if (!verified.ok || verified.payload.action !== cmd) {
     log.info('cardAction', 'skip-auto-auth-failed', {
       cmd,
@@ -441,14 +439,11 @@ async function dispatchAutoAction(
     });
     return actionToast('error', AUTO_INVALID_HINT);
   }
-  if (
-    verified.payload.chatId !== deps.evt.chatId
-    || verified.payload.draftId !== registered.draftId
-  ) {
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
   const now = (deps.now ?? Date.now)();
   if (registered.createdAt + AUTOMATIONS_DRAFT_TTL_MS <= now) {
+    return actionToast('error', AUTO_INVALID_HINT);
+  }
+  if (!isAutoEndAction(cmd) && !registered.operationId && !deps.autoAuth.consume(verified.payload.nonce)) {
     return actionToast('error', AUTO_INVALID_HINT);
   }
   if (isAutoEndAction(cmd)) {
@@ -546,7 +541,7 @@ async function dispatchBoardAction(
   if (!deps.controls.profileConfig.automations.enabled) {
     return actionToast('error', AUTO_INVALID_HINT);
   }
-  const verified = deps.boardAuth.verify(token);
+  const verified = deps.boardAuth.verify(token, { chatId: deps.evt.chatId, action: cmd });
   if (!verified.ok || verified.payload.action !== cmd) {
     return actionToast('error', AUTO_INVALID_HINT);
   }

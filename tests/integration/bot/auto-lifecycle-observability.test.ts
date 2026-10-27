@@ -374,7 +374,7 @@ function confirmCard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
 }
 
 function confirmToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.confirm token').toBeDefined();
   return match![1]!;
 }
@@ -409,25 +409,25 @@ function boardClick(
 }
 
 function rejectToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.reject","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.reject","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.reject token').toBeDefined();
   return match![1]!;
 }
 
 function pauseToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.pause","auto_token":"(auto_board\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.pause","auto_token":"(auto_board\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.pause token').toBeDefined();
   return match![1]!;
 }
 
 function resumeToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.resume","auto_token":"(auto_board\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.resume","auto_token":"(auto_board\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.resume token').toBeDefined();
   return match![1]!;
 }
 
 function deleteToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.delete","auto_token":"(auto_board\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.delete","auto_token":"(auto_board\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.delete token').toBeDefined();
   return match![1]!;
 }

@@ -1,4 +1,4 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { ActionTokenCodec, type ActionTokenInvalidReason, type ActionTokenPurpose } from '../card/action-token';
 import type { CallbackNonceStore } from '../card/callback-store';
 import { interruptionNoticeCard } from '../card/templates';
 import { log } from '../core/logger';
@@ -124,105 +124,48 @@ export interface NoticePayload {
   nonce: string;
 }
 
+type NoticeClaims = Omit<NoticeSignInput, 'ttlMs'>;
+
 export type NoticeVerifyResult =
   | { ok: true; payload: NoticePayload }
-  | {
-      ok: false;
-      reason: 'malformed' | 'bad-signature' | 'expired' | 'nonce-replay' | 'nonce-revoked';
-    };
+  | { ok: false; reason: ActionTokenInvalidReason };
 
-const PREFIX = 'notice_cb.v1';
+export const noticeActionPurpose: ActionTokenPurpose<NoticeClaims> = {
+  prefix: 'notice_cb.v2',
+  noncePolicy: 'consume-on-verify',
+  parseClaims(value) {
+    const raw = value as Partial<NoticeClaims> | null;
+    if (!raw || typeof raw.turnId !== 'string' || typeof raw.scope !== 'string'
+      || typeof raw.chatId !== 'string' || typeof raw.policyFingerprint !== 'string'
+      || (raw.action !== 'notice.continue' && raw.action !== 'notice.dismiss')) return undefined;
+    return { turnId: raw.turnId, scope: raw.scope, chatId: raw.chatId,
+      action: raw.action, policyFingerprint: raw.policyFingerprint };
+  },
+};
 
 export class NoticeActionAuth {
-  private readonly secret: string;
-  private readonly nonceStore: CallbackNonceStore;
-  private readonly now: () => number;
-  private readonly createNonce: () => string;
+  private readonly codec: ActionTokenCodec;
 
-  constructor(options: {
+  constructor(options: ActionTokenCodec | {
     secret: string;
     nonceStore: CallbackNonceStore;
     now?: () => number;
     createNonce?: () => string;
   }) {
-    this.secret = options.secret;
-    this.nonceStore = options.nonceStore;
-    this.now = options.now ?? Date.now;
-    this.createNonce = options.createNonce ?? (() => randomBytes(16).toString('base64url'));
+    this.codec = options instanceof ActionTokenCodec ? options : new ActionTokenCodec({
+      ...options, keys: [{ version: 1, secret: options.secret }],
+    });
   }
 
-  sign(input: NoticeSignInput): string {
-    const payload = {
-      t: input.turnId,
-      s: input.scope,
-      c: input.chatId,
-      a: input.action,
-      fp: input.policyFingerprint,
-      exp: this.now() + input.ttlMs,
-      n: this.createNonce(),
-    };
-    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-    return `${PREFIX}.${encoded}.${sign(encoded, this.secret)}`;
+  sign({ ttlMs, ...claims }: NoticeSignInput): string {
+    return this.codec.sign(noticeActionPurpose, claims, ttlMs);
   }
 
-  verify(token: string): NoticeVerifyResult {
-    const parts = token.split('.');
-    if (parts.length !== 4 || `${parts[0]}.${parts[1]}` !== PREFIX) {
-      return { ok: false, reason: 'malformed' };
-    }
-    const encoded = parts[2];
-    const signature = parts[3];
-    if (!encoded || !signature) return { ok: false, reason: 'malformed' };
-    if (!signatureMatches(signature, sign(encoded, this.secret))) {
-      return { ok: false, reason: 'bad-signature' };
-    }
-    const payload = decodePayload(encoded);
-    if (!payload) return { ok: false, reason: 'malformed' };
-    if (payload.exp <= this.now()) return { ok: false, reason: 'expired' };
-    const nonceState = this.nonceStore.state(payload.nonce);
-    if (nonceState === 'revoked') return { ok: false, reason: 'nonce-revoked' };
-    if (nonceState === 'used') return { ok: false, reason: 'nonce-replay' };
-    if (!this.nonceStore.consume(payload.nonce)) return { ok: false, reason: 'nonce-replay' };
-    return { ok: true, payload };
+  verify(token: string, context: Partial<NoticeClaims> = {}): NoticeVerifyResult {
+    const result = this.codec.verify(token, noticeActionPurpose, context);
+    if (!result.ok) return result;
+    return { ok: true, payload: { ...result.claims, exp: result.exp, nonce: result.nonce! } };
   }
-}
-
-function decodePayload(encoded: string): NoticePayload | undefined {
-  try {
-    const raw = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Record<string, unknown>;
-    if (
-      typeof raw.t !== 'string'
-      || typeof raw.s !== 'string'
-      || typeof raw.c !== 'string'
-      || (raw.a !== 'notice.continue' && raw.a !== 'notice.dismiss')
-      || typeof raw.fp !== 'string'
-      || typeof raw.exp !== 'number'
-      || typeof raw.n !== 'string'
-    ) {
-      return undefined;
-    }
-    return {
-      turnId: raw.t,
-      scope: raw.s,
-      chatId: raw.c,
-      action: raw.a,
-      policyFingerprint: raw.fp,
-      exp: raw.exp,
-      nonce: raw.n,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function sign(payload: string, secret: string): string {
-  return createHmac('sha256', secret).update(payload).digest('base64url');
-}
-
-function signatureMatches(actual: string, expected: string): boolean {
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
 export type NoticeSender = (
