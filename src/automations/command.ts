@@ -201,7 +201,7 @@ async function mutateAuto(
     await replyAuto(ctx, AUTO_UNKNOWN_ID);
     return;
   }
-  const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: ctx.msg.chatId, now: ctx.now }, op, id);
+  const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: ctx.msg.chatId, now: ctx.now }, { actor: 'human', operation: op, id });
   if (result.ok) log.info('auto', { pause: 'paused', resume: 'resumed', delete: 'deleted' }[op], { id });
   await replyAuto(ctx, result.ok ? `已${taskMutationLabels[op]} #${id} ${result.item.name}` : AUTO_UNKNOWN_ID);
 }

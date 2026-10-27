@@ -72,7 +72,7 @@ export async function manageAutomationOperation(operation: string, params: Recor
       return getAutomationOperation(operationId, context);
     }
     const result = await mutateAutomationTask({ store: context.store!, scheduler, chatId: context.chatId, now: context.now },
-      operation === 'automation.resume' ? 'resume' : 'pause', item.id, { chatId: context.chatId, revision: automationTargetRevision(item), operation: registration });
+      { actor: 'model', operation: operation === 'automation.resume' ? 'resume' : 'pause', id: item.id, revision: automationTargetRevision(item), createdBy: context.actorId, registration, drafts: context.drafts! });
     if (!result.ok) return fail(result.code);
     return getAutomationOperation(operationId, context);
   } catch { return unknownAutomationOperation(operationId, 'persistence-or-delivery-unknown'); }
