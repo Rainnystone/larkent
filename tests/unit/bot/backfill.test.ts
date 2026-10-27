@@ -1475,12 +1475,62 @@ describe('runBackfill delay line', () => {
     );
   });
 
+  it('retries the delay line on the next message after a failed post and records which messages it announced', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: {
+        [CHAT_A]: [
+          mentionItem('om_a1', CHAT_A, 'first', NOW - 30_000),
+          mentionItem('om_a2', CHAT_A, 'second', NOW - 20_000),
+          mentionItem('om_a3', CHAT_A, 'third', NOW - 10_000),
+        ],
+      },
+    });
+    const marks: RunBackfillDeps['marks'] = new Map();
+    const attempts: string[] = [];
+    await runBackfill(await deps({
+      ...h,
+      marks,
+      postDelayLine: async (target) => {
+        attempts.push(target.messageId);
+        if (target.messageId === 'om_a1') throw new Error('send failed');
+      },
+    }));
+    expect(attempts).toEqual(['om_a1', 'om_a2']);
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a1', 'om_a2', 'om_a3']);
+    expect([...marks].map(([id, mark]) => [id, mark.delayAnnounced])).toEqual([
+      ['om_a1', false],
+      ['om_a2', true],
+      ['om_a3', true],
+    ]);
+  });
+
+  it('retries the delay line on a re-scan when the earlier scan failed to post it', async () => {
+    const h = await harness({
+      chats: [{ id: CHAT_A, name: 'A' }],
+      messages: { [CHAT_A]: [mentionItem('om_a1', CHAT_A, 'first', NOW - 10_000)] },
+    });
+    const marks: RunBackfillDeps['marks'] = new Map();
+    const attempts: string[] = [];
+    let fail = true;
+    const postDelayLine = async (target: NormalizedMessage) => {
+      attempts.push(target.messageId);
+      if (fail) throw new Error('send failed');
+    };
+    await runBackfill(await deps({ ...h, marks, postDelayLine }));
+    h.ledger.unrecord('om_a1');
+    fail = false;
+    await runBackfill(await deps({ ...h, marks, postDelayLine }));
+    expect(attempts).toEqual(['om_a1', 'om_a1']);
+    expect(marks.get('om_a1')?.delayAnnounced).toBe(true);
+  });
+
   it('posts no second delay line when a re-scan finds only messages an earlier scan already enqueued', async () => {
     const h = await harness({
       chats: [{ id: CHAT_A, name: 'A' }],
       messages: { [CHAT_A]: [mentionItem('om_a1', CHAT_A, 'first', NOW - 10_000)] },
     });
-    const marks = new Map<string, { detectedAt: number }>();
+    const marks: RunBackfillDeps['marks'] = new Map();
     const posted: string[] = [];
     const postDelayLine = async (target: NormalizedMessage) => {
       posted.push(target.messageId);
@@ -1684,6 +1734,7 @@ describe('formatBackfillLatenessHint', () => {
       createTimeMs,
       nowMs: createTimeMs + 12 * 60_000,
       timeZone: PROFILE_TZ,
+      delayAnnounced: true,
     })).toBe(
       '以下用户消息发于 06:07（约 12 分钟前），bot 离线期间未处理；消息中的相对时间按发送时刻理解。' +
         'bridge 已自行告知延迟，直接回答用户请求。',
@@ -1696,9 +1747,23 @@ describe('formatBackfillLatenessHint', () => {
       createTimeMs,
       nowMs: createTimeMs + 30 * 60_000,
       timeZone: PROFILE_TZ,
+      delayAnnounced: true,
     })).toBe(
       '以下用户消息发于 2026-09-10 23:50（约 30 分钟前），bot 离线期间未处理；消息中的相对时间按发送时刻理解。' +
         'bridge 已自行告知延迟，直接回答用户请求。',
+    );
+  });
+
+  it('asks the model to acknowledge the late reply itself when the bridge could not announce the delay', () => {
+    const createTimeMs = Date.UTC(2026, 8, 11, 4, 7, 0);
+    expect(formatBackfillLatenessHint({
+      createTimeMs,
+      nowMs: createTimeMs + 12 * 60_000,
+      timeZone: PROFILE_TZ,
+      delayAnnounced: false,
+    })).toBe(
+      '以下用户消息发于 06:07（约 12 分钟前），bot 离线期间未处理；消息中的相对时间按发送时刻理解。' +
+        '回复开头先用一句话简短说明这是 bot 离线期间收到、较晚补上的回复，再回答用户请求。',
     );
   });
 });
@@ -1792,7 +1857,7 @@ async function deps(input: Awaited<ReturnType<typeof harness>> & {
     listMessagesHold: input.listMessagesHold,
     onListMessages: input.onListMessages,
   });
-  const marks = input.marks ?? new Map<string, { detectedAt: number }>();
+  const marks: RunBackfillDeps['marks'] = input.marks ?? new Map();
   const now = input.now ?? (() => NOW);
   const since = input.since ?? input.ledger.getLiveAt() ?? now();
   const fromMs = input.fromMs ?? resolveBackfillWindow({

@@ -75,7 +75,8 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
     expect(h.agent.runOptions).toHaveLength(1);
     expect(h.agent.runOptions[0]!.prompt).toContain('hello during rest outage');
     expect(answerSends(h.channel)).toHaveLength(1);
-    expect(delayLines(h.channel)).toHaveLength(1);
+    expect(delayLines(h.channel)).toHaveLength(0);
+    expect(h.agent.runOptions[0]!.prompt).toContain('回复开头先用一句话简短说明');
     expect(h.ledger.has('om_first')).toBe(true);
   });
 

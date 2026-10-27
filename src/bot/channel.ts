@@ -93,7 +93,13 @@ import {
   toPolicyAttachment,
   toPromptAttachment,
 } from '../media/attachment';
-import { canUseDm, canUseGroup, evaluateAccess, requireMentionForChat } from '../policy/access';
+import {
+  canUseDm,
+  canUseGroup,
+  evaluateAccess,
+  requireMentionForChat,
+  type AccessDecision,
+} from '../policy/access';
 import { MeetingManager } from '../meeting/manager';
 import type { VcRequestClient } from '../meeting/api';
 import { attachMeetingAgent, summarizeEndedMeeting } from '../meeting/orchestrator';
@@ -667,6 +673,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ...(sessionCatalog?.entries().map((entry) => entry.scopeId) ?? []),
       ],
       intake: (msg) => handOffIntake(msg, 'backfill'),
+      canRespond: (msg) => messageAccessDecision(controls, msg).ok,
+      resolveThreadId: async (msg) => (await resolveMessageThread(channel, chatModeCache, msg)).threadId,
       postDelayLine: async (target, text) => {
         await channel.send(target.chatId, { text }, {
           replyTo: target.messageId,
@@ -1434,25 +1442,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
   // downstream consumer keys off these.
-  const resolvedMode = await chatModeCache.resolve(channel, msg.chatId);
-  // Feishu delivers a sizable fraction of topic-group message events without a
-  // `thread_id` (notably the message that opens a new topic). We route topic
-  // replies (`replyInThread`) and isolate per-topic session scope off it, so a
-  // missing one makes the reply escape into a brand-new topic AND collapses the
-  // scope to the chat level. When getChatMode says this is a topic group but
-  // the event dropped `thread_id`, backfill it from the raw message — the same
-  // recovery the card-click path uses.
-  let threadId = msg.threadId;
-  if (!threadId && resolvedMode === 'topic') {
-    threadId = await lookupMessageThreadId(channel, msg.messageId);
-    if (threadId) {
-      log.info('intake', 'thread-id-backfilled', {
-        chatId: msg.chatId,
-        msgId: msg.messageId,
-        threadId,
-      });
-    }
-  }
+  const { resolvedMode, threadId } = await resolveMessageThread(channel, chatModeCache, msg);
   // Carry the (possibly backfilled) threadId on the message so the batched
   // flush — which reads `firstMsg.threadId` for reply routing and topic scope —
   // sees it.
@@ -1485,10 +1475,7 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
     resources: msg.resources.length,
   });
 
-  const accessDecision =
-    msg.chatType === 'p2p'
-      ? canUseDm(controls.profileConfig, controls, msg.senderId, msg.chatId)
-      : canUseGroup(controls.profileConfig, controls, msg.chatId, msg.senderId);
+  const accessDecision = messageAccessDecision(controls, msg);
   if (!accessDecision.ok) {
     log.info('intake', 'skip-not-allowed-user', {
       scope,
@@ -1598,6 +1585,39 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
   const size = pending.push(scope, emsg);
   log.info('intake', 'queued', { scope, queueSize: size, debounceMs: DEBOUNCE_MS });
   recordAccepted(ledger, emsg);
+}
+
+async function resolveMessageThread(
+  channel: LarkChannel,
+  chatModeCache: ChatModeCache,
+  msg: NormalizedMessage,
+): Promise<{ resolvedMode: ChatMode; threadId: string | undefined }> {
+  const resolvedMode = await chatModeCache.resolve(channel, msg.chatId);
+  // Feishu delivers a sizable fraction of topic-group message events without a
+  // `thread_id` (notably the message that opens a new topic). We route topic
+  // replies (`replyInThread`) and isolate per-topic session scope off it, so a
+  // missing one makes the reply escape into a brand-new topic AND collapses the
+  // scope to the chat level. When getChatMode says this is a topic group but
+  // the event dropped `thread_id`, backfill it from the raw message — the same
+  // recovery the card-click path uses.
+  let threadId = msg.threadId;
+  if (!threadId && resolvedMode === 'topic') {
+    threadId = await lookupMessageThreadId(channel, msg.messageId);
+    if (threadId) {
+      log.info('intake', 'thread-id-backfilled', {
+        chatId: msg.chatId,
+        msgId: msg.messageId,
+        threadId,
+      });
+    }
+  }
+  return { resolvedMode, threadId };
+}
+
+function messageAccessDecision(controls: Controls, msg: NormalizedMessage): AccessDecision {
+  return msg.chatType === 'p2p'
+    ? canUseDm(controls.profileConfig, controls, msg.senderId, msg.chatId)
+    : canUseGroup(controls.profileConfig, controls, msg.chatId, msg.senderId);
 }
 
 function recordAccepted(ledger: BackfillLedger | undefined, msg: NormalizedMessage): void {
@@ -1777,10 +1797,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   // skip the fetch, because resume will not reuse that handle.
   const agentKind = controls.profileConfig.agentKind;
   const capability = capabilityForProfile(controls.profileConfig);
-  const accessDecision =
-    firstMsg.chatType === 'p2p'
-      ? canUseDm(controls.profileConfig, controls, firstMsg.senderId, firstMsg.chatId)
-      : canUseGroup(controls.profileConfig, controls, firstMsg.chatId, firstMsg.senderId);
+  const accessDecision = messageAccessDecision(controls, firstMsg);
   let topicContext: QuotedContext[] = [];
   const topicResumeIdentity = mode === 'topic' && threadId
     ? await commandSessionCatalogIdentity({
@@ -1855,7 +1872,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
     );
   }
-  const backfilled = consumeBackfillMarks(batch, backfillMarks);
+  const { marked: backfilled, delayAnnounced } = consumeBackfillMarks(batch, backfillMarks);
   if (backfilled.length > 0) {
     const oldest = backfilled.reduce((current, msg) => (
       msg.createTime < current.createTime ? msg : current
@@ -1864,6 +1881,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       createTimeMs: oldest.createTime,
       nowMs: (now ?? Date.now)(),
       timeZone: controls.profileConfig.automations.timezone,
+      delayAnnounced,
     }));
   }
 
@@ -3516,14 +3534,17 @@ function delay(ms: number): Promise<void> {
 function consumeBackfillMarks(
   batch: NormalizedMessage[],
   marks: Map<string, BackfillMark>,
-): NormalizedMessage[] {
+): { marked: NormalizedMessage[]; delayAnnounced: boolean } {
   const marked: NormalizedMessage[] = [];
+  let delayAnnounced = false;
   for (const msg of batch) {
-    if (!marks.has(msg.messageId)) continue;
+    const mark = marks.get(msg.messageId);
+    if (!mark) continue;
     marks.delete(msg.messageId);
     marked.push(msg);
+    delayAnnounced ||= mark.delayAnnounced;
   }
-  return marked;
+  return { marked, delayAnnounced };
 }
 
 function buildPrompt(
