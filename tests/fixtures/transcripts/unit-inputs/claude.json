@@ -1,0 +1,345 @@
+[
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > translates system init metadata / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "sess-1",
+            "cwd": "/repo",
+            "model": "sonnet"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > translates system init metadata / 2",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "system",
+            "subtype": "init",
+            "session_id": "sess-1"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > translates assistant text, thinking, and tool_use blocks in order / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "assistant",
+            "message": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "hello"
+                },
+                {
+                  "type": "thinking",
+                  "thinking": "checking"
+                },
+                {
+                  "type": "tool_use",
+                  "id": "tool-1",
+                  "name": "Bash",
+                  "input": {
+                    "command": "pwd"
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > translates user tool_result blocks including structured output and errors / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "user",
+            "message": {
+              "content": [
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "tool-1",
+                  "content": "ok"
+                },
+                {
+                  "type": "tool_result",
+                  "tool_use_id": "tool-2",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "bad"
+                    }
+                  ],
+                  "is_error": true
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > translates result usage before done / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "result",
+            "session_id": "sess-2",
+            "usage": {
+              "input_tokens": 12,
+              "output_tokens": 34,
+              "cache_read_input_tokens": 5
+            },
+            "total_cost_usd": 0.1234
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > translates result usage before done / 2",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "result",
+            "session_id": "sess-2"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > reports a failed result instead of normal completion ('error_max_budget_usd' / true) / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "result",
+            "subtype": "error_max_budget_usd",
+            "is_error": true,
+            "session_id": "failed-session",
+            "errors": [
+              "Reached maximum budget ($0.000001)"
+            ],
+            "usage": {
+              "input_tokens": 12,
+              "output_tokens": 3
+            },
+            "total_cost_usd": 0.01
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > reports a failed result instead of normal completion ('error_during_execution' / false) / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": false,
+            "session_id": "failed-session",
+            "errors": [
+              "Reached maximum budget ($0.000001)"
+            ],
+            "usage": {
+              "input_tokens": 12,
+              "output_tokens": 3
+            },
+            "total_cost_usd": 0.01
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > reports a failed result instead of normal completion ('success' / true) / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "result",
+            "subtype": "success",
+            "is_error": true,
+            "session_id": "failed-session",
+            "errors": [
+              "Reached maximum budget ($0.000001)"
+            ],
+            "usage": {
+              "input_tokens": 12,
+              "output_tokens": 3
+            },
+            "total_cost_usd": 0.01
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > uses the error subtype when Claude supplies no error detail / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "result",
+            "subtype": "error_max_turns",
+            "is_error": true
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > ignores unknown, empty, and incomplete raw events / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          null
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > ignores unknown, empty, and incomplete raw events / 2",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "assistant",
+            "message": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": ""
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > ignores unknown, empty, and incomplete raw events / 3",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "assistant",
+            "message": {
+              "content": [
+                {
+                  "type": "tool_use",
+                  "id": "t"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json translator > ignores unknown, empty, and incomplete raw events / 4",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "system",
+            "subtype": "other"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "claude",
+    "name": "Claude stream-json reader behavior > skips non-JSON stdout lines and reports non-zero stderr detail without redacting visible paths / 1",
+    "source": "tests/unit/agent/claude-stream-json.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "assistant",
+            "message": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "kept"
+                }
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "claude exited with code 7: fatal stderr at <HOME>/work/repo/file.ts"
+        ]
+      }
+    ]
+  }
+]

@@ -1,0 +1,4915 @@
+[
+  {
+    "kind": "grok",
+    "name": "Grok tool cards drop the Node NO_COLOR warning > keeps RED and drops the warning and escape bytes / 1",
+    "source": "tests/unit/agent/grok-color-warning.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_color",
+            "toolName": "run_terminal_command",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "node /tmp/probe.mjs"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_color",
+            "status": "completed",
+            "rawOutput": {
+              "output": [
+                27,
+                91,
+                51,
+                49,
+                109,
+                82,
+                69,
+                68,
+                27,
+                91,
+                51,
+                57,
+                109,
+                10,
+                27,
+                91,
+                51,
+                51,
+                109,
+                89,
+                69,
+                76,
+                76,
+                79,
+                87,
+                69,
+                82,
+                82,
+                27,
+                91,
+                51,
+                57,
+                109,
+                10,
+                40,
+                110,
+                111,
+                100,
+                101,
+                58,
+                49,
+                50,
+                51,
+                52,
+                53,
+                41,
+                32,
+                87,
+                97,
+                114,
+                110,
+                105,
+                110,
+                103,
+                58,
+                32,
+                84,
+                104,
+                101,
+                32,
+                39,
+                78,
+                79,
+                95,
+                67,
+                79,
+                76,
+                79,
+                82,
+                39,
+                32,
+                101,
+                110,
+                118,
+                32,
+                105,
+                115,
+                32,
+                105,
+                103,
+                110,
+                111,
+                114,
+                101,
+                100,
+                32,
+                100,
+                117,
+                101,
+                32,
+                116,
+                111,
+                32,
+                116,
+                104,
+                101,
+                32,
+                39,
+                70,
+                79,
+                82,
+                67,
+                69,
+                95,
+                67,
+                79,
+                76,
+                79,
+                82,
+                39,
+                32,
+                101,
+                110,
+                118,
+                32,
+                98,
+                101,
+                105,
+                110,
+                103,
+                32,
+                115,
+                101,
+                116,
+                46,
+                10,
+                40,
+                85,
+                115,
+                101,
+                32,
+                96,
+                110,
+                111,
+                100,
+                101,
+                32,
+                45,
+                45,
+                116,
+                114,
+                97,
+                99,
+                101,
+                45,
+                119,
+                97,
+                114,
+                110,
+                105,
+                110,
+                103,
+                115,
+                32,
+                46,
+                46,
+                46,
+                96,
+                32,
+                116,
+                111,
+                32,
+                115,
+                104,
+                111,
+                119,
+                32,
+                119,
+                104,
+                101,
+                114,
+                101,
+                32,
+                116,
+                104,
+                101,
+                32,
+                119,
+                97,
+                114,
+                110,
+                105,
+                110,
+                103,
+                32,
+                119,
+                97,
+                115,
+                32,
+                99,
+                114,
+                101,
+                97,
+                116,
+                101,
+                100,
+                41,
+                10
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "Grok held-back answers and the idle watchdog > delivers one final_text when text chunks outlast the idle timeout / 1",
+    "source": "tests/unit/agent/grok-idle-liveness.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Held "
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "back "
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "answer "
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "stays "
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "whole."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "stopReason": "end_turn",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > maps a plain text run to system + final_text + done / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "OK"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "stopReason": "end_turn",
+            "sessionId": "<ID_1>",
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 4,
+              "cache_read_input_tokens": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > drops a final answer that is only a model control token / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": " <|eos|>\n"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > drops a final answer that is only a model control token / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "<|end"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "_of_turn|>  "
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "stopReason": "end_turn",
+            "sessionId": "<ID_1>",
+            "usage": {
+              "input_tokens": 10,
+              "output_tokens": 4,
+              "cache_read_input_tokens": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > drops a final answer that is only a model control token / 3",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "see <|eos|> in the answer"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > does not prefix a failed finish with a control-token-only buffer / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "<|eos|>"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": []
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > concatenates incremental text chunks into one final_text / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Hel"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "lo"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > emits one bare system event per non-empty text chunk and none for an empty chunk / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Hel"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "lo"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "text": "!"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": ""
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > flushes buffered text before an error and before fail / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "partial"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "message": "boom"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > flushes buffered text before an error and before fail / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "partial"
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "connection lost"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > emits pre-tool text as progress before the tool and keeps it out of the answer / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Let me check."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "read_file",
+            "status": "in_progress",
+            "rawInput": {
+              "path": "a.ts"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Done."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > shows every pre-tool segment as progress and answers with the text after the last tool / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "First "
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "look."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "read_file",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": "a"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Second look."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_2",
+            "toolName": "read_file",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_2",
+            "status": "completed",
+            "rawOutput": "b"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "The answer."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > answers with the last non-empty pre-tool segment when no text follows the last tool / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Checking the schedule."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "read_file",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": "a"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_2",
+            "toolName": "read_file",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_2",
+            "status": "completed",
+            "rawOutput": "b"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "  \n"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > shows pre-tool commentary as progress and maps thoughts to thinking / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thought",
+            "data": "looking"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Let me check."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "read_file",
+            "status": "in_progress",
+            "rawInput": {
+              "path": "a.ts"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "lines": 3
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "Done."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > keeps completed non-shell exitCode output successful / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "plugin",
+            "toolName": "mcp_process_report",
+            "status": "in_progress",
+            "rawInput": {}
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "plugin",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > keeps completed non-shell exit_code output successful / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "plugin",
+            "toolName": "mcp_process_report",
+            "status": "in_progress",
+            "rawInput": {}
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "plugin",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Bash results / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Bash",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Bash results / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Bash",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Bash results / 3",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Bash",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Bash results / 4",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Bash",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Shell results / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Shell",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Shell results / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Shell",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Shell results / 3",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Shell",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for Shell results / 4",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Shell",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for command_execution results / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "command_execution",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for command_execution results / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "command_execution",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for command_execution results / 3",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "command_execution",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for command_execution results / 4",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "command_execution",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for run_terminal_cmd results / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "run_terminal_cmd",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for run_terminal_cmd results / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "run_terminal_cmd",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for run_terminal_cmd results / 3",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "run_terminal_cmd",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses native exit status for run_terminal_cmd results / 4",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "run_terminal_cmd",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses Bash status when the initial call is already completed / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "inline",
+            "toolName": "Bash",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > uses mcp_process_report status when the initial call is already completed / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "inline",
+            "toolName": "mcp_process_report",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > keeps interleaved shell and plugin result status tied to each call / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "shell",
+            "toolName": "Bash",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "plugin",
+            "toolName": "mcp_process_report",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "shell",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "plugin",
+            "status": "completed",
+            "rawOutput": {
+              "exitCode": 2
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > preserves non-shell lifecycle failed with a zero exit field / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "plugin",
+            "toolName": "mcp_process_report",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "plugin",
+            "status": "failed",
+            "rawOutput": {
+              "exitCode": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > preserves non-shell lifecycle error with a zero exit field / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "plugin",
+            "toolName": "mcp_process_report",
+            "status": "in_progress"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "plugin",
+            "status": "error",
+            "rawOutput": {
+              "exitCode": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > does not finish a shell call on a statusless metadata update (P09s) / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call-test-1",
+            "title": "run_terminal_command",
+            "rawInput": {
+              "command": "ls /nonexistent-p09-retest-path",
+              "description": "List nonexistent path as specified"
+            },
+            "_meta": {
+              "x.ai/tool": {
+                "version": 1,
+                "name": "run_terminal_command",
+                "kind": "execute",
+                "namespace": "grok_build",
+                "label": "Run Command",
+                "read_only": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-1",
+            "kind": "execute",
+            "title": "Execute `ls /nonexistent-p09-retest-path`",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "List nonexistent path as specified"
+                }
+              }
+            ],
+            "locations": [],
+            "rawInput": {
+              "variant": "Bash",
+              "command": "ls /nonexistent-p09-retest-path",
+              "description": "List nonexistent path as specified",
+              "is_background": false
+            },
+            "_meta": {
+              "x.ai/tool": {
+                "version": 1,
+                "name": "run_terminal_command",
+                "kind": "execute",
+                "namespace": "grok_build",
+                "label": "Run Command",
+                "read_only": false,
+                "input": {
+                  "command": "ls /nonexistent-p09-retest-path",
+                  "description": "List nonexistent path as specified"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-1",
+            "status": "completed",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n"
+                }
+              }
+            ],
+            "rawOutput": {
+              "type": "Bash",
+              "output": [
+                108,
+                115,
+                58,
+                32,
+                99,
+                97,
+                110,
+                110,
+                111,
+                116,
+                32,
+                97,
+                99,
+                99,
+                101,
+                115,
+                115,
+                32,
+                39,
+                47,
+                110,
+                111,
+                110,
+                101,
+                120,
+                105,
+                115,
+                116,
+                101,
+                110,
+                116,
+                45,
+                112,
+                48,
+                57,
+                45,
+                114,
+                101,
+                116,
+                101,
+                115,
+                116,
+                45,
+                112,
+                97,
+                116,
+                104,
+                39,
+                58,
+                32,
+                78,
+                111,
+                32,
+                115,
+                117,
+                99,
+                104,
+                32,
+                102,
+                105,
+                108,
+                101,
+                32,
+                111,
+                114,
+                32,
+                100,
+                105,
+                114,
+                101,
+                99,
+                116,
+                111,
+                114,
+                121,
+                10
+              ],
+              "exit_code": 2,
+              "command": "ls /nonexistent-p09-retest-path",
+              "truncated": false,
+              "signal": null,
+              "timed_out": false,
+              "description": "List nonexistent path as specified"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > still accepts a statusless update that is the only carrier of rawOutput / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call-test-1",
+            "title": "run_terminal_command",
+            "rawInput": {
+              "command": "ls /nonexistent-p09-retest-path",
+              "description": "List nonexistent path as specified"
+            },
+            "_meta": {
+              "x.ai/tool": {
+                "version": 1,
+                "name": "run_terminal_command",
+                "kind": "execute",
+                "namespace": "grok_build",
+                "label": "Run Command",
+                "read_only": false
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-1",
+            "kind": "execute",
+            "title": "Execute `ls /nonexistent-p09-retest-path`",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "List nonexistent path as specified"
+                }
+              }
+            ],
+            "locations": [],
+            "rawInput": {
+              "variant": "Bash",
+              "command": "ls /nonexistent-p09-retest-path",
+              "description": "List nonexistent path as specified",
+              "is_background": false
+            },
+            "_meta": {
+              "x.ai/tool": {
+                "version": 1,
+                "name": "run_terminal_command",
+                "kind": "execute",
+                "namespace": "grok_build",
+                "label": "Run Command",
+                "read_only": false,
+                "input": {
+                  "command": "ls /nonexistent-p09-retest-path",
+                  "description": "List nonexistent path as specified"
+                }
+              }
+            },
+            "rawOutput": {
+              "type": "Bash",
+              "output": [
+                108,
+                115,
+                58,
+                32,
+                99,
+                97,
+                110,
+                110,
+                111,
+                116,
+                32,
+                97,
+                99,
+                99,
+                101,
+                115,
+                115,
+                32,
+                39,
+                47,
+                110,
+                111,
+                110,
+                101,
+                120,
+                105,
+                115,
+                116,
+                101,
+                110,
+                116,
+                45,
+                112,
+                48,
+                57,
+                45,
+                114,
+                101,
+                116,
+                101,
+                115,
+                116,
+                45,
+                112,
+                97,
+                116,
+                104,
+                39,
+                58,
+                32,
+                78,
+                111,
+                32,
+                115,
+                117,
+                99,
+                104,
+                32,
+                102,
+                105,
+                108,
+                101,
+                32,
+                111,
+                114,
+                32,
+                100,
+                105,
+                114,
+                101,
+                99,
+                116,
+                111,
+                114,
+                121,
+                10
+              ],
+              "exit_code": 2,
+              "command": "ls /nonexistent-p09-retest-path"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > adopts a shell tool name carried by the statusless metadata update / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call-test-1",
+            "title": "Run Command",
+            "rawInput": {
+              "command": "ls /nonexistent-p09-retest-path"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-1",
+            "kind": "execute",
+            "title": "Execute `ls /nonexistent-p09-retest-path`",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "List nonexistent path as specified"
+                }
+              }
+            ],
+            "locations": [],
+            "rawInput": {
+              "variant": "Bash",
+              "command": "ls /nonexistent-p09-retest-path",
+              "description": "List nonexistent path as specified",
+              "is_background": false
+            },
+            "_meta": {
+              "x.ai/tool": {
+                "version": 1,
+                "name": "run_terminal_command",
+                "kind": "execute",
+                "namespace": "grok_build",
+                "label": "Run Command",
+                "read_only": false,
+                "input": {
+                  "command": "ls /nonexistent-p09-retest-path",
+                  "description": "List nonexistent path as specified"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-1",
+            "status": "completed",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory\n"
+                }
+              }
+            ],
+            "rawOutput": {
+              "type": "Bash",
+              "output": [
+                108,
+                115,
+                58,
+                32,
+                99,
+                97,
+                110,
+                110,
+                111,
+                116,
+                32,
+                97,
+                99,
+                99,
+                101,
+                115,
+                115,
+                32,
+                39,
+                47,
+                110,
+                111,
+                110,
+                101,
+                120,
+                105,
+                115,
+                116,
+                101,
+                110,
+                116,
+                45,
+                112,
+                48,
+                57,
+                45,
+                114,
+                101,
+                116,
+                101,
+                115,
+                116,
+                45,
+                112,
+                97,
+                116,
+                104,
+                39,
+                58,
+                32,
+                78,
+                111,
+                32,
+                115,
+                117,
+                99,
+                104,
+                32,
+                102,
+                105,
+                108,
+                101,
+                32,
+                111,
+                114,
+                32,
+                100,
+                105,
+                114,
+                101,
+                99,
+                116,
+                111,
+                114,
+                121,
+                10
+              ],
+              "exit_code": 2,
+              "command": "ls /nonexistent-p09-retest-path",
+              "truncated": false,
+              "signal": null,
+              "timed_out": false,
+              "description": "List nonexistent path as specified"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > keeps a non-shell grep exit_code of 1 successful / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call-test-grep",
+            "title": "grep",
+            "rawInput": {
+              "pattern": "exit_code"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-grep",
+            "kind": "search",
+            "title": "grep"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-grep",
+            "status": "completed",
+            "rawOutput": {
+              "exit_code": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > treats a failed tool_call_update as isError / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "run_terminal_cmd",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "false"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "failed",
+            "rawOutput": {
+              "error": "exit 1"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > maps an error line to a terminal error event / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "message": "auth failed"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > ignores unknown event types without throwing / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "plan",
+            "entries": []
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "available_commands"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "not-a-real-event"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > finish(failed) surfaces an error when the stream had no end line / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "finish",
+        "args": []
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > decodes a Bash wrapper whose output is utf-8 bytes of 中文+JSON / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "type": "Bash",
+              "output": [
+                228,
+                184,
+                173,
+                230,
+                150,
+                135,
+                123,
+                34,
+                111,
+                107,
+                34,
+                58,
+                116,
+                114,
+                117,
+                101,
+                125
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > decodes a Bash wrapper whose output is utf-8 bytes of 中文+JSON / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "content": [
+                228,
+                184,
+                173,
+                230,
+                150,
+                135,
+                123,
+                34,
+                111,
+                107,
+                34,
+                58,
+                116,
+                114,
+                117,
+                101,
+                125
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > decodes a utf-8 byte number array tool payload / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": [
+              228,
+              184,
+              173,
+              230,
+              150,
+              135,
+              123,
+              34,
+              111,
+              107,
+              34,
+              58,
+              116,
+              114,
+              117,
+              101,
+              125
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > decodes a Uint8Array tool payload as utf-8 text / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "0": 228,
+              "1": 184,
+              "2": 173,
+              "3": 230,
+              "4": 150,
+              "5": 135,
+              "6": 123,
+              "7": 34,
+              "8": 111,
+              "9": 107,
+              "10": 34,
+              "11": 58,
+              "12": 116,
+              "13": 114,
+              "14": 117,
+              "15": 101,
+              "16": 125
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > decodes a Buffer tool payload as utf-8 text / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "type": "Buffer",
+              "data": [
+                228,
+                184,
+                173,
+                230,
+                150,
+                135,
+                123,
+                34,
+                111,
+                107,
+                34,
+                58,
+                116,
+                114,
+                117,
+                101,
+                125
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > leaves string tool output unchanged / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": "中文{\"ok\":true}"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > strips ANSI from Grok 1.0.41 colored byte output (P09t) / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call-test-ansi",
+            "title": "run_terminal_command",
+            "rawInput": {
+              "command": "node -e \"console.log(1792652400000)\"",
+              "description": "Convert task timestamps to Shanghai time"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-ansi",
+            "kind": "execute",
+            "title": "Execute `node -e \"console.log(1792652400000)\"`",
+            "rawInput": {
+              "variant": "Bash",
+              "command": "node -e \"console.log(1792652400000)\"",
+              "is_background": false
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call-test-ansi",
+            "status": "completed",
+            "rawOutput": {
+              "type": "Bash",
+              "output": [
+                27,
+                91,
+                51,
+                51,
+                109,
+                49,
+                55,
+                57,
+                50,
+                54,
+                53,
+                50,
+                52,
+                48,
+                48,
+                48,
+                48,
+                48,
+                27,
+                91,
+                51,
+                57,
+                109,
+                32,
+                50,
+                48,
+                50,
+                54,
+                45,
+                49,
+                48,
+                45,
+                50,
+                50,
+                32,
+                49,
+                53,
+                58,
+                48,
+                48,
+                58,
+                48,
+                48,
+                10,
+                27,
+                91,
+                51,
+                51,
+                109,
+                49,
+                55,
+                57,
+                50,
+                53,
+                57,
+                56,
+                52,
+                48,
+                48,
+                48,
+                48,
+                48,
+                27,
+                91,
+                51,
+                57,
+                109,
+                32,
+                50,
+                48,
+                50,
+                54,
+                45,
+                49,
+                48,
+                45,
+                50,
+                50,
+                32,
+                48,
+                48,
+                58,
+                48,
+                48,
+                58,
+                48,
+                48,
+                10
+              ],
+              "exit_code": 0
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > strips ANSI from Grok 1.0.41 colored byte output (P09t) / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": "\u001b[33m1792652400000\u001b[39m 2026-10-22 15:00:00\n\u001b[33m1792598400000\u001b[39m 2026-10-22 00:00:00\n"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > strips ANSI from Grok 1.0.41 colored byte output (P09t) / 3",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": [
+              27,
+              91,
+              51,
+              51,
+              109,
+              49,
+              55,
+              57,
+              50,
+              54,
+              53,
+              50,
+              52,
+              48,
+              48,
+              48,
+              48,
+              48,
+              27,
+              91,
+              51,
+              57,
+              109,
+              32,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              48,
+              45,
+              50,
+              50,
+              32,
+              49,
+              53,
+              58,
+              48,
+              48,
+              58,
+              48,
+              48,
+              10,
+              27,
+              91,
+              51,
+              51,
+              109,
+              49,
+              55,
+              57,
+              50,
+              53,
+              57,
+              56,
+              52,
+              48,
+              48,
+              48,
+              48,
+              48,
+              27,
+              91,
+              51,
+              57,
+              109,
+              32,
+              50,
+              48,
+              50,
+              54,
+              45,
+              49,
+              48,
+              45,
+              50,
+              50,
+              32,
+              48,
+              48,
+              58,
+              48,
+              48,
+              58,
+              48,
+              48,
+              10
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > strips ANSI from Grok 1.0.41 colored byte output (P09t) / 4",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "output": [
+                27,
+                91,
+                51,
+                51,
+                109,
+                49,
+                55,
+                57,
+                50,
+                54,
+                53,
+                50,
+                52,
+                48,
+                48,
+                48,
+                48,
+                48,
+                27,
+                91,
+                51,
+                57,
+                109,
+                32,
+                50,
+                48,
+                50,
+                54,
+                45,
+                49,
+                48,
+                45,
+                50,
+                50,
+                32,
+                49,
+                53,
+                58,
+                48,
+                48,
+                58,
+                48,
+                48,
+                10,
+                27,
+                91,
+                51,
+                51,
+                109,
+                49,
+                55,
+                57,
+                50,
+                53,
+                57,
+                56,
+                52,
+                48,
+                48,
+                48,
+                48,
+                48,
+                27,
+                91,
+                51,
+                57,
+                109,
+                32,
+                50,
+                48,
+                50,
+                54,
+                45,
+                49,
+                48,
+                45,
+                50,
+                50,
+                32,
+                48,
+                48,
+                58,
+                48,
+                48,
+                58,
+                48,
+                48,
+                10
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > strips ANSI from Grok 1.0.41 colored byte output (P09t) / 5",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "content": [
+                27,
+                91,
+                51,
+                51,
+                109,
+                49,
+                55,
+                57,
+                50,
+                54,
+                53,
+                50,
+                52,
+                48,
+                48,
+                48,
+                48,
+                48,
+                27,
+                91,
+                51,
+                57,
+                109,
+                32,
+                50,
+                48,
+                50,
+                54,
+                45,
+                49,
+                48,
+                45,
+                50,
+                50,
+                32,
+                49,
+                53,
+                58,
+                48,
+                48,
+                58,
+                48,
+                48,
+                10,
+                27,
+                91,
+                51,
+                51,
+                109,
+                49,
+                55,
+                57,
+                50,
+                53,
+                57,
+                56,
+                52,
+                48,
+                48,
+                48,
+                48,
+                48,
+                27,
+                91,
+                51,
+                57,
+                109,
+                32,
+                50,
+                48,
+                50,
+                54,
+                45,
+                49,
+                48,
+                45,
+                50,
+                50,
+                32,
+                48,
+                48,
+                58,
+                48,
+                48,
+                58,
+                48,
+                48,
+                10
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > strips ANSI from Grok 1.0.41 colored byte output (P09t) / 6",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": [
+              228,
+              184,
+              173,
+              230,
+              150,
+              135,
+              27,
+              91,
+              51,
+              51,
+              109,
+              49,
+              55,
+              57,
+              50,
+              54,
+              53,
+              50,
+              52,
+              48,
+              48,
+              48,
+              48,
+              48,
+              27,
+              91,
+              51,
+              57,
+              109
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > strips ANSI from Grok 1.0.41 colored byte output (P09t) / 7",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": "中文{\"ok\":true}"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > keeps ordinary tool objects as JSON / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "lines": 3
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > keeps ordinary tool objects as JSON / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "type": "Bash",
+              "output": "already text"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > replaces illegal utf-8 sequences instead of throwing / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": [
+              255
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > does not treat non-byte number arrays as utf-8 / 1",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": [
+              256,
+              1
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > does not treat non-byte number arrays as utf-8 / 2",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": [
+              -1,
+              0
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > does not treat non-byte number arrays as utf-8 / 3",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "type": "Bash",
+              "output": [
+                256,
+                1
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "GrokJsonlTranslator > does not treat non-byte number arrays as utf-8 / 4",
+    "source": "tests/unit/agent/grok-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "Bash",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "bridge-tool"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "type": "Bash",
+              "output": [
+                -1,
+                0
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "grok model catalog > keeps the unknown-model reason on the card and does not offer a retry / 1",
+    "source": "tests/unit/agent/grok-models.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "message": "Couldn't set model 'grok-build': Invalid params: \"unknown model id\". Run 'grok models' to see available models."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "Grok ReadFile output and usage > shows FileContent and emits the end usage once, including cost / 1",
+    "source": "tests/unit/agent/grok-read-usage.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_read",
+            "toolName": "read_file",
+            "status": "in_progress",
+            "rawInput": {
+              "path": "note.txt"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_read",
+            "status": "completed",
+            "rawOutput": {
+              "type": "ReadFile",
+              "FileContent": {
+                "content": "1→audit-note\nline-two\n",
+                "content_concise": "audit-note",
+                "absolute_path": "/tmp/note.txt",
+                "offset": 0,
+                "raw_output": "",
+                "total_lines": 2
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "usage",
+            "usage": {
+              "input_tokens": 21480,
+              "output_tokens": 436,
+              "cache_read_input_tokens": 2944,
+              "cache_creation_input_tokens": 0,
+              "reasoning_tokens": 276
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "usage",
+            "usage": {
+              "input_tokens": 796,
+              "output_tokens": 30,
+              "cache_read_input_tokens": 24320,
+              "cache_creation_input_tokens": 0,
+              "reasoning_tokens": 27
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "AUDIT_DONE"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "stopReason": "end_turn",
+            "sessionId": "<ID_1>",
+            "usage": {
+              "input_tokens": 22276,
+              "cache_read_input_tokens": 27264,
+              "cache_creation_input_tokens": 0,
+              "output_tokens": 466,
+              "reasoning_tokens": 303,
+              "total_tokens": 50006,
+              "cost": 0.06098
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "Grok failure signatures > treats an unknown model as a non-retriable failure without a continue notice / 1",
+    "source": "tests/unit/agent/grok-signatures.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "message": "Couldn't set model 'grok-build': Invalid params: \"unknown model id\". Run 'grok models' to see available models."
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'user-stop' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'new' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'cd' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'ws' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'resume' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'reconnect-command' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'account-restart' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'shutdown-signal' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'exit-command' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'bridge-idle-watchdog' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'runner-timeout' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'meeting' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'subscriber-abandoned' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'external-signal' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'policy-guard', …(1) } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "BUFFERED_ANSWER"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > delivers held text as the card answer after a user stop / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "answer "
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "before stop"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > shows text that arrived before a tool call as progress, not as the answer / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "before the tool"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "read_file",
+            "status": "in_progress",
+            "rawInput": {
+              "path": "a.ts"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "after"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "buffered answers after stop > answers with the last pre-tool text after a user stop with no text after the tool / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "checking the file"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "read_file",
+            "status": "in_progress",
+            "rawInput": {
+              "path": "a.ts"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "terminal text cleanup > turns CR progress and BEL into plain tool output and strips ANSI from final text / 1",
+    "source": "tests/unit/agent/grok-terminal-text.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call",
+            "toolCallId": "call_1",
+            "toolName": "run_terminal_command",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "prog"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "tool_call_update",
+            "toolCallId": "call_1",
+            "status": "completed",
+            "rawOutput": {
+              "output": [
+                112,
+                114,
+                111,
+                103,
+                13,
+                68,
+                79,
+                78,
+                69,
+                7
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "\u001b[31mRED\u001b[0m"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "terminal text cleanup > strips ANSI and BEL from the stderr snippet on a failed exit / 1",
+    "source": "tests/unit/agent/grok-terminal-text.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok exited with code 1: boom RED"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "Grok thoughts > maps each thought to one thinking delta, once in CoT and once in the reasoning panel / 1",
+    "source": "tests/unit/agent/grok-thought.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thought",
+            "data": "Running the exact command"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thought",
+            "data": " `node /tmp/probe.mjs`"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thought",
+            "data": " now."
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": "OK"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "end",
+            "stopReason": "end_turn",
+            "sessionId": "<ID_1>"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "Grok thoughts > resets the idle watchdog when a thought arrives / 1",
+    "source": "tests/unit/agent/grok-thought.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thought",
+            "data": "still working"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects a complete Chinese JSONL line one byte above the default cap / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII below the default byte cap > accepts LF in same chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388582
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII below the default byte cap > accepts LF in next chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388582
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII below the default byte cap > accepts EOF / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388582
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII below the default byte cap > accepts split UTF-8 / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388582
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII exactly at the default byte cap > accepts LF in same chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388583
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII exactly at the default byte cap > accepts LF in next chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388583
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII exactly at the default byte cap > accepts EOF / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388583
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > ASCII exactly at the default byte cap > accepts split UTF-8 / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "x",
+                8388583
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese below the default byte cap > accepts LF in same chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "中",
+                2796194
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese below the default byte cap > accepts LF in next chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "中",
+                2796194
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese below the default byte cap > accepts EOF / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "中",
+                2796194
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese below the default byte cap > accepts split UTF-8 / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "中",
+                2796194
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese exactly at the default byte cap > accepts LF in same chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$runs": [
+                [
+                  "中",
+                  2796194
+                ],
+                [
+                  "x",
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese exactly at the default byte cap > accepts LF in next chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$runs": [
+                [
+                  "中",
+                  2796194
+                ],
+                [
+                  "x",
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese exactly at the default byte cap > accepts EOF / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$runs": [
+                [
+                  "中",
+                  2796194
+                ],
+                [
+                  "x",
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > Chinese exactly at the default byte cap > accepts split UTF-8 / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$runs": [
+                [
+                  "中",
+                  2796194
+                ],
+                [
+                  "x",
+                  1
+                ]
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized ASCII with and without LF / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized ASCII with and without LF / 2",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized ASCII with and without LF / 3",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized ASCII with and without LF / 4",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized Chinese with and without LF / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized Chinese with and without LF / 2",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized Chinese with and without LF / 3",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized Chinese with and without LF / 4",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized pure Chinese with and without LF / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized pure Chinese with and without LF / 2",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized pure Chinese with and without LF / 3",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > rejects oversized pure Chinese with and without LF / 4",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > counts CR and whitespace before trimming, excluding only the LF delimiter / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "中",
+                2796194
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > counts CR and whitespace before trimming, excluding only the LF delimiter / 2",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "fail",
+        "args": [
+          "grok runtime error: grok streaming-json line exceeded 8388608 bytes"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "grok",
+    "name": "jsonl line cap > applies the cap per line when several valid records share a chunk / 1",
+    "source": "tests/unit/agent/jsonl-line-cap.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "中",
+                1398097
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "text",
+            "data": {
+              "$repeat": [
+                "中",
+                1398097
+              ]
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "normal"
+        ]
+      }
+    ]
+  }
+]

@@ -1,5 +1,8 @@
 # Real CLI transcripts (D03a)
 
+For the frozen translator-output corpus and its provenance, see
+[Translator differential baseline (D03b)](DIFFERENTIAL.md).
+
 Captured on the owner's machine from the installed, logged-in agent CLIs by
 `tests/helpers/capture-transcripts.ts` (opt-in, never run by CI). Each `<kind>/<scenario>.jsonl`
 file is one real run and records exactly what the adapter's translator consumed:

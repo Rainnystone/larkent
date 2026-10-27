@@ -1,0 +1,934 @@
+[
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > translates thread, text, command execution, usage, and completion events / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thread.started",
+            "thread_id": "thread-1"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.started"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.started",
+            "item": {
+              "id": "cmd-1",
+              "type": "command_execution",
+              "command": "pwd"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "cmd-1",
+              "type": "command_execution",
+              "output": "/repo\n",
+              "exit_code": 0
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "agent_message",
+            "message": "hello"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.completed",
+            "usage": {
+              "input_tokens": 12,
+              "output_tokens": 34,
+              "cached_input_tokens": 5,
+              "reasoning_output_tokens": 7
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > does not add Claude session ids to Codex system or done events / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thread.started",
+            "thread_id": "thread-1"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.completed"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > translates current Codex agent messages emitted as completed items / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "msg-1",
+              "type": "agent_message",
+              "text": "hello from item"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.completed"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > treats a message announced twice as one message / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "msg-1",
+              "type": "agent_message",
+              "text": "hello world"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "agent_message",
+            "message": "hello world"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.completed"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > streams earlier agent messages but reserves the last one as the final answer / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "agent_message",
+            "message": "progress one"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "agent_message",
+            "message": "progress two"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.started",
+            "item": {
+              "id": "cmd-after-progress",
+              "type": "command_execution",
+              "command": "pwd"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "agent_message",
+            "message": "final answer"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.completed"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > treats missing command exit codes as successful command results / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "cmd-no-code",
+              "type": "command_execution",
+              "output": "done"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > translates failed turns to one terminal error / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.failed",
+            "error": {
+              "message": "command denied"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "message": "late raw error"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": []
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > keeps raw error events non-terminal so retrying runs can continue / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thread.started",
+            "thread_id": "thread-retry"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "error": {
+              "message": "Reconnecting... 2/5 (timeout waiting for child process to exit)"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "agent_message",
+            "message": "after retry"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.completed"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > still treats turn.failed as terminal after a raw error event / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "message": "Reconnecting... 2/5"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "turn.failed",
+            "error": {
+              "message": "model stopped"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "agent_message",
+            "message": "too late"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > preserves the latest raw error detail when the stream ends without a terminal event / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "error",
+            "message": "transport failed"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": []
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > tracks protocol drift while ignoring unknown and anomalous events / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "unknown.future",
+            "value": 1
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "id": "cmd-late",
+              "type": "command_execution",
+              "output": "late",
+              "exit_code": 1
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > emits a failed terminal event on EOF without a terminal event / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thread.started",
+            "thread_id": "thread-1"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": []
+      },
+      {
+        "method": "finish",
+        "args": []
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > lets stop and timeout override EOF terminal reason / 1",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thread.started",
+            "thread_id": "thread-stop"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "Codex JSONL translator > lets stop and timeout override EOF terminal reason / 2",
+    "source": "tests/unit/agent/codex-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "thread.started",
+            "thread_id": "thread-timeout"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "timeout"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'user-stop' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'new' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'cd' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'ws' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'resume' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'reconnect-command' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'account-restart' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'shutdown-signal' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'exit-command' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'bridge-idle-watchdog' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'runner-timeout' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'meeting' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'subscriber-abandoned' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'external-signal' } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "codex",
+    "name": "buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'policy-guard', …(1) } / 1",
+    "source": "tests/unit/agent/grok-stop-answer.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "type": "item.completed",
+            "item": {
+              "type": "agent_message",
+              "text": "BUFFERED_ANSWER"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "interrupted"
+        ]
+      }
+    ]
+  }
+]
