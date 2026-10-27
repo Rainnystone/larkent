@@ -13,7 +13,7 @@ type Terminal = Extract<AgentEvent, { type: 'done' | 'error' }>;
 export type FinalAnswerInput = AgentEvent
   | { type: 'answer'; text: string; messageId?: unknown }
   // Native tool boundary, which may precede tool_use while input is still arriving.
-  | { type: 'boundary' }
+  | { type: 'boundary'; toolId?: string }
   | { type: 'complete'; terminal: Terminal; content?: string; prefix?: AgentEvent[]; suffix?: AgentEvent[]; emptyHint?: string };
 
 /** One per run. Parsers supply protocol facts; this module owns answer and event ordering. */
@@ -38,7 +38,10 @@ export class FinalAnswerCore {
         this.pending = this.policy.accumulation === 'delta' ? this.pending + input.text : input.text;
         return [...events, { type: 'liveness' }];
       }
-      case 'boundary': return this.classifySegment();
+      case 'boundary':
+        // A fresh native start may reuse a completed ID; updates do not reopen it.
+        if (input.toolId) this.completedTools.delete(input.toolId);
+        return this.classifySegment();
       case 'complete': return this.complete(input);
       case 'done':
       case 'error': return this.complete({ type: 'complete', terminal: input });

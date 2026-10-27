@@ -54,7 +54,7 @@ export class DevinTranscriptTranslator {
     if (!tool) {
       tool = { name: typeof u.kind === 'string' ? u.kind : 'tool' };
       this.tools.set(id, tool);
-      events.push(...this.core.accept({ type: 'boundary' }));
+      events.push(...this.core.accept({ type: 'boundary', toolId: id }));
     }
     if (typeof u.kind === 'string') tool.name = u.kind;
     if (u.rawInput != null) {

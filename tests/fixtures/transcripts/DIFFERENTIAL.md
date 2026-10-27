@@ -126,3 +126,7 @@ exit rewriting retains the core's tool closures.
 Native tool boundaries are normalized separately from tool-use readiness: a
 Devin tool awaiting command input classifies its pre-tool segment once, so text
 arriving before the later input update retains the baseline classification.
+A separate synthetic compatibility test also preserves fresh native starts that
+reuse a completed tool ID for Codex, Kimi, Grok and Cursor. This avoids adding a
+run-wide ID-uniqueness assumption; it does not claim D03a contains reused IDs.
+Devin's existing native-update suppression remains characterized separately.

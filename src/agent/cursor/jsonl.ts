@@ -48,7 +48,7 @@ export class CursorJsonlTranslator {
       case 'assistant':
         return this.translateAssistant(raw);
       case 'tool_call':
-        return [...this.core.accept({ type: 'boundary' }), ...this.translateToolCall(raw)];
+        return [...this.core.accept({ type: 'boundary', ...(raw.subtype === 'started' ? { toolId: stringValue(raw.call_id) } : {}) }), ...this.translateToolCall(raw)];
       case 'result':
         return this.translateResult(raw);
       case 'connection':

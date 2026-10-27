@@ -54,7 +54,7 @@ export class GrokJsonlTranslator {
         return text ? this.core.accept({ type: 'answer', text }) : [];
       }
       case 'tool_call':
-        return [...this.core.accept({ type: 'boundary' }), ...this.translateToolCall(raw)];
+        return [...this.core.accept({ type: 'boundary', toolId: stringValue(raw.toolCallId) ?? stringValue(raw.id) }), ...this.translateToolCall(raw)];
       case 'tool_call_update':
         return this.translateToolCallUpdate(raw);
       case 'usage':

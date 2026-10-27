@@ -78,7 +78,7 @@ export class CodexJsonlTranslator {
       this.core.anomaly();
       return [];
     }
-    return [...this.core.accept({ type: 'boundary' }), ...this.core.accept(
+    return [...this.core.accept({ type: 'boundary', toolId: id }), ...this.core.accept(
       {
         type: 'tool_use',
         id,
