@@ -121,13 +121,17 @@ export async function deliverAutomationMarkdown(input: AutomationDeliveryDeps & 
   scope?: string;
   kind?: 'reminder' | 'result';
 }): Promise<void> {
-  const outbox = input.outbox ?? new Outbox({
-    channel: input.channel as LarkChannel, journal: input.journal,
-    botAppId: input.botAppId, isDown: input.isLinkDown,
-    now: input.now, onNotInChat: input.onNotInChat, liveSweep: false,
-  });
+  const outbox = automationOutbox(input);
   await outbox.deliverAutomation({
     kind: input.kind ?? 'reminder', turnId: input.turnId, chatId: input.chatId,
     markdown: input.markdown, actor: input.botOpenId(), scope: input.scope,
+  });
+}
+
+export function automationOutbox(input: AutomationDeliveryDeps): Outbox {
+  return input.outbox ?? new Outbox({
+    channel: input.channel as LarkChannel, journal: input.journal,
+    botAppId: input.botAppId, isDown: input.isLinkDown,
+    now: input.now, onNotInChat: input.onNotInChat, liveSweep: false,
   });
 }

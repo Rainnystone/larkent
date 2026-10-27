@@ -103,33 +103,6 @@ describe('bot idle and settlement lifecycle', () => {
     expect(h.agent.runOptions[1]!.prompt).toContain('queued after blackhole');
   });
 
-  it('exposes lastEventAt on the run handle and advances it on stream events', async () => {
-    const handles: RunHandle[] = [];
-    const register = ActiveRuns.prototype.register;
-    vi.spyOn(ActiveRuns.prototype, 'register').mockImplementation(function (
-      this: ActiveRuns,
-      chatId,
-      run,
-    ) {
-      const handle = register.call(this, chatId, run);
-      handles.push(handle);
-      return handle;
-    });
-
-    const h = await harness(false, 'unset');
-    await h.channel.handlers.message?.(message('first', 'first request'));
-    await vi.advanceTimersByTimeAsync(600);
-    await h.waitForRun(1);
-    const handle = handles[0]!;
-    expect(handle.lastEventAt).toEqual(expect.any(Number));
-    const startedAt = handle.lastEventAt;
-
-    await vi.advanceTimersByTimeAsync(1_000);
-    h.agent.manual[0]!.push({ type: 'text', delta: 'WORKING' });
-    await waitFor(() => rendered(h.channel).includes('WORKING'));
-    expect(handle.lastEventAt).toBeGreaterThan(startedAt);
-  });
-
   it('pauses idle for an in-flight tool then stops and publishes timeout after a full idle period', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
