@@ -1,4 +1,8 @@
-import { createLarkChannel, type CardActionEvent } from '@larksuite/channel';
+import {
+  createLarkChannel,
+  type CardActionEvent,
+  type LarkChannelOptions,
+} from '@larksuite/channel';
 
 export interface CallbackButton {
   name?: string;
@@ -65,6 +69,8 @@ export function sdkCardClickRig(input: {
   messageId: string;
   /** The bridge handler behind the SDK; its return value is the callback response. */
   onCardAction?: (evt: CardActionEvent) => Promise<unknown>;
+  /** Extra channel options applied last, e.g. to override `logger`. */
+  sdkOptions?: Partial<LarkChannelOptions>;
 }) {
   const received: Array<Record<string, unknown>> = [];
   const channel = createLarkChannel({
@@ -73,6 +79,7 @@ export function sdkCardClickRig(input: {
     logger: silentLogger as never,
     cache: freshCache() as never,
     safety: { chatQueue: { enabled: false } },
+    ...input.sdkOptions,
   });
   channel.on('cardAction', async (evt) => {
     received.push((evt.action.value ?? {}) as Record<string, unknown>);

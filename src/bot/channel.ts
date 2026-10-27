@@ -224,6 +224,43 @@ export function shouldSuppressSdkErrorLog(args: unknown[]): boolean {
   return args.some(isSuppressedSdkMessage);
 }
 
+const SDK_DROP_ACTION_RE =
+  /^safety: drop (duplicate|in-flight) action card:([^:]+):[^:]*:([\s\S]*)$/;
+const SDK_DROP_CMD_RE = /"cmd":"([^"\\]{1,64})"/;
+const SDK_DROP_CLICK_ID_RE = /"a":"([A-Za-z0-9_-]{1,16})"/;
+/** node-sdk LoggerLevel.debug; @larksuiteoapi/node-sdk is not a direct dep. */
+const SDK_DEBUG_LEVEL: LarkChannelOptions['loggerLevel'] = 4;
+
+export type SdkCardActionDrop = {
+  reason: 'duplicate' | 'in-flight';
+  msgId: string;
+  cmd?: string;
+  clickId?: string;
+};
+
+/** Redacted fields from an SDK `safety: drop ... action card:...` debug line. */
+export function sdkCardActionDrop(args: unknown[]): SdkCardActionDrop | undefined {
+  for (const item of args.flat(Infinity)) {
+    if (typeof item !== 'string') continue;
+    const match = SDK_DROP_ACTION_RE.exec(item);
+    if (!match) continue;
+    const [, reason, msgId, clicked] = match;
+    if (reason === undefined || msgId === undefined || clicked === undefined) continue;
+    const drop: SdkCardActionDrop = { reason: reason as SdkCardActionDrop['reason'], msgId };
+    const cmd = SDK_DROP_CMD_RE.exec(clicked);
+    if (cmd?.[1]) drop.cmd = cmd[1];
+    const clickId = SDK_DROP_CLICK_ID_RE.exec(clicked);
+    if (clickId?.[1]) drop.clickId = clickId[1];
+    return drop;
+  }
+  return undefined;
+}
+
+/** Logger + level the bridge passes to @larksuite/channel. */
+export function sdkLoggerOptions(): Pick<LarkChannelOptions, 'logger' | 'loggerLevel'> {
+  return { logger: buildQuietLogger(), loggerLevel: SDK_DEBUG_LEVEL };
+}
+
 function buildQuietLogger(): {
   error: (...m: unknown[]) => void;
   warn: (...m: unknown[]) => void;
@@ -238,7 +275,10 @@ function buildQuietLogger(): {
     },
     warn: (...args: unknown[]) => log.warn('sdk', 'warn', { args: stringifyArgs(args) }),
     info: (...args: unknown[]) => log.info('sdk', 'info', { args: stringifyArgs(args) }),
-    debug: () => {},
+    debug: (...args: unknown[]) => {
+      const drop = sdkCardActionDrop(args);
+      if (drop) log.info('sdk', 'card-action-dropped', drop);
+    },
     trace: () => {},
   };
 }
@@ -406,7 +446,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ? 'https://open.larksuite.com'
         : 'https://open.feishu.cn',
     source: 'lark-channel-bridge',
-    logger: buildQuietLogger(),
+    ...sdkLoggerOptions(),
     policy: {
       dmMode: 'open',
       requireMention: false,
