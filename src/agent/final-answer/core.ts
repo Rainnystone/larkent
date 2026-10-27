@@ -13,7 +13,7 @@ type Terminal = Extract<AgentEvent, { type: 'done' | 'error' }>;
 export type FinalAnswerInput = AgentEvent
   | { type: 'answer'; text: string; messageId?: unknown }
   | { type: 'boundary' }
-  | { type: 'complete'; terminal: Terminal; content?: string; prefix?: AgentEvent[]; suffix?: AgentEvent[]; progressOnly?: boolean; emptyHint?: string };
+  | { type: 'complete'; terminal: Terminal; content?: string; prefix?: AgentEvent[]; suffix?: AgentEvent[]; emptyHint?: string };
 
 /** One per run. Parsers supply protocol facts; this module owns answer and event ordering. */
 export class FinalAnswerCore {
@@ -70,18 +70,19 @@ export class FinalAnswerCore {
 
   private complete(input: Extract<FinalAnswerInput, { type: 'complete' }>): AgentEvent[] {
     this.terminal = true;
-    const successful = input.terminal.type === 'done' && input.terminal.terminationReason === 'normal' && !input.progressOnly;
+    const successful = input.terminal.type === 'done' && input.terminal.terminationReason === 'normal';
     let answer: AgentEvent[];
     if (successful) {
       const pending = this.clean(input.content ?? this.pending);
-      const content = this.hasAnswer(pending) ? pending : this.fallback;
+      const content = this.fallback && !this.hasAnswer(pending) ? this.fallback : pending;
       const final = content || input.emptyHint;
       answer = final ? [{ type: 'final_text', content: final }] : [];
     } else {
       // Preserve the explicitly requested stopped partial reply without labelling it a successful final.
       if (input.terminal.type === 'done' && input.terminal.terminationReason !== 'normal') {
-        const text = this.clean(this.pending) || this.fallback;
-        answer = this.hasAnswer(text) ? [{ type: 'text', delta: text, heldBack: true }] : [];
+        const pending = this.clean(this.pending);
+        const text = this.fallback && !this.hasAnswer(pending) ? this.fallback : pending;
+        answer = text ? [{ type: 'text', delta: text, heldBack: true }] : [];
       } else {
         answer = this.progress();
       }
@@ -96,7 +97,7 @@ export class FinalAnswerCore {
     this.messageId = undefined;
     const pending = this.clean(this.pending);
     if (this.policy.preTool === 'fallback' && this.hasAnswer(pending)) this.fallback = pending;
-    if (this.policy.preTool === 'discard') {
+    if (this.policy.preTool === 'discard' || !this.hasAnswer(pending)) {
       this.pending = '';
       return [];
     }
@@ -108,7 +109,7 @@ export class FinalAnswerCore {
   private progress(): AgentEvent[] {
     const text = this.clean(this.pending);
     this.pending = '';
-    if (!this.hasAnswer(text)) return [];
+    if (!text) return [];
     const delta = this.policy.separator === 'none' || (this.policy.separator === 'line' && text.endsWith('\n'))
       ? text : `${text}\n\n`;
     return [{ type: 'text', delta }];

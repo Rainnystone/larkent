@@ -104,14 +104,14 @@ export class CodexJsonlTranslator {
       return [];
     }
     const exitCode = numberValue(item.exit_code);
-    return this.core.accept(
+    return [...this.core.accept({ type: 'boundary' }), ...this.core.accept(
       {
         type: 'tool_result',
         id,
         output: stringValue(item.output ?? item.aggregated_output ?? item.stdout) ?? '',
         isError: exitCode !== undefined && exitCode !== 0,
       },
-    );
+    )];
   }
 
   private translateAgentMessage(raw: Record<string, unknown>): AgentEvent[] {

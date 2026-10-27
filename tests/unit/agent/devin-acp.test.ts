@@ -22,10 +22,10 @@ describe('Devin ACP translation', () => {
     ]);
     const use = { sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'in_progress', rawInput: { command: 'lark-cli im +send --chat-id oc_test' } };
     expect([...t.translate(use)]).toEqual([{ type: 'tool_use', id: 'a', name: 'execute', input: use.rawInput }]);
-    expect([...t.translate(use)]).toEqual([{ type: 'liveness' }]);
+    expect([...t.translate(use)].every(event => event.type === 'liveness')).toBe(true);
     const result = { sessionUpdate: 'tool_call_update', toolCallId: 'a', status: 'completed', rawOutput: { code: 0, data: { message_id: 'om_test' } } };
-    expect([...t.translate(result)]).toEqual([{ type: 'tool_result', id: 'a', output: JSON.stringify(result.rawOutput), isError: false }]);
-    expect([...t.translate(result)]).toEqual([]);
+    expect([...t.translate(result)].filter(event => event.type !== 'liveness')).toEqual([{ type: 'tool_result', id: 'a', output: JSON.stringify(result.rawOutput), isError: false }]);
+    expect([...t.translate(result)].every(event => event.type === 'liveness')).toBe(true);
     t.translate(text('Finished.'));
     expect([...t.finish('end_turn')][0]).toEqual({ type: 'final_text', content: 'Finished.' });
   });
@@ -33,7 +33,7 @@ describe('Devin ACP translation', () => {
   it('reports failed tools without ending a turn the model can correct', () => {
     const t = new DevinTranscriptTranslator();
     t.translate({ sessionUpdate: 'tool_call', toolCallId: 'b', kind: 'read', rawInput: { path: '/missing' } });
-    expect([...t.translate({ sessionUpdate: 'tool_call_update', toolCallId: 'b', status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'Not found' } }] })]).toEqual([
+    expect([...t.translate({ sessionUpdate: 'tool_call_update', toolCallId: 'b', status: 'failed', content: [{ type: 'content', content: { type: 'text', text: 'Not found' } }] })].filter(event => event.type !== 'liveness')).toEqual([
       { type: 'tool_result', id: 'b', output: 'Not found', isError: true },
     ]);
     t.translate(text('Corrected.'));

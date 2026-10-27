@@ -32,7 +32,7 @@ export class GrokJsonlTranslator {
   private sessionId: string | undefined;
   // D03a: transcripts/grok/narration-tool-answer.jsonl has deltas around tools;
   // The legacy fallback is pinned by D03b synthetic boundaries; D03a does not exercise missing post-tool text.
-  private readonly core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'fallback', separator: 'line', clean: stripTerminalText, hasAnswer: hasAnswerText });
+  private readonly core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'fallback', separator: 'line', clean: cleanAnswerText, hasAnswer: hasAnswerText });
   private readonly startedToolCalls = new Map<string, string>();
   private lastUsage: AgentEvent | undefined;
 
@@ -232,6 +232,11 @@ export class GrokJsonlTranslator {
     };
   }
 
+}
+
+function cleanAnswerText(text: string): string {
+  const content = stripTerminalText(text);
+  return isControlTokenOnly(content) ? '' : content;
 }
 
 /** A buffer that is only a Grok control token, such as `<|eos|>`, is not an answer. */

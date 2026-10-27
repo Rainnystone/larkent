@@ -5,8 +5,11 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function recordValue(value: unknown): Record<string, unknown> | undefined {
   return isRecord(value) ? value : undefined;
 }
+export function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return isRecord(value) && !Array.isArray(value);
+}
 export function record(value: unknown): Record<string, unknown> {
-  return isRecord(value) && !Array.isArray(value) ? value : {};
+  return isPlainRecord(value) ? value : {};
 }
 export function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;

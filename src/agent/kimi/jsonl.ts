@@ -131,14 +131,14 @@ export class KimiJsonlTranslator {
     // Kimi's shell status is the leading system part (0.38 and current
     // soul/message.py), separate from the command's arbitrary stdout data.
     const failedExit = /^<system>(?:ERROR: )?Command failed with exit code: (-?\d+)\.<\/system>/.exec(output);
-    return this.core.accept(
+    return [...this.core.accept({ type: 'boundary' }), ...this.core.accept(
       {
         type: 'tool_result',
         id,
         output,
         isError: /^(?:Bash|Shell)$/i.test(name ?? '') && failedExit !== null && Number(failedExit[1]) !== 0,
       },
-    );
+    )];
   }
 
 }

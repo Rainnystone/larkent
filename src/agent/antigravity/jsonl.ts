@@ -59,7 +59,7 @@ export class AntigravityJsonlTranslator {
 
   finish(reason: AntigravityFinishReason = 'failed'): AgentEvent[] {
     return reason === 'failed' ? this.fail('antigravity stream ended before a terminal event')
-      : this.core.accept({ type: 'complete', terminal: this.doneEvent(reason), prefix: this.systemEvents(), progressOnly: true });
+      : this.core.accept({ type: 'complete', terminal: this.doneEvent(reason), prefix: this.systemEvents() });
   }
 
   fail(message: string): AgentEvent[] {

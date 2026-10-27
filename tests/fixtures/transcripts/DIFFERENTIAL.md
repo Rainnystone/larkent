@@ -115,3 +115,11 @@ captures do not demonstrate missing post-tool text or envelopes. Those details a
 supported by the original D03b synthetic boundaries and existing incident fixtures,
 not claimed as new real CLI observations. D04's silent-activity tests select actual
 records from D03a captures; they establish event handling, not heartbeat timing.
+
+Review also adds synthetic compatibility cases outside the frozen corpus: Codex
+and Kimi release text at result boundaries; Grok preserves whitespace-only tails
+and the stopped fallback after whitespace/control tokens; Devin retains array
+input replacement; Antigravity retains explicit successful EOF. These preserve
+legacy behavior and do not claim new native protocol observations. CoT ignores
+terminal held partials, and the scripted ACP process tests verify that abnormal
+exit rewriting retains the core's tool closures.

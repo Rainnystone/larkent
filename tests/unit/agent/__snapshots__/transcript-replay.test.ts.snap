@@ -3388,10 +3388,19 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "type": "liveness",
   },
   {
+    "type": "liveness",
+  },
+  {
     "id": "a",
     "isError": false,
     "output": "{"code":0,"data":{"message_id":"<IDENTITY_2>"}}",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "type": "liveness",
@@ -3450,6 +3459,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     },
     "name": "read",
     "type": "tool_use",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "b",
@@ -9364,10 +9376,16 @@ exports[`D03b real capture baseline > devin/long-tool.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_2>",
     "isError": false,
     "output": "",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "type": "liveness",
@@ -9436,6 +9454,9 @@ exports[`D03b real capture baseline > devin/narration-tool-answer.jsonl 1`] = `
     },
     "name": "execute",
     "type": "tool_use",
+  },
+  {
+    "type": "liveness",
   },
   {
     "type": "liveness",
@@ -9753,6 +9774,9 @@ exports[`D03b real capture baseline > devin/two-tools.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_1>",
     "isError": false,
     "output": "one",
@@ -9765,6 +9789,9 @@ exports[`D03b real capture baseline > devin/two-tools.jsonl 1`] = `
     },
     "name": "execute",
     "type": "tool_use",
+  },
+  {
+    "type": "liveness",
   },
   {
     "type": "liveness",

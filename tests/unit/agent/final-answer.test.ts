@@ -92,4 +92,14 @@ describe('answer hold-back', () => {
     const core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'progress', separator: 'line' });
     expect(core.accept({ type: 'done', terminationReason: 'normal' })).toEqual([{ type: 'done', terminationReason: 'normal' }]);
   });
+  it.each(['   ', '<|eos|>'])('keeps the stopped fallback when the post-tool segment is %j', text => {
+    const core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'fallback', separator: 'line', hasAnswer: text => text.trim() !== '' && text.trim() !== '<|eos|>' });
+    core.accept({ type: 'answer', text: 'Checking' });
+    core.accept({ type: 'tool_use', id: 'one', name: 'Read', input: {} });
+    core.accept({ type: 'tool_result', id: 'one', output: 'ok', isError: false });
+    core.accept({ type: 'answer', text });
+    expect(core.accept({ type: 'done', terminationReason: 'interrupted' })).toEqual([
+      { type: 'text', delta: 'Checking', heldBack: true }, { type: 'done', terminationReason: 'interrupted' },
+    ]);
+  });
 });

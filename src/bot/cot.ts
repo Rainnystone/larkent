@@ -391,6 +391,7 @@ export async function consumeCotEvents(
         toolBrief.delete(evt.id);
         continue;
       }
+      if (evt.type === 'text' && evt.heldBack) continue;
       if (evt.type === 'text') {
         closeReasoningIfNeeded();
         if (!textStepOpen) {
