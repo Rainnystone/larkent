@@ -1,0 +1,14 @@
+{"transcript": 1, "kind": "codex", "cliVersion": "codex-cli 0.163.0", "capturedAt": "2026-10-27", "scenario": "answer-only", "command": "codex exec --json --sandbox danger-full-access -c approval_policy=\"never\" -c shell_environment_policy.inherit=\"all\" --ignore-rules --skip-git-repo-check -C <CWD> -", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 2, "note": "spawned pid=17910"}
+{"t": 4371, "line": "{\"type\": \"thread.started\", \"thread_id\": \"<SESSION_1>\"}"}
+{"t": 5436, "stderr": "2026-10-27T06:36:43.485051Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out"}
+{"t": 5558, "line": "{\"type\": \"turn.started\"}"}
+{"t": 9363, "stderr": "2026-10-27T06:36:47.412401Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest(\"http/request failed: error sending request for url (https://developers.openai.com/mcp?source=codex)\")))\n2026-10-27T06:36:47.412608Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest(\"http/request failed: error sending request for url (https://chatgpt.com/backend-api/ps/mcp)\")))"}
+{"t": 14627, "stderr": "2026-10-27T06:36:52.675681Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest(\"http/request failed: error sending request for url (https://chatgpt.com/backend-api/ps/mcp)\")))\n2026-10-27T06:36:52.675896Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest(\"http/request failed: error sending request for url (https://developers.openai.com/mcp?source=codex)\")))"}
+{"t": 20635, "stderr": "2026-10-27T06:36:58.683861Z ERROR rmcp::transport::worker: worker quit with fatal: Transport channel closed, when Client(HttpRequest(HttpRequest(\"http/request failed: error sending request for url (https://chatgpt.com/backend-api/ps/mcp)\")))"}
+{"t": 21021, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_0\", \"type\": \"agent_message\", \"text\": \"TRANSCRIPT-OK\"}}"}
+{"t": 22385, "line": "{\"type\": \"turn.completed\", \"usage\": {\"input_tokens\": 26197, \"cached_input_tokens\": 0, \"cache_write_input_tokens\": 0, \"output_tokens\": 24, \"reasoning_output_tokens\": 14}}"}
+{"t": 48922, "exit": {"code": 0, "signal": null}}
+{"t": 48922, "note": "translator tail event: {\"type\":\"final_text\",\"content\":\"TRANSCRIPT-OK\"}"}
+{"t": 48922, "note": "translator tail event: {\"type\":\"usage\",\"inputTokens\":26197,\"outputTokens\":24,\"cachedInputTokens\":0,\"reasoningOutputTokens\":14}"}
+{"t": 48922, "note": "translator tail event: {\"type\":\"done\",\"resumeHandle\":\"<SESSION_1>\",\"terminationReason\":\"normal\"}"}

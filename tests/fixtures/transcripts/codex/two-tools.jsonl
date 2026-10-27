@@ -1,0 +1,16 @@
+{"transcript": 1, "kind": "codex", "cliVersion": "codex-cli 0.163.0", "capturedAt": "2026-10-27", "scenario": "two-tools", "command": "codex exec --json --sandbox danger-full-access -c approval_policy=\"never\" -c shell_environment_policy.inherit=\"all\" --ignore-rules --skip-git-repo-check -C <CWD> -", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 2, "note": "spawned pid=25963"}
+{"t": 405, "line": "{\"type\": \"thread.started\", \"thread_id\": \"<SESSION_1>\"}"}
+{"t": 1779, "line": "{\"type\": \"turn.started\"}"}
+{"t": 5266, "stderr": "2026-10-27T06:47:11.012210Z ERROR codex_models_manager::manager: failed to refresh available models: request timed out"}
+{"t": 13610, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_0\", \"type\": \"agent_message\", \"text\": \"我会依次执行这两个命令。\\n\"}}"}
+{"t": 14196, "line": "{\"type\": \"item.started\", \"item\": {\"id\": \"item_1\", \"type\": \"command_execution\", \"command\": \"/bin/zsh -lc 'echo one'\", \"aggregated_output\": \"\", \"exit_code\": null, \"status\": \"in_progress\"}}"}
+{"t": 14196, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_1\", \"type\": \"command_execution\", \"command\": \"/bin/zsh -lc 'echo one'\", \"aggregated_output\": \"one\\n\", \"exit_code\": 0, \"status\": \"completed\"}}"}
+{"t": 19631, "line": "{\"type\": \"item.started\", \"item\": {\"id\": \"item_2\", \"type\": \"command_execution\", \"command\": \"/bin/zsh -lc 'echo two'\", \"aggregated_output\": \"\", \"exit_code\": null, \"status\": \"in_progress\"}}"}
+{"t": 19632, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_2\", \"type\": \"command_execution\", \"command\": \"/bin/zsh -lc 'echo two'\", \"aggregated_output\": \"two\\n\", \"exit_code\": 0, \"status\": \"completed\"}}"}
+{"t": 22814, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_3\", \"type\": \"agent_message\", \"text\": \"DONE\"}}"}
+{"t": 23795, "line": "{\"type\": \"turn.completed\", \"usage\": {\"input_tokens\": 78929, \"cached_input_tokens\": 52224, \"cache_write_input_tokens\": 0, \"output_tokens\": 78, \"reasoning_output_tokens\": 0}}"}
+{"t": 33233, "exit": {"code": 0, "signal": null}}
+{"t": 33233, "note": "translator tail event: {\"type\":\"final_text\",\"content\":\"DONE\"}"}
+{"t": 33233, "note": "translator tail event: {\"type\":\"usage\",\"inputTokens\":78929,\"outputTokens\":78,\"cachedInputTokens\":52224,\"reasoningOutputTokens\":0}"}
+{"t": 33233, "note": "translator tail event: {\"type\":\"done\",\"resumeHandle\":\"<SESSION_1>\",\"terminationReason\":\"normal\"}"}

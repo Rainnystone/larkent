@@ -1,0 +1,13 @@
+{"transcript": 1, "kind": "codex", "cliVersion": "codex-cli 0.163.0", "capturedAt": "2026-10-27", "scenario": "long-tool", "command": "codex exec --json --sandbox danger-full-access -c approval_policy=\"never\" -c shell_environment_policy.inherit=\"all\" --ignore-rules --skip-git-repo-check -C <CWD> -", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 2, "note": "spawned pid=27171"}
+{"t": 386, "line": "{\"type\": \"thread.started\", \"thread_id\": \"<SESSION_1>\"}"}
+{"t": 2798, "line": "{\"type\": \"turn.started\"}"}
+{"t": 11734, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_0\", \"type\": \"agent_message\", \"text\": \"我会等待 45 秒，命令完成后回复 DONE。\\n\"}}"}
+{"t": 12220, "line": "{\"type\": \"item.started\", \"item\": {\"id\": \"item_1\", \"type\": \"command_execution\", \"command\": \"/bin/zsh -lc 'sleep 45 && echo done'\", \"aggregated_output\": \"\", \"exit_code\": null, \"status\": \"in_progress\"}}"}
+{"t": 57093, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_1\", \"type\": \"command_execution\", \"command\": \"/bin/zsh -lc 'sleep 45 && echo done'\", \"aggregated_output\": \"done\\n\", \"exit_code\": 0, \"status\": \"completed\"}}"}
+{"t": 59937, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_2\", \"type\": \"agent_message\", \"text\": \"DONE\"}}"}
+{"t": 61486, "line": "{\"type\": \"turn.completed\", \"usage\": {\"input_tokens\": 105884, \"cached_input_tokens\": 87040, \"cache_write_input_tokens\": 0, \"output_tokens\": 134, \"reasoning_output_tokens\": 0}}"}
+{"t": 73478, "exit": {"code": 0, "signal": null}}
+{"t": 73478, "note": "translator tail event: {\"type\":\"final_text\",\"content\":\"DONE\"}"}
+{"t": 73478, "note": "translator tail event: {\"type\":\"usage\",\"inputTokens\":105884,\"outputTokens\":134,\"cachedInputTokens\":87040,\"reasoningOutputTokens\":0}"}
+{"t": 73478, "note": "translator tail event: {\"type\":\"done\",\"resumeHandle\":\"<SESSION_1>\",\"terminationReason\":\"normal\"}"}

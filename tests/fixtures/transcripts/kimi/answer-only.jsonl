@@ -1,0 +1,7 @@
+{"transcript": 1, "kind": "kimi", "cliVersion": "2.1.1", "capturedAt": "2026-10-27", "scenario": "answer-only", "command": "kimi -p <PROMPT> --output-format stream-json", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 2, "note": "spawned pid=18396"}
+{"t": 365, "line": "{\"role\": \"meta\", \"type\": \"system.version\", \"version\": \"2.1.1\"}"}
+{"t": 22556, "line": "{\"role\": \"assistant\", \"content\": \"TRANSCRIPT-OK\"}"}
+{"t": 22556, "line": "{\"role\": \"meta\", \"type\": \"session.resume_hint\", \"session_id\": \"<SESSION_1>\", \"command\": \"kimi -r session_<UUID_1>\", \"content\": \"To resume this session: kimi -r session_<UUID_1>\"}"}
+{"t": 26868, "exit": {"code": 0, "signal": null}}
+{"t": 26868, "note": "translator tail event: {\"type\":\"system\",\"resumeHandle\":\"session_<UUID_1>\"}"}

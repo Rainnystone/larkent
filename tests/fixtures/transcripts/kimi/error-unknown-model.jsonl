@@ -1,0 +1,6 @@
+{"transcript": 1, "kind": "kimi", "cliVersion": "2.1.1", "capturedAt": "2026-10-27", "scenario": "error-unknown-model", "command": "kimi -p <PROMPT> --output-format stream-json -m lark-nonexistent-model-0", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 2, "note": "spawned pid=32260"}
+{"t": 357, "line": "{\"role\": \"meta\", \"type\": \"system.version\", \"version\": \"2.1.1\"}"}
+{"t": 3572, "stderr": "error: failed to run prompt: Model \"lark-nonexistent-model-0\" is not configured in config.toml."}
+{"t": 3573, "stderr": "See log: <HOME>/.kimi-code/logs/kimi-code.log"}
+{"t": 3595, "exit": {"code": 1, "signal": null}}

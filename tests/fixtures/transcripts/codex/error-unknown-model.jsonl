@@ -1,0 +1,10 @@
+{"transcript": 1, "kind": "codex", "cliVersion": "codex-cli 0.163.0", "capturedAt": "2026-10-27", "scenario": "error-unknown-model", "command": "codex exec --json --sandbox danger-full-access --model lark-nonexistent-model-0 -c approval_policy=\"never\" -c shell_environment_policy.inherit=\"all\" --ignore-rules --skip-git-repo-check -C <CWD> -", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 2, "note": "spawned pid=30120"}
+{"t": 407, "line": "{\"type\": \"thread.started\", \"thread_id\": \"<SESSION_1>\"}"}
+{"t": 416, "line": "{\"type\": \"item.completed\", \"item\": {\"id\": \"item_0\", \"type\": \"error\", \"message\": \"Model metadata for `lark-nonexistent-model-0` not found. Defaulting to fallback metadata; this can degrade performance and cause issues.\"}}"}
+{"t": 522, "line": "{\"type\": \"turn.started\"}"}
+{"t": 10057, "line": "{\"type\": \"error\", \"message\": \"{\\\"type\\\":\\\"error\\\",\\\"status\\\":400,\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"The 'lark-nonexistent-model-0' model is not supported when using Codex with a ChatGPT account.\\\",\\\"code\\\":\\\"model_not_found\\\"}}\"}"}
+{"t": 10067, "line": "{\"type\": \"turn.failed\", \"error\": {\"message\": \"{\\\"type\\\":\\\"error\\\",\\\"status\\\":400,\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"The 'lark-nonexistent-model-0' model is not supported when using Codex with a ChatGPT account.\\\",\\\"code\\\":\\\"model_not_found\\\"}}\"}}"}
+{"t": 11741, "exit": {"code": 1, "signal": null}}
+{"t": 11741, "note": "translator tail event: {\"type\":\"system\",\"resumeHandle\":\"<SESSION_1>\"}"}
+{"t": 11741, "note": "translator tail event: {\"type\":\"error\",\"message\":\"{\\\"type\\\":\\\"error\\\",\\\"status\\\":400,\\\"error\\\":{\\\"type\\\":\\\"invalid_request_error\\\",\\\"message\\\":\\\"The 'lark-nonexistent-model-0' model is not supported when using Codex with a "}
