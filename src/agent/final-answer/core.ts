@@ -12,6 +12,7 @@ export interface ProtocolDriftState { unknownEvents: number; anomalies: number }
 type Terminal = Extract<AgentEvent, { type: 'done' | 'error' }>;
 export type FinalAnswerInput = AgentEvent
   | { type: 'answer'; text: string; messageId?: unknown }
+  // Native tool boundary, which may precede tool_use while input is still arriving.
   | { type: 'boundary' }
   | { type: 'complete'; terminal: Terminal; content?: string; prefix?: AgentEvent[]; suffix?: AgentEvent[]; emptyHint?: string };
 
@@ -32,19 +33,19 @@ export class FinalAnswerCore {
       case 'answer': {
         const newMessage = input.messageId !== undefined && this.messageId !== undefined && input.messageId !== this.messageId;
         const replacement = this.policy.accumulation === 'message' && this.pending !== input.text;
-        const events = newMessage || replacement ? this.beforeTool() : [];
+        const events = newMessage || replacement ? this.classifySegment() : [];
         if (input.messageId !== undefined) this.messageId = input.messageId;
         this.pending = this.policy.accumulation === 'delta' ? this.pending + input.text : input.text;
         return [...events, { type: 'liveness' }];
       }
-      case 'boundary': return this.beforeTool();
+      case 'boundary': return this.classifySegment();
       case 'complete': return this.complete(input);
       case 'done':
       case 'error': return this.complete({ type: 'complete', terminal: input });
       case 'tool_use': {
         if (this.tools.has(input.id) || this.completedTools.has(input.id)) return [{ type: 'liveness' }];
         this.tools.add(input.id);
-        return [...this.beforeTool(), input];
+        return [input];
       }
       case 'tool_result': {
         if (!this.tools.delete(input.id)) {
@@ -93,7 +94,7 @@ export class FinalAnswerCore {
     return [...input.prefix ?? [], ...answer, ...tools, ...input.suffix ?? [], input.terminal];
   }
 
-  private beforeTool(): AgentEvent[] {
+  private classifySegment(): AgentEvent[] {
     this.messageId = undefined;
     const pending = this.clean(this.pending);
     if (this.policy.preTool === 'fallback' && this.hasAnswer(pending)) this.fallback = pending;

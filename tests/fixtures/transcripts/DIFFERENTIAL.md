@@ -123,3 +123,6 @@ input replacement; Antigravity retains explicit successful EOF. These preserve
 legacy behavior and do not claim new native protocol observations. CoT ignores
 terminal held partials, and the scripted ACP process tests verify that abnormal
 exit rewriting retains the core's tool closures.
+Native tool boundaries are normalized separately from tool-use readiness: a
+Devin tool awaiting command input classifies its pre-tool segment once, so text
+arriving before the later input update retains the baseline classification.

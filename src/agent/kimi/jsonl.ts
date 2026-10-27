@@ -109,7 +109,7 @@ export class KimiJsonlTranslator {
         continue;
       }
       this.startedToolCalls.set(id, name);
-      events.push(...this.core.accept({
+      events.push(...this.core.accept({ type: 'boundary' }), ...this.core.accept({
         type: 'tool_use',
         id,
         name,

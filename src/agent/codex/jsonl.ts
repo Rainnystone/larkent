@@ -78,7 +78,7 @@ export class CodexJsonlTranslator {
       this.core.anomaly();
       return [];
     }
-    return this.core.accept(
+    return [...this.core.accept({ type: 'boundary' }), ...this.core.accept(
       {
         type: 'tool_use',
         id,
@@ -87,7 +87,7 @@ export class CodexJsonlTranslator {
           command: stringValue(item.command) ?? '',
         },
       },
-    );
+    )];
   }
 
   private translateItemCompleted(raw: Record<string, unknown>): AgentEvent[] {

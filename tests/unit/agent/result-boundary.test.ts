@@ -51,4 +51,16 @@ describe('protocol parsing retains the legacy result boundary', () => {
       { type: 'final_text', content: 'Answer' }, { type: 'done', terminationReason: 'normal' },
     ]);
   });
+  it('Devin classifies a tool boundary once while its command input is deferred', () => {
+    const translator = new DevinTranscriptTranslator();
+    translator.translate({ sessionUpdate: 'tool_call', toolCallId: 'one', kind: 'execute' });
+    translator.translate({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'Answer while input arrives' } });
+    expect(translator.translate({ sessionUpdate: 'tool_call_update', toolCallId: 'one', rawInput: { command: 'echo ok' } })).toEqual([
+      { type: 'tool_use', id: 'one', name: 'execute', input: { command: 'echo ok' } },
+    ]);
+    translator.translate({ sessionUpdate: 'tool_call_update', toolCallId: 'one', status: 'completed', rawOutput: 'ok' });
+    expect(translator.finish('end_turn')).toEqual([
+      { type: 'final_text', content: 'Answer while input arrives' }, { type: 'done', terminationReason: 'normal' },
+    ]);
+  });
 });

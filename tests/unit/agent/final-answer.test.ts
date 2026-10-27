@@ -29,7 +29,7 @@ describe('answer hold-back', () => {
     const core = new FinalAnswerCore({ accumulation: 'delta', preTool, separator: 'line' });
     core.accept({ type: 'answer', text: 'Pl' });
     core.accept({ type: 'answer', text: 'an' });
-    expect(core.accept({ type: 'tool_use', id: 'call', name: 'Shell', input: {} })).toEqual([
+    expect([...core.accept({ type: 'boundary' }), ...core.accept({ type: 'tool_use', id: 'call', name: 'Shell', input: {} })]).toEqual([
       ...progress, { type: 'tool_use', id: 'call', name: 'Shell', input: {} },
     ]);
     core.accept({ type: 'tool_result', id: 'call', output: 'ok', isError: false });
@@ -95,6 +95,7 @@ describe('answer hold-back', () => {
   it.each(['   ', '<|eos|>'])('keeps the stopped fallback when the post-tool segment is %j', text => {
     const core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'fallback', separator: 'line', hasAnswer: text => text.trim() !== '' && text.trim() !== '<|eos|>' });
     core.accept({ type: 'answer', text: 'Checking' });
+    core.accept({ type: 'boundary' });
     core.accept({ type: 'tool_use', id: 'one', name: 'Read', input: {} });
     core.accept({ type: 'tool_result', id: 'one', output: 'ok', isError: false });
     core.accept({ type: 'answer', text });
