@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { confirmAutomationDraft } from '../../../src/automations/command';
+import { confirmAutomationDraft } from '../../../src/automations/draft-confirmation';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
 import { reconcileDraftCard, sendAutomationDraftCard } from '../../../src/automations/draft-delivery';
 import { automationEndCard } from '../../../src/automations/end-card';

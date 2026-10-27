@@ -573,6 +573,7 @@ export class AutomationsStore {
     input: Extract<SaveAutomationDraftInput, { op: 'replace' }>,
     operation?: RegisterAutomationOperationInput,
   ): Promise<ReplaceAutomationDraft>;
+  async saveDraft(input: SaveAutomationDraftInput, operation?: RegisterAutomationOperationInput): Promise<AutomationDraft>;
   async saveDraft(input: SaveAutomationDraftInput, operation?: RegisterAutomationOperationInput): Promise<AutomationDraft> {
     this.assertMutable();
     this.pruneDrafts();

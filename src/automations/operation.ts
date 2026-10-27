@@ -2,7 +2,7 @@ import { replyState } from '../bot/turn-journal';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
-import { flushDraftCardOnce } from './command';
+import { flushDraftCardOnce } from './draft-confirmation';
 import { AUTOMATION_OPERATION_TTL_MS, automationOperationScope, readAutomationOperationId } from './operation-id';
 import { nextFireAfter, readSchedule, scheduleOccurrenceCount } from './schedule';
 import { normalizeAutomationSchedule } from './schedule-input';

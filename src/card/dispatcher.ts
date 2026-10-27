@@ -1,3 +1,4 @@
+import { completeDraftEnd, confirmAutomationDraft, resolveEndAt } from '../automations/draft-confirmation';
 import type {
   CardActionEvent,
   CardActionResponse,
@@ -23,9 +24,6 @@ import {
   AUTO_BOARD_UPDATED_HINT,
   AUTO_INVALID_HINT,
   AUTO_UNKNOWN_ID,
-  completeDraftEnd,
-  confirmAutomationDraft,
-  resolveEndAt,
 } from '../automations/command';
 import { cloneDraftCardBody } from '../automations/card-body';
 import {

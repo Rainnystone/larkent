@@ -1,3 +1,4 @@
+import { flushPendingDraftCards } from '../automations/draft-confirmation';
 import { bridgeToolInstructions } from '../bridge-tools/prompt';
 import type {
   LarkChannel,
@@ -138,7 +139,6 @@ import {
 } from '../automations/agent-run';
 import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
 import {
-  flushPendingDraftCards,
 } from '../automations/command';
 import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';

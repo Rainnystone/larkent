@@ -3,7 +3,7 @@ import { toolResult, type ToolResult } from '../bridge-tools/protocol';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { AUTOMATION_OPERATION_TTL_MS, readAutomationOperationId } from './operation-id';
 import { validateAutomationOperationId, getAutomationOperation, unknownAutomationOperation } from './operation';
-import { flushDraftCardOnce } from './command';
+import { flushDraftCardOnce } from './draft-confirmation';
 import { automationTargetSnapshot } from './confirm-card';
 import { automationTargetRevision, taskMutationError } from './store';
 import { normalizeAutomationSchedule } from './schedule-input';

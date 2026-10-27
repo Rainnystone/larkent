@@ -4,12 +4,8 @@ import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
-import {
-  assessAutomationSchedule,
-  completeDraftEnd,
-  handleAutoCommand,
-  submitAutomationCommand,
-} from '../../../src/automations/command';
+import { assessAutomationSchedule, handleAutoCommand, submitAutomationCommand } from '../../../src/automations/command';
+import { completeDraftEnd } from '../../../src/automations/draft-confirmation';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
