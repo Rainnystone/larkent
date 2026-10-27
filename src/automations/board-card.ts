@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto';
 import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
 import { describeEnd, formatZonedDateTime } from './confirm-card';
 import { readSchedule } from './schedule';
@@ -99,7 +98,6 @@ export function automationStatusLabel(item: AutomationItem): string {
 
 function boardButtonValue(item: AutomationItem, auth: BoardActionAuth, action: BoardCardAction): Record<string, string> {
   return {
-    a: randomBytes(6).toString('base64url'),
     cmd: action,
     auto_token: auth.sign({ chatId: item.chatId, itemId: item.id, action, ttlMs: BOARD_CARD_TTL_MS }),
   };

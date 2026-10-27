@@ -355,6 +355,21 @@ describe('automation board card', () => {
     expect(h.store.get(1)?.paused).toBe(true);
   });
 
+  it('accepts the full rendered confirm button value including its click id', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    const value = cardButtonValue(JSON.parse(confirmCard(h)), 'auto.confirm');
+    expect(typeof value.a).toBe('string');
+    const tap = await h.channel.handlers.cardAction?.({
+      action: { value },
+      chatId: CHAT,
+      messageId: draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!,
+      operator: { openId: USER, name: 'Op' },
+    } as unknown as CardActionEvent);
+    expect(tap).toMatchObject({ toast: { type: 'success' } });
+    expect(h.store.list()).toHaveLength(1);
+  });
+
   it('still refreshes the board when the first cardless draft fails on link recovery', async () => {
     const h = await harness();
     await confirmOne(h);

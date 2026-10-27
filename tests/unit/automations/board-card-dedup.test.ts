@@ -1,79 +1,29 @@
-import { createLarkChannel } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { automationBoardCard } from '../../../src/automations/board-card';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
 import type { AutomationItem } from '../../../src/automations/store';
 import { cardButtonValue } from '../../helpers/card-button-value';
+import { sdkCardClickRig, sortedKeys } from '../../helpers/sdk-card-click';
 
 const CHAT = 'oc_752b8bb8cca2d789ba269f34ae8c1372';
 const OPERATOR = 'ou_operator';
 const BOARD_MESSAGE = 'om_board';
 const FIRE = Date.UTC(2026, 0, 2, 12, 0, 0);
 
-const silentLogger = {
-  debug() {},
-  info() {},
-  warn() {},
-  error() {},
-  trace() {},
-};
-
-type ChannelInternals = {
-  registerDispatcherHandlers(): void;
-  builtinHandlers: Record<string, (raw: unknown) => Promise<unknown>>;
-  safety: { dispose(): Promise<void> };
-};
-
-const channels: ChannelInternals[] = [];
+const rigs: Array<{ dispose(): Promise<unknown> }> = [];
 
 afterEach(async () => {
-  for (const internals of channels.splice(0)) {
-    await internals.safety.dispose().catch(() => {});
-  }
+  for (const next of rigs.splice(0)) await next.dispose();
 });
 
-function freshCache() {
-  const values = new Map<string, { value: unknown; expire?: number }>();
-  return {
-    async get(key: string | symbol, options?: { namespace?: string }) {
-      const storageKey = `${options?.namespace ?? ''}:${String(key)}`;
-      const entry = values.get(storageKey);
-      if (!entry) return undefined;
-      if (entry.expire !== undefined && entry.expire <= Date.now()) {
-        values.delete(storageKey);
-        return undefined;
-      }
-      return entry.value;
-    },
-    async set(key: string | symbol, value: unknown, expire?: number, options?: { namespace?: string }) {
-      values.set(`${options?.namespace ?? ''}:${String(key)}`, { value, expire });
-      return true;
-    },
-  };
-}
-
 function rig() {
+  const sdk = sdkCardClickRig({ chatId: CHAT, operatorOpenId: OPERATOR, messageId: BOARD_MESSAGE });
+  rigs.push(sdk);
   const received: string[] = [];
-  const channel = createLarkChannel({
-    appId: 'cli_test',
-    appSecret: 'test',
-    logger: silentLogger as never,
-    cache: freshCache() as never,
-    safety: { chatQueue: { enabled: false } },
-  });
-  channel.on('cardAction', (evt) => {
-    const value = evt.action.value as Record<string, unknown> | undefined;
-    received.push(String(value?.cmd));
-  });
-  const internals = channel as unknown as ChannelInternals;
-  internals.registerDispatcherHandlers();
-  channels.push(internals);
-  const trigger = internals.builtinHandlers['card.action.trigger']!;
-  const click = (value: Record<string, unknown>) => trigger({
-    operator: { open_id: OPERATOR },
-    context: { open_message_id: BOARD_MESSAGE, open_chat_id: CHAT },
-    action: { tag: 'button', value },
-  });
+  const click = async (value: Record<string, unknown>) => {
+    await sdk.click({ value });
+    received.splice(0, received.length, ...sdk.received.map((entry) => String(entry.cmd)));
+  };
   return { received, click };
 }
 
@@ -104,12 +54,6 @@ function item(overrides: Partial<AutomationItem> = {}): AutomationItem {
 function render(paused: boolean): object {
   const auth = new BoardActionAuth({ secret: 'board-secret', now: () => FIRE });
   return automationBoardCard({ items: [item({ paused })], auth });
-}
-
-function sortedKeys(value: Record<string, unknown>): Record<string, unknown> {
-  return Object.fromEntries(
-    Object.entries(value).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
-  );
 }
 
 describe.each([
