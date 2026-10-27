@@ -127,6 +127,9 @@ describe('one classifier and untimed stream', { timeout: 20_000 }, () => {
       entry.messageIds.includes('om_net') && entry.status === 'completed-undelivered'
     )));
     expect(answerSends(h.channel)).toHaveLength(0);
+    // Staging precedes the durable flush and first send. Wait for the external
+    // fault to be consumed before asking the link to recover that failure.
+    await waitFor(() => fail.err === undefined);
 
     await h.bridge.tickLink();
     await h.bridge.recoverMissed();
