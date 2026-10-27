@@ -1,5 +1,4 @@
 import { reconcileDraftCard, sendAutomationDraftCard } from './draft-delivery';
-import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { senderTypeFromMessage } from '../bot/self-message';
 import { classify, isNotInChat } from '../bot/feishu-error';
@@ -7,7 +6,6 @@ import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
-import { draftCardBodyFromCard } from './card-body';
 import {
   automationConfirmCard,
   automationDeleteCard,
@@ -851,7 +849,7 @@ export async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string
     const draft = automations.getDraft(draftId);
     if (!draft || draft.cardMessageId) return;
     if (draft.delivery?.state === 'sending') { await reconcileDraftCard(ctx.channel, automations, draft, ctx.botAppId); return; }
-    if (draft.delivery?.state === 'rejected') return;
+    if (draft.operationId && draft.delivery?.state === 'rejected') return;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -941,7 +939,7 @@ export async function completeDraftEnd(
     nextFireAt,
     pendingRecurring: null,
     cardMessageId: null,
-    ...(draft.operationId ? { cardReply: { ...(draft.cardReply ?? {}), replyTo } } : {}),
+    ...(draft.operationId || draft.cardReply ? { cardReply: { ...(draft.cardReply ?? {}), replyTo } } : {}),
   });
   if (!updated || updated.op === 'delete') return { ok: false, message: AUTO_INVALID_HINT };
   if (updated.operationId) {
@@ -953,8 +951,8 @@ export async function completeDraftEnd(
     automations: ctx.automations,
     autoAuth: ctx.autoAuth,
     automationsScheduler: ctx.automationsScheduler,
-    chatMode: ctx.chatMode ?? 'group',
-    msg: { chatId: draft.chatId, threadId: undefined },
+    chatMode: updated.cardReply?.replyInThread ? 'topic' : ctx.chatMode ?? 'group',
+    msg: { chatId: draft.chatId, threadId: updated.cardReply?.threadId },
   }, updated, parsed.schedule, now, replyTo);
   return { ok: true };
 }
@@ -1227,11 +1225,10 @@ async function postEndCard(
   if (!ctx.automations || !ctx.autoAuth) return;
   const tokens = signEndTokens(ctx.autoAuth, draft);
   const card = automationEndCard(tokens);
-  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
+    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo: ctx.msg.messageId,
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
   } catch (error) {
     if (draft.operationId) {
@@ -1241,12 +1238,6 @@ async function postEndCard(
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
-  await ctx.automations.bindDraftCard(
-    draft.draftId,
-    sent.messageId,
-    sent.cardId,
-    draftCardBodyFromCard(card),
-  );
 }
 
 async function postConfirmCard(
@@ -1311,11 +1302,10 @@ async function postConfirmCard(
   const card = draft.op === 'replace'
     ? automationReplaceCard({ ...body, target: draft.target })
     : automationConfirmCard(body);
-  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
+    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo,
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
   } catch (error) {
     if (draft.operationId) {
@@ -1325,12 +1315,6 @@ async function postConfirmCard(
     await settleDraftCardFailure(ctx, draft, error, replyTo);
     return;
   }
-  await ctx.automations.bindDraftCard(
-    draft.draftId,
-    sent.messageId,
-    sent.cardId,
-    draftCardBodyFromCard(card),
-  );
 }
 
 async function postDeleteCard(
@@ -1362,11 +1346,10 @@ async function postDeleteCard(
     confirmToken,
     rejectToken,
   });
-  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
+    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       ...(ctx.msg.messageId ? { replyTo: ctx.msg.messageId } : {}),
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
+      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
   } catch (error) {
     if (draft.operationId) {
@@ -1376,12 +1359,6 @@ async function postDeleteCard(
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
-  await ctx.automations.bindDraftCard(
-    draft.draftId,
-    sent.messageId,
-    sent.cardId,
-    draftCardBodyFromCard(card),
-  );
 }
 
 async function settleDraftCardFailure(
@@ -1400,6 +1377,7 @@ async function settleDraftCardFailure(
     return;
   }
   if (isNotInChat(error)) throw error;
+  if (ctx.automations?.getDraft(draft.draftId)?.delivery?.state === 'sending') return;
   const kind = classify(error);
   const { code } = readCardApiError(error);
   switch (kind) {

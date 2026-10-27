@@ -1,0 +1,2 @@
+export const RECOVERY_RETRY_MIN_MS = 1_000;
+export const RECOVERY_RETRY_MAX_MS = 30_000;

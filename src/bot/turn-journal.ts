@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { parseDraftCardItem, type DraftCardItem } from './outbox-draft-item';
 import * as outboxState from './outbox-state';
 import { replyState, noticeState, replyDeliveryKey, noticeDeliveryKey } from './outbox-state';
 export { replyState, noticeState, replyDeliveryKey, noticeDeliveryKey, noticeOwnerDeliveryKey, streamDeliveryKey, FEISHU_DELIVERY_ID_MAX_CHARS } from './outbox-state';
@@ -31,6 +32,7 @@ export type TurnJournalStatus =
 export type OutboxItemState = 'staged' | 'sent' | 'rejected' | 'voided';
 
 export interface TurnReply {
+  kind?: 'reminder' | 'result';
   markdown: string;
   replyTo: string;
   replyInThread?: boolean;
@@ -144,6 +146,7 @@ export interface JournalRecoverOptions {
 
 interface JournalDocument {
   entries: TurnJournalEntry[];
+  draftCards?: DraftCardItem[];
   upgrade?: boolean;
 }
 
@@ -159,6 +162,7 @@ export class TurnJournal {
   private readonly maxEntries: number;
   private readonly maxAgeMs: number;
   private entries: TurnJournalEntry[] = [];
+  private draftCards: DraftCardItem[] = [];
   private queue = new PersistenceQueue();
   private persistScheduled = false;
   private persistDirty = false;
@@ -198,6 +202,38 @@ export class TurnJournal {
   get(turnId: string): TurnJournalEntry | undefined {
     const entry = this.entries.find((item) => item.turnId === turnId);
     return entry ? { ...entry } : undefined;
+  }
+
+  listDraftCards(): DraftCardItem[] {
+    return structuredClone(this.draftCards);
+  }
+
+  getDraftCard(deliveryId: string): DraftCardItem | undefined {
+    const item = this.draftCards.find(item => item.deliveryId === deliveryId);
+    return item ? structuredClone(item) : undefined;
+  }
+
+  stageDraftCard(item: DraftCardItem): void {
+    if (this.persistenceDisabled) throw new Error('Turn journal is not writable');
+    this.queue.assertHealthy();
+    const existing = this.draftCards.find(entry => entry.deliveryId === item.deliveryId);
+    if (existing) {
+      if (existing.payload.draftId !== item.payload.draftId || existing.target.chatId !== item.target.chatId) throw new Error('Outbox deliveryId conflict');
+      return;
+    }
+    this.draftCards.push(parseDraftCardItem(item, item.deliveryId));
+    this.schedulePersist();
+  }
+
+  updateDraftCard(deliveryId: string, change: Pick<Partial<DraftCardItem>, 'state' | 'cardId' | 'receipt' | 'rejection'>): void {
+    if (this.persistenceDisabled) throw new Error('Turn journal is not writable');
+    this.queue.assertHealthy();
+    const item = this.draftCards.find(entry => entry.deliveryId === deliveryId);
+    if (!item || item.state === 'voided') return;
+    if (item.cardId && change.cardId && item.cardId !== change.cardId) throw new Error('Outbox card entity conflict');
+    if (item.receipt && change.receipt && (item.receipt.messageId !== change.receipt.messageId || item.receipt.cardId !== change.receipt.cardId)) throw new Error('Outbox receipt conflict');
+    Object.assign(item, parseDraftCardItem({ ...item, ...change }, deliveryId));
+    this.schedulePersist();
   }
 
   enqueue(input: Omit<TurnJournalEntry, 'createdAt' | 'updatedAt'>): TurnJournalEntry {
@@ -465,7 +501,7 @@ export class TurnJournal {
       // Write the complete upgraded snapshot before publishing it. A failed
       // atomic replacement leaves the original v1 file available for retry.
       if (document.upgrade) {
-        await writeFileAtomic(this.path, `${JSON.stringify(serializeDocument(document.entries), null, 2)}\n`, { mode: 0o600 });
+        await writeFileAtomic(this.path, `${JSON.stringify(serializeDocument(document.entries, document.draftCards), null, 2)}\n`, { mode: 0o600 });
       }
       this.publish(document, false);
       if (this.prune()) this.schedulePersist();
@@ -479,6 +515,7 @@ export class TurnJournal {
 
   private publish(document: JournalDocument, persistenceDisabled: boolean): void {
     this.entries = document.entries;
+    this.draftCards = document.draftCards ?? [];
     this.enqueuedThisProcess.clear();
     this.persistenceDisabled = persistenceDisabled;
     this.persistScheduled = false;
@@ -539,7 +576,7 @@ export class TurnJournal {
   }
 
   private serialize(): ReturnType<typeof serializeDocument> {
-    return serializeDocument(this.entries);
+    return serializeDocument(this.entries, this.draftCards);
   }
 }
 
@@ -548,7 +585,7 @@ function emptyDocument(): JournalDocument {
 }
 
 interface StoredOutboxItem {
-  kind: 'reply' | 'notice';
+  kind: 'reply' | 'notice' | 'reminder' | 'result';
   turnId: string;
   deliveryId: string;
   target: { chatId: string; replyTo?: string; replyInThread?: boolean; threadId?: string };
@@ -558,8 +595,12 @@ interface StoredOutboxItem {
   supersedes?: string;
 }
 
-function serializeDocument(entries: TurnJournalEntry[]) {
-  const items: Record<string, StoredOutboxItem> = Object.create(null);
+function serializeDocument(entries: TurnJournalEntry[], draftCards: DraftCardItem[] = []) {
+  const items: Record<string, StoredOutboxItem | DraftCardItem> = Object.create(null);
+  for (const item of draftCards) {
+    if (items[item.deliveryId]) throw new Error('Duplicate Outbox deliveryId');
+    items[item.deliveryId] = structuredClone(item);
+  }
   const turns = entries.map((entry) => {
     const { reply, notice, ...turn } = entry;
     const replyId = reply ? reply.deliveryId ?? replyDeliveryKey(entry.turnId) : undefined;
@@ -569,7 +610,7 @@ function serializeDocument(entries: TurnJournalEntry[]) {
         replyTo, replyInThread, threadId, ...payload } = reply;
       if (items[replyId]) throw new Error('Duplicate Outbox deliveryId');
       items[replyId] = {
-        kind: 'reply', turnId: entry.turnId, deliveryId: replyId,
+        kind: reply.kind ?? 'reply', turnId: entry.turnId, deliveryId: replyId,
         target: { chatId: entry.chatId, replyTo, ...(replyInThread ? { replyInThread } : {}), ...(threadId ? { threadId } : {}) },
         payload, state: replyState(entry) ?? 'staged',
         ...(messageId ? { receipt: { messageId, ...(interactive ? { interactive } : {}) } } : {}),
@@ -602,6 +643,15 @@ function parseJournalDocument(text: string): JournalDocument {
   if (!upgrade && !isObject(raw.items)) throw new Error('Invalid Outbox items');
   const entries: TurnJournalEntry[] = [];
   const referenced = new Set<string>();
+  const draftCards: DraftCardItem[] = [];
+  if (!upgrade && isObject(raw.items)) {
+    for (const [id, item] of Object.entries(raw.items)) {
+      if (isObject(item) && item.kind === 'draft-card') {
+        draftCards.push(parseDraftCardItem(item, id));
+        referenced.add(id);
+      }
+    }
+  }
   for (const item of raw.entries) {
     let materialized = item;
     if (!upgrade && isObject(item)) {
@@ -611,7 +661,7 @@ function parseJournalDocument(text: string): JournalDocument {
         if (id === undefined) continue;
         if (typeof id !== 'string' || referenced.has(id)) throw new Error('Invalid Outbox reference');
         const stored = isObject(raw.items) ? raw.items[id] : undefined;
-        if (!isObject(stored) || stored.kind !== kind || stored.deliveryId !== id || stored.turnId !== item.turnId
+        if (!isObject(stored) || !(stored.kind === kind || (kind === 'reply' && (stored.kind === 'reminder' || stored.kind === 'result'))) || stored.deliveryId !== id || stored.turnId !== item.turnId
           || !isObject(stored.target) || !isObject(stored.payload) || !isOutboxItemState(stored.state)) {
           throw new Error('Invalid Outbox item');
         }
@@ -619,6 +669,7 @@ function parseJournalDocument(text: string): JournalDocument {
         const receipt = isObject(stored.receipt) ? stored.receipt : {};
         const payload = {
           ...stored.payload, deliveryId: id, state: stored.state,
+          ...(stored.kind === 'reminder' || stored.kind === 'result' ? { kind: stored.kind } : {}),
           ...(kind === 'notice' ? { recipientChatId: target.chatId } : {}),
           replyTo: target.replyTo, replyInThread: target.replyInThread, threadId: target.threadId,
           messageId: receipt.messageId, interactive: receipt.interactive, supersedes: stored.supersedes,
@@ -638,7 +689,7 @@ function parseJournalDocument(text: string): JournalDocument {
   if (!upgrade && isObject(raw.items) && Object.keys(raw.items).some((id) => !referenced.has(id))) {
     throw new Error('Unreferenced Outbox item');
   }
-  return { entries, ...(upgrade ? { upgrade: true } : {}) };
+  return { entries, draftCards, ...(upgrade ? { upgrade: true } : {}) };
 }
 
 function parseEntry(raw: unknown): TurnJournalEntry | undefined {
@@ -760,6 +811,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
   if (typeof raw.replyMode !== 'string') return undefined;
   return {
     markdown: raw.markdown,
+    ...(raw.kind === 'reminder' || raw.kind === 'result' ? { kind: raw.kind } : {}),
     replyTo: raw.replyTo,
     replyMode: raw.replyMode,
     ...(raw.replyInThread === true ? { replyInThread: true } : {}),

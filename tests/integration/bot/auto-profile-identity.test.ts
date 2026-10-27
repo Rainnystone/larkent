@@ -375,13 +375,13 @@ async function harness(plan: IdentityPlan, options: { strictMode?: string; failu
   cfg.larkCli = { identityPreset: 'user-default' };
   cfg.workspaces.default = tmp.workspace;
   const profileBefore = JSON.stringify(cfg);
-  const store = new AutomationsStore({ path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now });
   let now = NOW;
+  const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now: () => now });
+  await journal.load();
+  const store = new AutomationsStore({ journal, path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now });
   await store.load();
   if (options.seed !== false) await store.create({ taskType: 'agent', schedule: { kind: 'interval', timezone: 'UTC', everyMs: HOUR, startAt: NOW, endAt: NOW + 3 * HOUR }, timezone: 'UTC', startAt: NOW, endAt: NOW + 3 * HOUR, nextFireAt: NOW + HOUR,
     chatId: CHAT, createdBy: CREATOR, name: 'synthetic identity task', taskText: 'identity-case:automatic', cwd: tmp.workspace });
-  const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now: () => now });
-  await journal.load();
   const agent = createRuntimeAgent(cfg, { profileDir: tmp.profile, rootDir: tmp.root, profile: 'synthetic', larkCliConfigDir: configDir, larkCliSourceConfigFile: env.LARK_CHANNEL_CONFIG });
   const channel = createRecordingLarkChannel({ chats: [{ id: CHAT, name: 'Synthetic' }], chatMode: options.chatMode ?? 'group', botIdentity: { openId: 'ou_synthetic_bot', name: 'Synthetic' } });
   sdk.channel = channel;

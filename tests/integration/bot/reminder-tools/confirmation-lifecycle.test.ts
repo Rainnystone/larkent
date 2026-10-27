@@ -45,11 +45,15 @@ it('recovers every submitted semantic-retry ID after its response is lost and th
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
 }, 30000);
 
-it.each(['delivery', 'operations', 'delivery-state', 'operation-state'] as const)('refuses malformed v2 %s data without losing the original uncertain receipt', async field => {
+it.each(['delivery', 'operations', 'delivery-state', 'operation-state'] as const)('refuses malformed legacy %s data without losing the original uncertain receipt', async field => {
   const h = await harness();
   h.channel.sendErrors.send = new Error('synthetic uncertain send');
   await h.turn(async call => { expect(await call('automation.create', reminder)).toMatchObject({ category: 'unknown' }); });
   const document = JSON.parse(await readFile(h.store.getFilePath(), 'utf8'));
+  document.schemaVersion = 2;
+  const delivery = h.store.getDraft(document.drafts[0].draftId)!.delivery;
+  document.drafts[0].delivery = delivery;
+  delete document.drafts[0].deliveryId;
   if (field === 'delivery') document.drafts[0].delivery = {};
   else if (field === 'delivery-state') document.drafts[0].delivery.state = ['sending'];
   else if (field === 'operation-state') document.operations[0].state = ['received'];

@@ -345,7 +345,10 @@ async function harness(opts: {
   const tmp = opts.tmp ?? await createTmpProfile('auto-outbox-');
   let nowMs = opts.nowMs;
   const now = () => nowMs;
+  const journal = opts.store?.outboxJournal ?? new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
+  await journal.load();
   const store = opts.store ?? new AutomationsStore({
+    journal,
     path: join(tmp.profile, 'automations.json'),
     logPath: join(tmp.profile, 'automations.log'),
     statusPath: join(tmp.profile, 'automations-status.json'),
@@ -361,8 +364,6 @@ async function harness(opts: {
         : [];
   for (const item of seeds) await store.create(item);
 
-  const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
-  await journal.load();
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },

@@ -89,8 +89,8 @@ export function registerSevenCliContract(input: SevenCliContractDeps): void {
     const agent: AgentAdapter = { id: real.id, displayName: real.displayName,
       isAvailable: () => real.isAvailable(), prepareRun: opts => real.prepareRun?.(opts) ?? Promise.resolve(),
       setBotIdentity: identity => real.setBotIdentity?.(identity), run: opts => { runs.push(opts); return real.run(opts); } };
-    const store = new AutomationsStore({ path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now }); await store.load();
     const journal = new TurnJournal(join(tmp.profile, 'journal.json'), { now: () => now }); await journal.load();
+    const store = new AutomationsStore({ journal, path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now }); await store.load();
     const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
     const sessionCatalog = new SessionCatalog(join(tmp.profile, 'session-catalog.json')); await sessionCatalog.load();
     const channel = createRecordingLarkChannel({ chats: [{ id: 'oc_synthetic', name: 'Synthetic' }], chatMode: 'group' }); sdk.channel = channel;

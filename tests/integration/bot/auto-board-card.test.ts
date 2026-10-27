@@ -305,9 +305,8 @@ describe('automation board card', () => {
       boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
     expect(h.store.get(1)?.paused).toBe(true);
-    await waitFor(() => h.channel.callLog.some((call) => call.op === 'updateCard'));
-    expect(h.channel.callLog.some((call) => call.op === 'updateCard')).toBe(true);
-    expect(h.channel.callLog.some((call) => call.op === 'updateCardById')).toBe(false);
+    await waitFor(() => h.channel.callLog.some((call) => call.op === 'updateCard' && call.messageId === board.messageId));
+    expect(h.channel.updatedCards.some(update => update.messageId === board.messageId)).toBe(true);
   });
 
   it('pauses, resumes, and deletes through board callbacks', async () => {
@@ -520,7 +519,7 @@ async function harness(opts: {
   if (opts.rawCardFallback) {
     const origSend = channel.send.bind(channel);
     channel.send = (async (recipientId, content, sendOpts) => {
-      if (content && typeof content === 'object' && 'cardId' in content && !('card' in content)) {
+      if (content && typeof content === 'object' && 'cardId' in content && !('card' in content) && !(sendOpts as { replyTo?: string } | undefined)?.replyTo) {
         throw new Error('cardid is invalid');
       }
       return origSend(recipientId, content, sendOpts);

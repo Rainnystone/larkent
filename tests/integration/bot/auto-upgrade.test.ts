@@ -60,7 +60,7 @@ it('resumes a pre-tools session with the current short contract and client while
 it('preserves v1 tasks and drafts while pre-deploy buttons get the existing invalid response', async () => {
   const h = await harness();
   const upgraded = await readFile(join(h.tmp.profile, 'automations.json'), 'utf8');
-  expect(JSON.parse(upgraded).schemaVersion).toBe(2);
+  expect(JSON.parse(upgraded).schemaVersion).toBe(3);
   await h.restart({ messages });
   const restarted = JSON.parse(await readFile(join(h.tmp.profile, 'automations.json'), 'utf8'));
   expect(restarted.items).toEqual(JSON.parse(upgraded).items);

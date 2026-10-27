@@ -45,6 +45,21 @@ afterEach(async () => {
 });
 
 describe('A2 recurring creation and expiry', () => {
+  it.each(['in 15m', '每个工作日 09:00'])('keeps a manual %s draft card in its originating topic', async schedule => {
+    const h = await harness({ chatMode: 'topic' });
+    await h.channel.handlers.message?.({ ...mention('om_topic', `/auto new ${schedule} | 话题提醒 | 提醒`), threadId: 'omt_topic' });
+    const card = h.channel.sent.find(item => JSON.stringify(item.content).includes(schedule === 'in 15m' ? 'auto.confirm' : 'auto.end.'));
+    expect(card?.options).toMatchObject({ replyTo: 'om_topic', replyInThread: true });
+    expect(h.store.listDrafts()[0]?.cardMessageId).toBeTypeOf('string');
+    if (schedule !== 'in 15m') {
+      const draft = h.store.listDrafts()[0]!;
+      const endCard = JSON.stringify(card!.content);
+      await h.channel.handlers.cardAction?.(cardClick(MATE, tokenFor(endCard, 'auto.end.1w'), draft.cardMessageId!, 'auto.end.1w'));
+      const confirm = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'));
+      expect(confirm?.options).toMatchObject({ replyTo: draft.cardMessageId, replyInThread: true });
+    }
+  });
+
   it('asks for an end on a weekday draft, then confirms, fires the last catch-up, and expires off the status file', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
@@ -276,7 +291,7 @@ function pendingOf(
   return draft.pendingRecurring;
 }
 
-async function harness(opts: { agentTasks?: boolean } = {}) {
+async function harness(opts: { agentTasks?: boolean; chatMode?: 'group' | 'topic' } = {}) {
   const tmp = await createTmpProfile('auto-recurring-');
   const mediaDir = join(tmp.profile, 'media');
   await mkdir(mediaDir, { recursive: true });
@@ -317,7 +332,7 @@ async function harness(opts: { agentTasks?: boolean } = {}) {
   const start = async () => {
     const channel = createRecordingLarkChannel({
       chats: [{ id: CHAT, name: 'G' }],
-      chatMode: 'group',
+      chatMode: opts.chatMode ?? 'group',
       botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
     });
     sdk.channel = channel;
