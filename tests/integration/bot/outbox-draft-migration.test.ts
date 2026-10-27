@@ -6,6 +6,8 @@ import type { LarkChannel } from '@larksuite/channel';
 import { AutomationsStore } from '../../../src/automations/store';
 import { automationOperationScope, newAutomationOperationId } from '../../../src/automations/operation-id';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
+import { automationEndCard } from '../../../src/automations/end-card';
+import { draftCardBodyFromCard } from '../../../src/automations/card-body';
 import { Outbox } from '../../../src/bot/outbox';
 import { withDraftCardReadbackMarker } from '../../../src/bot/feishu-delivery';
 import { TurnJournal } from '../../../src/bot/turn-journal';
@@ -14,7 +16,7 @@ import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
-async function fixture(state: 'prepared' | 'sending') {
+async function fixture(state: 'prepared' | 'sending', phase: 'confirm' | 'end' = 'confirm') {
   const dir = await mkdtemp(join(tmpdir(), 'outbox-migrate-'));
   cleanups.push(() => rm(dir, { recursive: true, force: true }));
   const now = Date.now() - 1000;
@@ -22,12 +24,20 @@ async function fixture(state: 'prepared' | 'sending') {
   const store = new AutomationsStore(options);
   await store.load();
   const operationId = newAutomationOperationId(automationOperationScope('profile', 'chat'), now);
+  const recurring = { kind: 'daily' as const, timezone: 'UTC', times: [{ hour: 9, minute: 0 }] };
   const draft = await store.saveDraft({ operationId, taskType: 'reminder', name: 'reminder', taskText: 'do it', chatId: 'chat', createdBy: 'user',
-    schedule: { kind: 'one-shot', fireAt: now + 600_000 }, startAt: now, endAt: now + 600_000, nextFireAt: now + 600_000, timezone: 'UTC',
+    schedule: phase === 'end' ? recurring : { kind: 'one-shot', fireAt: now + 600_000 }, startAt: now, timezone: 'UTC',
+    nextFireAt: phase === 'end' ? 0 : now + 600_000,
+    ...(phase === 'end' ? { pendingRecurring: recurring } : { endAt: now + 600_000 }),
   }, { operationId, profile: 'profile', chatId: 'chat', fingerprint: 'ab'.repeat(32) });
   const deliveryId = 'ab'.repeat(16);
-  const card = withDraftCardReadbackMarker(automationConfirmCard({ taskType: 'reminder', name: 'reminder', taskText: 'do it', timezone: 'UTC',
-    schedule: { kind: 'one-shot', fireAt: now + 600_000 }, now, confirmToken: 'synthetic', rejectToken: 'synthetic-no' }), deliveryId);
+  const rendered = phase === 'end' ? automationEndCard({
+    'auto.end.1w': 'synthetic-week', 'auto.end.2w': 'synthetic-two-weeks', 'auto.end.1m': 'synthetic-month',
+    'auto.end.3m': 'synthetic-three-months', 'auto.end.eoy': 'synthetic-year-end', 'auto.end.1y': 'synthetic-year',
+    'auto.end.custom': 'synthetic-custom', 'auto.reject': 'synthetic-no',
+  }) : automationConfirmCard({ taskType: 'reminder', name: 'reminder', taskText: 'do it', timezone: 'UTC',
+    schedule: { kind: 'one-shot', fireAt: now + 600_000 }, now, confirmToken: 'synthetic', rejectToken: 'synthetic-no' });
+  const card = withDraftCardReadbackMarker(rendered, deliveryId);
   const channel = createRecordingLarkChannel();
   const cardId = state === 'sending' ? (await channel.createCard(card)).cardId : undefined;
   if (cardId) await channel.send('chat', { cardId }, { uuid: deliveryId });
@@ -204,4 +214,25 @@ it('restores a stage-only draft association before recovery sends, preserving an
   await recovered.redeliver();
   expect(expired.getDraft(h.draft.draftId)?.cardMessageId).toBe('om_fake_1');
   expect(h.channel.sent).toHaveLength(1);
+});
+
+it('refuses to commit a phase change when the previous card cannot be durably voided', async () => {
+  const h = await fixture('sending', 'end');
+  const store = new AutomationsStore(h.options);
+  await store.load();
+  const item = store.outboxJournal.getDraftCard(h.deliveryId)!;
+  // Receipt-hook commit before the Outbox's final sent-state commit.
+  await store.bindDraftCard(h.draft.draftId, 'om_fake_1', item.cardId, draftCardBodyFromCard(item.payload.card));
+  const before = await readFile(h.options.path, 'utf8');
+  const backup = `${h.journalPath}.backup`;
+  await rename(h.journalPath, backup);
+  await mkdir(h.journalPath);
+  await expect(store.updateDraft(h.draft.draftId, { pendingRecurring: null, cardMessageId: null })).rejects.toThrow();
+  expect(await readFile(h.options.path, 'utf8')).toBe(before);
+  await rm(h.journalPath, { recursive: true });
+  await rename(backup, h.journalPath);
+  const restarted = new AutomationsStore(h.options);
+  await restarted.load();
+  expect(restarted.getDraft(h.draft.draftId)).toMatchObject({ deliveryId: h.deliveryId, cardMessageId: 'om_fake_1',
+    pendingRecurring: { kind: 'daily' }, cardBody: { title: '指定结束时间' } });
 });

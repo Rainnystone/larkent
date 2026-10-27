@@ -760,6 +760,12 @@ export class AutomationsStore {
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.draftId === draftId);
     if (!draft) return undefined;
+    if (patch.cardMessageId === null && draft.deliveryId) {
+      // Commit invalidation before mutating the draft: even another queued
+      // automations snapshot must not publish the new phase first.
+      this.outboxJournal.updateDraftCard(draft.deliveryId, { state: 'voided' });
+      await this.outboxJournal.flush();
+    }
     if (draft.op !== 'delete') {
       if (patch.schedule !== undefined) draft.schedule = patch.schedule;
       if (patch.endAt !== undefined) draft.endAt = patch.endAt;
@@ -769,7 +775,6 @@ export class AutomationsStore {
     }
     if (patch.cardReply) draft.cardReply = { ...patch.cardReply };
     if (patch.cardMessageId === null) {
-      if (draft.deliveryId) this.outboxJournal.updateDraftCard(draft.deliveryId, { state: 'voided' });
       delete draft.deliveryId;
       delete draft.delivery;
       delete draft.cardMessageId;
