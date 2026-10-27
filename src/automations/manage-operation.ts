@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto';
 import { toolResult, type ToolResult } from '../bridge-tools/protocol';
-import { resolveWorkingDirectory } from '../policy/workspace';
 import { AUTOMATION_OPERATION_TTL_MS, readAutomationOperationId } from './operation-id';
 import { validateAutomationOperationId, getAutomationOperation, unknownAutomationOperation } from './operation';
 import { normalizeAutomationSchedule } from './schedule-input';
@@ -51,14 +50,6 @@ export async function manageAutomationOperation(operation: string, params: Recor
     const fail = async (code: string) => { await context.store!.recordOperationFailure(registration, code); return getAutomationOperation(operationId, context); };
     const current = readAutomationTask(context.store!, { id: params.id as number, chatId: context.chatId, revision: params.revision as string | undefined, consistency: 'live' });
     if (!current.ok) return fail(current.code);
-    if (replacement) {
-      if (!context.drafts?.autoAuth) return toolResult('unavailable', 'automation-confirmation-unavailable');
-      if (replacement.cwd) {
-        const workspace = await resolveWorkingDirectory(replacement.cwd);
-        if (!workspace.ok) return toolResult('unavailable', 'agent-cwd-unavailable', { operationId, reason: workspace.reason });
-      }
-      if (!replacement.pendingRecurring && !replacement.nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
-    }
     const result = await mutateAutomationTask({ store: context.store!, scheduler, chatId: context.chatId }, {
       actor: 'model', id: current.item.id, revision: params.revision as string | undefined,
       createdBy: context.actorId, registration, drafts: context.drafts!, cardReply: context.cardReply,
@@ -66,7 +57,7 @@ export async function manageAutomationOperation(operation: string, params: Recor
         : { operation: operation === 'automation.delete' ? 'delete' as const : operation === 'automation.resume' ? 'resume' as const : 'pause' as const }),
     });
     if (!result.ok) return 'category' in result
-      ? toolResult(result.category, result.code) : fail(result.code);
+      ? toolResult(result.category, result.code, 'data' in result ? result.data : undefined) : fail(result.code);
     return getAutomationOperation(operationId, context);
   } catch { return unknownAutomationOperation(operationId, 'persistence-or-delivery-unknown'); }
 }

@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery, handleDraftAction } from '../../../src/automations/draft-confirmation';
 import { manageAutomationOperation } from '../../../src/automations/manage-operation';
 import { automationOperationScope, newAutomationOperationId } from '../../../src/automations/operation-id';
 import { callAutomationTool } from '../../../src/automations/tools';
@@ -13,15 +14,15 @@ import { Outbox } from '../../../src/bot/outbox';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 
-const fsFault = vi.hoisted(() => ({ beforeRename: undefined as undefined | ((destination: string) => Promise<void>) }));
+const fsFault = vi.hoisted(() => ({ beforeRename: undefined as undefined | ((destination: string) => Promise<void>), beforeRealpath: undefined as undefined | ((path: string) => Promise<void>) }));
 vi.mock('node:fs/promises', async original => {
   const actual = await original<typeof import('node:fs/promises')>();
-  return { ...actual, rename: async (from: string, to: string) => { await fsFault.beforeRename?.(String(to)); return actual.rename(from, to); } };
+  return { ...actual, realpath: async (path: string) => { await fsFault.beforeRealpath?.(String(path)); return actual.realpath(path); }, rename: async (from: string, to: string) => { await fsFault.beforeRename?.(String(to)); return actual.rename(from, to); } };
 });
 
 const NOW = Date.UTC(2026, 9, 19);
 const cleanups: Array<() => Promise<unknown>> = [];
-afterEach(async () => { fsFault.beforeRename = undefined; for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
+afterEach(async () => { fsFault.beforeRename = undefined; fsFault.beforeRealpath = undefined; for (const cleanup of cleanups.splice(0).reverse()) await cleanup(); });
 
 it('applies a human delete immediately and asks for confirmation for a model delete', async () => {
   const h = await harness();
@@ -158,6 +159,30 @@ it.each(['pause', 'resume'] as const)('applies a fresh model %s after an opposit
   expect(readAutomationTasks(h.store, { chatId: context.chatId, consistency: 'committed' })[0]?.paused).toBe(operation === 'pause');
 });
 
+it('retains the inspected replacement revision while validating the agent workspace', async () => {
+  const h = await harness();
+  const item = await h.store.create(reminder());
+  const context = { profile: 'synthetic', chatId: 'oc_synthetic', actorId: 'ou_synthetic', runType: 'im' as const,
+    availability: () => undefined, store: h.store, drafts: h.drafts, timezone: 'UTC', agentTasks: true, cwd: h.dir, now: h.context.now };
+  const operationId = newAutomationOperationId(automationOperationScope(context.profile, context.chatId), context.now());
+  let entered!: () => void;
+  const reading = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  fsFault.beforeRealpath = async path => { if (path === h.dir) { entered(); await gate; } };
+  const replacement = callAutomationTool('automation.replace', { id: item.id, operationId, taskType: 'agent', name: 'Replacement', taskText: 'Review', schedule: reminder().schedule }, context);
+  await reading;
+  try { await mutateAutomationTask(h.context, { actor: 'human', operation: 'pause', id: item.id }); }
+  finally { release(); }
+  expect(await replacement).toMatchObject({ category: 'waiting-confirmation' });
+  const draft = readAutomationReceipt(h.store, operationId)!.draft!;
+  const token = h.drafts.autoAuth.sign({ draftId: draft.draftId, chatId: item.chatId, action: 'auto.confirm', ttlMs: 60_000 });
+  expect(await handleDraftAction(h.drafts, { action: 'auto.confirm', token, chatId: item.chatId, messageId: draftConfirmationDelivery(draft).messageId! }))
+    .toEqual({ ok: false, message: '#1 状态已变化，请重新查询。' });
+  expect(readAutomationReceipt(h.store, operationId)?.operation).toMatchObject({ state: 'not-applied', code: 'target-state-conflict' });
+  expect(h.store.list()).toMatchObject([{ id: item.id, name: 'Review', paused: true }]);
+});
+
 function reminder(): CreateAutomationInput {
   return { taskType: 'reminder', schedule: { kind: 'one-shot', fireAt: NOW + 900_000 }, timezone: 'UTC',
     startAt: NOW, endAt: NOW + 900_000, nextFireAt: NOW + 900_000, chatId: 'oc_synthetic', createdBy: 'ou_synthetic', name: 'Review', taskText: 'Review the plan' };
@@ -177,5 +202,5 @@ async function harness() {
   cleanups.push(async () => { scheduler.stop(); await scheduler.idle(); await store.flush(); });
   const context = { store, scheduler, chatId: 'oc_synthetic', now: () => now };
   const drafts = { automations: store, automationsScheduler: scheduler, channel: channel as never, autoAuth, now: () => now };
-  return { store, channel, context, drafts, setNow(value: number) { now = value; } };
+  return { dir, store, channel, context, drafts, setNow(value: number) { now = value; } };
 }

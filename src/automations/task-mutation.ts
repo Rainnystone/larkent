@@ -1,3 +1,4 @@
+import { resolveWorkingDirectory } from '../policy/workspace';
 import { automationTargetSnapshot } from './confirm-card';
 import { submitDraft, type DraftConfirmationContext } from './draft-confirmation';
 import type { AutomationScheduler } from './scheduler';
@@ -47,6 +48,16 @@ export async function mutateAutomationTask(
   if (request.actor === 'model') query.revision ??= automationTargetRevision(target.item);
   if (automationMutationNeedsConfirmation(request.actor, request.operation) && request.actor === 'model') {
     if (!request.drafts.autoAuth) return { ok: false as const, code: 'automation-confirmation-unavailable', category: 'unavailable' as const };
+    if (request.operation === 'replace') {
+      const { replacement, registration } = request;
+      if (replacement.cwd) {
+        const workspace = await resolveWorkingDirectory(replacement.cwd);
+        if (!workspace.ok) return { ok: false as const, category: 'unavailable' as const, code: 'agent-cwd-unavailable',
+          data: { operationId: registration.operationId, reason: workspace.reason } };
+      }
+      if (!replacement.pendingRecurring && !replacement.nextFireAt) return { ok: false as const, category: 'validation-failed' as const,
+        code: 'no-remaining-fires', data: { operationId: registration.operationId } };
+    }
     const common = { operationId: request.registration.operationId, cardReply: request.cardReply, chatId, createdBy: request.createdBy,
       targetId: target.item.id, target: automationTargetSnapshot(target.item) };
     if (request.operation === 'replace') {
