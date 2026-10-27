@@ -13,8 +13,9 @@ import {
   deriveRunOutcome,
   formatRunOutcome,
   formatStopRequest,
+  noteTerminalStop,
   requestStop,
-  stopRequestFromTerminal,
+  runOverlappedOutage,
 } from '../bot/run-outcome';
 import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
@@ -29,7 +30,9 @@ export interface RunExecutorDeps {
   createRunId?: () => string;
   now?: () => number;
   postDoneExitGraceMs?: number;
-  stderrSignatures?: () => readonly CliSignature[] | undefined;
+  stderrSignatures?: (variant?: AgentPromptVariant) => readonly CliSignature[] | undefined;
+  /** Read the current Feishu link at spawn and settlement, including after a swap. */
+  getLink?: () => { outageEpoch(): number; isDown(): boolean } | undefined;
   onSpawn?: (input: {
     scopeId: string;
     runId: string;
@@ -82,6 +85,7 @@ export class RunExecutor {
   private readonly now: () => number;
   private readonly postDoneExitGraceMs: number;
   private readonly stderrSignatures?: RunExecutorDeps['stderrSignatures'];
+  private readonly getLink?: RunExecutorDeps['getLink'];
   private readonly onSpawn?: RunExecutorDeps['onSpawn'];
 
   constructor(deps: RunExecutorDeps) {
@@ -92,6 +96,7 @@ export class RunExecutor {
     this.now = deps.now ?? Date.now;
     this.postDoneExitGraceMs = deps.postDoneExitGraceMs ?? DEFAULT_POST_DONE_EXIT_GRACE_MS;
     this.stderrSignatures = deps.stderrSignatures;
+    this.getLink = deps.getLink;
     this.onSpawn = deps.onSpawn;
   }
 
@@ -190,6 +195,9 @@ export class RunExecutor {
         this.activeRuns.newRunsPauseReason() ?? 'new runs are temporarily paused',
       );
     }
+    const startedLink = this.getLink?.();
+    const startedEpoch = startedLink?.outageEpoch() ?? 0;
+    const startedDown = startedLink?.isDown() ?? false;
     try {
       run = this.agent.run(runOptions);
     } catch (err) {
@@ -292,13 +300,38 @@ export class RunExecutor {
       pid: rawRun.pid,
       startedAt: rawRun.startedAt ?? startedAt,
     });
-    const fanout = new EventFanout(observeRunEvents(rawRun.events, {
-      dimensions,
-      startedAt,
-      now: this.now,
-      handle: () => handle,
-      stderrSignatures: this.stderrSignatures,
+    let terminalEvent: AgentEvent | undefined;
+    const fanout = new EventFanout(observeRunEvents(rawRun.events, event => {
+      terminalEvent = event;
+      noteTerminalStop(handle, event);
     }), finish, () => {
+      const failure = cliFailureInput(rawRun.stderrSnapshot,
+        terminalEvent?.type === 'error' ? terminalEvent.message : undefined,
+        this.stderrSignatures?.(input.promptVariant));
+      handle.outcome = deriveRunOutcome({
+        stopRequest: handle.stopRequest,
+        terminalEvent,
+        ...failure,
+        exit: rawRun.exit,
+        signal: rawRun.signal,
+        outageOverlapped: runOverlappedOutage(this.getLink?.(), startedEpoch, startedDown),
+      });
+      if (terminalEvent?.type === 'error') {
+        log.warn('run', 'failed', {
+          ...dimensions,
+          result: terminalEvent.terminationReason,
+          durationMs: this.now() - startedAt,
+          error: terminalEvent.message,
+          ...(handle.stopRequest ? { stopReason: formatStopRequest(handle.stopRequest) } : {}),
+          outcome: formatRunOutcome(handle.outcome),
+        });
+      } else if (terminalEvent?.type === 'done') {
+        log.info('run', 'completed', {
+          ...dimensions,
+          result: terminalEvent.terminationReason,
+          durationMs: this.now() - startedAt,
+        });
+      }
       // Raw exit/cleanup can finish before buffered source events. Release
       // ownership only once the pump has drained them (or observed failure).
       this.activeRuns.unregister(input.scopeId, ownedRun);
@@ -320,45 +353,13 @@ export class RunExecutor {
 
 function observeRunEvents(
   events: AsyncIterable<AgentEvent>,
-  opts: {
-    dimensions: Record<string, unknown>;
-    startedAt: number;
-    now: () => number;
-    handle: () => RunHandle;
-    stderrSignatures?: RunExecutorDeps['stderrSignatures'];
-  },
+  onTerminal: (event: AgentEvent) => void,
 ): AsyncIterable<AgentEvent> {
   return {
     async *[Symbol.asyncIterator](): AsyncIterator<AgentEvent> {
       for await (const event of events) {
-        if (event.type === 'done') {
-          log.info('run', 'completed', {
-            ...opts.dimensions,
-            result: event.terminationReason,
-            durationMs: opts.now() - opts.startedAt,
-          });
-          yield event;
-          return;
-        }
-        if (event.type === 'error') {
-          const stopRequest = opts.handle().stopRequest ?? stopRequestFromTerminal(event);
-          const signatures = opts.stderrSignatures?.();
-          const failure = cliFailureInput(opts.handle().run.stderrSnapshot, event.message, signatures);
-          const outcome = deriveRunOutcome({
-            stopRequest: opts.handle().stopRequest,
-            terminalEvent: event,
-            ...failure,
-            exit: opts.handle().run.exit,
-            signal: opts.handle().run.signal,
-          });
-          log.warn('run', 'failed', {
-            ...opts.dimensions,
-            result: event.terminationReason,
-            durationMs: opts.now() - opts.startedAt,
-            error: event.message,
-            ...(stopRequest ? { stopReason: formatStopRequest(stopRequest) } : {}),
-            outcome: formatRunOutcome(outcome),
-          });
+        if (isTerminalEvent(event)) {
+          onTerminal(event);
           yield event;
           return;
         }

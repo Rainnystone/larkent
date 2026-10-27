@@ -40,7 +40,7 @@ export interface DeriveRunOutcomeInput {
   terminalEvent?: AgentEvent;
   stderrTail?: string;
   signatures?: readonly CliSignature[];
-  /** True when the Feishu link's outage epoch changed during the run. */
+  /** True when the link's outage epoch changed, or the run started while down. */
   outageOverlapped?: boolean;
 }
 

@@ -376,6 +376,32 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(continuationBodies(h.channel)).toEqual([]);
   });
 
+  it('uses the settled outage outcome for an automation failure and its journal', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>(resolve => { release = resolve; });
+    const h = await harness({
+      nowMs: t0, seed: true, hold,
+      events: [[{ type: 'error', message: 'Synthetic failure', terminationReason: 'failed' }]],
+    });
+    try {
+      await waitFor(() => h.agent.runs.length === 1);
+      h.channel.connectionState = 'reconnecting';
+      await h.bridge.tickLink();
+      release();
+      await waitFor(() => h.journal.list().some(entry => entry.outcome !== undefined));
+      h.channel.connectionState = 'connected';
+      await h.bridge.tickLink();
+      await waitFor(() => bodies(h.channel).some(body => body.includes('自动化任务中断')));
+      expect(h.journal.list().find(entry => entry.turnId.startsWith('af:'))?.outcome).toEqual({
+        kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false,
+      });
+      expect(bodies(h.channel).join('\n')).toContain('自动化任务中断：上游网络中断');
+      expect(continuationBodies(h.channel)).toEqual([]);
+    } finally {
+      release();
+    }
+  });
+
   it('posts a plain failure notice with no 继续, and restart does not offer a Continuation', async () => {
     let release!: () => void;
     const hold = new Promise<void>((resolve) => {

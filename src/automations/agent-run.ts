@@ -16,10 +16,8 @@ import { createIdleWatchdog } from '../bot/idle-watchdog';
 import { recordRunSessionEvent, startRunFlow } from '../bot/run-flow';
 import {
   cardTerminalFromOutcome,
-  deriveRunOutcome,
   describeRunOutcome,
   formatRunOutcome,
-  noteTerminalStop,
   requestStop,
   shouldDeliverAgentEvent,
   type RunOutcome,
@@ -520,7 +518,6 @@ async function drainFireRun(input: {
       if (event.type === 'liveness') continue;
       if (event.type === 'done' || event.type === 'error') {
         lastTerminal = event;
-        noteTerminalStop(input.handle, event);
       }
       state = reduce(state, event);
       if (state.terminal !== 'running') break;
@@ -532,14 +529,8 @@ async function drainFireRun(input: {
   const stderrTail = input.handle.run.stderrSnapshot
     ?? (lastTerminal?.type === 'error' ? lastTerminal.message : undefined);
   const matched = matchCliSignature(stderrTail, input.signatures);
-  const outcome = deriveRunOutcome({
-    stopRequest: input.handle.stopRequest,
-    terminalEvent: lastTerminal,
-    exit: input.handle.run.exit,
-    signal: input.handle.run.signal,
-    stderrTail,
-    signatures: input.signatures,
-  });
+  const outcome = input.handle.outcome;
+  if (!outcome) throw new Error('run settled without an outcome');
   const userMessage = outcome.kind === 'partial' ? cardUserMessage(outcome, matched) : undefined;
   if (
     state.terminal === 'running'
@@ -548,7 +539,6 @@ async function drainFireRun(input: {
   ) {
     state = applyFireOutcome(state, outcome, watchdog.armedDelayMs(), userMessage);
   }
-  input.handle.outcome = outcome;
   if (input.handle.interrupted) await input.handle.run.stop();
   return policyGuard ? { state, policyGuard } : { state };
 }
