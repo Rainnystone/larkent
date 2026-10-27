@@ -174,6 +174,17 @@ it('keeps an explicit user stop distinct from an idle interruption', async () =>
   expect(h.journal.get('turn')?.continuation).toBeUndefined();
 });
 
+it.each([
+  ['timeout', 'runner_timeout', 'runner-timeout'],
+  ['interrupted', 'interrupted', 'external-signal'],
+] as const)('preserves a terminal %s reason through state and settlement', async (terminationReason, terminal, reason) => {
+  const h = await fixture({ events: [{ type: 'done', terminationReason }] });
+  const result = await executeTurn({ run: h.run, delivery: h.delivery });
+  expect(result.ok && result.state.terminal).toBe(terminal);
+  expect(result.ok && result.handle.outcome).toMatchObject({ kind: 'interrupted', reason: { type: reason } });
+  expect(h.journal.get('turn')?.outcome).toEqual(result.ok && result.handle.outcome);
+});
+
 it('updates the returned handle activity time when a liveness event arrives', async () => {
   const h = await fixture();
   const originalRun = h.agent.run.bind(h.agent);

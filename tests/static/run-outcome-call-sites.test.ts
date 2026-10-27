@@ -34,7 +34,6 @@ describe('stop request call sites', () => {
     expect(channel).toContain("stopAll(opts?.stopReason ?? { type: 'shutdown-signal' })");
     expect(read('src/bot/idle-watchdog.ts')).toContain("requestStop(handle, { type: 'bridge-idle-watchdog' })");
     expect(channel).not.toMatch(/onConnectedTick:[\s\S]*recoverJournal\(\)/);
-    expect(channel).toContain('noteTerminalStop(handle, evt)');
     expect(executor).toContain("requestStop(handle, { type: 'subscriber-abandoned' })");
     expect(executor).toContain('stopRequestFromTerminal(terminalEvent)');
 
