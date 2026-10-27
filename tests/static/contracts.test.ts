@@ -210,7 +210,7 @@ describe('static architecture contracts', () => {
     expect(read('src/bot/self-message.ts')).toMatch(/'message\.list'/);
     expect(read('src/bot/self-message.ts')).toMatch(/'cardkit\.card\.update'/);
     expect(read('src/bot/channel.ts')).not.toMatch(/outageEpoch: \(\) => 0/);
-    expect(read('src/bot/channel.ts')).toMatch(/streamReliability\(controls\.profileConfig, \(\) => link\)/);
+    expect(read('src/bot/channel.ts')).toMatch(/getLink: \(\) => feishuLink/);
     expect(read('package.json')).toMatch(/"@larksuite\/channel@0\.7\.1": "patches\/@larksuite__channel@0\.7\.1\.patch"/);
     expect(read('patches/@larksuite__channel@0.7.1.patch')).toMatch(/payload\.uuid = args\.uuid/);
     expect(read('src/bot/feishu-delivery.ts')).toMatch(/\bupdateCard\b/);
