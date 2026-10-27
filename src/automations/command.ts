@@ -851,7 +851,7 @@ export async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string
     const draft = automations.getDraft(draftId);
     if (!draft || draft.cardMessageId) return;
     if (draft.delivery?.state === 'sending') { await reconcileDraftCard(ctx.channel, automations, draft, ctx.botAppId); return; }
-    if (draft.delivery?.state === 'rejected') return;
+    if (draft.operationId && draft.delivery?.state === 'rejected') return;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -1400,6 +1400,7 @@ async function settleDraftCardFailure(
     return;
   }
   if (isNotInChat(error)) throw error;
+  if (ctx.automations?.getDraft(draft.draftId)?.delivery?.state === 'sending') return;
   const kind = classify(error);
   const { code } = readCardApiError(error);
   switch (kind) {

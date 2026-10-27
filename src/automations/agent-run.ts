@@ -444,6 +444,7 @@ async function postFireMarkdown(
 ): Promise<void> {
   if (!runtime.journal) return;
   await deliverAutomationMarkdown({
+    kind: 'result',
     ...runtime,
     journal: runtime.journal,
     turnId,

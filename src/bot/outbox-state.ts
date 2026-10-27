@@ -11,6 +11,7 @@ type Change = Partial<TurnJournalEntry>;
 export function stageReply(entry: TurnJournalEntry, reply: StageReply): Change {
   const threadId = reply.threadId?.trim() || entry.threadId;
   const next: TurnReply = {
+    ...(reply.kind ? { kind: reply.kind } : {}),
     markdown: reply.markdown,
     replyTo: reply.replyTo,
     replyMode: reply.replyMode ?? 'text',

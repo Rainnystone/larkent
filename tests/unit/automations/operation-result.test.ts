@@ -1,3 +1,4 @@
+import { seedDraftDelivery } from '../../helpers/draft-delivery-fixture';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -18,7 +19,7 @@ it.each(['prepared', 'unattempted'] as const)('reports an unsent %s draft as pen
   const { context, operationId } = await fixture();
   const draft = context.store!.listDrafts()[0]!;
   if (state === 'prepared') {
-    await context.store!.setDraftDelivery(draft.draftId, {
+    await seedDraftDelivery(context.store!, draft.draftId, {
       state: 'prepared',
       deliveryId: 'ab'.repeat(16),
       card: { synthetic: true },
@@ -34,7 +35,7 @@ it.each(['prepared', 'unattempted'] as const)('reports an unsent %s draft as pen
 it('still reports a rejected card send as not-applied', async () => {
   const { context, operationId } = await fixture();
   const draft = context.store!.listDrafts()[0]!;
-  await context.store!.setDraftDelivery(draft.draftId, {
+  await seedDraftDelivery(context.store!, draft.draftId, {
     state: 'rejected',
     deliveryId: 'cd'.repeat(16),
     card: { synthetic: true },

@@ -234,7 +234,10 @@ async function harness(opts: {
   configureLogger({ logsDir, retentionDays: 1, now: () => LOG_AT });
   let nowMs = NOW;
   const now = () => nowMs;
+  const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
+  await journal.load();
   const store = new AutomationsStore({
+    journal,
     path: join(tmp.profile, 'automations.json'),
     logPath: join(tmp.profile, 'automations.log'),
     statusPath: join(tmp.profile, 'automations-status.json'),
@@ -243,8 +246,6 @@ async function harness(opts: {
   await store.load();
   for (const input of opts.items ?? []) await store.create(input);
   for (const input of opts.drafts ?? []) await store.saveDraft(input);
-  const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
-  await journal.load();
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },

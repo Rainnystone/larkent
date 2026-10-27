@@ -217,7 +217,7 @@ it('upgrades an existing v1 manual draft and completes its original confirmation
   await writeFile(h.store.getFilePath(), JSON.stringify(document));
   await h.restart();
   const upgraded = await readFile(h.store.getFilePath(), 'utf8');
-  expect(JSON.parse(upgraded).schemaVersion).toBe(2);
+  expect(JSON.parse(upgraded).schemaVersion).toBe(3);
   await h.restart();
   expect(await readFile(h.store.getFilePath(), 'utf8')).toBe(upgraded);
   await h.channel.handlers.cardAction?.(click(original.cardMessageId!, button(card, 'auto.confirm')));

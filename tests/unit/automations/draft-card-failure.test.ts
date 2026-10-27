@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { setImmediate as yieldIO } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
@@ -207,7 +208,7 @@ describe('automation draft card delivery', () => {
     });
 
     const first = flush();
-    for (let n = 0; creates < 1 && n < 20; n++) await Promise.resolve();
+    for (let n = 0; creates < 1 && n < 200; n++) await yieldIO();
     expect(creates).toBe(1);
     const second = flush();
     await Promise.resolve();

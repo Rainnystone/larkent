@@ -672,6 +672,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
 
   outbox = new Outbox({
     channel, journal, botAppId: cfg.accounts.app.id,
+    draftCards: deps.automations,
+    draftJournal: deps.automations?.outboxJournal,
     isDown: () => closing || link.isDown(),
     isActive: (scope) => activeRuns.get(scope) !== undefined,
     now: deps.now,
@@ -727,6 +729,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       });
     },
   });
+  if (deps.automations) deps.automations.draftOutbox = outbox;
 
   const recovery = createRecovery({
     journal: {
@@ -808,10 +811,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       botOpenId: () => channel.botIdentity?.openId ?? '',
       isLinkDown: () => closing || started.isDown(),
       ...(deps.now ? { now: deps.now } : {}),
-      ...(journal ? {
-        deliver: (entry) => outbox.deliver(entry),
-      } : {}),
-      onUndelivered: () => outbox.schedule(),
+      outbox,
       onNotInChat: removeFromChat,
     };
     automationsCtl.scheduler = createAutomationScheduler({

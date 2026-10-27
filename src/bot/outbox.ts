@@ -5,7 +5,8 @@ import type { RunOutcome } from './run-outcome';
 import { withDeliveryUuid } from './feishu-delivery';
 import { streamDeliveryKey, replyState, noticeState } from './turn-journal';
 import { classify, rateLimitResetDelayMs, isNotInChat } from './feishu-error';
-import { RECOVERY_RETRY_MAX_MS } from './recovery';
+import { RECOVERY_RETRY_MAX_MS } from './recovery-timing';
+import { deliverDraftCard, stageDraftCard, type DraftCardInput, type DraftCardReceipts } from './outbox-draft';
 
 import type {
   TurnJournal,
@@ -51,6 +52,9 @@ export interface OutboxOptions {
   onInterrupted?: JournalRecoverOptions['onInterrupted'];
   track?: (work: Promise<void>) => Promise<void>;
   onNotInChat?: (chatId: string) => void | Promise<unknown>;
+  draftCards?: DraftCardReceipts;
+  draftJournal?: TurnJournal;
+  liveSweep?: boolean;
 }
 
 /** Owns durable reply and notice delivery; the journal stores the atomic turn snapshot. */
@@ -64,6 +68,33 @@ export class Outbox {
   private sweepTail: Promise<void> = Promise.resolve();
 
   constructor(private readonly options: OutboxOptions) {}
+
+  async stageDraftCard(input: DraftCardInput): Promise<void> {
+    const journal = this.options.draftJournal ?? this.options.journal;
+    if (!journal) throw new Error('Draft Outbox is unavailable');
+    stageDraftCard(journal, input);
+    await journal.flush();
+  }
+
+  async deliverDraftCard(input: DraftCardInput) {
+    const journal = this.options.draftJournal ?? this.options.journal;
+    if (!journal || !this.options.draftCards) throw new Error('Draft Outbox is unavailable');
+    await this.stageDraftCard(input);
+    try {
+      const receipt = await deliverDraftCard({ ...this.options, journal, draftCards: this.options.draftCards }, input.deliveryId);
+      if (!receipt) throw new Error('draft card delivery is unknown or pending');
+      return receipt;
+    } catch (error) {
+      if (journal.getDraftCard(input.deliveryId)?.state === 'staged') this.schedule(OUTBOX_SWEEP_MS);
+      throw error;
+    }
+  }
+
+  async reconcileDraftCard(deliveryId: string): Promise<void> {
+    const journal = this.options.draftJournal ?? this.options.journal;
+    if (!journal || !this.options.draftCards) return;
+    await deliverDraftCard({ ...this.options, journal, draftCards: this.options.draftCards }, deliveryId);
+  }
 
   stream(
     chatId: string,
@@ -148,6 +179,48 @@ export class Outbox {
     });
   }
 
+  async deliverAutomation(input: {
+    kind: 'reminder' | 'result';
+    turnId: string;
+    chatId: string;
+    markdown: string;
+    actor: string;
+    scope?: string;
+  }): Promise<void> {
+    const journal = this.options.journal;
+    if (!journal) return;
+    const existing = journal.get(input.turnId);
+    if (existing && replyState(existing) !== undefined) {
+      if (replyState(existing) !== 'staged') return;
+    } else {
+      if (!existing) journal.enqueue({
+        turnId: input.turnId, scope: input.scope ?? `auto:${input.turnId}`,
+        chatId: input.chatId, messageIds: [], senderId: input.actor,
+        initiatorId: input.actor, initiatorType: 'bot', status: 'settled',
+      });
+      journal.stageReply(input.turnId, {
+        kind: input.kind, markdown: input.markdown, replyTo: '', replyMode: 'text',
+      });
+    }
+    await journal.flush();
+    if (this.options.isDown?.()) return;
+    const current = journal.get(input.turnId);
+    if (!current || current.status === 'voided') return;
+    try {
+      if (!await this.deliver(current)) this.schedule();
+    } catch (error) {
+      if (isNotInChat(error)) {
+        journal.replyRejected(current.turnId);
+        await journal.flush();
+        throw error;
+      }
+      try { this.redeliveryFailed('reply', current, error); }
+      catch { /* The link owns recovery after a transport failure. */ }
+      await journal.flush();
+      this.schedule();
+    }
+  }
+
   async stage(
     item:
       | {
@@ -198,7 +271,7 @@ export class Outbox {
   }
 
   redeliver(): Promise<void> {
-    if (!this.options.journal) return Promise.resolve();
+    if (!this.options.journal && !this.options.draftJournal) return Promise.resolve();
     if (this.redelivering) return this.redelivering;
     this.redelivering = this.finishRedeliver().finally(() => {
       this.redelivering = undefined;
@@ -207,7 +280,7 @@ export class Outbox {
   }
 
   private async finishRedeliver(): Promise<void> {
-    const journal = this.options.journal!;
+    const journal = (this.options.journal ?? this.options.draftJournal)!;
     try {
       await journal.flush();
       await this.redeliverOwned();
@@ -219,7 +292,7 @@ export class Outbox {
   }
 
   private async redeliverOwned(): Promise<void> {
-    const journal = this.options.journal!;
+    const journal = (this.options.journal ?? this.options.draftJournal)!;
     const snapshot = journal
       .list()
       .filter((entry) => isStagedReply(entry) || isStagedNotice(entry));
@@ -276,6 +349,16 @@ export class Outbox {
         notices,
         interrupted: 0,
       });
+    const draftJournal = this.options.draftJournal ?? journal;
+    for (const item of draftJournal.listDraftCards()) {
+      if (this.options.isDown?.()) break;
+      if (item.state !== 'staged' || !this.options.draftCards) continue;
+      try { await this.reconcileDraftCard(item.deliveryId); }
+      catch (error) {
+        if (isNotInChat(error)) await this.options.onNotInChat?.(item.target.chatId);
+        if (classify(error) === 'link') throw error;
+      }
+    }
   }
 
   private redeliveryFailed(
@@ -313,7 +396,7 @@ export class Outbox {
   }
 
   schedule(delayMs = 0): void {
-    if (this.stopped) return;
+    if (this.stopped || this.options.liveSweep === false) return;
     this.sweepDelayMs = OUTBOX_SWEEP_MS;
     if (delayMs > 0) {
       this.armSweep(delayMs);
@@ -323,7 +406,7 @@ export class Outbox {
   }
 
   sweep(): Promise<void> {
-    const { journal } = this.options;
+    const journal = this.options.journal ?? this.options.draftJournal;
     if (this.stopped || !journal || this.options.isDown?.())
       return Promise.resolve();
     if (this.sweepInFlight) {
@@ -331,13 +414,14 @@ export class Outbox {
       return this.sweepTail;
     }
     this.sweepInFlight = true;
-    const stagedBefore = stagedOutboxCount(journal);
+    const count = () => stagedOutboxCount(journal) + (this.options.draftJournal ?? journal).listDraftCards().filter(item => item.state === 'staged').length;
+    const stagedBefore = count();
     const work = this.redeliver();
     this.sweepTail = (this.options.track?.(work) ?? work)
       .then(
         () => {
           if (this.stopped || this.options.isDown?.()) return;
-          const stagedAfter = stagedOutboxCount(journal);
+          const stagedAfter = count();
           if (stagedAfter === 0) {
             this.sweepDelayMs = OUTBOX_SWEEP_MS;
             return;
