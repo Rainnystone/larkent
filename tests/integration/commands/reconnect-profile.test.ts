@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import type { AgentRun } from '../../../src/agent/types';
 import { ActiveRuns } from '../../../src/bot/active-runs';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store';
@@ -108,8 +108,9 @@ async function createHarness(): Promise<{
     restart,
     command: (content: string) =>
       tryHandleCommand({
+        origin: 'slash',
         resumeCandidates,
-        channel: channel as unknown as CommandContext['channel'],
+        channel: channel as unknown as UserActionContext['channel'],
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',

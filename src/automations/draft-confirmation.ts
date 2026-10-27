@@ -5,7 +5,7 @@ import { log } from '../core/logger';
 import { classify, isNotInChat } from '../bot/feishu-error';
 import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
-import type { CommandContext } from '../commands';
+import type { UserActionContext } from '../commands';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction, isAutoEndAction } from './action-auth';
 import { automationConfirmCard, automationDeleteCard, automationReplaceCard } from './confirm-card';
 import { automationEndCard, type EndCardTokens } from './end-card';
@@ -16,13 +16,13 @@ import { AUTOMATIONS_DRAFT_TTL_MS, type AutomationDraft, type AutomationItem, ty
 import { AUTO_INVALID_HINT, AUTO_INVALID_END, AUTO_END_BUSY, AUTO_END_NOT_AFTER_START, AUTO_NO_REMAINING_FIRES, AUTO_AGENT_NEEDS_CWD, assessAutomationSchedule, hasRemainingFire, noteAutomationRejected, rejectMessage, completePendingSchedule, resolveEndAt, scheduleStartAt, scheduleEndAt, type AutomationScheduleVerdict } from './command-schedule';
 export type DraftConfirmationContext = {
   botAppId?: string;
-  channel: CommandContext['channel'];
+  channel: UserActionContext['channel'];
   automations?: AutomationsStore;
   autoAuth?: AutoActionAuth;
-  automationsScheduler?: CommandContext['automationsScheduler'];
+  automationsScheduler?: UserActionContext['automationsScheduler'];
   now?: () => number;
   isLinkDown?: () => boolean;
-  onAutomationConfirmed?: CommandContext['onAutomationConfirmed'];
+  onAutomationConfirmed?: UserActionContext['onAutomationConfirmed'];
 };
 
 /** In-flight card claim per draft. Bind happens after send, so a second flush must wait. */
@@ -120,10 +120,10 @@ async function completeDraftEnd(
   ctx: {
     automations: AutomationsStore;
     autoAuth: AutoActionAuth;
-    automationsScheduler?: CommandContext['automationsScheduler'];
-    channel: CommandContext['channel'];
+    automationsScheduler?: UserActionContext['automationsScheduler'];
+    channel: UserActionContext['channel'];
     now?: () => number;
-    chatMode?: CommandContext['chatMode'];
+    chatMode?: UserActionContext['chatMode'];
   },
   draft: Exclude<AutomationDraft, DeleteAutomationDraft>,
   endAt: number,
@@ -167,7 +167,7 @@ interface AutomationConfirmOutcome {
 }
 
 async function confirmAutomationDraft(
-  ctx: Pick<CommandContext, 'automations' | 'automationsScheduler' | 'onAutomationConfirmed'> & {
+  ctx: Pick<UserActionContext, 'automations' | 'automationsScheduler' | 'onAutomationConfirmed'> & {
     now?: () => number;
   },
   draft: AutomationDraft,
@@ -196,7 +196,7 @@ async function confirmAutomationDraft(
 }
 
 async function confirmCreateDraft(
-  ctx: Pick<CommandContext, 'automations' | 'onAutomationConfirmed'>,
+  ctx: Pick<UserActionContext, 'automations' | 'onAutomationConfirmed'>,
   draft: Exclude<AutomationDraft, DeleteAutomationDraft | ReplaceAutomationDraft>,
 ): Promise<AutomationConfirmOutcome> {
   if (!ctx.automations || draft.pendingRecurring) return confirmInvalid();
@@ -228,7 +228,7 @@ async function confirmCreateDraft(
 }
 
 async function confirmDeleteDraft(
-  ctx: Pick<CommandContext, 'automations' | 'automationsScheduler'>,
+  ctx: Pick<UserActionContext, 'automations' | 'automationsScheduler'>,
   draft: DeleteAutomationDraft,
 ): Promise<AutomationConfirmOutcome> {
   if (!ctx.automations || !ctx.automationsScheduler) return confirmInvalid();
@@ -248,7 +248,7 @@ async function confirmDeleteDraft(
 }
 
 async function confirmReplaceDraft(
-  ctx: Pick<CommandContext, 'automations' | 'automationsScheduler' | 'onAutomationConfirmed'> & {
+  ctx: Pick<UserActionContext, 'automations' | 'automationsScheduler' | 'onAutomationConfirmed'> & {
     now?: () => number;
   },
   draft: ReplaceAutomationDraft,
@@ -369,10 +369,10 @@ function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): Automa
 
 async function settleDraftCardFailure(
   ctx: {
-    channel: CommandContext['channel'];
+    channel: UserActionContext['channel'];
     automations?: AutomationsStore;
-    automationsScheduler?: CommandContext['automationsScheduler'];
-    chatMode: CommandContext['chatMode'];
+    automationsScheduler?: UserActionContext['automationsScheduler'];
+    chatMode: UserActionContext['chatMode'];
     msg: { chatId: string; messageId?: string; threadId?: string };
   },
   draft: AutomationDraft,
@@ -419,9 +419,9 @@ async function settleDraftCardFailure(
 
 async function replyDraftCardFailed(
   ctx: {
-    channel: CommandContext['channel'];
-    automationsScheduler?: CommandContext['automationsScheduler'];
-    chatMode: CommandContext['chatMode'];
+    channel: UserActionContext['channel'];
+    automationsScheduler?: UserActionContext['automationsScheduler'];
+    chatMode: UserActionContext['chatMode'];
     msg: { chatId: string; threadId?: string };
   },
   replyTo: string,

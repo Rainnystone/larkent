@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommentEvent, NormalizedMessage } from '@larksuite/channel';
 import { handleCommentMention } from '../../../src/bot/comments';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { ProcessPool } from '../../../src/bot/process-pool';
@@ -174,9 +174,10 @@ function commandContext(args: {
   controls: Controls;
   senderId: string;
   content: string;
-}): CommandContext {
+}): UserActionContext {
   return {
-    channel: args.channel as unknown as CommandContext['channel'],
+    origin: 'slash',
+    channel: args.channel as unknown as UserActionContext['channel'],
     msg: message(args.senderId, args.content),
     scope: 'chat-1',
     chatMode: 'p2p',

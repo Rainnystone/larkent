@@ -31,6 +31,7 @@ describe('backfill static contracts', () => {
       'src/bot/recovery.ts',
       'src/bot/channel.ts',
       'src/commands/index.ts',
+      'src/commands/handlers.ts',
     ].map(read).join('\n');
 
     const missing = REQUIRED_BACKFILL_EVENTS.filter((name) => !emittedInSource(botLayer, name));

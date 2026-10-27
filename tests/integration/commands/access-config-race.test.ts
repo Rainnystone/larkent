@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
-import type { CommandContext, Controls } from '../../../src/commands/index.js';
+import type { UserActionContext, Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
 import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
@@ -121,8 +121,9 @@ async function createHarness(): Promise<{
     configPath,
     run: (content, overrides = {}) =>
       tryHandleCommand({
+        origin: 'slash',
         resumeCandidates,
-        channel: channel as unknown as CommandContext['channel'],
+        channel: channel as unknown as UserActionContext['channel'],
         msg: message(content, overrides.mentions ?? []),
         scope: 'chat-1',
         chatMode: 'p2p',

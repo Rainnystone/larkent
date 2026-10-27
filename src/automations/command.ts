@@ -1,15 +1,15 @@
 import { log } from '../core/logger';
 import { senderTypeFromMessage } from '../bot/self-message';
 import { abandonIfNotInChat } from './chat-lifecycle';
-import type { CommandContext } from '../commands';
+import type { UserActionContext } from '../commands';
 import { formatAutomationListLine } from './board-card';
 import { mutateAutomationTask, readAutomationTasks, taskMutationLabels } from './task-mutation';
 import { AUTO_NEW_USAGE, AUTO_P2P_HINT, AUTO_AGENT_DISABLED, AUTO_LIST_EMPTY, AUTO_UNKNOWN_ID, parseAutoNewArgs, assessAutomationSchedule, rejectMessage, noteAutomationRejected, scheduleStartAt, scheduleEndAt, type ParsedAutoNew, type AutomationRejectSource } from './command-schedule';
 import { nextFireAfter } from './schedule';
 import { submitDraft } from './draft-confirmation';
 export * from './command-schedule';
-export type AutomationCommandContext = Pick<
-  CommandContext,
+export type AutomationUserActionContext = Pick<
+  UserActionContext,
   | 'channel'
   | 'msg'
   | 'scope'
@@ -45,7 +45,7 @@ export function parseAutoCommand(args: string): ParsedAutoCommand {
   return { op: 'new', ...parsed };
 }
 
-export async function handleAutoCommand(args: string, ctx: CommandContext): Promise<void> {
+export async function handleAutoCommand(args: string, ctx: UserActionContext): Promise<void> {
   if (!ctx.controls.profileConfig.automations.enabled) return;
   if (isIgnoredAutoSender(ctx)) return;
   if (ctx.scope.startsWith('auto:') || ctx.scope.startsWith('meeting:')) return;
@@ -78,7 +78,7 @@ export async function handleAutoCommand(args: string, ctx: CommandContext): Prom
 }
 
 export async function submitAutomationCommand(
-  ctx: AutomationCommandContext,
+  ctx: AutomationUserActionContext,
   parsed: ParsedAutoNew,
   source: AutomationRejectSource = 'command',
 ): Promise<void> {
@@ -179,7 +179,7 @@ export async function submitAutomationCommand(
   }
 }
 
-async function listAutos(ctx: CommandContext): Promise<void> {
+async function listAutos(ctx: UserActionContext): Promise<void> {
   if (!ctx.automations) {
     await replyAuto(ctx, AUTO_LIST_EMPTY);
     return;
@@ -193,7 +193,7 @@ async function listAutos(ctx: CommandContext): Promise<void> {
 }
 
 async function mutateAuto(
-  ctx: CommandContext,
+  ctx: UserActionContext,
   op: 'pause' | 'resume' | 'delete',
   id: number,
 ): Promise<void> {
@@ -206,14 +206,14 @@ async function mutateAuto(
   await replyAuto(ctx, result.ok ? `已${taskMutationLabels[op]} #${id} ${result.item.name}` : AUTO_UNKNOWN_ID);
 }
 
-function isIgnoredAutoSender(ctx: Pick<CommandContext, 'msg' | 'channel'>): boolean {
+function isIgnoredAutoSender(ctx: Pick<UserActionContext, 'msg' | 'channel'>): boolean {
   const senderType = senderTypeFromMessage(ctx.msg);
   if (senderType === 'app' || senderType === 'bot') return true;
   const botOpenId = ctx.channel.botIdentity?.openId;
   return Boolean(botOpenId) && ctx.msg.senderId === botOpenId;
 }
 
-async function replyAuto(ctx: AutomationCommandContext, markdown: string): Promise<void> {
+async function replyAuto(ctx: AutomationUserActionContext, markdown: string): Promise<void> {
   try {
     await ctx.channel.send(
       ctx.msg.chatId,

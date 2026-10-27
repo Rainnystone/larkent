@@ -6,7 +6,7 @@ import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import type { ChatModeCache } from '../../../src/bot/chat-mode-cache.js';
 import { PendingQueue } from '../../../src/bot/pending-queue.js';
 import { handleCardAction } from '../../../src/card/dispatcher.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type AgentKind, type ProfileConfig } from '../../../src/config/profile-schema.js';
 import { canUseDm } from '../../../src/policy/access.js';
 import { evaluateRunPolicy } from '../../../src/policy/run-policy.js';
@@ -496,7 +496,8 @@ async function createHarness(
     runOptions: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' } = {},
   ): Promise<boolean> =>
     tryHandleCommand({
-      channel: channel as unknown as CommandContext['channel'],
+      origin: 'slash',
+      channel: channel as unknown as UserActionContext['channel'],
       msg: message(content),
       scope: 'chat-1',
       chatMode: runOptions.chatMode ?? 'p2p',
