@@ -18,16 +18,8 @@ import {
   type BridgePromptQuotedMessage,
   type BridgePromptTopicMessage,
 } from '../agent/prompt';
-import {
-  cardUserMessage,
-  cliFailureInput,
-  matchCliSignature,
-  NETWORK_TRANSIENT_SIGNATURES,
-  noteUnclassifiedStderr,
-  type CliSignature,
-} from '../agent/cli-signatures';
-import { descriptorFor, isAgentKind } from '../agent/registry';
-import type { AgentAdapter, AgentEvent } from '../agent/types';
+import { descriptorFor } from '../agent/registry';
+import type { AgentAdapter } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
 import { ActionTokenCodec } from '../card/action-token';
@@ -38,7 +30,6 @@ import {
   planInterruptionNotice,
 } from './interruption-notice';
 import { createContinuations, type ContinuationTaken, type Continuations } from './continuation';
-import { renderCard } from '../card/run-renderer';
 import {
   CliSelfSendTracker,
   OutboundMessageIds,
@@ -46,30 +37,9 @@ import {
   automationUnavailableForSender,
   isSelfSender,
   noteInboundSkipSelf,
-  outboundMessageId,
   senderTypeFromMessage,
-  withOutboundTimeout,
 } from './self-message';
-import {
-  finalizeIfRunning,
-  initialState,
-  markIdleTimeout,
-  markInterrupted,
-  markRunnerTimeout,
-  reduce,
-  seedRunState,
-  type RunState,
-} from '../card/run-state';
-import {
-  cardTerminalFromOutcome,
-  formatRunOutcome,
-  formatStopRequest,
-  noteTerminalStop,
-  shouldDeliverAgentEvent,
-  type RunOutcome,
-  type StopRequest,
-} from './run-outcome';
-import { renderText } from '../card/text-renderer';
+import { formatRunOutcome, type StopRequest } from './run-outcome';
 import { commandClearsPending, tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
@@ -105,7 +75,7 @@ import type { SessionCatalog } from '../session/catalog';
 import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
-import { ActiveRuns, noteRunEvent, type RunHandle } from './active-runs';
+import { ActiveRuns } from './active-runs';
 import {
   BACKFILL_DELAY_LINE,
   createBackfillRun,
@@ -118,7 +88,7 @@ import { classify } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
-import { Outbox, type StreamDelivery } from './outbox';
+import { Outbox } from './outbox';
 import {
   isJournalResourceType,
   replyDeliveryKey,
@@ -147,30 +117,20 @@ import type { AutomationItem, AutomationsStore } from '../automations/store';
 import { deploymentPluginCatalog, type PluginCatalog } from '../plugins/catalog';
 import type { ToolRunContext } from '../bridge-tools/server';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
-import { createIdleWatchdog } from './idle-watchdog';
 import { isAutomationRunScope, isAutomationScope, parseAutomationRunScope } from './scope';
 import { handleCommentMention } from './comments';
-import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
+import { resolveRunResumeHandle } from './run-flow';
+import { executeTurn, turnStderrSignatures, TurnStartFailed } from './turn';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
 import { PendingQueue } from './pending-queue';
 import { ProcessPool } from './process-pool';
 import { fetchQuotedContext, fetchTopicContext, type QuotedContext } from './quote';
 import { lookupMessageThreadId } from './thread-id';
-import { addWorkingReaction, removeReaction } from './reaction';
 import { fetchKnownChats } from './lark-info';
 import type { AppPaths } from '../config/app-paths';
-import {
-  consumeCotEvents,
-  CotClient,
-  CotPublisher,
-  appendOutcomeNotice,
-  finalAnswerOnlyState,
-  finalReplyFor,
-} from './cot';
+import { CotClient } from './cot';
 
 const DEBOUNCE_MS = 600;
-const STREAM_TERMINAL_GRACE_MS = 3000;
-const REACTION_CLEANUP_GRACE_MS = 1000;
 
 /** Single handshake attempt. Also the force-reconnect budget via connectTimeoutMs. */
 export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
@@ -368,13 +328,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     agent,
     pool,
     activeRuns,
-    stderrSignatures: variant => {
-      const signatures = streamReliability(controls.profileConfig).signatures;
-      // Fires have always used signatures only for partial-output warnings.
-      return variant === 'automation'
-        ? signatures?.filter(signature => signature.classify.kind === 'partial')
-        : signatures;
-    },
+    stderrSignatures: variant => turnStderrSignatures(controls.profileConfig.agentKind, variant),
     getLink: () => feishuLink,
     ...(deps.now ? { now: deps.now } : {}),
     onSpawn: (input) => {
@@ -1694,859 +1648,74 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     });
   }
 
-  const flow = await startRunFlow({
-    toolContext,
-    scopeId: scope,
-    scope: scopeContext,
-    prompt,
-    attachments: attachments.map(toPolicyAttachment),
-    access: accessDecision,
-    capability,
-    profileConfig: controls.profileConfig,
-    sessions,
-    sessionCatalog,
-    workspaces,
-    executor,
-    now: Date.now(),
-    stopGraceMs: getAgentStopGraceMs(controls.cfg),
-    ...(taken.kind === 'continue'
-      ? taken.resumeHandle
-        ? {
-          forceResumeHandle: taken.resumeHandle,
-          ...(taken.policyFingerprint
-            ? { forceResumeFingerprint: taken.policyFingerprint }
-            : {}),
-        }
-        : { forceResumeHandle: null }
-      : {}),
-    observability: {
-      profile: controls.profile,
-      agent: capability.agentId,
-      source: 'im',
-      stage: 'submit',
-    },
-  });
-  if (!flow.ok) {
-    log.info('run-flow', 'rejected', { scope, code: flow.rejectReason.code });
-    log.warn('policy', 'denied', {
-      scope,
-      source: 'im',
-      code: flow.rejectReason.code,
-    });
-    if (
-      flow.rejectReason.code === 'reconnect-in-progress'
-      && ledger
-    ) {
-      unrecordAcceptedMessages(ledger, batch);
-      log.info('pending', 'handoff', {
-        count: batch.length,
-        reason: 'reconnect-in-progress',
-        incompleteFrom: ledger.getIncompleteFrom(),
-      });
-    }
-    await channel.send(chatId, { markdown: flow.rejectReason.userVisible }, sendOpts);
-    if (journal && turnId) journal.voidTurn(turnId);
-    return;
-  }
-
-  const { execution, cwdRealpath: cwd } = flow;
-  activePolicyFingerprints.set(scope, flow.policy.policyFingerprint);
-  if (journal && turnId) {
-    journal.noteTurnMeta(turnId, {
-      ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}),
-      policyFingerprint: flow.policy.policyFingerprint,
-    });
-  }
-  const handle = execution.handle;
-  const eventStream = execution.subscribe();
-  const noticeCtx = journal && !isAutomationRunScope(scope)
-    ? {
-        enabled: true as const,
-        auth: noticeAuth,
-        continuations,
-        ownerId: controls.botOwnerId,
-        requireBotMention: lastMsg.chatType !== 'p2p'
-          && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
-      }
-    : undefined;
-  if (flow.resumeFrom) {
-    log.info('session', 'resume', { resumeHandle: flow.resumeFrom, cwd });
-  } else {
-    log.info('session', 'fresh', { cwd });
-  }
-  const recordSession = (evt: AgentEvent): void => {
-    if (!deps.canRecordSession()) return;
-    recordRunSessionEvent({
-      scopeId: scope,
-      sessions,
-      sessionCatalog,
-      capability,
-      policy: flow.policy,
-      event: evt,
-    });
-    if (evt.type === 'system' && evt.resumeHandle) {
-      log.info('session', 'set', { resumeHandle: evt.resumeHandle });
-      if (journal && turnId) journal.noteTurnMeta(turnId, { resumeHandle: evt.resumeHandle });
-    }
-    // Ground truth for "which model is actually running": claude reports the
-    // model it loaded in its init event. Logging requested-vs-actual reveals
-    // whether the --model pin took effect or claude silently fell back (e.g.
-    // an id this claude build/account doesn't recognize).
-    if (evt.type === 'system' && evt.model) {
-      log.info('session', 'model', {
-        requested: requestedModel ?? 'default',
-        actual: evt.model,
-      });
-    }
-  };
-
-  // Resolve idle-timeout for this run: scope override (on SessionEntry) wins
-  // over global default (preferences, unset = 15 min). 0 = no watchdog.
   const scopeOverride = sessions.getIdleTimeoutMinutes(scope);
-  const idleTimeoutMs =
-    scopeOverride !== undefined
-      ? scopeOverride > 0
-        ? scopeOverride * 60_000
-        : undefined
-      : getRunIdleTimeoutMs(controls.cfg);
-  if (idleTimeoutMs) {
-    log.info('flush', 'idle-watchdog', { idleTimeoutMs });
-  }
-
-  const replyMode = getMessageReplyMode(controls.cfg);
-  const finalAnswerOnly =
-    descriptorFor(controls.profileConfig.agentKind).replyMode === 'final-answer';
-  const runContext = {
-    currentChatId: chatId,
-    batchMessageIds: batch.map((msg) => msg.messageId),
-  };
-  log.info('flush', 'reply-mode', { mode: replyMode });
+  const idleTimeoutMs = scopeOverride !== undefined
+    ? scopeOverride > 0 ? scopeOverride * 60_000 : undefined
+    : getRunIdleTimeoutMs(controls.cfg);
+  if (idleTimeoutMs) log.info('flush', 'idle-watchdog', { idleTimeoutMs });
   const cotMessages = getCotMessages(controls.cfg);
-  const cotEnabled = cotMessages !== 'off';
-  // Re-read prefs on every flush so toggling /config mid-stream takes
-  // effect immediately. Cheap object lookups, no allocation when on.
-  const filterForPrefs = (state: RunState): RunState => {
-    const withoutTools = getShowToolCalls(controls.cfg)
-      ? state
-      : { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
-    return stripLegacyAutomationTagsFromState(withoutTools);
-  };
-  const cardRenderOptions = callbackAuth
-    ? {
-        signCallback: (action: string) =>
-          callbackAuth.sign({
-            runId: execution.runId,
-            scope,
-            chatId,
-            operatorOpenId: firstMsg.senderId,
-            action,
-            policyFingerprint: flow.policy.policyFingerprint,
-            ttlMs: 24 * 60 * 60 * 1000,
-          }),
-      }
-    : {};
-
-  // For non-card modes Claude's output doesn't surface visually until either
-  // a first streamed token (markdown mode) or the whole run ends (text mode).
-  // Add a "Typing" reaction to the triggering message as an instant ack, but
-  // never let that outbound API call block agent event draining.
-  const reactionPromise =
-    cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
-
-  const onNotInChat = (chatId: string): Promise<unknown> => (
-    automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve()
-  );
-  cliSelfSent?.begin(scope, turnId);
   try {
-    if (cotEnabled) {
-      const cotPublisher = new CotPublisher({
-        client: cotClient,
-        chatId,
-        // The CoT bubble follows this origin message's thread. In a topic the
-        // triggering message is itself in-topic, so the bubble lands in the
-        // topic; message_cot has no thread_id receive type, so origin is the
-        // only lever we have (see CotClient.create).
-        originMessageId: lastMsg.messageId,
-        runId: execution.runId,
-        scope,
-        inputPreview: lastMsg.content,
-      });
-      await cotPublisher.start();
-      if (!cotPublisher.disabled) {
-        const cotDone = consumeCotEvents(execution.subscribe(), cotPublisher, {
-          detail: cotMessages,
-        });
-        const finalState = await processAgentStream(
-          handle,
-          eventStream,
-          scope,
-          idleTimeoutMs,
-          recordSession,
-          async () => {},
-          runContext,
-          streamReliability(controls.profileConfig),
-        );
-        await cotDone;
-        if (cotPublisher.degradedReason) {
-          await sendCotDegradedNotice({
-            channel,
-            chatId,
-            scope,
-            sendOpts,
-            reason: cotPublisher.degradedReason,
-            journal,
-            turnId,
-          });
-        }
-        await outbox.deliverFinalReply({
-          chatId,
-          scope,
-          state: finalAnswerOnlyState(finalState),
-          skipFrom: finalState,
-          replyMode,
-          sendOpts,
-          cardRenderOptions,
-          turnId,
-          outcome: handle.outcome,
-          notice: noticeCtx,
-          cliSelfSent,
-          onWait: onDeliveryWait,
-          onNotInChat,
-
-        });
-        return;
-      }
-      log.warn('cot', 'fallback-existing-reply', { reason: 'create-disabled' });
-    }
-
-    if (replyMode === 'card') {
-      let latestState: RunState = seedRunState(runContext);
-      let producerStarted = false;
-      let producerRendered = false;
-      let cardCtrl:
-        | { messageId?: string; update(next: object | ((current: object) => object)): Promise<void> }
-        | undefined;
-      const progress = createLazyProgressStream(scope, replyMode, () =>
-        outbox.stream(
-          chatId,
-          {
-            card: {
-              initial: renderCard(initialState, cardRenderOptions),
-              producer: async (ctrl) => {
-                producerStarted = true;
-                progress.noteMessageId(ctrl.messageId);
-                if (progress.abandoned()) return;
-                cardCtrl = ctrl;
-                const visible = filterForPrefs(latestState);
-                await ctrl.update(renderCard(visible, cardRenderOptions));
-                producerRendered = true;
-                await renderDone;
-              },
-            },
-          },
-          sendOpts,
-          turnId,
-        ),
-      );
-      const renderDone = processAgentStream(
-        handle,
-        eventStream,
-        scope,
-        idleTimeoutMs,
-        recordSession,
-        async (state) => {
-          latestState = state;
-          if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
-          if (cardCtrl) {
-            try {
-              const visible = filterForPrefs(state);
-              await cardCtrl.update(renderCard(visible, cardRenderOptions));
-            } catch (err) {
-              log.fail('stream', err, { mode: replyMode, step: 'render' });
+    await executeTurn({
+      run: {
+        toolContext,
+        scopeId: scope,
+        scope: scopeContext,
+        prompt,
+        attachments: attachments.map(toPolicyAttachment),
+        access: accessDecision,
+        capability,
+        profileConfig: controls.profileConfig,
+        sessions,
+        sessionCatalog,
+        workspaces,
+        executor,
+        now: Date.now(),
+        stopGraceMs: getAgentStopGraceMs(controls.cfg),
+        ...(taken.kind === 'continue'
+          ? taken.resumeHandle
+            ? {
+              forceResumeHandle: taken.resumeHandle,
+              ...(taken.policyFingerprint
+                ? { forceResumeFingerprint: taken.policyFingerprint }
+                : {}),
             }
-          }
+            : { forceResumeHandle: null }
+          : {}),
+        observability: {
+          profile: controls.profile,
+          agent: capability.agentId,
+          source: 'im',
+          stage: 'submit',
         },
-        runContext,
-        streamReliability(controls.profileConfig),
-      );
-      const stream = await awaitRenderAwareStream({
-        mode: replyMode,
-        progress,
-        renderDone,
-        producerStarted: () => producerStarted,
-        producerRendered: () => producerRendered,
-        timeoutMs: outboundTimeoutMs,
-      });
-      await outbox.recallEmptyStream(progress, filterForPrefs(latestState), scope);
-      const visible = filterForPrefs(latestState);
-      const terminalState = finalAnswerOnly
-        ? finalReplyState(stream, visible)
-        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
-      await outbox.deliverFinalReply({
-        chatId,
-        scope,
-        state: terminalState,
-        skipFrom: latestState,
-        stream,
-        dedicatedFinal: finalAnswerOnly,
-        replyMode,
-        sendOpts,
-        cardRenderOptions,
-        turnId,
-        outcome: handle.outcome,
-        notice: noticeCtx,
-        cliSelfSent,
-        onWait: onDeliveryWait,
-        onNotInChat,
-
-      });
-    } else if (replyMode === 'markdown') {
-      let latestState: RunState = seedRunState(runContext);
-      let producerStarted = false;
-      let producerRendered = false;
-      let markdownCtrl: { messageId?: string; setContent(markdown: string): Promise<void> } | undefined;
-      const progress = createLazyProgressStream(scope, replyMode, () =>
-        outbox.stream(
-          chatId,
-          {
-            markdown: async (ctrl) => {
-              producerStarted = true;
-              progress.noteMessageId(ctrl.messageId);
-              if (progress.abandoned()) return;
-              markdownCtrl = ctrl;
-              const visible = filterForPrefs(latestState);
-              await ctrl.setContent(renderText(visible));
-              producerRendered = true;
-              await renderDone;
-            },
-          },
-          sendOpts,
-          turnId,
-        ),
-      );
-      const renderDone = processAgentStream(
-        handle,
-        eventStream,
-        scope,
-        idleTimeoutMs,
-        recordSession,
-        async (state) => {
-          latestState = state;
-          if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
-          if (markdownCtrl) {
-            try {
-              const visible = filterForPrefs(state);
-              await markdownCtrl.setContent(renderText(visible));
-            } catch (err) {
-              log.fail('stream', err, { mode: replyMode, step: 'render' });
-            }
-          }
+      },
+      idleTimeoutMs,
+      delivery: {
+        kind: 'chat', outbox, channel, journal, turnId, chatId, sendOpts,
+        batchMessageIds: batch.map(msg => msg.messageId),
+        replyMode: getMessageReplyMode(controls.cfg), callbackAuth, activePolicyFingerprints,
+        canRecordSession: deps.canRecordSession, requestedModel, cliSelfSent,
+        outboundTimeoutMs, onWait: onDeliveryWait,
+        onRejected: reason => {
+          if (reason.code !== 'reconnect-in-progress' || !ledger) return;
+          unrecordAcceptedMessages(ledger, batch);
+          log.info('pending', 'handoff', { count: batch.length, reason: reason.code, incompleteFrom: ledger.getIncompleteFrom() });
         },
-        runContext,
-        streamReliability(controls.profileConfig),
-      );
-      const stream = await awaitRenderAwareStream({
-        mode: replyMode,
-        progress,
-        renderDone,
-        producerStarted: () => producerStarted,
-        producerRendered: () => producerRendered,
-        timeoutMs: outboundTimeoutMs,
-      });
-      await outbox.recallEmptyStream(progress, filterForPrefs(latestState), scope);
-      const visible = filterForPrefs(latestState);
-      const terminalState = finalAnswerOnly
-        ? finalReplyState(stream, visible)
-        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
-      await outbox.deliverFinalReply({
-        chatId,
-        scope,
-        state: terminalState,
-        skipFrom: latestState,
-        stream,
-        dedicatedFinal: finalAnswerOnly,
-        replyMode,
-        sendOpts,
-        cardRenderOptions,
-        turnId,
-        outcome: handle.outcome,
-        notice: noticeCtx,
-        cliSelfSent,
-        onWait: onDeliveryWait,
-        onNotInChat,
-
-      });
-    } else {
-      // text mode: drain the agent stream without sending anything during
-      // the run, then post the final rendered text once as a plain markdown
-      // (msg_type=post) message — no card, no streaming, no typewriter.
-      const finalState = await processAgentStream(
-        handle,
-        eventStream,
-        scope,
-        idleTimeoutMs,
-        recordSession,
-        async () => {},
-        runContext,
-        streamReliability(controls.profileConfig),
-      );
-      await outbox.deliverFinalReply({
-        chatId,
-        scope,
-        state: finalReplyFor(filterForPrefs(finalState), {
-          replyMode: finalAnswerOnly ? 'final-answer' : 'stream-deltas',
-          streamed: false,
-        }),
-        skipFrom: finalState,
-        replyMode,
-        sendOpts,
-        cardRenderOptions,
-        turnId,
-        outcome: handle.outcome,
-        notice: noticeCtx,
-        cliSelfSent,
-        onWait: onDeliveryWait,
-        onNotInChat,
-
-      });
-    }
-  } catch (err) {
-    log.fail('stream', err);
-  } finally {
-    cliSelfSent?.consume(scope);
-    activePolicyFingerprints.delete(scope);
-    scheduleWorkingReactionCleanup(channel, lastMsg.messageId, reactionPromise);
-  }
-}
-
-interface LazyProgressStream {
-  /**
-   * Mirrors the underlying `channel.stream(...)` promise, and stays pending
-   * forever while no stream has been opened — so callers can race it against
-   * the render loop exactly as if the stream had been created up front.
-   */
-  readonly settled: Promise<unknown>;
-  opened(): boolean;
-  ensureOpen(): void;
-  /**
-   * True once the reply went out without this stream. A producer that starts
-   * after that must render nothing, or the user gets the same answer twice.
-   */
-  abandoned(): boolean;
-  abandon(): void;
-  messageId(): string | undefined;
-  noteMessageId(id: string | undefined): void;
-}
-
-/**
- * Wrap a progress stream so the user-visible message is only created once the
- * run has something worth showing (see `shouldOpenProgressStream`).
- *
- * The SDK starts a stream eagerly: `channel.stream(...)` sends a card before
- * the producer runs, and finishes it with a "(no content)" placeholder when the
- * producer never supplied any text. A Codex round that only produces a final
- * answer (delivered separately by `sendFinalReply`) used to hit exactly that:
- * an empty card sat in the chat for seconds until `recall-empty` cleaned it up.
- */
-function createLazyProgressStream(
-  scope: string,
-  mode: 'card' | 'markdown',
-  open: () => Promise<unknown>,
-): LazyProgressStream {
-  let stream: Promise<unknown> | undefined;
-  let givenUp = false;
-  let createdId: string | undefined;
-  let settle!: (result: Promise<unknown>) => void;
-  const settled = new Promise<unknown>((resolve, reject) => {
-    settle = (result) => {
-      result.then(resolve, reject);
-    };
-  });
-  return {
-    settled,
-    opened: () => stream !== undefined,
-    ensureOpen: () => {
-      if (stream) return;
-      log.info('outbound', 'progress-stream-open', { scope, mode });
-      stream = open();
-      settle(stream);
-    },
-    abandoned: () => givenUp,
-    abandon: () => {
-      givenUp = true;
-    },
-    messageId: () => createdId,
-    noteMessageId: (id) => {
-      if (id) createdId = id;
-    },
-  };
-}
-
-/**
- * Is there anything in this state that will still be on screen when the run
- * ends? Footer status lines ("正在思考…") don't count: the terminal event drops
- * them, so a stream opened for a footer alone can still finish empty — which is
- * the placeholder-then-recall churn we're avoiding.
- *
- * Terminal states don't count either. By then the stream has nothing left to
- * stream, and whatever the run produced goes out as a normal reply
- * (`sendFinalReply`) instead of a card that would be created only to be
- * finished a moment later.
- *
- * `state` must already be `filterForPrefs`-projected, and emptiness is measured
- * with `renderText` in both reply modes so it matches the rule
- * `recallIfEmptyStreamedReply` applies: a stream we open is one that survives.
- */
-function shouldOpenProgressStream(state: RunState): boolean {
-  if (state.terminal !== 'running') return false;
-  return renderText({ ...state, footer: null }).trim() !== '';
-}
-
-/**
- * What Codex's dedicated final reply may carry, given what the progress stream
- * already put on screen.
- *
- * `finalAnswerOnlyState` falls back to the run's text blocks when Codex held
- * nothing back for the end — correct where nothing was streamed (CoT, text
- * mode, a stream we gave up on), but those blocks are already visible once a
- * stream rendered them, and repeating them posts the same words a second time.
- * Codex leaves the answer in `blocks` more often than it looks: any abnormal
- * turn end (`turn.failed`, or the process exiting before `turn.completed`)
- * flushes the pending message as text instead of `final_text`.
- *
- * Terminal notices are dropped for the same reason — the stream rendered them.
- */
-function finalReplyState(stream: StreamDelivery, state: RunState): RunState {
-  return finalReplyFor(state, {
-    replyMode: 'final-answer',
-    streamed: stream.kind === 'confirmed',
-  });
-}
-
-async function sendCotDegradedNotice(input: {
-  channel: LarkChannel;
-  chatId: string;
-  scope: string;
-  sendOpts: { replyTo: string; replyInThread?: boolean };
-  reason: string;
-  journal?: TurnJournal;
-  turnId?: string;
-}): Promise<void> {
-  log.warn('cot', 'degraded', {
-    scope: input.scope,
-    reason: input.reason,
-    replyInThread: input.sendOpts.replyInThread === true,
-  });
-  try {
-    const result = await input.channel.send(
-      input.chatId,
-      { markdown: 'COT 过程消息更新失败，已停止展示过程；最终答案仍会继续发送。' },
-      input.sendOpts,
-    );
-    const messageId = outboundMessageId(result);
-    if (messageId && input.journal && input.turnId) {
-      input.journal.noteNonAnswerId(input.turnId, messageId);
-    }
-  } catch (err) {
-    log.warn('cot', 'degraded-notice-failed', {
-      scope: input.scope,
-      err: err instanceof Error ? err.message : String(err),
+        onNotInChat: chatId => automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+        filterState: state => stripLegacyAutomationTagsFromState(getShowToolCalls(controls.cfg)
+          ? state : { ...state, blocks: state.blocks.filter(block => block.kind !== 'tool') }),
+        notice: journal && !isAutomationRunScope(scope) ? {
+          enabled: true, auth: noticeAuth, continuations, ownerId: controls.botOwnerId,
+          requireBotMention: lastMsg.chatType !== 'p2p'
+            && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
+        } : undefined,
+        ...(cotMessages !== 'off' ? { cot: { client: cotClient, detail: cotMessages, inputPreview: lastMsg.content } } : {}),
+      },
     });
+
+  } catch (error) {
+    if (error instanceof TurnStartFailed) throw error.cause;
+    log.fail('stream', error);
   }
-}
-
-/**
- * Drive the agent's event stream into a stateful RunState, calling `flush`
- * on every state transition. Used by both card and markdown reply modes —
- * the only difference between the two is what `flush` does with the state.
- */
-async function processAgentStream(
-  handle: RunHandle,
-  events: AsyncIterable<AgentEvent>,
-  scope: string,
-  idleTimeoutMs: number | undefined,
-  recordSession: (event: AgentEvent) => void,
-  flush: (state: RunState) => Promise<void>,
-  runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
-  reliability: StreamReliability = {},
-): Promise<RunState> {
-  const signatures = reliability.signatures;
-  const runStart = Date.now();
-  let state: RunState = seedRunState(runContext ?? {});
-  let lastTerminal: AgentEvent | undefined;
-
-  // Idle watchdog: silence for `idleTimeoutMs` is treated as "presumed hung".
-  // An open tool call pauses that bound (a long `lark-cli` OAuth can be
-  // quiet for a while) but the pause itself is capped at 60 minutes.
-  // Shared with agent-task fires via createIdleWatchdog.
-  const watchdog = createIdleWatchdog({ handle, idleTimeoutMs, scope });
-
-  try {
-    for await (const evt of events) {
-      noteRunEvent(handle);
-      if (!handle.interrupted) watchdog.noteDelivered(evt);
-      // A stopped run can still deliver its final resume handle before cleanup.
-      // Keep draining owned events while suppressing further UI updates.
-      if (evt.type === 'system') {
-        recordSession(evt);
-        continue;
-      }
-      if (!shouldDeliverAgentEvent(handle, evt)) continue;
-
-      if (evt.type === 'liveness') continue;
-
-      if (evt.type === 'usage') {
-        const { costUsd, inputTokens, outputTokens } = evt;
-        if (costUsd !== undefined || inputTokens !== undefined || outputTokens !== undefined) {
-          log.info('agent', 'usage', {
-            ...(costUsd !== undefined ? { costUsd: Number(costUsd.toFixed(4)) } : {}),
-            ...(inputTokens !== undefined ? { inputTokens } : {}),
-            ...(outputTokens !== undefined ? { outputTokens } : {}),
-          });
-          if (costUsd !== undefined) reportMetric('cost_usd', costUsd);
-          if (inputTokens !== undefined) reportMetric('tokens_in', inputTokens);
-          if (outputTokens !== undefined) reportMetric('tokens_out', outputTokens);
-        }
-        continue;
-      }
-
-      if (evt.type === 'done' || evt.type === 'error') {
-        lastTerminal = evt;
-        noteTerminalStop(handle, evt);
-      }
-
-      const prevTerminal = state.terminal;
-      const prevFooter = state.footer;
-      state = reduce(state, evt);
-      // The iterator joins settlement on return. Render the error only after
-      // the executor has classified it, keeping raw CLI diagnostics off cards.
-      if (evt.type === 'error') break;
-      if (state.footer !== prevFooter || state.terminal !== prevTerminal) {
-        log.info('card', 'transition', { footer: state.footer, terminal: state.terminal });
-      }
-      await flush(state);
-      // Stop iterating as soon as we have a terminal state. Some claude
-      // versions don't close stdout immediately after the result event, which
-      // would leave the for-await waiting forever otherwise.
-      if (state.terminal !== 'running') break;
-    }
-  } finally {
-    watchdog.dispose();
-  }
-
-  // If state already reached a terminal event (done/error/etc.) before the
-  // watchdog or interrupt could land, don't clobber it — that real terminal
-  // wins. This avoids "claude finished but flush was slow → timer fired
-  // mid-flush → user sees 'idle_timeout' on a successful run".
-  const failure = cliFailureInput(handle.run.stderrSnapshot,
-    lastTerminal?.type === 'error' ? lastTerminal.message : undefined, signatures);
-  const matched = matchCliSignature(failure.stderrTail, failure.signatures);
-  const outcome = handle.outcome;
-  if (!outcome) throw new Error('run settled without an outcome');
-  noteUnclassifiedStderr({
-    outcome,
-    stderrTail: failure.stderrTail,
-    signature: matched,
-    agent: reliability.agent,
-  });
-  const userMessage = cardUserMessage(outcome, matched);
-  if (
-    state.terminal === 'running'
-    || cardTerminalFromOutcome(outcome) !== state.terminal
-    || userMessage !== undefined
-  ) {
-    state = applyOutcomeToState(state, outcome, watchdog.armedDelayMs(), userMessage);
-  }
-  if (userMessage !== undefined && state.terminal === 'error') {
-    state = { ...state, errorMsg: userMessage };
-  }
-  log.info('card', 'final', {
-    scope,
-    terminal: state.terminal,
-    stopReason: handle.stopRequest ? formatStopRequest(handle.stopRequest) : undefined,
-    outcome: formatRunOutcome(outcome),
-    interrupted: handle.interrupted,
-  });
-  reportMetric('run_e2e_ms', Date.now() - runStart, { terminal: state.terminal });
-  await flush(state);
-  if (handle.interrupted) {
-    await handle.run.stop();
-  }
-  return state;
-}
-
-function applyOutcomeToState(
-  state: RunState,
-  outcome: RunOutcome,
-  idleTimeoutMs: number | undefined,
-  userMessage?: string,
-): RunState {
-  const terminal = cardTerminalFromOutcome(outcome);
-  switch (terminal) {
-    case 'idle_timeout':
-      return markIdleTimeout(state, Math.round((idleTimeoutMs ?? 0) / 60_000));
-    case 'runner_timeout':
-      return markRunnerTimeout(state);
-    case 'interrupted':
-      return markInterrupted(state);
-    case 'error':
-      return {
-        ...state,
-        terminal: 'error',
-        footer: null,
-        ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
-      };
-    case 'done':
-      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
-    case 'running':
-      return state;
-    default: {
-      const _exhaustive: never = terminal;
-      return _exhaustive;
-    }
-  }
-}
-
-interface StreamReliability {
-  signatures?: readonly CliSignature[];
-  agent?: string;
-}
-
-function streamReliability(
-  profile: { agentKind: string },
-): StreamReliability {
-  const kind = profile.agentKind;
-  return {
-    signatures: [
-      ...(isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : []),
-      ...NETWORK_TRANSIENT_SIGNATURES,
-    ],
-    agent: kind,
-  };
-}
-
-async function awaitRenderAwareStream(input: {
-  mode: 'card' | 'markdown';
-  progress: LazyProgressStream;
-  renderDone: Promise<RunState>;
-  producerStarted: () => boolean;
-  producerRendered: () => boolean;
-  timeoutMs: number;
-}): Promise<StreamDelivery> {
-  const streamResult = input.progress.settled.then(
-    (result) => ({ kind: 'stream' as const, ok: true as const, result }),
-    (err) => ({ kind: 'stream' as const, ok: false as const, err }),
-  );
-  const renderResult = input.renderDone.then(
-    (state) => ({ kind: 'render' as const, ok: true as const, state }),
-    (err) => ({ kind: 'render' as const, ok: false as const, err }),
-  );
-  const first = await Promise.race([streamResult, renderResult]);
-  if (!first.ok) {
-    if (first.kind === 'stream') {
-      const rendered = await renderResult;
-      if (!rendered.ok) throw rendered.err;
-      if (!input.producerRendered()) input.progress.abandon();
-      return failedStream(first.err, input.progress);
-    }
-    throw first.err;
-  }
-
-  if (first.kind === 'stream') {
-    const rendered = await renderResult;
-    if (!rendered.ok) throw rendered.err;
-    return confirmedStream(first.result, input.progress);
-  }
-
-  // Nothing durable ever showed up, so no progress message was opened at all
-  // (the common Codex final-only round). Whatever the run ended with still has
-  // to reach the user as a standalone reply.
-  if (!input.progress.opened()) {
-    log.info('outbound', 'progress-stream-skipped', { mode: input.mode });
-    return { kind: 'none' };
-  }
-
-  // The run ended before the stream did. A producer that hasn't started yet is
-  // usually just a card still being created (two API round trips), so give the
-  // stream its grace window rather than replying immediately — an immediate
-  // send would post the same answer twice once the stream catches up.
-  const terminal = await Promise.race([
-    streamResult,
-    delay(STREAM_TERMINAL_GRACE_MS).then(() => undefined),
-  ]);
-
-  if (!terminal) {
-    if (input.producerStarted()) {
-      log.warn('stream', 'terminal-grace-expired', {
-        mode: input.mode,
-        graceMs: STREAM_TERMINAL_GRACE_MS,
-      });
-      try {
-        const waited = await withOutboundTimeout('stream.producer', streamResult, input.timeoutMs);
-        if (!waited.ok) return failedStream(waited.err, input.progress);
-        return confirmedStream(waited.result, input.progress);
-      } catch (err) {
-        return failedStream(err, input.progress);
-      }
-    }
-    // Still nothing on screen after the grace window: give up on the stream and
-    // reply without it. `abandon()` keeps a late producer from rendering the
-    // same answer again; the empty message it leaves is recalled in cleanup.
-    input.progress.abandon();
-    log.warn('stream', 'producer-not-started-before-agent-terminal', { mode: input.mode });
-    return { kind: 'none' };
-  }
-
-  if (!terminal.ok) {
-    if (!input.producerRendered()) input.progress.abandon();
-    return failedStream(terminal.err, input.progress);
-  }
-  return confirmedStream(terminal.result, input.progress);
-}
-
-function confirmedStream(result: unknown, progress: LazyProgressStream): StreamDelivery {
-  const messageId = outboundMessageId(result) ?? progress.messageId() ?? '';
-  if (messageId) progress.noteMessageId(messageId);
-  return { kind: 'confirmed', messageId };
-}
-
-function failedStream(err: unknown, progress: LazyProgressStream): StreamDelivery {
-  const messageId = progress.messageId();
-  return messageId ? { kind: 'failed', err, messageId } : { kind: 'failed', err };
-}
-
-function scheduleWorkingReactionCleanup(
-  channel: LarkChannel,
-  messageId: string,
-  reactionPromise: Promise<string | undefined> | undefined,
-): void {
-  if (!reactionPromise) return;
-
-  void (async () => {
-    const reactionResult = reactionPromise.then(
-      (reactionId) => ({ ok: true as const, reactionId }),
-      (err) => ({ ok: false as const, err }),
-    );
-    const settled = await Promise.race([
-      reactionResult,
-      delay(REACTION_CLEANUP_GRACE_MS).then(() => undefined),
-    ]);
-
-    if (!settled) {
-      log.warn('reaction', 'cleanup-deferred', {
-        messageId,
-        graceMs: REACTION_CLEANUP_GRACE_MS,
-      });
-      void reactionResult.then((result) => {
-        if (!result.ok || !result.reactionId) return;
-        void removeReaction(channel, messageId, result.reactionId);
-      });
-      return;
-    }
-
-    if (!settled.ok || !settled.reactionId) return;
-    await removeReaction(channel, messageId, settled.reactionId);
-  })();
 }
 
 function applyTakenInstruction(taken: ContinuationTaken, extraInstructions: string[]): void {
@@ -2585,10 +1754,6 @@ function journalResourceSourceId(resource: unknown): string | undefined {
   return typeof sourceMessageId === 'string' && sourceMessageId
     ? sourceMessageId
     : undefined;
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function consumeBackfillMarks(

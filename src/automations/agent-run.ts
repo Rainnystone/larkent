@@ -2,25 +2,11 @@ import { bridgeToolInstructions } from '../bridge-tools/prompt';
 import type { ToolRunContext } from '../bridge-tools/server';
 import type { PluginCatalog } from '../plugins/catalog';
 import { capabilityForProfile } from '../agent/capability';
-import {
-  cardUserMessage,
-  matchCliSignature,
-  type CliSignature,
-} from '../agent/cli-signatures';
-import { descriptorFor } from '../agent/registry';
 import { buildAgentPrompt } from '../agent/prompt';
-import type { AgentEvent } from '../agent/types';
-import { noteRunEvent, type RunHandle } from '../bot/active-runs';
-import { appendOutcomeNotice, finalReplyFor } from '../bot/cot';
-import { createIdleWatchdog } from '../bot/idle-watchdog';
-import { recordRunSessionEvent, startRunFlow } from '../bot/run-flow';
+import { executeTurn, TurnStartFailed, type TurnResult } from '../bot/turn';
 import {
-  cardTerminalFromOutcome,
   describeRunOutcome,
   formatRunOutcome,
-  noteTerminalStop,
-  requestStop,
-  shouldDeliverAgentEvent,
   type RunOutcome,
 } from '../bot/run-outcome';
 import {
@@ -29,17 +15,6 @@ import {
   isAutomationRunScope,
 } from '../bot/scope';
 import type { TurnJournal } from '../bot/turn-journal';
-import {
-  finalizeIfRunning,
-  markIdleTimeout,
-  markInterrupted,
-  markRunnerTimeout,
-  reduce,
-  seedRunState,
-  shouldSkipFinalReply,
-  type RunState,
-} from '../card/run-state';
-import { renderText } from '../card/text-renderer';
 import type { AppConfig } from '../config/schema';
 import { getAgentStopGraceMs, getRunIdleTimeoutMs } from '../config/schema';
 import type { ProfileConfig } from '../config/profile-schema';
@@ -50,6 +25,7 @@ import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import {
+  automationOutbox,
   deliverAutomationMarkdown,
   fireTurnId,
   formatScheduledLabel,
@@ -262,47 +238,63 @@ async function runAutomationAgentFireBody(
   );
   const capability = capabilityForProfile(runtime.profileConfig);
   let policyGuard: PolicyGuardReason | undefined;
-  let flow: Awaited<ReturnType<typeof startRunFlow>>;
+  let flow: TurnResult;
   try {
-    flow = await startRunFlow({
-      toolContext,
-      scopeId: scope,
-      scope: {
-        source: 'im',
-        chatId: fire.chatId,
-        actorId: fire.createdBy,
+    flow = await executeTurn({
+      run: {
+        toolContext,
+        scopeId: scope,
+        scope: {
+          source: 'im',
+          chatId: fire.chatId,
+          actorId: fire.createdBy,
+        },
+        prompt,
+        attachments: [],
+        access,
+        capability,
+        profileConfig: runtime.profileConfig,
+        sessions: runtime.sessions,
+        ...(runtime.sessionCatalog ? { sessionCatalog: runtime.sessionCatalog } : {}),
+        workspaces: runtime.workspaces,
+        executor: runtime.executor,
+        now,
+        cwdOverride: cwd,
+        forceResumeHandle: null,
+        bypassPool: true,
+        promptVariant: 'automation',
+        stopGraceMs: getAgentStopGraceMs(runtime.cfg),
+        observability: {
+          profile: runtime.profile,
+          agent: capability.agentId,
+          source: 'automation',
+          stage: 'submit',
+        },
       },
-      prompt,
-      attachments: [],
-      access,
-      capability,
-      profileConfig: runtime.profileConfig,
-      sessions: runtime.sessions,
-      ...(runtime.sessionCatalog ? { sessionCatalog: runtime.sessionCatalog } : {}),
-      workspaces: runtime.workspaces,
-      executor: runtime.executor,
-      now,
-      cwdOverride: cwd,
-      forceResumeHandle: null,
-      bypassPool: true,
-      promptVariant: 'automation',
-      onEvent: (event, handle) => {
-        if (handle.interrupted || event.type !== 'tool_use') return;
+      idleTimeoutMs: getRunIdleTimeoutMs(runtime.cfg),
+      onToolUse: event => {
         const hit = inspectAutomationToolUse(event);
         if (!hit) return;
-        requestStop(handle, { type: 'policy-guard', code: hit.reason });
         policyGuard = hit.reason;
-        void handle.run.stop().catch(() => {});
+        return { type: 'policy-guard', code: hit.reason };
       },
-      stopGraceMs: getAgentStopGraceMs(runtime.cfg),
-      observability: {
-        profile: runtime.profile,
-        agent: capability.agentId,
-        source: 'automation',
-        stage: 'submit',
+      delivery: {
+        onResult: ok => { if (ok) setStatus('ok'); },
+        onSettled: async outcome => {
+          if (policyGuard && runtime.automations) await applyPolicyGuard(runtime, fire, policyGuard);
+          log.info('auto', 'result', { id: fire.id, fireAt: fire.fireAt, outcome: formatRunOutcome(outcome) });
+        },
+        kind: 'automation', outbox: automationOutbox(runtime), journal, turnId, chatId: fire.chatId,
+        actor: runtime.botOpenId(), emptyResult: AGENT_EMPTY_RESULT,
+        failureBody: outcome => formatAgentFailureBody(outcome, policyGuard),
+        formatPost: (body, followUp) => formatAgentResultPost({
+          body, catchUp: fire.catchUp, timezone: fire.timezone, fireAt: fire.fireAt,
+          now: (runtime.now ?? Date.now)(), followUp,
+        }),
       },
     });
-  } catch {
+  } catch (error) {
+    if (!(error instanceof TurnStartFailed)) throw error;
     noteUnanchored(runtime, fire, turnId, scope, {
       kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: true,
     });
@@ -329,76 +321,6 @@ async function runAutomationAgentFireBody(
     return;
   }
 
-  const recordSession = (event: AgentEvent): void => {
-    recordRunSessionEvent({
-      scopeId: scope,
-      sessions: runtime.sessions,
-      ...(runtime.sessionCatalog ? { sessionCatalog: runtime.sessionCatalog } : {}),
-      capability,
-      policy: flow.policy,
-      event,
-    });
-  };
-  const state = await drainFireRun({
-    handle: flow.execution.handle,
-    events: flow.execution.subscribe(),
-    idleTimeoutMs: getRunIdleTimeoutMs(runtime.cfg),
-    recordSession,
-    chatId: fire.chatId,
-    scope,
-    signatures: descriptorFor(runtime.profileConfig.agentKind).stderrSignatures.filter(
-      (signature) => signature.classify.kind === 'partial',
-    ),
-  });
-  const outcome = flow.execution.handle.outcome;
-  if (policyGuard && runtime.automations) {
-    await applyPolicyGuard(runtime, fire, policyGuard);
-  }
-  if (journal && outcome) journal.markSettled(turnId, outcome);
-  log.info('auto', 'result', {
-    id: fire.id,
-    fireAt: fire.fireAt,
-    outcome: outcome ? formatRunOutcome(outcome) : 'unknown',
-  });
-
-  if (shouldSkipFinalReply(state, fire.chatId)) {
-    if (journal) {
-      journal.noteCliAlreadySent(turnId);
-      journal.replyDelivered(turnId);
-      await journal.flush();
-    }
-    log.info('outbound', 'skip-cli-already-sent', {
-      scope,
-      chatId: fire.chatId,
-      mode: 'text',
-    });
-    setStatus('ok');
-    return;
-  }
-
-  let body = '';
-  let followUp = false;
-  if (outcome?.kind === 'interrupted' || outcome?.kind === 'failed') {
-    body = formatAgentFailureBody(outcome, policyGuard);
-  } else {
-    const replied = finalReplyFor(state, {
-      replyMode: descriptorFor(runtime.profileConfig.agentKind).replyMode,
-      streamed: false,
-    });
-    const visible: RunState = {
-      ...replied,
-      blocks: replied.blocks.filter((block) => block.kind !== 'tool'),
-    };
-    body = renderText(visible).trim();
-    if (!body && outcome && outcome.kind !== 'completed' && outcome.kind !== 'partial') {
-      body = formatAgentFailureBody(outcome, policyGuard);
-    } else {
-      if (!body) body = AGENT_EMPTY_RESULT;
-      setStatus('ok');
-      followUp = true;
-    }
-  }
-  await postFireMarkdown(runtime, fire, turnId, scope, body, followUp);
 }
 
 async function persistFireStatus(
@@ -489,85 +411,4 @@ async function applyPolicyGuard(
   });
   log.info('auto', 'policy-guard', { id: fire.id, fireAt: fire.fireAt, reason });
   log.info('auto', 'paused', { id: fire.id });
-}
-
-async function drainFireRun(input: {
-  handle: RunHandle;
-  events: AsyncIterable<AgentEvent>;
-  idleTimeoutMs: number | undefined;
-  recordSession: (event: AgentEvent) => void;
-  chatId: string;
-  scope: string;
-  signatures: readonly CliSignature[];
-}): Promise<RunState> {
-  let state = seedRunState({ currentChatId: input.chatId });
-  let lastTerminal: AgentEvent | undefined;
-  const watchdog = createIdleWatchdog({
-    handle: input.handle,
-    idleTimeoutMs: input.idleTimeoutMs,
-    scope: input.scope,
-  });
-  try {
-    for await (const event of input.events) {
-      noteRunEvent(input.handle);
-      if (!input.handle.interrupted) watchdog.noteDelivered(event);
-      if (event.type === 'system') {
-        input.recordSession(event);
-        continue;
-      }
-      if (!shouldDeliverAgentEvent(input.handle, event)) continue;
-      if (event.type === 'liveness') continue;
-      if (event.type === 'done' || event.type === 'error') {
-        lastTerminal = event;
-        noteTerminalStop(input.handle, event);
-      }
-      state = reduce(state, event);
-      if (state.terminal !== 'running') break;
-    }
-  } finally {
-    watchdog.dispose();
-  }
-
-  const stderrTail = input.handle.run.stderrSnapshot
-    ?? (lastTerminal?.type === 'error' ? lastTerminal.message : undefined);
-  const matched = matchCliSignature(stderrTail, input.signatures);
-  const outcome = input.handle.outcome;
-  if (!outcome) throw new Error('run settled without an outcome');
-  const userMessage = outcome.kind === 'partial' ? cardUserMessage(outcome, matched) : undefined;
-  if (
-    state.terminal === 'running'
-    || cardTerminalFromOutcome(outcome) !== state.terminal
-    || userMessage !== undefined
-  ) {
-    state = applyFireOutcome(state, outcome, watchdog.armedDelayMs(), userMessage);
-  }
-  if (input.handle.interrupted) await input.handle.run.stop();
-  return state;
-}
-
-function applyFireOutcome(
-  state: RunState,
-  outcome: RunOutcome,
-  idleTimeoutMs: number | undefined,
-  userMessage?: string,
-): RunState {
-  const terminal = cardTerminalFromOutcome(outcome);
-  switch (terminal) {
-    case 'idle_timeout':
-      return markIdleTimeout(state, Math.round((idleTimeoutMs ?? 0) / 60_000));
-    case 'runner_timeout':
-      return markRunnerTimeout(state);
-    case 'interrupted':
-      return markInterrupted(state);
-    case 'error':
-      return { ...state, terminal: 'error', footer: null };
-    case 'done':
-      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
-    case 'running':
-      return state;
-    default: {
-      const _exhaustive: never = terminal;
-      return _exhaustive;
-    }
-  }
 }
