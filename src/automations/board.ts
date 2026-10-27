@@ -520,6 +520,10 @@ function redactBoardAttempt(node: unknown): unknown {
       rec[key] = '';
       continue;
     }
+    if (key === 'a' && typeof value === 'string' && 'auto_token' in node) {
+      rec[key] = '';
+      continue;
+    }
     if (key === 'content' && typeof value === 'string' && value.includes('"v":1')) {
       rec[key] = value.replace(/"updatedAt":\d+/g, '"updatedAt":0');
       continue;

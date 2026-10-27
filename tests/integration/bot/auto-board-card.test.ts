@@ -11,6 +11,7 @@ import { FEISHU_LINK_SILENT_PROBE_MS, FEISHU_LINK_TICK_MS } from '../../../src/b
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
+import { cardButtonValue } from '../../helpers/card-button-value';
 import { CardSchemaError } from '../../helpers/card-schema2';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
@@ -336,6 +337,22 @@ describe('automation board card', () => {
     expect(deletedTap).toEqual({ toast: { type: 'success', content: '已删除 #1' } });
     expect(h.store.list()).toEqual([]);
     await waitFor(() => latestBoard(h).text.includes('暂无'));
+  });
+
+  it('accepts the full rendered board button value including its click id', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    const board = latestBoard(h);
+    const value = cardButtonValue(JSON.parse(board.text), 'auto.pause');
+    expect(typeof value.a).toBe('string');
+    const tap = await h.channel.handlers.cardAction?.({
+      action: { value },
+      chatId: CHAT,
+      messageId: board.messageId,
+      operator: { openId: USER, name: 'Op' },
+    } as unknown as CardActionEvent);
+    expect(tap).toEqual({ toast: { type: 'success', content: '已暂停 #1' } });
+    expect(h.store.get(1)?.paused).toBe(true);
   });
 
   it('still refreshes the board when the first cardless draft fails on link recovery', async () => {

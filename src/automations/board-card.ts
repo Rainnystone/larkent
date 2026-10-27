@@ -1,8 +1,9 @@
+import { randomBytes } from 'node:crypto';
 import { buttonRow, callbackButton, card2, hr, md } from '../card/v2';
 import { describeEnd, formatZonedDateTime } from './confirm-card';
 import { readSchedule } from './schedule';
 import type { AutomationItem } from './store';
-import type { BoardActionAuth } from './board-auth';
+import type { BoardActionAuth, BoardCardAction } from './board-auth';
 import { BOARD_CARD_TTL_MS } from './board-auth';
 
 function escapeMd(s: string): string {
@@ -96,47 +97,20 @@ export function automationStatusLabel(item: AutomationItem): string {
   }
 }
 
+function boardButtonValue(item: AutomationItem, auth: BoardActionAuth, action: BoardCardAction): Record<string, string> {
+  return {
+    a: randomBytes(6).toString('base64url'),
+    cmd: action,
+    auto_token: auth.sign({ chatId: item.chatId, itemId: item.id, action, ttlMs: BOARD_CARD_TTL_MS }),
+  };
+}
+
 function taskButtons(item: AutomationItem, auth: BoardActionAuth): object[] {
   const mutate = item.paused
-    ? callbackButton({
-        text: '恢复',
-        value: {
-          cmd: 'auto.resume',
-          auto_token: auth.sign({
-            chatId: item.chatId,
-            itemId: item.id,
-            action: 'auto.resume',
-            ttlMs: BOARD_CARD_TTL_MS,
-          }),
-        },
-        style: 'primary',
-      })
-    : callbackButton({
-        text: '暂停',
-        value: {
-          cmd: 'auto.pause',
-          auto_token: auth.sign({
-            chatId: item.chatId,
-            itemId: item.id,
-            action: 'auto.pause',
-            ttlMs: BOARD_CARD_TTL_MS,
-          }),
-        },
-      });
+    ? callbackButton({ text: '恢复', value: boardButtonValue(item, auth, 'auto.resume'), style: 'primary' })
+    : callbackButton({ text: '暂停', value: boardButtonValue(item, auth, 'auto.pause') });
   return [
     mutate,
-    callbackButton({
-      text: '删除',
-      value: {
-        cmd: 'auto.delete',
-        auto_token: auth.sign({
-          chatId: item.chatId,
-          itemId: item.id,
-          action: 'auto.delete',
-          ttlMs: BOARD_CARD_TTL_MS,
-        }),
-      },
-      style: 'danger',
-    }),
+    callbackButton({ text: '删除', value: boardButtonValue(item, auth, 'auto.delete'), style: 'danger' }),
   ];
 }
