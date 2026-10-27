@@ -511,4 +511,29 @@ describe('Outbox', () => {
     expect(await h.outbox.deliver(staged)).toBe(false);
     expect(h.channel.sent).toHaveLength(0);
   });
+  it('does not send a notice voided during the staging flush', async () => {
+    const h = await fixture();
+    const pending = h.outbox.deliverNotice({
+      turnId: 'turn-1',
+      outcome: {
+        kind: 'interrupted',
+        reason: { type: 'external-signal' },
+        retriable: true,
+        needsHuman: false,
+      },
+      consecutive: 4,
+      requireBotMention: false,
+    });
+    h.outbox.voidScope('chat');
+    expect(await pending).toBe(false);
+    expect(h.channel.sent).toHaveLength(0);
+  });
+
+  it('does not send a final reply voided during the staging flush', async () => {
+    const h = await fixture();
+    const pending = h.outbox.deliverFinalReply(finalReply());
+    h.outbox.voidScope('chat');
+    await pending;
+    expect(h.channel.sent).toHaveLength(0);
+  });
 });

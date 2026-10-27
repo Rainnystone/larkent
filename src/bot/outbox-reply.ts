@@ -141,6 +141,13 @@ export async function deliverFinalReply(input: {
   // `completed-undelivered` for the whole write.
   const deferJournalFlush = stream.kind === 'confirmed' && !dedicatedFinal;
   if (input.journal && !deferJournalFlush) await input.journal.flush();
+  // Session switches may void this turn while the staged snapshot is flushing.
+  if (
+    input.journal &&
+    input.turnId &&
+    input.journal.get(input.turnId)?.status === 'voided'
+  )
+    return;
   if (skipCli) {
     log.info('outbound', 'skip-cli-already-sent', {
       scope: input.scope,
@@ -689,7 +696,8 @@ async function sendTurnNotice(input: {
   onWait?: (delayMs?: number) => void;
 }): Promise<void> {
   if (planInterruptionNotice(input.outcome).kind === 'none') return;
-  if (input.link?.isDown()) return;
+  const entry = input.journal.get(input.turnId);
+  if (!entry || noticeState(entry) !== 'staged' || input.link?.isDown()) return;
   const result = await deliverInterruptionNotice({
     send: (chatId, content, options) =>
       input.channel.send(chatId, content, options),

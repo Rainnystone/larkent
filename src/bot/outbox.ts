@@ -112,7 +112,13 @@ export class Outbox {
     };
     stageInterruptionNotice(args);
     await journal.flush();
-    if (this.options.isDown?.()) return false;
+    const current = journal.get(input.turnId);
+    if (
+      !current ||
+      noticeState(current) !== 'staged' ||
+      this.options.isDown?.()
+    )
+      return false;
     const result = await deliverInterruptionNotice({
       ...args,
       send: (...args) => this.options.channel.send(...args),
@@ -204,20 +210,7 @@ export class Outbox {
     const journal = this.options.journal!;
     try {
       await journal.flush();
-      await this.redeliverOwned({
-        isDown: this.options.isDown,
-        isActive: this.options.isActive,
-        resend: (entry) => this.deliver(entry),
-        resendNotice: (entry) =>
-          resendPendingNotice({
-            send: (...args) => this.options.channel.send(...args),
-            entry,
-            journal,
-            noticeAuth: this.options.noticeAuth,
-          }),
-        noticeGapMs: NOTICE_RESTART_GAP_MS,
-        sleep: this.options.sleep,
-      });
+      await this.redeliverOwned();
     } catch (error) {
       await journal.flush().catch(() => {});
       throw error;
@@ -225,132 +218,98 @@ export class Outbox {
     await journal.flush();
   }
 
-  private async redeliverOwned(
-    opts: Pick<OutboxOptions, 'isDown' | 'isActive' | 'sleep'> & {
-      resend?: (entry: TurnJournalEntry) => Promise<boolean>;
-      resendNotice?: (entry: TurnJournalEntry) => Promise<boolean>;
-      noticeGapMs?: number;
-    },
-  ): Promise<{ resent: number; notices: number }> {
+  private async redeliverOwned(): Promise<void> {
     const journal = this.options.journal!;
     const snapshot = journal
       .list()
       .filter((entry) => isStagedReply(entry) || isStagedNotice(entry));
-    if (snapshot.length === 0) return { resent: 0, notices: 0 };
-
     let resent = 0;
     let notices = 0;
-    const pendingNoticeCount = snapshot.filter((item) =>
-      isStagedNotice(item),
-    ).length;
-
+    const pendingNoticeCount = snapshot.filter(isStagedNotice).length;
     for (const entry of snapshot) {
-      if (opts.isDown?.()) break;
-      const current = journal
-        .list()
-        .find((item) => item.turnId === entry.turnId);
+      if (this.options.isDown?.()) break;
+      const current = journal.get(entry.turnId);
       if (!current) continue;
-
       if (isStagedReply(current)) {
-        if (current.cliAlreadySent) {
-          journal.replyDelivered(current.turnId);
-        } else if (opts.resend) {
+        if (current.cliAlreadySent) journal.replyDelivered(current.turnId);
+        else {
           try {
-            const ok = await opts.resend({ ...current });
-            if (ok) {
-              journal.replyDelivered(current.turnId);
-              resent += 1;
-            }
+            if (await this.deliver(current)) resent += 1;
           } catch (error) {
-            const kind = classify(error);
-            switch (kind) {
-              case 'rejected':
-                log.warn('journal', 'resend-rejected', {
-                  turnId: current.turnId,
-                  err: error instanceof Error ? error.message : String(error),
-                });
-                journal.replyRejected(current.turnId);
-                break;
-              case 'link':
-                log.warn('journal', 'resend-failed', {
-                  turnId: current.turnId,
-                  err: error instanceof Error ? error.message : String(error),
-                });
-                throw error;
-              case 'local':
-                log.warn('journal', 'resend-failed', {
-                  turnId: current.turnId,
-                  err: error instanceof Error ? error.message : String(error),
-                });
-                break;
-              default: {
-                const _exhaustive: never = kind;
-                throw _exhaustive;
-              }
-            }
+            this.redeliveryFailed('reply', current, error);
           }
         }
       }
-
-      if (opts.isDown?.()) break;
-      const latest = journal
-        .list()
-        .find((item) => item.turnId === entry.turnId);
-      if (!latest || !isStagedNotice(latest)) continue;
-      if (opts.isActive?.(latest.scope)) continue;
-      if (!opts.resendNotice) continue;
+      if (this.options.isDown?.()) break;
+      const latest = journal.get(entry.turnId);
+      if (
+        !latest ||
+        !isStagedNotice(latest) ||
+        this.options.isActive?.(latest.scope)
+      )
+        continue;
       if (latest.notice?.messageId) {
         journal.noticeDelivered(latest.turnId);
         continue;
       }
       try {
-        const ok = await opts.resendNotice({ ...latest });
-        if (ok) {
+        const delivered = await resendPendingNotice({
+          send: (...args) => this.options.channel.send(...args),
+          entry: latest,
+          journal,
+          noticeAuth: this.options.noticeAuth,
+        });
+        if (delivered) {
           journal.noticeDelivered(latest.turnId);
           notices += 1;
-          if (opts.noticeGapMs && notices < pendingNoticeCount) {
-            await (opts.sleep ?? defaultSleep)(opts.noticeGapMs);
-          }
+          if (notices < pendingNoticeCount)
+            await (this.options.sleep ?? defaultSleep)(NOTICE_RESTART_GAP_MS);
         }
       } catch (error) {
-        const kind = classify(error);
-        switch (kind) {
-          case 'rejected':
-            log.warn('journal', 'resend-rejected', {
-              turnId: latest.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-            journal.noticeRejected(latest.turnId);
-            break;
-          case 'link':
-            log.warn('journal', 'notice-resend-failed', {
-              turnId: latest.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-            throw error;
-          case 'local':
-            log.warn('journal', 'notice-resend-failed', {
-              turnId: latest.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-            break;
-          default: {
-            const _exhaustive: never = kind;
-            throw _exhaustive;
-          }
-        }
+        this.redeliveryFailed('notice', latest, error);
       }
     }
-
-    if (resent > 0 || notices > 0) {
+    if (resent > 0 || notices > 0)
       log.info('journal', 'recovered', {
         orphans: 0,
         resent,
         notices,
         interrupted: 0,
       });
+  }
+
+  private redeliveryFailed(
+    item: 'reply' | 'notice',
+    entry: TurnJournalEntry,
+    error: unknown,
+  ): void {
+    const kind = classify(error);
+    log.warn(
+      'journal',
+      kind === 'rejected'
+        ? 'resend-rejected'
+        : item === 'reply'
+          ? 'resend-failed'
+          : 'notice-resend-failed',
+      {
+        turnId: entry.turnId,
+        err: error instanceof Error ? error.message : String(error),
+      },
+    );
+    switch (kind) {
+      case 'rejected':
+        if (item === 'reply') this.options.journal!.replyRejected(entry.turnId);
+        else this.options.journal!.noticeRejected(entry.turnId);
+        return;
+      case 'link':
+        throw error;
+      case 'local':
+        return;
+      default: {
+        const exhaustive: never = kind;
+        throw exhaustive;
+      }
     }
-    return { resent, notices };
   }
 
   schedule(delayMs = 0): void {
