@@ -1,3 +1,4 @@
+import { mutateAutomationTask, readAutomationTask } from './task-mutation';
 import { cardDraft, type DraftCardPatch } from './draft-confirmation/state';
 import { reconcileDraftCard, sendAutomationDraftCard } from './draft-confirmation/delivery';
 import { log } from '../core/logger';
@@ -11,7 +12,7 @@ import { automationEndCard, type EndCardTokens } from './end-card';
 import { nextFireAfter, parseSchedule, readSchedule, type Schedule } from './schedule';
 import { zonedParts } from './zoned-time';
 import { draftConfirmedStatus, draftDeletedStatus, draftReplacedStatus, draftSameNameExistsStatus, draftTargetGoneStatus, draftTargetChangedStatus, DRAFT_SETTLED_SUPERSEDED, DRAFT_SETTLED_CANCELLED, DRAFT_SETTLED_END_CHOSEN, scheduleDraftCardSettle } from './draft-confirmation/settlement';
-import { AUTOMATIONS_DRAFT_TTL_MS, taskMutationError, type AutomationDraft, type AutomationItem, type AutomationsStore, type DeleteAutomationDraft, type ReplaceAutomationDraft, type SaveAutomationDraftInput, type RegisterAutomationOperationInput } from './store';
+import { AUTOMATIONS_DRAFT_TTL_MS, type AutomationDraft, type AutomationItem, type AutomationsStore, type DeleteAutomationDraft, type ReplaceAutomationDraft, type SaveAutomationDraftInput, type RegisterAutomationOperationInput } from './store';
 import { AUTO_INVALID_HINT, AUTO_INVALID_END, AUTO_END_BUSY, AUTO_END_NOT_AFTER_START, AUTO_NO_REMAINING_FIRES, AUTO_AGENT_NEEDS_CWD, assessAutomationSchedule, hasRemainingFire, noteAutomationRejected, rejectMessage, completePendingSchedule, resolveEndAt, scheduleStartAt, scheduleEndAt, type AutomationScheduleVerdict } from './command-schedule';
 export type DraftConfirmationContext = {
   botAppId?: string;
@@ -172,8 +173,9 @@ async function confirmAutomationDraft(
   draft: AutomationDraft,
 ): Promise<AutomationConfirmOutcome> {
   if (draft.op !== 'create' && ctx.automations) {
-    const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision });
-    if (code) {
+    const target = readAutomationTask(ctx.automations, { id: draft.targetId, chatId: draft.chatId, revision: draft.target.revision, consistency: 'live' });
+    if (!target.ok) {
+      const code = target.code;
       const status = code === 'target-not-found' ? draftTargetGoneStatus(draft.targetId) : draftTargetChangedStatus(draft.targetId);
       if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code, status);
       return { ok: false, status, toast: status };
@@ -230,14 +232,12 @@ async function confirmDeleteDraft(
   draft: DeleteAutomationDraft,
 ): Promise<AutomationConfirmOutcome> {
   if (!ctx.automations || !ctx.automationsScheduler) return confirmInvalid();
-  const item = ctx.automations.get(draft.targetId);
-  if (!item || item.chatId !== draft.chatId) {
-    const status = draftTargetGoneStatus(draft.targetId);
-    return { ok: false, status, toast: status };
-  }
-  const ok = await ctx.automationsScheduler.delete(draft.targetId, { chatId: draft.chatId, revision: draft.target.revision, operationId: draft.operationId, confirmedDraftId: draft.draftId });
-  if (!ok) {
-    const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision }) ?? 'target-not-found';
+  const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: draft.chatId }, {
+    actor: 'human', operation: 'delete', id: draft.targetId, revision: draft.target.revision,
+    confirmation: { draftId: draft.draftId, operationId: draft.operationId },
+  });
+  if (!result.ok) {
+    const code = result.code;
     const status = code === 'target-state-conflict' ? draftTargetChangedStatus(draft.targetId) : draftTargetGoneStatus(draft.targetId);
     if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, code, status);
     return { ok: false, status, toast: status };
@@ -271,7 +271,9 @@ async function confirmReplaceDraft(
     const nextFireAt = nextFireAfter(blocked.schedule, now);
     const startAt = scheduleStartAt(blocked.schedule, now);
     const endAt = scheduleEndAt(blocked.schedule);
-    created = await ctx.automations.replace(draft, {
+    const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: draft.chatId }, {
+      actor: 'human', operation: 'replace', id: draft.targetId, revision: draft.target.revision,
+      confirmation: { draftId: draft.draftId, operationId: draft.operationId }, replacement: {
       taskType: draft.taskType,
       schedule: blocked.schedule,
       timezone: draft.timezone,
@@ -283,7 +285,14 @@ async function confirmReplaceDraft(
       name: draft.name,
       taskText: draft.taskText,
       ...(draft.cwd ? { cwd: draft.cwd } : {}),
+      },
     });
+    if (!result.ok) {
+      const status = result.code === 'target-state-conflict' ? draftTargetChangedStatus(draft.targetId) : draftTargetGoneStatus(draft.targetId);
+      if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, result.code, status);
+      return { ok: false, status, toast: status };
+    }
+    created = result.item;
   } catch (error) {
     if (draft.operationId) throw error;
     log.fail('auto', error, { event: 'replace', oldId: draft.targetId });

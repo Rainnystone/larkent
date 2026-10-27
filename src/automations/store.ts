@@ -97,10 +97,8 @@ export class DraftSupersessionConflict extends Error {
   constructor() { super('draft-supersession-conflict'); }
 }
 
-export interface TaskMutationGuard {
+export interface TaskMutationReceipt {
   confirmedDraftId?: string;
-  chatId: string;
-  revision?: string;
   operationId?: string;
   operation?: RegisterAutomationOperationInput;
 }
@@ -111,11 +109,6 @@ export function automationTargetRevision(item: AutomationItem): string {
     taskText: item.taskText, schedule: item.schedule, timezone: item.timezone, startAt: item.startAt, endAt: item.endAt, paused: item.paused, cwd: item.cwd })).digest('hex');
 }
 
-export function taskMutationError(item: AutomationItem | undefined, guard: TaskMutationGuard): string | undefined {
-  if (!item || item.chatId !== guard.chatId) return 'target-not-found';
-  if (guard.revision && guard.revision !== automationTargetRevision(item)) return 'target-state-conflict';
-  return undefined;
-}
 
 export interface DraftDelivery {
   state: 'prepared' | 'sending' | 'sent' | 'rejected';
@@ -405,12 +398,11 @@ export class AutomationsStore {
     return item;
   }
 
-  async replace(draft: ReplaceAutomationDraft, input: CreateAutomationInput): Promise<AutomationItem | undefined> {
+  async replace(id: number, input: CreateAutomationInput, receipt?: TaskMutationReceipt): Promise<AutomationItem | undefined> {
     this.assertMutable();
-    const old = this.items.find(item => item.id === draft.targetId && item.chatId === draft.chatId);
-    if (taskMutationError(old, { chatId: draft.chatId, revision: draft.target.revision })) return undefined;
-    const created = this.insertItem({ ...input, confirmedDraftId: draft.draftId, ...(draft.operationId ? { operationId: draft.operationId } : {}) });
-    this.items = this.items.filter(item => item.id !== draft.targetId);
+    if (!this.items.some(item => item.id === id)) return undefined;
+    const created = this.insertItem({ ...input, confirmedDraftId: receipt?.confirmedDraftId, ...(receipt?.operationId ? { operationId: receipt.operationId } : {}) });
+    this.items = this.items.filter(item => item.id !== id);
     await this.persistNow();
     return created;
   }
@@ -449,10 +441,10 @@ export class AutomationsStore {
     return cloneItem(item);
   }
 
-  async delete(id: number, guard?: TaskMutationGuard): Promise<boolean> {
+  async delete(id: number, guard?: TaskMutationReceipt): Promise<boolean> {
     this.assertMutable();
     const index = this.items.findIndex((item) => item.id === id);
-    if (index < 0 || (guard && taskMutationError(this.items[index], guard))) return false;
+    if (index < 0) return false;
     this.applyMutationOperation(id, guard);
     this.items.splice(index, 1);
     await this.persistNow();
@@ -856,7 +848,7 @@ export class AutomationsStore {
     this.drafts = this.drafts.filter(draft => draft.draftId !== operation.draftId);
   }
 
-  private applyMutationOperation(id: number, guard?: TaskMutationGuard): void {
+  private applyMutationOperation(id: number, guard?: TaskMutationReceipt): void {
     // Receipt execution facts describe the linked task's lifetime, including fires before this mutation.
     const linked = this.operations.filter(entry => entry.state === 'applied' && entry.taskId === id);
     const dispatchedCountKnown = linked.some(entry => entry.dispatchedCountKnown !== false);
@@ -897,20 +889,20 @@ export class AutomationsStore {
     await this.persistNow();
   }
 
-  async pause(id: number, guard?: TaskMutationGuard): Promise<boolean> {
+  async pause(id: number, guard?: TaskMutationReceipt): Promise<boolean> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
-    if (!item || (guard && taskMutationError(item, guard))) return false;
+    if (!item) return false;
     this.applyMutationOperation(id, guard);
     item.paused = true;
     await this.persistNow();
     return true;
   }
 
-  async resume(id: number, nextFireAt: number, guard?: TaskMutationGuard): Promise<boolean> {
+  async resume(id: number, nextFireAt: number, guard?: TaskMutationReceipt): Promise<boolean> {
     this.assertMutable();
     const item = this.items.find((entry) => entry.id === id);
-    if (!item || (guard && taskMutationError(item, guard))) return false;
+    if (!item) return false;
     this.applyMutationOperation(id, guard);
     item.paused = false;
     item.nextFireAt = nextFireAt;

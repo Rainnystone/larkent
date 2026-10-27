@@ -17,7 +17,6 @@ import {
   type AutomationTaskType,
   type AutomationTriggerSource,
   type AutomationsStore,
-  type TaskMutationGuard,
 } from './store';
 import { createStatusPusher, type StatusPusher } from './status-pusher';
 import { consumeWakeRequests, watchWakeDir, type WakeWatch } from './wake-file';
@@ -92,9 +91,11 @@ export interface AutomationScheduler {
   notifyChanged(): Promise<void>;
   /** Re-arm after an in-process create/confirm so new nextFireAt / endAt take effect. */
   nudge(): Promise<void>;
-  pause(id: number, guard?: TaskMutationGuard): Promise<boolean>;
-  resume(id: number, guard?: TaskMutationGuard): Promise<boolean>;
-  delete(id: number, guard?: TaskMutationGuard): Promise<boolean>;
+  /** Serialize a task write with due fires, then refresh status and timers on success. */
+  updateTasks<T extends { ok: boolean }>(write: (now: number) => Promise<T>): Promise<T>;
+  pause(id: number): Promise<boolean>;
+  resume(id: number): Promise<boolean>;
+  delete(id: number): Promise<boolean>;
   removeFromChat(chatId: string): Promise<boolean>;
 }
 
@@ -221,39 +222,33 @@ class Scheduler implements AutomationScheduler {
     });
   }
 
-  pause(id: number, guard?: TaskMutationGuard): Promise<boolean> {
+  updateTasks<T extends { ok: boolean }>(write: (now: number) => Promise<T>): Promise<T> {
     return this.enqueue(async () => {
-      const item = this.store.get(id);
-      if (!item || (guard && item.chatId !== guard.chatId)) return false;
-      const ok = await this.store.pause(id, guard);
-      if (ok) await this.writeStatus();
+      const result = await write(this.now());
+      if (result.ok) await this.writeStatus();
       this.armTimer();
-      return ok;
+      return result;
     });
   }
 
-  resume(id: number, guard?: TaskMutationGuard): Promise<boolean> {
-    return this.enqueue(async () => {
+  async pause(id: number): Promise<boolean> {
+    return (await this.updateTasks(async () => ({ ok: await this.store.pause(id) }))).ok;
+  }
+
+  async resume(id: number): Promise<boolean> {
+    return (await this.updateTasks(async now => {
       const item = this.store.get(id);
-      if (!item || (guard && item.chatId !== guard.chatId)) return false;
+      if (!item) return { ok: false };
       const schedule = readSchedule(item.schedule);
-      const next = schedule ? nextFireAfter(schedule, this.now()) : 0;
-      if (guard?.operation && !next) return false;
-      const ok = await this.store.resume(id, next, guard);
+      const next = schedule ? nextFireAfter(schedule, now) : 0;
+      const ok = await this.store.resume(id, next);
       if (ok && next === 0) await this.store.delete(id);
-      if (ok) await this.writeStatus();
-      this.armTimer();
-      return ok;
-    });
+      return { ok };
+    })).ok;
   }
 
-  delete(id: number, guard?: TaskMutationGuard): Promise<boolean> {
-    return this.enqueue(async () => {
-      const ok = await this.store.delete(id, guard);
-      if (ok) await this.writeStatus();
-      this.armTimer();
-      return ok;
-    });
+  async delete(id: number): Promise<boolean> {
+    return (await this.updateTasks(async () => ({ ok: await this.store.delete(id) }))).ok;
   }
 
   removeFromChat(chatId: string): Promise<boolean> {

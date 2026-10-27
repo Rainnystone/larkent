@@ -3,7 +3,7 @@ import { senderTypeFromMessage } from '../bot/self-message';
 import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
 import { formatAutomationListLine } from './board-card';
-import { mutateAutomationTask, taskMutationLabels } from './task-mutation';
+import { mutateAutomationTask, readAutomationTasks, taskMutationLabels } from './task-mutation';
 import { AUTO_NEW_USAGE, AUTO_P2P_HINT, AUTO_AGENT_DISABLED, AUTO_LIST_EMPTY, AUTO_UNKNOWN_ID, parseAutoNewArgs, assessAutomationSchedule, rejectMessage, noteAutomationRejected, scheduleStartAt, scheduleEndAt, type ParsedAutoNew, type AutomationRejectSource } from './command-schedule';
 import { nextFireAfter } from './schedule';
 import { submitDraft } from './draft-confirmation';
@@ -184,7 +184,7 @@ async function listAutos(ctx: CommandContext): Promise<void> {
     await replyAuto(ctx, AUTO_LIST_EMPTY);
     return;
   }
-  const items = ctx.automations.list().filter((item) => item.chatId === ctx.msg.chatId);
+  const items = readAutomationTasks(ctx.automations, { chatId: ctx.msg.chatId, consistency: 'live' });
   if (items.length === 0) {
     await replyAuto(ctx, AUTO_LIST_EMPTY);
     return;
@@ -201,7 +201,7 @@ async function mutateAuto(
     await replyAuto(ctx, AUTO_UNKNOWN_ID);
     return;
   }
-  const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: ctx.msg.chatId, now: ctx.now }, { actor: 'human', operation: op, id });
+  const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: ctx.msg.chatId }, { actor: 'human', operation: op, id });
   if (result.ok) log.info('auto', { pause: 'paused', resume: 'resumed', delete: 'deleted' }[op], { id });
   await replyAuto(ctx, result.ok ? `已${taskMutationLabels[op]} #${id} ${result.item.name}` : AUTO_UNKNOWN_ID);
 }

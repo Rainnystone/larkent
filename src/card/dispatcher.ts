@@ -448,7 +448,7 @@ async function dispatchBoardAction(
   }
   const operation = cmd === 'auto.pause' ? 'pause' : cmd === 'auto.resume' ? 'resume' : 'delete';
   const id = verified.payload.itemId;
-  const result = await mutateAutomationTask({ store: deps.automations, scheduler: deps.automationsScheduler, chatId: registered.chatId, now: deps.now }, { actor: 'human', operation, id });
+  const result = await mutateAutomationTask({ store: deps.automations, scheduler: deps.automationsScheduler, chatId: registered.chatId }, { actor: 'human', operation, id });
   if (!result.ok) return actionToast('error', AUTO_UNKNOWN_ID);
   log.info('auto', { pause: 'paused', resume: 'resumed', delete: 'deleted' }[operation], { id });
   return actionToast('success', `已${taskMutationLabels[operation]} #${id}`);
