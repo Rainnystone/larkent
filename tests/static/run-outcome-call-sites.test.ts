@@ -36,7 +36,7 @@ describe('stop request call sites', () => {
     expect(channel).not.toMatch(/onConnectedTick:[\s\S]*recoverJournal\(\)/);
     expect(channel).toContain('noteTerminalStop(handle, evt)');
     expect(executor).toContain("requestStop(handle, { type: 'subscriber-abandoned' })");
-    expect(executor).toContain('stopRequestFromTerminal(event)');
+    expect(executor).toContain('stopRequestFromTerminal(terminalEvent)');
 
     expect(spawn).toContain('Turn journal reaps agent CLI orphans');
     expect(runner).toMatch(/detached:\s*true/);

@@ -16,7 +16,7 @@ import {
   type WorkingDirectoryRejectReason,
   type WorkingDirectoryResolveResult,
 } from '../policy/workspace';
-import type { RunExecution, RunExecutor } from '../runtime/run-executor';
+import type { RunExecution, RunExecutor, SubmitRunInput } from '../runtime/run-executor';
 import { RunRejected, type RunRejectedCode } from '../runtime/errors';
 import type { ToolRunContext } from '../bridge-tools/server';
 import type { SessionCatalog } from '../session/catalog';
@@ -48,6 +48,7 @@ export interface StartRunFlowInput {
   bypassPool?: boolean;
   /** Automation fires use the unattended system-prompt variant. */
   promptVariant?: AgentPromptVariant;
+  onEvent?: SubmitRunInput['onEvent'];
   observability?: {
     profile: string;
     agent: string;
@@ -207,6 +208,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
       stopGraceMs: input.stopGraceMs,
       ...(input.bypassPool ? { bypassPool: true } : {}),
       ...(input.promptVariant ? { promptVariant: input.promptVariant } : {}),
+      ...(input.onEvent ? { onEvent: input.onEvent } : {}),
       observability: input.observability,
     });
   } catch (err) {

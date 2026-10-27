@@ -16,7 +16,6 @@ import { createIdleWatchdog } from '../bot/idle-watchdog';
 import { recordRunSessionEvent, startRunFlow } from '../bot/run-flow';
 import {
   cardTerminalFromOutcome,
-  deriveRunOutcome,
   describeRunOutcome,
   formatRunOutcome,
   noteTerminalStop,
@@ -262,6 +261,7 @@ async function runAutomationAgentFireBody(
     fire.createdBy,
   );
   const capability = capabilityForProfile(runtime.profileConfig);
+  let policyGuard: PolicyGuardReason | undefined;
   let flow: Awaited<ReturnType<typeof startRunFlow>>;
   try {
     flow = await startRunFlow({
@@ -286,6 +286,14 @@ async function runAutomationAgentFireBody(
       forceResumeHandle: null,
       bypassPool: true,
       promptVariant: 'automation',
+      onEvent: (event, handle) => {
+        if (handle.interrupted || event.type !== 'tool_use') return;
+        const hit = inspectAutomationToolUse(event);
+        if (!hit) return;
+        requestStop(handle, { type: 'policy-guard', code: hit.reason });
+        policyGuard = hit.reason;
+        void handle.run.stop().catch(() => {});
+      },
       stopGraceMs: getAgentStopGraceMs(runtime.cfg),
       observability: {
         profile: runtime.profile,
@@ -331,7 +339,7 @@ async function runAutomationAgentFireBody(
       event,
     });
   };
-  const { state, policyGuard } = await drainFireRun({
+  const state = await drainFireRun({
     handle: flow.execution.handle,
     events: flow.execution.subscribe(),
     idleTimeoutMs: getRunIdleTimeoutMs(runtime.cfg),
@@ -491,10 +499,9 @@ async function drainFireRun(input: {
   chatId: string;
   scope: string;
   signatures: readonly CliSignature[];
-}): Promise<{ state: RunState; policyGuard?: PolicyGuardReason }> {
+}): Promise<RunState> {
   let state = seedRunState({ currentChatId: input.chatId });
   let lastTerminal: AgentEvent | undefined;
-  let policyGuard: PolicyGuardReason | undefined;
   const watchdog = createIdleWatchdog({
     handle: input.handle,
     idleTimeoutMs: input.idleTimeoutMs,
@@ -509,15 +516,6 @@ async function drainFireRun(input: {
         continue;
       }
       if (!shouldDeliverAgentEvent(input.handle, event)) continue;
-      if (event.type === 'tool_use') {
-        const hit = inspectAutomationToolUse(event);
-        if (hit) {
-          requestStop(input.handle, { type: 'policy-guard', code: hit.reason });
-          policyGuard = hit.reason;
-          void input.handle.run.stop().catch(() => {});
-          break;
-        }
-      }
       if (event.type === 'liveness') continue;
       if (event.type === 'done' || event.type === 'error') {
         lastTerminal = event;
@@ -533,14 +531,8 @@ async function drainFireRun(input: {
   const stderrTail = input.handle.run.stderrSnapshot
     ?? (lastTerminal?.type === 'error' ? lastTerminal.message : undefined);
   const matched = matchCliSignature(stderrTail, input.signatures);
-  const outcome = deriveRunOutcome({
-    stopRequest: input.handle.stopRequest,
-    terminalEvent: lastTerminal,
-    exit: input.handle.run.exit,
-    signal: input.handle.run.signal,
-    stderrTail,
-    signatures: input.signatures,
-  });
+  const outcome = input.handle.outcome;
+  if (!outcome) throw new Error('run settled without an outcome');
   const userMessage = outcome.kind === 'partial' ? cardUserMessage(outcome, matched) : undefined;
   if (
     state.terminal === 'running'
@@ -549,9 +541,8 @@ async function drainFireRun(input: {
   ) {
     state = applyFireOutcome(state, outcome, watchdog.armedDelayMs(), userMessage);
   }
-  input.handle.outcome = outcome;
   if (input.handle.interrupted) await input.handle.run.stop();
-  return policyGuard ? { state, policyGuard } : { state };
+  return state;
 }
 
 function applyFireOutcome(

@@ -40,7 +40,7 @@ export interface DeriveRunOutcomeInput {
   terminalEvent?: AgentEvent;
   stderrTail?: string;
   signatures?: readonly CliSignature[];
-  /** True when the Feishu link's outage epoch changed during the run. */
+  /** True when the link's outage epoch changed, or the run started while down. */
   outageOverlapped?: boolean;
 }
 
@@ -113,6 +113,9 @@ export function runOverlappedOutage(
 }
 
 function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
+  // A guarded tool ends consumption before any later buffered terminal. Keep
+  // that decision even when the source pump has already observed the terminal.
+  if (input.stopRequest?.type === 'policy-guard') return interrupted(input.stopRequest);
   const signed = matchCliSignature(input.stderrTail, input.signatures);
   if (signed && signatureApplies(signed.classify, input)) {
     return applySignatureOverlay(signed.classify);

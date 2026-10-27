@@ -60,11 +60,9 @@ import {
 } from '../card/run-state';
 import {
   cardTerminalFromOutcome,
-  deriveRunOutcome,
   formatRunOutcome,
   formatStopRequest,
   noteTerminalStop,
-  runOverlappedOutage,
   shouldDeliverAgentEvent,
   type RunOutcome,
   type StopRequest,
@@ -372,7 +370,14 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     agent,
     pool,
     activeRuns,
-    stderrSignatures: () => streamReliability(controls.profileConfig).signatures,
+    stderrSignatures: variant => {
+      const signatures = streamReliability(controls.profileConfig).signatures;
+      // Fires have always used signatures only for partial-output warnings.
+      return variant === 'automation'
+        ? signatures?.filter(signature => signature.classify.kind === 'partial')
+        : signatures;
+    },
+    getLink: () => feishuLink,
     ...(deps.now ? { now: deps.now } : {}),
     onSpawn: (input) => {
       journal?.noteSpawn({
@@ -1999,7 +2004,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           recordSession,
           async () => {},
           runContext,
-          streamReliability(controls.profileConfig, () => link),
+          streamReliability(controls.profileConfig),
         );
         await cotDone;
         if (cotPublisher.degradedReason) {
@@ -2082,7 +2087,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        streamReliability(controls.profileConfig, () => link),
+        streamReliability(controls.profileConfig),
       );
       const stream = await awaitRenderAwareStream({
         mode: replyMode,
@@ -2158,7 +2163,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         },
         runContext,
-        streamReliability(controls.profileConfig, () => link),
+        streamReliability(controls.profileConfig),
       );
       const stream = await awaitRenderAwareStream({
         mode: replyMode,
@@ -2203,7 +2208,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         recordSession,
         async () => {},
         runContext,
-        streamReliability(controls.profileConfig, () => link),
+        streamReliability(controls.profileConfig),
       );
       await outbox.deliverFinalReply({
         chatId,
@@ -2433,20 +2438,9 @@ async function processAgentStream(
       const prevTerminal = state.terminal;
       const prevFooter = state.footer;
       state = reduce(state, evt);
-      if (evt.type === 'error' && state.terminal === 'error') {
-        const failure = cliFailureInput(handle.run.stderrSnapshot, evt.message, signatures);
-        const matched = matchCliSignature(failure.stderrTail, failure.signatures);
-        const early = deriveRunOutcome({
-          stopRequest: handle.stopRequest,
-          terminalEvent: evt,
-          ...failure,
-          exit: handle.run.exit,
-          signal: handle.run.signal,
-          outageOverlapped: reliability.outageOverlapped?.(),
-        });
-        const msg = cardUserMessage(early, matched);
-        if (msg) state = { ...state, errorMsg: msg };
-      }
+      // The iterator joins settlement on return. Render the error only after
+      // the executor has classified it, keeping raw CLI diagnostics off cards.
+      if (evt.type === 'error') break;
       if (state.footer !== prevFooter || state.terminal !== prevTerminal) {
         log.info('card', 'transition', { footer: state.footer, terminal: state.terminal });
       }
@@ -2467,14 +2461,8 @@ async function processAgentStream(
   const failure = cliFailureInput(handle.run.stderrSnapshot,
     lastTerminal?.type === 'error' ? lastTerminal.message : undefined, signatures);
   const matched = matchCliSignature(failure.stderrTail, failure.signatures);
-  const outcome = deriveRunOutcome({
-    stopRequest: handle.stopRequest,
-    terminalEvent: lastTerminal,
-    ...failure,
-    exit: handle.run.exit,
-    signal: handle.run.signal,
-    outageOverlapped: reliability.outageOverlapped?.(),
-  });
+  const outcome = handle.outcome;
+  if (!outcome) throw new Error('run settled without an outcome');
   noteUnclassifiedStderr({
     outcome,
     stderrTail: failure.stderrTail,
@@ -2492,7 +2480,6 @@ async function processAgentStream(
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };
   }
-  handle.outcome = outcome;
   log.info('card', 'final', {
     scope,
     terminal: state.terminal,
@@ -2510,7 +2497,7 @@ async function processAgentStream(
 
 function applyOutcomeToState(
   state: RunState,
-  outcome: ReturnType<typeof deriveRunOutcome>,
+  outcome: RunOutcome,
   idleTimeoutMs: number | undefined,
   userMessage?: string,
 ): RunState {
@@ -2543,24 +2530,18 @@ function applyOutcomeToState(
 interface StreamReliability {
   signatures?: readonly CliSignature[];
   agent?: string;
-  outageOverlapped?: () => boolean;
 }
 
 function streamReliability(
   profile: { agentKind: string },
-  getLink?: () => { outageEpoch(): number; isDown(): boolean } | undefined,
 ): StreamReliability {
   const kind = profile.agentKind;
-  const link = getLink?.();
-  const startedEpoch = link?.outageEpoch() ?? 0;
-  const startedDown = link?.isDown() ?? false;
   return {
     signatures: [
       ...(isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : []),
       ...NETWORK_TRANSIENT_SIGNATURES,
     ],
     agent: kind,
-    outageOverlapped: () => runOverlappedOutage(getLink?.(), startedEpoch, startedDown),
   };
 }
 
