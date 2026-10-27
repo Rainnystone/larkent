@@ -121,7 +121,7 @@ class Board implements AutomationBoard {
         if (this.failedAttempt.get(chatId) === attemptKey) return;
         const outcome = await this.patchOrResend(chatId, binding, card);
         this.failedAttempt.delete(chatId);
-        const next = outcome.binding;
+        let next = outcome.binding;
         if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
           return;
         }
@@ -131,10 +131,17 @@ class Board implements AutomationBoard {
           return;
         }
         if (outcome.applied) {
-          const pinned = await this.ensurePinned(chatId, next, {
+          let pinned = await this.ensurePinned(chatId, next, {
             repin: binding?.messageId === next.messageId,
+            resendIfGone: true,
           });
-          if (!pinned) return;
+          if (pinned === 'message-deleted') {
+            // A CardKit patch still succeeds after the message is deleted; only the pin shows it is gone.
+            log.warn('auto', 'board.resend', { chatId, reason: 'message-deleted' });
+            next = (await this.sendReplacement(chatId, next, card, { previousGone: true })).binding;
+            pinned = await this.ensurePinned(chatId, next, { repin: false, resendIfGone: false });
+          }
+          if (pinned !== 'pinned') return;
         } else if (
           !next.pendingUnpinMessageIds?.length
           || !(await this.currentMessagePinned(chatId, next.messageId))
@@ -242,9 +249,10 @@ class Board implements AutomationBoard {
     chatId: string,
     binding: AutomationBoardBinding | undefined,
     card: object,
+    opts: { previousGone: boolean } = { previousGone: false },
   ): Promise<BoardPatchOutcome> {
     const sent = await sendManagedCard(this.channel, chatId, card);
-    const pendingUnpinMessageIds = appendPendingUnpin(binding, sent.messageId);
+    const pendingUnpinMessageIds = appendPendingUnpin(binding, sent.messageId, opts);
     const next: AutomationBoardBinding = {
       chatId,
       messageId: sent.messageId,
@@ -259,19 +267,22 @@ class Board implements AutomationBoard {
   private async ensurePinned(
     chatId: string,
     binding: AutomationBoardBinding,
-    opts: { repin: boolean },
-  ): Promise<boolean> {
+    opts: { repin: boolean; resendIfGone: boolean },
+  ): Promise<BoardPinOutcome> {
+    let creating = false;
     try {
       const pinned = await listPinnedMessageIds(this.channel, chatId);
-      if (pinned.includes(binding.messageId)) return true;
+      if (pinned.includes(binding.messageId)) return 'pinned';
+      creating = true;
       await pinMessage(this.channel, binding.messageId);
       if (opts.repin) log.info('auto', 'board.repin', { chatId });
-      return true;
+      return 'pinned';
     } catch (error) {
       if (isNotInChat(error)) throw error;
+      if (creating && opts.resendIfGone && isMessageGone(error)) return 'message-deleted';
       log.fail('auto', error, { event: 'board.pin', chatId });
       await this.hintPinFailed(chatId, binding);
-      return false;
+      return 'failed';
     }
   }
 
@@ -330,6 +341,8 @@ class Board implements AutomationBoard {
         unpinned = true;
       } catch (error) {
         if (isNotInChat(error)) throw error;
+        // A deleted message has no pin left to remove.
+        unpinned = isMessageGone(error);
         log.warn('auto', 'board.unpin-failed', {
           err: error instanceof Error ? error.message : String(error),
         });
@@ -419,6 +432,8 @@ interface BoardPatchOutcome {
   applied: boolean;
 }
 
+type BoardPinOutcome = 'pinned' | 'failed' | 'message-deleted';
+
 type BoardResendReason = '200740' | '200750' | 'message-deleted';
 
 /**
@@ -436,6 +451,10 @@ function boardResendReason(error: unknown): BoardResendReason | undefined {
   if (code === 230110 || code === 230011 || code === 10020 || code === 10037) return 'message-deleted';
   if (code === undefined && responseStatus(error) === 404) return 'message-deleted';
   return undefined;
+}
+
+function isMessageGone(error: unknown): boolean {
+  return boardResendReason(error) === 'message-deleted';
 }
 
 function responseStatus(error: unknown): number | undefined {
@@ -468,16 +487,19 @@ function logPatchFailed(error: unknown, sequence: number | undefined): void {
   });
 }
 
+/** A gone previous message is not pinned and cannot be unpinned, so it is not tracked. */
 function appendPendingUnpin(
   binding: AutomationBoardBinding | undefined,
   nextMessageId: string,
+  opts: { previousGone: boolean },
 ): PendingUnpinMessageRef[] | undefined {
   if (!binding) return undefined;
   const pending = (binding.pendingUnpinMessageIds ?? []).filter(
     (ref) => pendingUnpinRefMessageId(ref) !== nextMessageId,
   );
   if (
-    binding.messageId
+    !opts.previousGone
+    && binding.messageId
     && binding.messageId !== nextMessageId
     && !pending.some((ref) => pendingUnpinRefMessageId(ref) === binding.messageId)
   ) {
