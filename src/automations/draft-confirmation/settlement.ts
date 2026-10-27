@@ -77,6 +77,8 @@ async function updateSettledCard(
   const card = draft.cardBody ? renderSettledCard(draft.cardBody, status) : automationSettledCard(status);
   if (draft.cardId) {
     const sequence = monotonicCardSequence(draft.sequence, now());
+    // This is a private snapshot: retain attempts for retries, persist only success.
+    draft.sequence = sequence;
     await updateCardByCardId(channel, draft.cardId, card, sequence);
     const found = store?.getDraft(draft.draftId);
     const live = found ? cardDraft(found) : undefined;

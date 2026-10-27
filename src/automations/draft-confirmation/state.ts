@@ -25,6 +25,7 @@ export function draftReceipt(draft: AutomationDraft) {
 export function bindCard(draft: AutomationDraft, messageId: string, cardId?: string, body?: DraftCardBody): boolean {
   const card = cardDraft(draft);
   if (cardDraft(draft).deliveryId && card.cardMessageId && card.cardMessageId !== messageId) return false;
+  if (card.cardMessageId === messageId && card.cardId === cardId && card.cardBody) return true;
   card.cardMessageId = messageId;
   if (cardId) card.cardId = cardId; else delete card.cardId;
   delete card.sequence;

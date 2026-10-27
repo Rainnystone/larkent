@@ -105,6 +105,10 @@ it.each(['create', 'delete'] as const)('serializes simultaneous confirm and reje
 it('retries a stale sequence and preserves the visible body while settling in place', async () => {
   const h = await harness();
   await submitDraft(h.ctx, reminder());
+  const persisted = JSON.parse(await readFile(h.options.path, 'utf8'));
+  persisted.drafts[0].sequence = 100_000_000;
+  await writeFile(h.options.path, JSON.stringify(persisted));
+  await h.store.load();
   const original = h.channel.rawClient.cardkit.v1.card.update;
   const sequences: number[] = [];
   h.channel.rawClient.cardkit.v1.card.update = async params => {
@@ -119,6 +123,32 @@ it('retries a stale sequence and preserves the visible body while settling in pl
   expect(sequences[1]).toBeGreaterThan(sequences[0]!);
   expect(JSON.stringify(h.channel.updatedCards.at(-1)?.card)).toContain('Review the plan');
   expect(JSON.stringify(h.channel.updatedCards.at(-1)?.card)).toContain('已确认 #1');
+  expect(h.channel.sent).toHaveLength(1);
+});
+
+it('keeps the persisted sequence when recovery replays an already bound Outbox receipt', async () => {
+  const h = await harness();
+  const draft = await submitDraft(h.ctx, reminder());
+  const persisted = JSON.parse(await readFile(h.options.path, 'utf8'));
+  persisted.drafts[0].sequence = 100_000_000;
+  await writeFile(h.options.path, JSON.stringify(persisted));
+  const id = h.store.getDraftCardReceipt(draft.draftId)!.deliveryId!;
+  h.store.outboxJournal.updateDraftCard(id, { state: 'staged' });
+  await h.store.outboxJournal.flush();
+  await h.store.load();
+  await h.store.draftOutbox!.redeliver();
+  const receipt = h.store.getDraftCardReceipt(draft.draftId)!;
+  await h.store.bindDraftCard(draft.draftId, receipt.cardMessageId!, receipt.cardId);
+  const original = h.channel.rawClient.cardkit.v1.card.update;
+  const sequences: number[] = [];
+  h.channel.rawClient.cardkit.v1.card.update = async params => {
+    sequences.push((params as { data: { sequence: number } }).data.sequence);
+    return original(params);
+  };
+  expect(await tap(h, 'auto.confirm')).toMatchObject({ ok: true });
+  await expect.poll(() => sequences.length).toBe(1);
+  expect(sequences[0]).toBe(100_000_001);
+  expect(JSON.stringify(h.channel.updatedCards.at(-1)?.card)).toContain('Review the plan');
   expect(h.channel.sent).toHaveLength(1);
 });
 
