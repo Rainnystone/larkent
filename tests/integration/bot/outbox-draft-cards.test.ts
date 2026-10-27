@@ -234,7 +234,7 @@ async function liveDraft(input: {
     taskText: 'Synthetic reminder body',
     operationId,
     ...(input.pendingRecurring ? { pendingRecurring: input.pendingRecurring } : {}),
-    cardReply: { replyTo: 'om_src', ...replyFields(input) },
+    cardReply: { replyTo: 'om_src', ...(input.replyInThread ? { replyInThread: true } : {}), ...(input.threadId ? { threadId: input.threadId } : {}) },
   }, { operationId, profile, chatId, fingerprint: 'ab'.repeat(32) });
   return { store, draft, channel: createFakeChannel({ botAppId: APP, now: () => NOW + 500 }) };
 }
