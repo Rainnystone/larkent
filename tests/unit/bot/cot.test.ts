@@ -42,6 +42,19 @@ describe('COT event mapping', () => {
     expect(client.completed).toEqual(['done']);
   });
 
+  it('keeps stopped held-back progress out of the separate CoT bubble', async () => {
+    const client = new FakeCotClient();
+    const publisher = new CotPublisher({ client, chatId: 'synthetic', originMessageId: 'origin', runId: 'run', scope: 'scope', inputPreview: 'run' });
+    await publisher.start();
+    await consumeCotEvents(iterate([
+      { type: 'liveness' },
+      { type: 'text', delta: 'Partial', heldBack: true },
+      { type: 'done', terminationReason: 'interrupted' },
+    ]), publisher, { detail: 'brief' });
+    expect(client.events.filter(event => event.event_type.startsWith('TEXT_MESSAGE'))).toEqual([]);
+    expect(client.completed).toEqual(['error']);
+  });
+
   it('includes tool args and output only in detailed mode', async () => {
     const client = new FakeCotClient();
     const publisher = new CotPublisher({

@@ -134,6 +134,15 @@ describe('DEVIN ACP adapter contract', () => {
     expect(events).toContainEqual({ type: 'text', delta: 'Partial answer' });
     expect(events.at(-1)).toMatchObject({ type: 'error', terminationReason: 'failed', message: expect.stringMatching(/exited with code 17/) });
   });
+  it.each(['exitAfterUpdates', 'exitAfterTurn'])('pairs an unfinished call when %s rewrites the terminal error', async exitPoint => {
+    const f = await fixture({ updates: [{ sessionUpdate: 'tool_call', toolCallId: 'unfinished', title: 'Read', kind: 'read', rawInput: { path: 'file' } }], [exitPoint]: 17 });
+    const events = await collect(f.run());
+    expect(events.filter(event => event.type === 'tool_use' || event.type === 'tool_result')).toEqual([
+      { type: 'tool_use', id: 'unfinished', name: 'read', input: { path: 'file' } },
+      { type: 'tool_result', id: 'unfinished', output: 'Tool did not complete before the run ended.', isError: true },
+    ]);
+    expect(events.at(-1)).toMatchObject({ type: 'error', terminationReason: 'failed' });
+  });
   it('keeps stderr and exit status live after an abnormal exit', async () => {
     const f = await fixture({ stderr: 'x'.repeat(700) + 'ECONNRESET', exitCode: 17 }); const r = f.run();
     expect(r.exit).toBeUndefined(); await collect(r); expect(await r.waitForExit(1000)).toBe(true);

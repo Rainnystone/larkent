@@ -502,9 +502,9 @@ async function drainFireRun(input: {
   try {
     for await (const event of input.events) {
       noteRunEvent(input.handle);
+      if (!input.handle.interrupted) watchdog.noteDelivered(event);
       if (event.type === 'system') {
         input.recordSession(event);
-        if (!input.handle.interrupted) watchdog.arm();
         continue;
       }
       if (!shouldDeliverAgentEvent(input.handle, event)) continue;
@@ -517,7 +517,7 @@ async function drainFireRun(input: {
           break;
         }
       }
-      watchdog.noteDelivered(event);
+      if (event.type === 'liveness') continue;
       if (event.type === 'done' || event.type === 'error') {
         lastTerminal = event;
         noteTerminalStop(input.handle, event);

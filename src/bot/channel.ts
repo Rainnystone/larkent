@@ -2399,19 +2399,16 @@ async function processAgentStream(
   try {
     for await (const evt of events) {
       noteRunEvent(handle);
+      if (!handle.interrupted) watchdog.noteDelivered(evt);
       // A stopped run can still deliver its final resume handle before cleanup.
       // Keep draining owned events while suppressing further UI updates.
       if (evt.type === 'system') {
-        if (!handle.interrupted) watchdog.arm();
         recordSession(evt);
         continue;
       }
       if (!shouldDeliverAgentEvent(handle, evt)) continue;
 
-      // Track tool flight before re-arming the idle timer so the arm step
-      // sees the correct set size. tool_use opens a window; tool_result
-      // closes it. Other event types are bookkept after the if/else.
-      watchdog.noteDelivered(evt);
+      if (evt.type === 'liveness') continue;
 
       if (evt.type === 'usage') {
         const { costUsd, inputTokens, outputTokens } = evt;

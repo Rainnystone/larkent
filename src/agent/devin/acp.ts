@@ -135,7 +135,7 @@ export function runDevinAcp(input: {
       catch (error) { cleanupError = error; }
       if (!stopping && (processError || (exit !== null && exit !== 0))) {
         const kept = terminal.flatMap(e =>
-          e.type === 'text' ? [e]
+          e.type === 'text' || e.type === 'tool_result' ? [e]
             : e.type === 'final_text' ? [{ type: 'text' as const, delta: e.content }]
               : []);
         // Error detail retains the tail too, where transport signatures often occur.
