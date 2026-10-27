@@ -1,3 +1,4 @@
+import { manageAutomationOperation } from '../../../src/automations/manage-operation';
 import { automationOperationScope, newAutomationOperationId } from '../../../src/automations/operation-id';
 import { callAutomationTool } from '../../../src/automations/tools';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -128,6 +129,33 @@ it('does not resume a model task whose last fire passes while queued', async () 
   release(); await queued;
   expect(await mutation).toEqual({ ok: false, code: 'no-remaining-fires' });
   expect(h.store.get(item.id)?.paused).toBe(true);
+});
+
+it.each(['pause', 'resume'] as const)('applies a fresh model %s after an opposite human mutation begins committing', async operation => {
+  const h = await harness();
+  const item = await h.store.create({ ...reminder(), paused: operation === 'resume' });
+  const context = { profile: 'synthetic', chatId: 'oc_synthetic', actorId: 'ou_synthetic', runType: 'im' as const,
+    availability: () => undefined, store: h.store, drafts: h.drafts, timezone: 'UTC', agentTasks: false, now: h.context.now };
+  const scope = automationOperationScope(context.profile, context.chatId);
+  const originalId = newAutomationOperationId(scope, context.now());
+  expect(await callAutomationTool(`automation.${operation}`, { id: item.id, operationId: originalId }, context)).toMatchObject({ category: 'applied' });
+  let entered!: () => void;
+  const writing = new Promise<void>(resolve => { entered = resolve; });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  let armed = true;
+  fsFault.beforeRename = async destination => {
+    if (armed && destination === h.store.getFilePath()) { armed = false; entered(); await gate; }
+  };
+  const human = mutateAutomationTask(h.context, { actor: 'human', operation: operation === 'pause' ? 'resume' : 'pause', id: item.id });
+  await writing;
+  const operationId = newAutomationOperationId(scope, context.now());
+  // Direct management entry reaches reuse selection synchronously before its first await.
+  const model = manageAutomationOperation(`automation.${operation}`, { id: item.id, operationId }, context);
+  release();
+  await human;
+  expect(await model).toMatchObject({ category: 'applied', data: { operationId } });
+  expect(readAutomationTasks(h.store, { chatId: context.chatId, consistency: 'committed' })[0]?.paused).toBe(operation === 'pause');
 });
 
 function reminder(): CreateAutomationInput {

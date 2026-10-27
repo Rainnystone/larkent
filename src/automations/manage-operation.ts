@@ -38,7 +38,7 @@ export async function manageAutomationOperation(operation: string, params: Recor
     const fingerprint = createHash('sha256').update(JSON.stringify({ operation, id: params.id, revision: params.revision, ...(replacement ? { replacement: { taskType: replacement.taskType, ...(replacement.cwd ? { cwd: replacement.cwd } : {}), name: replacement.name, taskText: replacement.taskText, timezone: replacement.timezone, startAt: replacement.startAt, endAt: replacement.endAt ?? null, schedule: replacement.schedule } } : {}) })).digest('hex');
     if (previous) return previous.fingerprint === fingerprint ? getAutomationOperation(operationId, context) : toolResult('validation-failed', 'operation-conflict', { operationId });
     if (params.revision !== undefined && (typeof params.revision !== 'string' || !/^[a-f0-9]{64}$/.test(params.revision))) return toolResult('validation-failed', 'invalid-target-revision');
-    const target = readAutomationTask(context.store!, { id: params.id as number, chatId: context.chatId, consistency: 'committed' });
+    const target = readAutomationTask(context.store!, { id: params.id as number, chatId: context.chatId, consistency: 'live' });
     const item = target.ok ? target.item : undefined;
     const reusable = context.store!.findReusableOperation(context.profile, context.chatId, fingerprint);
     if (reusable && (operation === 'automation.delete' || operation === 'automation.replace'
