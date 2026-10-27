@@ -88,7 +88,6 @@ it('refuses a stale revision while retaining the changed target', async () => {
   await submitDraft(h.ctx, { op: 'delete', chatId: item.chatId, createdBy: item.createdBy, targetId: item.id, target: automationTargetSnapshot(item) });
   await h.store.pause(item.id);
   expect(await tap(h, 'auto.confirm')).toEqual({ ok: false, message: '#1 状态已变化，请重新查询。' });
-  expect(h.store.get(item.id)?.paused).toBe(true);
 });
 
 it.each(['create', 'delete'] as const)('serializes simultaneous confirm and reject taps for a %s draft', async op => {

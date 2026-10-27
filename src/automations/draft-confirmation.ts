@@ -266,7 +266,7 @@ async function confirmReplaceDraft(
     if (draft.operationId) await ctx.automations.rejectOperation(draft.operationId, blocked.outcome === 'reject' ? blocked.reason : 'confirmation-invalid', message);
     return { ok: false, status: message, toast: message };
   }
-  let created: AutomationItem | undefined;
+  let created: AutomationItem;
   try {
     const nextFireAt = nextFireAfter(blocked.schedule, now);
     const startAt = scheduleStartAt(blocked.schedule, now);
@@ -274,17 +274,17 @@ async function confirmReplaceDraft(
     const result = await mutateAutomationTask({ store: ctx.automations, scheduler: ctx.automationsScheduler, chatId: draft.chatId }, {
       actor: 'human', operation: 'replace', id: draft.targetId, revision: draft.target.revision,
       confirmation: { draftId: draft.draftId, operationId: draft.operationId }, replacement: {
-      taskType: draft.taskType,
-      schedule: blocked.schedule,
-      timezone: draft.timezone,
-      startAt,
-      ...(endAt !== undefined ? { endAt } : {}),
-      nextFireAt,
-      chatId: draft.chatId,
-      createdBy: draft.createdBy,
-      name: draft.name,
-      taskText: draft.taskText,
-      ...(draft.cwd ? { cwd: draft.cwd } : {}),
+        taskType: draft.taskType,
+        schedule: blocked.schedule,
+        timezone: draft.timezone,
+        startAt,
+        ...(endAt !== undefined ? { endAt } : {}),
+        nextFireAt,
+        chatId: draft.chatId,
+        createdBy: draft.createdBy,
+        name: draft.name,
+        taskText: draft.taskText,
+        ...(draft.cwd ? { cwd: draft.cwd } : {}),
       },
     });
     if (!result.ok) {
@@ -297,11 +297,6 @@ async function confirmReplaceDraft(
     if (draft.operationId) throw error;
     log.fail('auto', error, { event: 'replace', oldId: draft.targetId });
     const status = `没有替换 #${draft.targetId}：新任务未创建`;
-    return { ok: false, status, toast: status };
-  }
-  if (!created) {
-    if (draft.operationId) await ctx.automations.takeDraft(draft.draftId);
-    const status = draftTargetGoneStatus(draft.targetId);
     return { ok: false, status, toast: status };
   }
   log.info('auto', 'replaced', { oldId: draft.targetId, newId: created.id });

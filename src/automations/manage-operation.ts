@@ -4,7 +4,7 @@ import { resolveWorkingDirectory } from '../policy/workspace';
 import { AUTOMATION_OPERATION_TTL_MS, readAutomationOperationId } from './operation-id';
 import { validateAutomationOperationId, getAutomationOperation, unknownAutomationOperation } from './operation';
 import { normalizeAutomationSchedule } from './schedule-input';
-import { mutateAutomationTask, readAutomationTask } from './task-mutation';
+import { mutateAutomationTask, readAutomationTask, readAutomationReceipt } from './task-mutation';
 import { nextFireAfter } from './schedule';
 import type { AutomationToolContext } from './tools';
 
@@ -18,7 +18,7 @@ export async function manageAutomationOperation(operation: string, params: Recor
   const scheduler = context.drafts?.automationsScheduler;
   if (!scheduler) return toolResult('unavailable', 'automation-scheduler-unavailable');
   try {
-    const previous = context.store!.getOperation(operationId);
+    const previous = readAutomationReceipt(context.store!, operationId)?.operation;
     let replacement: (import('./store').CreateAutomationInput & { pendingRecurring?: import('./schedule').PendingRecurring }) | undefined;
     if (operation === 'automation.replace') {
       const missing = ['name', 'taskText'].filter(key => params[key] === undefined);

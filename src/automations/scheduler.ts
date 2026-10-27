@@ -94,8 +94,6 @@ export interface AutomationScheduler {
   /** Serialize a task write with due fires, then refresh status and timers on success. */
   updateTasks<T extends { ok: boolean }>(write: (now: number) => Promise<T>): Promise<T>;
   pause(id: number): Promise<boolean>;
-  resume(id: number): Promise<boolean>;
-  delete(id: number): Promise<boolean>;
   removeFromChat(chatId: string): Promise<boolean>;
 }
 
@@ -235,21 +233,6 @@ class Scheduler implements AutomationScheduler {
     return (await this.updateTasks(async () => ({ ok: await this.store.pause(id) }))).ok;
   }
 
-  async resume(id: number): Promise<boolean> {
-    return (await this.updateTasks(async now => {
-      const item = this.store.get(id);
-      if (!item) return { ok: false };
-      const schedule = readSchedule(item.schedule);
-      const next = schedule ? nextFireAfter(schedule, now) : 0;
-      const ok = await this.store.resume(id, next);
-      if (ok && next === 0) await this.store.delete(id);
-      return { ok };
-    })).ok;
-  }
-
-  async delete(id: number): Promise<boolean> {
-    return (await this.updateTasks(async () => ({ ok: await this.store.delete(id) }))).ok;
-  }
 
   removeFromChat(chatId: string): Promise<boolean> {
     return this.enqueue(() => this.dropChat(chatId));

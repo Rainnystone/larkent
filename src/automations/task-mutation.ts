@@ -22,6 +22,12 @@ export function readAutomationTasks(store: AutomationsStore, query: { chatId: st
   return (query.consistency === 'committed' ? store.listCommitted() : store.list()).filter(item => item.chatId === query.chatId);
 }
 
+/** Operation and its draft come from one committed snapshot, including during an in-flight write. */
+export function readAutomationReceipt(store: AutomationsStore, operationId: string) {
+  const operation = store.getOperation(operationId);
+  return operation ? { operation, draft: store.getOperationDraft(operation.draftId) } : undefined;
+}
+
 export function readAutomationTask(store: AutomationsStore, query: { chatId: string; id: number; revision?: string; consistency: 'live' | 'committed' }) {
   const item = query.consistency === 'live' ? store.get(query.id)
     : readAutomationTasks(store, query).find(item => item.id === query.id);
@@ -50,17 +56,17 @@ export async function mutateAutomationTask(
     }
     return { ok: true as const, item: target.item };
   }
+  const receipt: TaskMutationReceipt | undefined = request.actor === 'model' ? { operation: request.registration }
+    : request.confirmation ? { confirmedDraftId: request.confirmation.draftId, operationId: request.confirmation.operationId } : undefined;
+  if (request.operation === 'replace') {
+    const created = await store.replace(target.item.id, request.replacement, receipt);
+    return created ? { ok: true as const, item: created } : { ok: false as const, code: 'target-not-found' };
+  }
   return scheduler.updateTasks(async now => {
     // Read again inside the scheduler queue: a due fire or another action may have run while waiting.
     const current = readAutomationTask(store, query);
     if (!current.ok) return current;
-    const receipt: TaskMutationReceipt | undefined = request.actor === 'model' ? { operation: request.registration }
-      : request.confirmation ? { confirmedDraftId: request.confirmation.draftId, operationId: request.confirmation.operationId } : undefined;
     const item = current.item;
-    if (request.operation === 'replace') {
-      const created = await store.replace(item.id, request.replacement, receipt);
-      return created ? { ok: true as const, item: created } : { ok: false as const, code: 'target-not-found' };
-    }
     let ok: boolean;
     if (request.operation === 'resume') {
       const schedule = readSchedule(item.schedule);
