@@ -32,15 +32,15 @@ git show origin/docs/architecture-deepening:docs/specs/architecture-deepening/ti
 | Area | Read first | Targeted tests |
 |---|---|---|
 | Outbox (D01, D02) | `CONTEXT.md` › outbox, turn journal; `src/bot/channel.ts` 801-857 and 2416-3100; `src/bot/turn-journal.ts`; `src/bot/feishu-delivery.ts`; `src/automations/delivery.ts`; `src/automations/draft-delivery.ts` | `pnpm test:integration`; files listed in D01 / D02 |
-| Agent events (D03, D04) | `CONTEXT.md` › Agents; `src/agent/types.ts`; `src/agent/*/jsonl.ts`; `src/agent/devin/transcript.ts`; `src/bot/idle-watchdog.ts` | `pnpm test:process`; `tests/unit/agent/*`; opt-in `*_REAL_SMOKE=1` |
+| Agent events (D03, D04) | `CONTEXT.md` › Agents; `src/agent/types.ts`; `src/agent/*/jsonl.ts`; `src/agent/devin/transcript.ts`; `src/bot/idle-watchdog.ts` | `pnpm test:process`; `tests/unit/agent/*`; D03b baseline (real smokes in D11) |
 | Run outcome (D05) | `src/bot/run-outcome.ts`; `src/runtime/run-executor.ts` | files listed in D05 |
 | Tokens and actions (D06, D09) | `src/card/dispatcher.ts`; `src/commands/index.ts`; the four auth modules | `tests/unit/card/*`; `tests/integration/card/*`; `tests/static/contracts.test.ts` |
 | Turn execution (D10) | `src/bot/channel.ts` `runAgentBatch` / `processAgentStream`; `src/automations/agent-run.ts`; `src/bot/cot.ts` | files listed in D10 |
-| Real Feishu (D11) | workspace `feishu-agent-test-guide.md` | scenarios S1-S12 in D11 |
+| Real Feishu (D11) | workspace `feishu-agent-test-guide.md` | scenarios S0-S12 in D11 |
 | Automations (D07, D08) | `CONTEXT.md` › automations; `src/automations/command.ts`; `store.ts`; `scheduler.ts` | `pnpm exec vitest run tests/unit/automations tests/integration/bot/auto-*.test.ts tests/integration/bot/reminder-tools` |
 
 Full gate: `pnpm ci:local`. CI must be green on the code PR head (`gh pr checks`).
 
 ## Ground truth (D12)
 
-All seven CLIs and `lark-cli` are installed on the owner's machine. Do not infer agent protocol behaviour; use the D03 transcripts or capture more. Do not infer new Feishu behaviour; verify with `lark-cli` against the test bot per the workspace `feishu-agent-test-guide.md`. Real-CLI captures and smokes spend quota and run only on the owner's machine.
+Cloud workers have no agent CLIs and no `lark-cli`. The seven logged-in CLIs exist on the owner's machine (D03a captures run there once, before cloud work) and in Grokbot's acceptance environment (D11 real-CLI smokes and real Feishu runs). In cloud tickets: cite D03a transcripts for protocol facts, prove behaviour preservation against the D03b baseline, and introduce no new CLI or Feishu assumption. If one seems needed, stop and ask on the docs PR.

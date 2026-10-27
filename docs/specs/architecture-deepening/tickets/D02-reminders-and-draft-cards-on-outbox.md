@@ -13,7 +13,7 @@ Touch: `src/automations/delivery.ts`, `src/automations/draft-delivery.ts`, `src/
 2. Red: Outbox tests for two new item kinds. Reminder / result: staged under the fire turn, delivered once across restart. Draft card: created card id persisted before send (a crash after this point is unknown, never a new send), readback by the draft marker element id binds exactly one message, more than one match binds nothing, absence proves nothing; the receipt hook binds `messageId` / `cardId` / body to the draft.
 3. Green: route reminders and draft-card sends through the Outbox. Delete the send / classify / readback code in `delivery.ts` and `draft-delivery.ts` that the Outbox now owns.
 4. Migrate: bump `automations.json` schema; move in-flight `prepared` / `sending` draft deliveries to Outbox items atomically; add fixture tests for both states, including restart then exactly one card.
-5. If a step needs a Feishu behaviour that no current code relies on, verify it with `lark-cli` against the test bot first (D12) and record the evidence in the delivery note.
+5. Rely only on Feishu behaviour that current code already relies on (D12). If a step seems to need a new one, stop, record the question on the docs PR, and do not guess; the owner or Grokbot verifies it with `lark-cli`.
 6. Update `CONTEXT.md` (Outbox item kinds; automations persistence). `/code-review`.
 
 ## Acceptance

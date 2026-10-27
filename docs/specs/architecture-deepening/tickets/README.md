@@ -9,7 +9,7 @@ Read this README (shared interfaces and invariants) and the ticket before starti
 |---|---|---|---|
 | D01 | Outbox owns reply and notice delivery | none | ready |
 | D02 | Reminders and draft cards become Outbox items | D01 | ready |
-| D03 | Capture real transcripts for seven CLIs | none | ready |
+| D03 | D03a real transcripts (owner's machine, pre-cloud); D03b differential baseline (cloud) | none (D03b after D03a) | ready |
 | D04 | Shared final-answer core, liveness event, tool pairing | D03 | ready |
 | D05 | Run outcome derived once | D01, D04 | ready |
 | D06 | One action token codec | none | ready |
@@ -33,7 +33,7 @@ Suggested integration order into `feat/architecture-deepening`: D03 → D06 → 
 - **User action registry** (D09). Each action declares its auth (`signed(purpose)` or `fence-only`), its handler and its invalid response. `config.*`, `account.*`, `ws.*` are declared `fence-only` (D2).
 - **Turn execution** (D10). Input: run options, a delivery target, optional hooks (policy-guard on `tool_use`). Output: a delivered final run state with `handle.outcome`. Owns executor call, event loop, idle watchdog, progress stream and handoff to the Outbox. Callers own input preparation.
 - **Mutation policy** (D08). Human direct (slash, board) applies immediately; model via tool goes through a confirmation card (D3).
-- **Ground truth** (D12). Protocol claims cite a captured transcript under `tests/fixtures/transcripts/<kind>/`. New Feishu assumptions cite `lark-cli` evidence from the test bot.
+- **Ground truth** (D12). Cloud workers have no CLIs and no `lark-cli`. Protocol claims cite a D03a transcript under `tests/fixtures/transcripts/<kind>/`; behaviour preservation is proven against the D03b baseline. No ticket introduces a new CLI or Feishu assumption; if one seems needed, stop and ask on the docs PR. Real-CLI smokes and real Feishu runs belong to D11.
 
 ## Rules for every ticket
 

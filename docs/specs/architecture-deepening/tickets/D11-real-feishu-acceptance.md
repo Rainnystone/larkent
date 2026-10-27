@@ -17,6 +17,7 @@ The track touches reply delivery, notices, recovery, cards, commands and automat
 
 | # | Scenario | Coverage |
 |---|---|---|
+| S0 | Real-CLI smokes (`*_REAL_SMOKE=1` per `tests/process/*-real.smoke.test.ts`) for every kind present; re-capture one D03a scenario per kind and replay it through the shared core | translators still match current CLI versions; record CLI versions and any drift from D03a |
 | S1 | One group @ question and one DM question per agent kind (claude, codex, kimi, grok, cursor, antigravity, devin) | one visible answer, Typing reaction added and removed |
 | S2 | Reply modes card, markdown, text, CoT on at least two agent kinds (one `stream-deltas`, one `final-answer`) | progress and final rendering unchanged |
 | S3 | Stop mid-answer; idle timeout (short `/timeout`) | terminal card and notice wording unchanged |
@@ -32,6 +33,6 @@ The track touches reply delivery, notices, recovery, cards, commands and automat
 
 ## Acceptance
 
-- [ ] S1 to S12 recorded on the code PR; each gap listed as unverified with the reason.
+- [ ] S0 to S12 recorded on the code PR; each gap listed as unverified with the reason.
 - [ ] Every fix has a regression test and keeps `pnpm ci:local` and CI green.
 - [ ] No ids, names or secrets in evidence.
