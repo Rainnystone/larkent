@@ -1,4 +1,4 @@
-import { createLarkChannel } from '@larksuite/channel';
+import { createLarkChannel, type CardActionEvent } from '@larksuite/channel';
 
 export interface CallbackButton {
   name?: string;
@@ -59,7 +59,13 @@ function freshCache() {
  * Drives clicks through the real @larksuite/channel `card.action.trigger`
  * handler so its dedup id and seen-cache decide what reaches our handler.
  */
-export function sdkCardClickRig(input: { chatId: string; operatorOpenId: string; messageId: string }) {
+export function sdkCardClickRig(input: {
+  chatId: string;
+  operatorOpenId: string;
+  messageId: string;
+  /** The bridge handler behind the SDK; its return value is the callback response. */
+  onCardAction?: (evt: CardActionEvent) => Promise<unknown>;
+}) {
   const received: Array<Record<string, unknown>> = [];
   const channel = createLarkChannel({
     appId: 'cli_test',
@@ -68,8 +74,9 @@ export function sdkCardClickRig(input: { chatId: string; operatorOpenId: string;
     cache: freshCache() as never,
     safety: { chatQueue: { enabled: false } },
   });
-  channel.on('cardAction', (evt) => {
+  channel.on('cardAction', async (evt) => {
     received.push((evt.action.value ?? {}) as Record<string, unknown>);
+    return await input.onCardAction?.(evt) as Record<string, unknown> | void;
   });
   const internals = channel as unknown as ChannelInternals;
   internals.registerDispatcherHandlers();

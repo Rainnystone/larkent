@@ -34,6 +34,7 @@ vi.mock('../../../src/session/codex-history.js', () => ({
 import { createFakeAgent } from '../../helpers/fake-agent.js';
 import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel.js';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js';
+import { callbackButtons, sdkCardClickRig } from '../../helpers/sdk-card-click.js';
 
 interface Harness {
   tmp: TmpProfile;
@@ -49,6 +50,7 @@ interface Harness {
   pending: PendingQueue;
   run(content: string, options?: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' }): Promise<boolean>;
   dispatchResumeArg(arg: string): Promise<void>;
+  cardRuntime: Omit<Parameters<typeof handleCardAction>[0], 'evt'>;
   historyInputs: ResumeHistoryInput[];
 }
 
@@ -448,6 +450,35 @@ describe('agent-aware resume commands', () => {
     expect(h.historyInputs).toHaveLength(1);
     expect(h.historyInputs[0]).toMatchObject({ profile: h.controls.profileConfig, profileDir: join(h.tmp.profile, 'profiles', 'codex'), cwd: h.tmp.workspace, limit: 5 });
   });
+
+  it('resume card A -> B -> A through the real SDK handler: every pick reaches the handler and the card marks the current session', async () => {
+    const h = await createHarness('claude');
+    h.claudeHistory.push(claudeSession('sess-alpha', 'alpha', Date.now() - 60_000), claudeSession('sess-beta', 'beta', Date.now() - 120_000));
+    const rig = sdkCardClickRig({
+      chatId: 'chat-1', operatorOpenId: 'ou-user', messageId: 'om-resume-card',
+      onCardAction: (evt) => handleCardAction({ ...h.cardRuntime, evt }),
+    });
+    cleanups.push(rig.dispose);
+    await h.run('/resume 3');
+    let shown = lastContent(h.channel).card as object;
+    const pick = (card: object, index: number) => callbackButtons(card).filter((b) => b.value.cmd === 'resume.use')[index]!;
+    const currentPreview = (card: object) => JSON.stringify(card).match(/\*\*\d\.\*\* (\w+)  ← 当前/)?.[1];
+
+    const after: Array<{ active?: string; marked?: string }> = [];
+    for (const index of [0, 1, 0]) {
+      const response = await rig.click(pick(shown, index)) as { card?: { type?: string; data?: object } } | undefined;
+      shown = response?.card?.type === 'raw' && response.card.data ? response.card.data : shown;
+      after.push({ active: h.catalog.activeFor(h.identity)?.resumeHandle, marked: currentPreview(shown) });
+    }
+    expect(rig.received).toHaveLength(3);
+    expect(after).toEqual([
+      { active: 'sess-alpha', marked: 'alpha' }, { active: 'sess-beta', marked: 'beta' }, { active: 'sess-alpha', marked: 'alpha' },
+    ]);
+    expect(h.historyInputs.at(-1)?.limit).toBe(3);
+    expect(await rig.click(pick(shown, 1))).toBeDefined();
+    expect(await rig.click(pick(shown, 1))).toBeUndefined();
+    expect(rig.received).toHaveLength(4);
+  });
 });
 
 async function createHarness(
@@ -491,6 +522,12 @@ async function createHarness(
     resolve: async () => 'p2p',
   } as unknown as ChatModeCache;
 
+  const resumeHistoryProvider = async (input: ResumeHistoryInput) => {
+    historyInputs.push(input);
+    return agentKind === 'codex'
+      ? codexHistory.map(t => ({ resumeHandle: t.threadId, preview: t.name || t.preview, updatedAtMs: t.updatedAtMs, detail: `Codex · ${t.source}` }))
+      : claudeHistory.map(t => ({ resumeHandle: t.sessionId, preview: t.preview, updatedAtMs: t.mtime, lineCount: t.lineCount }));
+  };
   const run = (
     content: string,
     runOptions: { withCatalogIdentity?: boolean; chatMode?: 'p2p' | 'group' | 'topic' } = {},
@@ -509,13 +546,13 @@ async function createHarness(
       agent,
       activeRuns,
       controls,
-      resumeHistoryProvider: async (input) => {
-        historyInputs.push(input);
-        return agentKind === 'codex'
-          ? codexHistory.map(t => ({ resumeHandle: t.threadId, preview: t.name || t.preview, updatedAtMs: t.updatedAtMs, detail: `Codex · ${t.source}` }))
-          : claudeHistory.map(t => ({ resumeHandle: t.sessionId, preview: t.preview, updatedAtMs: t.mtime, lineCount: t.lineCount }));
-      },
+      resumeHistoryProvider,
     });
+  const cardRuntime: Omit<Parameters<typeof handleCardAction>[0], 'evt'> = {
+    channel: channel as unknown as Parameters<typeof handleCardAction>[0]['channel'],
+    sessions, resumeCandidates, sessionCatalog: catalog, workspaces, activeRuns, agent, controls, pending,
+    chatModeCache, resumeHistoryProvider,
+  };
 
   const dispatchResumeArg = async (arg: string): Promise<void> => {
     await handleCardAction({
@@ -553,6 +590,7 @@ async function createHarness(
     pending,
     run,
     dispatchResumeArg,
+    cardRuntime,
     historyInputs,
   };
 }

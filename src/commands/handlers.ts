@@ -33,7 +33,9 @@ import {
   reduce,
   type RunState,
 } from '../card/run-state';
-import { formatLocalDateTime, helpCard, resumeCard, statusCard, workspacesCard } from '../card/templates';
+import {
+  formatLocalDateTime, helpCard, resumeCard, statusCard, workspacesCard, type CommandCardKind,
+} from '../card/templates';
 import { resolveAppPaths } from '../config/app-paths';
 import * as configOps from '../config/config-ops';
 import type {
@@ -238,13 +240,11 @@ export async function handleWs(args: string, ctx: UserActionContext): Promise<vo
 }
 
 async function handleWsList(ctx: UserActionContext): Promise<void> {
-  const named = listScopedWorkspaces(ctx);
-  const currentCwd = effectiveWorkspaceCwd(ctx);
-  const card = workspacesCard(
-    currentCwd,
-    named,
-  );
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
+  await ctx.channel.send(ctx.msg.chatId, { card: workspacesCardFor(ctx) }, commandReplyOptions(ctx));
+}
+
+function workspacesCardFor(ctx: UserActionContext): object {
+  return workspacesCard(effectiveWorkspaceCwd(ctx), listScopedWorkspaces(ctx));
 }
 
 async function handleWsSave(name: string, ctx: UserActionContext): Promise<void> {
@@ -357,18 +357,22 @@ export async function handleResume(args: string, ctx: UserActionContext): Promis
   }
 
   // Default: list recent sessions
-  const n = Number.parseInt(sub, 10);
-  const limit = Number.isFinite(n) && n > 0 && n <= 20 ? n : 5;
+  const listing = await resumeListing(ctx, resumeLimit(sub));
+  if ('card' in listing) await ctx.channel.send(ctx.msg.chatId, { card: listing.card }, commandReplyOptions(ctx));
+  else await reply(ctx, listing.markdown);
+}
 
+function resumeLimit(raw: unknown): number {
+  const n = Number.parseInt(String(raw ?? ''), 10);
+  return Number.isFinite(n) && n > 0 && n <= 20 ? n : 5;
+}
+
+async function resumeListing(ctx: UserActionContext, limit: number): Promise<{ card: object } | { markdown: string }> {
   const cwd = selectedResumeCwd(ctx);
-  if (!cwd) {
-    await reply(ctx, '请先使用 /cd <path> 选择工作目录，再查看或恢复会话。');
-    return;
-  }
+  if (!cwd) return { markdown: '请先使用 /cd <path> 选择工作目录，再查看或恢复会话。' };
 
   if (ctx.chatMode !== 'p2p') {
-    await reply(ctx, '群聊中不展示历史会话详情。请私聊 bot 使用 `/resume` 查看和选择历史会话。');
-    return;
+    return { markdown: '群聊中不展示历史会话详情。请私聊 bot 使用 `/resume` 查看和选择历史会话。' };
   }
 
   const resumeDescriptor = descriptorFor(ctx.controls.profileConfig.agentKind);
@@ -414,18 +418,35 @@ export async function handleResume(args: string, ctx: UserActionContext): Promis
       detail: entry.detail,
       current: entry.resumeHandle === currentHandle,
     }));
-    await ctx.channel.send(ctx.msg.chatId, { card: resumeCard(cwd, entries) }, commandReplyOptions(ctx));
-    return;
+    return { card: resumeCard(cwd, entries, limit) };
   }
   if (currentHandle && identity) {
     const nonce = ctx.resumeCandidates.issue(identity, currentHandle);
     const label = resumeDescriptor.resume.label === 'thread'
       ? 'Codex thread '
       : `${resumeDescriptor.displayName.replace(/ (Code|CLI|Build)$/, '')} 会话`;
-    await reply(ctx, `当前 ${label}可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。`);
-    return;
+    return { markdown: `当前 ${label}可恢复。\n使用 \`/resume use ${nonce}\` 恢复（10 分钟内有效）。` };
   }
-  await ctx.channel.send(ctx.msg.chatId, { card: resumeCard(cwd, []) }, commandReplyOptions(ctx));
+  return { card: resumeCard(cwd, []) };
+}
+
+/** The current render of the command card a clicked button sits on (`value.card`), if it has one. */
+export async function renderCommandCard(ctx: UserActionContext, value: Record<string, unknown>): Promise<object | undefined> {
+  const kind = value.card as CommandCardKind | undefined;
+  switch (kind) {
+    case 'ws':
+      return workspacesCardFor(ctx);
+    case 'status':
+      return statusCardFor(ctx);
+    case 'help':
+      return helpCard(ctx.agent.displayName);
+    case 'resume': {
+      const listing = await resumeListing(ctx, resumeLimit(value.limit));
+      return 'card' in listing ? listing.card : undefined;
+    }
+    default:
+      return undefined;
+  }
 }
 
 async function applyResume(sessionId: string, ctx: UserActionContext): Promise<void> {
@@ -542,6 +563,10 @@ async function larkCliStatus(ctx: UserActionContext): Promise<'app' | 'user-read
 }
 
 export async function handleStatus(_args: string, ctx: UserActionContext): Promise<void> {
+  await ctx.channel.send(ctx.msg.chatId, { card: await statusCardFor(ctx) }, commandReplyOptions(ctx));
+}
+
+async function statusCardFor(ctx: UserActionContext): Promise<object> {
   const cwd = effectiveWorkspaceCwd(ctx);
   const sess = ctx.sessions.getRaw(ctx.scope, ctx.controls.profileConfig.agentKind);
   const isThreadResume = descriptorFor(ctx.controls.profileConfig.agentKind).resume.label === 'thread';
@@ -549,7 +574,7 @@ export async function handleStatus(_args: string, ctx: UserActionContext): Promi
     isThreadResume && ctx.sessionCatalog && ctx.sessionCatalogIdentity
       ? ctx.sessionCatalog.activeFor(ctx.sessionCatalogIdentity)
       : undefined;
-  const card = statusCard({
+  return statusCard({
     profileName: ctx.controls.profile,
     cwd,
     sessionId: isThreadResume ? catalogEntry?.resumeHandle : sess?.resumeHandle,
@@ -568,7 +593,6 @@ export async function handleStatus(_args: string, ctx: UserActionContext): Promi
     scope: ctx.scope,
     chatMode: ctx.chatMode,
   });
-  await ctx.channel.send(ctx.msg.chatId, { card }, commandReplyOptions(ctx));
 }
 
 function formatOwnerState(ctx: UserActionContext): string {

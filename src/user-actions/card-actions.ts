@@ -3,6 +3,8 @@ import { handleDraftAction } from '../automations/draft-confirmation';
 import { AUTO_BOARD_UPDATED_HINT, AUTO_INVALID_HINT, AUTO_UNKNOWN_ID } from '../automations/command';
 import { mutateAutomationTask, taskMutationLabels } from '../automations/task-mutation';
 import { resolvedNoticeCard, resolveInterruptionNotice, type NoticePayload } from '../bot/interruption-notice';
+import { withFreshClickId } from '../card/templates';
+import { renderCommandCard } from '../commands/handlers';
 import { log } from '../core/logger';
 import type { UserActionContext } from './context';
 import type { ActionPayload, ActionResponse } from './definition';
@@ -49,9 +51,9 @@ export function verifyNoticeAction(ctx: UserActionContext, payload: ActionPayloa
   return result?.ok ? result.payload : undefined;
 }
 
-const NOTICE_RESOLVE_FALLBACK_MS = 1_500;
+const CLICK_PATCH_FALLBACK_MS = 1_500;
 // Real Feishu click spinners ran 5-8 s; re-assert once after that window so a late callback completion cannot leave the old card.
-const NOTICE_RESOLVE_REASSERT_MS = 10_000;
+const CLICK_PATCH_REASSERT_MS = 10_000;
 
 export async function handleNoticeAction(ctx: UserActionContext, _payload: ActionPayload, claims: NoticePayload): Promise<ActionResponse> {
   const entry = ctx.journal?.get(claims.turnId);
@@ -75,10 +77,10 @@ export async function handleNoticeAction(ctx: UserActionContext, _payload: Actio
       journal, turnId: entry.turnId, resolution: 'dismissed',
       updateCard: (id, card) => ctx.channel.updateCard(id, card),
     });
-    setTimeout(settle, NOTICE_RESOLVE_FALLBACK_MS).unref();
+    setTimeout(settle, CLICK_PATCH_FALLBACK_MS).unref();
     setTimeout(() => {
       if (journal.get(entry.turnId)?.notice?.messageId === messageId) settle();
-    }, NOTICE_RESOLVE_REASSERT_MS).unref();
+    }, CLICK_PATCH_REASSERT_MS).unref();
     return { card: { type: 'raw', data: resolvedNoticeCard('dismissed') } };
   }
   enqueueActionMessage(ctx.pending, ctx.scope, ctx.msg, {
@@ -87,6 +89,45 @@ export async function handleNoticeAction(ctx: UserActionContext, _payload: Actio
     content: entry.resumeHandle ? '继续' : (entry.userInput ?? '继续'), rawContentType: 'text',
     resources: (entry.resources ?? []).map(resource => ({ ...resource })),
   });
+}
+
+const latestCommandClicks = new Map<string, symbol>();
+
+/**
+ * Re-renders the clicked command card from current state with fresh click
+ * ids, so its buttons accept a repeat click. Feishu applies the callback's
+ * card; the same card is patched again after the click spinner unless a later
+ * click on that message has arrived since.
+ */
+export async function rerenderCommandCard(ctx: UserActionContext, payload: ActionPayload): Promise<ActionResponse> {
+  if (payload.card === undefined) return;
+  const messageId = ctx.msg.messageId;
+  const click = Symbol(messageId);
+  latestCommandClicks.set(messageId, click);
+  let rendered: object | undefined;
+  try {
+    const invocation = ctx.resolveSessionCatalogIdentity
+      ? { ...ctx, sessionCatalogIdentity: await ctx.resolveSessionCatalogIdentity() } : ctx;
+    rendered = await renderCommandCard(invocation, payload);
+  } catch (error) {
+    log.warn('cardAction', 'rerender-failed', { err: error instanceof Error ? error.message : String(error) });
+  }
+  const isLatest = () => latestCommandClicks.get(messageId) === click;
+  if (!rendered) {
+    if (isLatest()) latestCommandClicks.delete(messageId);
+    return;
+  }
+  const card = withFreshClickId(rendered);
+  const reassert = (last: boolean) => {
+    if (!isLatest()) return;
+    if (last) latestCommandClicks.delete(messageId);
+    ctx.channel.updateCard(messageId, card).catch((error: unknown) => {
+      log.warn('cardAction', 'rerender-patch-failed', { err: error instanceof Error ? error.message : String(error) });
+    });
+  };
+  setTimeout(() => reassert(false), CLICK_PATCH_FALLBACK_MS).unref();
+  setTimeout(() => reassert(true), CLICK_PATCH_REASSERT_MS).unref();
+  return { card: { type: 'raw', data: card } };
 }
 
 export async function sendNoticeInvalid(ctx: UserActionContext): Promise<void> {

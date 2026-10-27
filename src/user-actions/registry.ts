@@ -7,7 +7,7 @@ import { fenceOnlyAction, signedAction, type ActionPayload, type UserAction } fr
 import type { UserActionContext } from './context';
 import {
   automationInvalid, BRIDGE_CALLBACK_MARKER, forwardBridgeAction, handleAutomationAction,
-  handleBoardAction, handleNoticeAction, LEGACY_CALLBACK_MARKER, sendNoticeInvalid,
+  handleBoardAction, handleNoticeAction, LEGACY_CALLBACK_MARKER, rerenderCommandCard, sendNoticeInvalid,
   verifyBoardAction, verifyBridgeAction, verifyDraftAction, verifyNoticeAction,
 } from './card-actions';
 
@@ -91,5 +91,8 @@ export function resolveCardUserAction(payload: ActionPayload): UserAction | unde
   // command also has a deliberately unsigned, fence-only button.
   return BRIDGE_CALLBACK_MARKER in payload || typeof payload.bridge_token === 'string'
     ? signedAction('bridge-callback', verifyBridgeAction, invoke, ignoreInvalid)
-    : fenceOnlyAction(invoke);
+    : fenceOnlyAction(async (ctx) => {
+      const response = await invoke(ctx);
+      return (await rerenderCommandCard(ctx, payload)) ?? response;
+    });
 }
