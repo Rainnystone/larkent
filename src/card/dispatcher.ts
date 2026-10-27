@@ -7,6 +7,10 @@ import type { UserActionRuntime } from '../user-actions/context';
 import { cardActionMessage } from '../user-actions/message';
 import { resolveCardUserAction } from '../user-actions/registry';
 
+type RawCardActionEvent = CardActionEvent & {
+  raw?: { create_time?: unknown; action?: { form_value?: Record<string, unknown> } };
+};
+
 export async function handleCardAction(
   deps: UserActionRuntime & { evt: CardActionEvent },
 ): Promise<CardActionResponse | void> {
@@ -14,7 +18,7 @@ export async function handleCardAction(
   const value = deps.evt.action.value;
   const payload = value && typeof value === 'object' ? value as Record<string, unknown> : undefined;
   const cmd = typeof payload?.cmd === 'string' ? payload.cmd : '';
-  log.info('cardAction', 'received', { cmd });
+  log.info('cardAction', 'received', { cmd, ...feishuLag(deps.evt, startedAt) });
   try {
     if (!payload || !deps.chatModeCache) return;
     const mode = await deps.chatModeCache.resolve(deps.channel, deps.evt.chatId);
@@ -32,7 +36,7 @@ export async function handleCardAction(
     const action = resolveCardUserAction(payload);
     if (!action) return;
     const msg = cardActionMessage(deps.evt, mode, threadId);
-    const raw = (deps.evt as CardActionEvent & { raw?: { action?: { form_value?: Record<string, unknown> } } }).raw;
+    const raw = (deps.evt as RawCardActionEvent).raw;
     return await action.invoke({
       ...deps, msg, scope, chatMode: mode, origin: 'card',
       formValue: raw?.action?.form_value,
@@ -43,4 +47,10 @@ export async function handleCardAction(
   } finally {
     log.info('cardAction', 'responded', { cmd, ms: Date.now() - startedAt });
   }
+}
+
+function feishuLag(evt: CardActionEvent, receivedAt: number): { feishuLagMs?: number } {
+  const createTime = Number((evt as RawCardActionEvent).raw?.create_time);
+  if (!Number.isFinite(createTime) || createTime <= 0) return {};
+  return { feishuLagMs: receivedAt - (createTime > 1e14 ? Math.round(createTime / 1000) : createTime) };
 }

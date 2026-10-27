@@ -88,7 +88,7 @@ describe('notice card dispatch', () => {
       expect(JSON.stringify(response)).toContain('已忽略');
     });
 
-    it('patches the notice to 已忽略 once, after the callback was acknowledged', async () => {
+    it('patches the notice to 已忽略 after the callback was acknowledged', async () => {
       vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
       const h = await harness({ buttons: true });
       await h.dispatch('ou_user', h.token({ action: 'notice.dismiss' }), 'notice.dismiss');
@@ -96,11 +96,42 @@ describe('notice card dispatch', () => {
       await vi.advanceTimersByTimeAsync(1_499);
       expect(h.channel.updatedCards).toEqual([]);
       await vi.advanceTimersByTimeAsync(1);
-      await vi.advanceTimersByTimeAsync(10_000);
+      await vi.advanceTimersByTimeAsync(8_000);
       expect(h.channel.updatedCards).toHaveLength(1);
       expect(h.channel.updatedCards[0]?.messageId).toBe('om_card');
       expect(JSON.stringify(h.channel.updatedCards[0]?.card)).toContain('已忽略');
       expect(JSON.stringify(h.channel.updatedCards[0]?.card)).not.toContain('notice.dismiss');
+    });
+
+    it('re-asserts the settled card once after the click-spinner window', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const h = await harness({ buttons: true });
+      await h.dispatch('ou_user', h.token({ action: 'notice.dismiss' }), 'notice.dismiss');
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(h.channel.updatedCards).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.channel.updatedCards).toHaveLength(2);
+      for (const entry of h.channel.updatedCards) {
+        expect(entry.messageId).toBe('om_card');
+        expect(JSON.stringify(entry.card)).toContain('已忽略');
+        expect(JSON.stringify(entry.card)).not.toContain('notice.dismiss');
+      }
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.channel.updatedCards).toHaveLength(2);
+    });
+
+    it('skips the re-assert when the journal no longer holds that notice message', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      const h = await harness({ buttons: true });
+      await h.dispatch('ou_user', h.token({ action: 'notice.dismiss' }), 'notice.dismiss');
+      await vi.advanceTimersByTimeAsync(1_500);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(h.channel.updatedCards).toHaveLength(1);
+      h.journal.recordNotice('turn-1', { ...h.journal.get('turn-1')!.notice!, messageId: 'om_other' });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(h.channel.updatedCards).toHaveLength(1);
+      expect(h.channel.updatedCards.some((entry) => entry.messageId === 'om_other')).toBe(false);
     });
   });
 });

@@ -50,6 +50,8 @@ export function verifyNoticeAction(ctx: UserActionContext, payload: ActionPayloa
 }
 
 const NOTICE_RESOLVE_FALLBACK_MS = 1_500;
+// Real Feishu click spinners ran 5-8 s; re-assert once after that window so a late callback completion cannot leave the old card.
+const NOTICE_RESOLVE_REASSERT_MS = 10_000;
 
 export async function handleNoticeAction(ctx: UserActionContext, _payload: ActionPayload, claims: NoticePayload): Promise<ActionResponse> {
   const entry = ctx.journal?.get(claims.turnId);
@@ -68,10 +70,15 @@ export async function handleNoticeAction(ctx: UserActionContext, _payload: Actio
     log.info('notice', 'dismissed', { turnId: entry.turnId, scope: ctx.scope });
     const journal = ctx.journal;
     if (!journal || !entry.notice?.includeButtons) return;
-    setTimeout(() => void resolveInterruptionNotice({
+    const messageId = entry.notice.messageId;
+    const settle = () => void resolveInterruptionNotice({
       journal, turnId: entry.turnId, resolution: 'dismissed',
       updateCard: (id, card) => ctx.channel.updateCard(id, card),
-    }), NOTICE_RESOLVE_FALLBACK_MS).unref();
+    });
+    setTimeout(settle, NOTICE_RESOLVE_FALLBACK_MS).unref();
+    setTimeout(() => {
+      if (journal.get(entry.turnId)?.notice?.messageId === messageId) settle();
+    }, NOTICE_RESOLVE_REASSERT_MS).unref();
     return { card: { type: 'raw', data: resolvedNoticeCard('dismissed') } };
   }
   enqueueActionMessage(ctx.pending, ctx.scope, ctx.msg, {
