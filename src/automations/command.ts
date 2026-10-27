@@ -1,5 +1,4 @@
 import { reconcileDraftCard, sendAutomationDraftCard } from './draft-delivery';
-import { sendManagedCard } from '../card/managed';
 import { log } from '../core/logger';
 import { senderTypeFromMessage } from '../bot/self-message';
 import { classify, isNotInChat } from '../bot/feishu-error';
@@ -7,7 +6,6 @@ import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
 import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
-import { draftCardBodyFromCard } from './card-body';
 import {
   automationConfirmCard,
   automationDeleteCard,
@@ -1227,9 +1225,8 @@ async function postEndCard(
   if (!ctx.automations || !ctx.autoAuth) return;
   const tokens = signEndTokens(ctx.autoAuth, draft);
   const card = automationEndCard(tokens);
-  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
+    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo: ctx.msg.messageId,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
@@ -1241,12 +1238,6 @@ async function postEndCard(
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
-  await ctx.automations.bindDraftCard(
-    draft.draftId,
-    sent.messageId,
-    sent.cardId,
-    draftCardBodyFromCard(card),
-  );
 }
 
 async function postConfirmCard(
@@ -1311,9 +1302,8 @@ async function postConfirmCard(
   const card = draft.op === 'replace'
     ? automationReplaceCard({ ...body, target: draft.target })
     : automationConfirmCard(body);
-  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
+    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       replyTo,
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
@@ -1325,12 +1315,6 @@ async function postConfirmCard(
     await settleDraftCardFailure(ctx, draft, error, replyTo);
     return;
   }
-  await ctx.automations.bindDraftCard(
-    draft.draftId,
-    sent.messageId,
-    sent.cardId,
-    draftCardBodyFromCard(card),
-  );
 }
 
 async function postDeleteCard(
@@ -1362,9 +1346,8 @@ async function postDeleteCard(
     confirmToken,
     rejectToken,
   });
-  let sent: Awaited<ReturnType<typeof sendManagedCard>>;
   try {
-    sent = await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
+    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
       ...(ctx.msg.messageId ? { replyTo: ctx.msg.messageId } : {}),
       ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
     });
@@ -1376,12 +1359,6 @@ async function postDeleteCard(
     await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
     return;
   }
-  await ctx.automations.bindDraftCard(
-    draft.draftId,
-    sent.messageId,
-    sent.cardId,
-    draftCardBodyFromCard(card),
-  );
 }
 
 async function settleDraftCardFailure(

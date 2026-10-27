@@ -1,12 +1,13 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { setImmediate as yieldIO } from 'node:timers/promises';
 import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
 import { createAutomationBoard } from '../../../src/automations/board';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
-import { flushPendingDraftCards, handleAutoCommand } from '../../../src/automations/command';
+import { completeDraftEnd, flushPendingDraftCards, handleAutoCommand } from '../../../src/automations/command';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
@@ -30,6 +31,33 @@ afterEach(async () => {
 });
 
 describe('automation draft card delivery', () => {
+  it('keeps the new confirmation binding when the end card is clicked before its initial command returns', async () => {
+    const h = await harness();
+    const posting = h.command('om_end', 'new 每个工作日 09:00 | 站会 | 提醒站会');
+    let endMessageId = '';
+    const clicking = (async () => {
+      for (;;) {
+        const draft = h.store.listDrafts()[0];
+        if (draft?.cardMessageId) {
+          if (draft.op === 'delete') throw new Error('expected an end-date draft');
+          endMessageId = draft.cardMessageId;
+          return completeDraftEnd({ automations: h.store, autoAuth: h.autoAuth, channel: h.channel as never, now: () => NOW },
+            draft, NOW + 7 * 24 * 60 * 60_000, endMessageId);
+        }
+        await yieldIO();
+      }
+    })();
+    const settled = await Promise.allSettled([posting, clicking]);
+    expect(settled.map(result => result.status)).toEqual(['fulfilled', 'fulfilled']);
+    const current = h.store.listDrafts()[0]!;
+    expect(current).toBeDefined();
+    if (current.op === 'delete') throw new Error('expected a create draft');
+    expect(current.pendingRecurring).toBeUndefined();
+    expect(current.cardMessageId).not.toBe(endMessageId);
+    expect(current.cardBody?.title).toBe('确认自动化');
+    expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+  });
+
   it('deletes the draft and replies in text when createCard returns 200610', async () => {
     const h = await harness();
     h.channel.cardErrors.create = new CardSchemaError();

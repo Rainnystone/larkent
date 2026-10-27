@@ -98,6 +98,9 @@ async function deliverOwned(input: Parameters<typeof deliverDraftCard>[0], deliv
     await bind(journal.getDraftCard(deliveryId)!);
   }
   async function bind(current: DraftCardItem): Promise<void> {
+    const latest = journal.getDraftCard(deliveryId);
+    if (!latest || latest.state === 'voided' || latest.state === 'rejected') return;
+    if (draftCards.getDraft(current.payload.draftId)?.deliveryId !== deliveryId) return;
     const receipt = current.receipt!;
     const bound = await draftCards.bindDraftCard(current.payload.draftId, receipt.messageId, receipt.cardId, draftCardBodyFromCard(current.payload.card));
     if (!bound) throw new Error('Draft Outbox receipt could not bind');
