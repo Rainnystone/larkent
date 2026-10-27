@@ -305,9 +305,8 @@ describe('automation board card', () => {
       boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
     expect(h.store.get(1)?.paused).toBe(true);
-    await waitFor(() => h.channel.callLog.some((call) => call.op === 'updateCard'));
-    expect(h.channel.callLog.some((call) => call.op === 'updateCard')).toBe(true);
-    expect(h.channel.callLog.some((call) => call.op === 'updateCardById')).toBe(false);
+    await waitFor(() => h.channel.callLog.some((call) => call.op === 'updateCard' && call.messageId === board.messageId));
+    expect(h.channel.updatedCards.some(update => update.messageId === board.messageId)).toBe(true);
   });
 
   it('pauses, resumes, and deletes through board callbacks', async () => {

@@ -1,5 +1,4 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { setImmediate as yieldIO } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
@@ -191,13 +190,15 @@ describe('automation draft card delivery', () => {
     });
     const orig = h.channel.createCard.bind(h.channel);
     let creates = 0;
+    let enteredFirst!: () => void;
+    const firstCreate = new Promise<void>(resolve => { enteredFirst = resolve; });
     let releaseFirst!: () => void;
     const held = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
     h.channel.createCard = async (card) => {
       creates += 1;
-      if (creates === 1) await held;
+      if (creates === 1) { enteredFirst(); await held; }
       return orig(card);
     };
     const flush = () => flushPendingDraftCards({
@@ -208,7 +209,7 @@ describe('automation draft card delivery', () => {
     });
 
     const first = flush();
-    for (let n = 0; creates < 1 && n < 200; n++) await yieldIO();
+    await firstCreate;
     expect(creates).toBe(1);
     const second = flush();
     await Promise.resolve();

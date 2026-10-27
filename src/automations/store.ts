@@ -1,3 +1,4 @@
+import type { DraftCardItem } from '../bot/outbox-draft-item';
 import { dirname, join } from 'node:path';
 import { TurnJournal } from '../bot/turn-journal';
 import type { Outbox } from '../bot/outbox';
@@ -677,9 +678,10 @@ export class AutomationsStore {
     const draft = this.drafts.find(entry => entry.draftId === draftId);
     const item = this.outboxJournal.getDraftCard(deliveryId);
     if (!draft || item?.payload.draftId !== draftId) throw new Error('Draft Outbox association unavailable');
+    if (draft.deliveryId && draft.deliveryId !== deliveryId) throw new Error('Draft Outbox association conflict');
     draft.deliveryId = deliveryId;
-    if (item.target.replyTo) draft.cardReply = { replyTo: item.target.replyTo,
-      ...(item.target.replyInThread ? { replyInThread: true } : {}), ...(item.target.threadId ? { threadId: item.target.threadId } : {}) };
+    const cardReply = draftCardReply(item);
+    if (cardReply) draft.cardReply = cardReply;
     await this.persistNow();
   }
 
@@ -1014,7 +1016,7 @@ export class AutomationsStore {
         this.loadFailure = undefined;
         return;
       }
-      const { document, upgraded } = parseAutomationsDocument(text);
+      let { document, upgraded } = parseAutomationsDocument(text);
       // Journal first, automations second: either crash point can repeat the
       // transfer by deliveryId without losing or resetting an unknown send.
       for (const draft of document.drafts) {
@@ -1030,6 +1032,18 @@ export class AutomationsStore {
         });
         draft.deliveryId = delivery.deliveryId;
         delete draft.delivery;
+      }
+      const stagedCards = this.outboxJournal.listDraftCards().filter(item => item.state === 'staged');
+      for (const draft of document.drafts) {
+        if (draft.deliveryId) continue;
+        const candidates = stagedCards.filter(item => item.payload.draftId === draft.draftId && item.target.chatId === draft.chatId);
+        if (candidates.length > 1) throw new Error('Invalid ambiguous automation delivery reference');
+        const item = candidates[0];
+        if (!item) continue;
+        draft.deliveryId = item.deliveryId;
+        const cardReply = draftCardReply(item);
+        if (cardReply) draft.cardReply = cardReply;
+        upgraded = true;
       }
       for (const draft of document.drafts) {
         if (!draft.deliveryId) continue;
@@ -1778,4 +1792,12 @@ function parsePolicyGuardReason(value: unknown): AutomationPolicyGuardReason | u
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function draftCardReply(item: DraftCardItem): DraftCardReply | undefined {
+  const target = item.target;
+  return target.replyTo ? { replyTo: target.replyTo,
+    ...(target.replyInThread ? { replyInThread: true } : {}),
+    ...(target.threadId ? { threadId: target.threadId } : {}),
+  } : undefined;
 }

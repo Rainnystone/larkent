@@ -171,3 +171,37 @@ it('retries a saved receipt hook after the automation write fails without sendin
   expect(reloaded.findDraftByCardMessageId(messageId)?.draftId).toBe(h.draft.draftId);
   expect(h.channel.sent).toHaveLength(1);
 });
+
+it('restores a stage-only draft association before recovery sends, preserving an unknown receipt past expiry', async () => {
+  const h = await fixture('prepared');
+  let now = h.options.now();
+  const options = { ...h.options, now: () => now };
+  const document = JSON.parse(h.original);
+  const card = document.drafts[0].delivery.card;
+  delete document.drafts[0].delivery;
+  document.schemaVersion = 3;
+  await writeFile(h.options.path, JSON.stringify(document));
+  const journal = new TurnJournal(h.journalPath, { now: () => now });
+  await journal.load();
+  // Persisted state at a crash between journal staging and the automations reference.
+  journal.stageDraftCard({ kind: 'draft-card', deliveryId: h.deliveryId, state: 'staged', createdAt: now,
+    target: { chatId: 'chat' }, payload: { draftId: h.draft.draftId, card } });
+  await journal.flush();
+  const restarted = new AutomationsStore(options);
+  await restarted.load();
+  expect(restarted.getDraft(h.draft.draftId)?.deliveryId).toBe(h.deliveryId);
+  const send = h.channel.send.bind(h.channel);
+  h.channel.send = async (...args) => { await send(...args); throw new Error('lost receipt'); };
+  const outbox = new Outbox({ channel: h.channel as unknown as LarkChannel, journal: restarted.outboxJournal, botAppId: 'cli_bot', draftCards: restarted });
+  cleanups.push(async () => outbox.stop());
+  await expect(outbox.reconcileDraftCard(h.deliveryId)).rejects.toThrow('lost receipt');
+  now += 25 * 60 * 60_000;
+  const expired = new AutomationsStore(options);
+  await expired.load();
+  expect(expired.getDraft(h.draft.draftId)?.delivery?.state).toBe('sending');
+  const recovered = new Outbox({ channel: h.channel as unknown as LarkChannel, journal: expired.outboxJournal, botAppId: 'cli_bot', draftCards: expired });
+  cleanups.push(async () => recovered.stop());
+  await recovered.redeliver();
+  expect(expired.getDraft(h.draft.draftId)?.cardMessageId).toBe('om_fake_1');
+  expect(h.channel.sent).toHaveLength(1);
+});

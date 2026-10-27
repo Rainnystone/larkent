@@ -137,7 +137,7 @@ describe('reconcileDraftCard', () => {
   });
 
   it('does not bind an old unmarked draft even when the list has auto_token evidence', async () => {
-    const { store, draft } = await sendingDraft({});
+    const { store, draft } = await liveDraft({});
     await seedDraftDelivery(store, draft.draftId, {
       state: 'sending',
       deliveryId: 'cd'.repeat(16),

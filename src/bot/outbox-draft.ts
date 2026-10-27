@@ -9,7 +9,8 @@ import type { DraftCardItem } from './outbox-draft-item';
 import { log } from '../core/logger';
 
 export interface DraftCardReceipts {
-  getDraft(draftId: string): { draftId: string; operationId?: string; cardMessageId?: string; cardId?: string } | undefined;
+  getDraft(draftId: string): { draftId: string; operationId?: string; deliveryId?: string; cardMessageId?: string; cardId?: string } | undefined;
+  setDraftDeliveryId(draftId: string, deliveryId: string): Promise<void>;
   bindDraftCard(draftId: string, messageId: string, cardId?: string, body?: DraftCardBody): Promise<boolean>;
 }
 
@@ -50,6 +51,9 @@ async function deliverOwned(input: Parameters<typeof deliverDraftCard>[0], deliv
   if (item.state === 'rejected') throw Object.assign(new Error(item.rejection?.message ?? 'draft card rejected'), { code: item.rejection?.code });
   const draft = draftCards.getDraft(item.payload.draftId);
   if (!draft) { journal.updateDraftCard(deliveryId, { state: 'voided' }); await journal.flush(); return; }
+  // Recovery can observe staging before its cross-file association committed.
+  // Establish that durable association before any external send or binding.
+  if (draft.deliveryId !== deliveryId) await draftCards.setDraftDeliveryId(item.payload.draftId, deliveryId);
   if (draft.cardMessageId) {
     await recordReceipt(draft.cardMessageId, draft.cardId);
     return result(journal.getDraftCard(deliveryId)!);
