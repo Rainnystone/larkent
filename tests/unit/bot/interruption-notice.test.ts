@@ -5,7 +5,6 @@ import {
   NOTICE_MAX_BUTTON_STREAK,
   NoticeActionAuth,
   buildNoticeMarkdown,
-  deliverInterruptionNotice,
   abandonExtraInstruction,
   continueExtraInstruction,
   isContinuePrompt,
@@ -13,6 +12,9 @@ import {
   planInterruptionNotice,
   resolvedNoticeCard,
 } from '../../../src/bot/interruption-notice';
+import type { LarkChannel } from '@larksuite/channel';
+import { Outbox } from '../../../src/bot/outbox';
+import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { interruptionNoticeCard } from '../../../src/card/templates';
 import type { RunOutcome } from '../../../src/bot/run-outcome';
@@ -253,19 +255,12 @@ describe('interruption notice actions', () => {
         ...(initiatorType ? { initiatorType } : {}),
         status: 'queued',
       });
-      const sent: unknown[] = [];
-      await deliverInterruptionNotice({
-        send: async (_chatId, content) => {
-          sent.push(content);
-          return { messageId: 'om_notice' };
-        },
-        journal,
-        turnId: 'turn-1',
-        outcome: interruptedOutcome,
-        consecutive: 4,
-        requireBotMention: true,
-        authNotified: false,
-      });
+      const channel = createRecordingLarkChannel();
+      const outbox = new Outbox({ channel: channel as unknown as LarkChannel, journal, botAppId: 'cli_bot' });
+      await outbox.deliverNotice({ turnId: 'turn-1', outcome: interruptedOutcome, consecutive: 4, requireBotMention: true });
+      outbox.stop();
+      await journal.flush();
+      const sent = channel.sent.map((item) => item.content);
       return { sent, cleanup: tmp.cleanup };
     }
 
