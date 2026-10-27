@@ -631,7 +631,7 @@ function confirmCard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
 }
 
 function confirmToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.confirm token').toBeDefined();
   return match![1]!;
 }
@@ -641,7 +641,7 @@ function pauseToken(cardJson: string): string {
 }
 
 function boardToken(cardJson: string, cmd: 'auto.pause' | 'auto.resume' | 'auto.delete'): string {
-  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_board\\.v1\\.[^"]+)"`));
+  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_board\\.v[0-9]+\\.[^"]+)"`));
   expect(match?.[1], `expected ${cmd} token`).toBeDefined();
   return match![1]!;
 }

@@ -47,7 +47,7 @@ describe('/auto new confirm card', () => {
     expect(card).toContain('Asia/Shanghai');
     expect(card).toContain('是');
     expect(card).toContain('auto.confirm');
-    expect(card).toMatch(/auto_cb\.v1\./);
+    expect(card).toContain('auto_cb.');
     expect(h.store.list()).toEqual([]);
     expect(h.store.listDrafts()).toHaveLength(1);
   });
@@ -113,6 +113,20 @@ describe('/auto new confirm card', () => {
     h.setNow(NOW + 24 * 60 * 60 * 1000 + 1);
     const stale = await h.channel.handlers.cardAction?.(cardClick(USER, staleToken, staleId));
     expect(stale).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+    expect(h.store.list()).toHaveLength(1);
+  });
+
+  it('keeps a valid confirmation usable after an action mismatch or a pre-deploy token', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    const token = confirmToken(confirmCard(h));
+    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const mismatch = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId, 'auto.reject'));
+    expect(mismatch).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+    const legacy = await h.channel.handlers.cardAction?.(cardClick(USER, token.replace('.v2.', '.v1.'), messageId));
+    expect(legacy).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+    const valid = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId));
+    expect(valid).toEqual({ toast: { type: 'success', content: '已确认 #1' } });
     expect(h.store.list()).toHaveLength(1);
   });
 
@@ -436,13 +450,13 @@ function confirmCard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
 }
 
 function confirmToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.confirm token').toBeDefined();
   return match![1]!;
 }
 
 function rejectToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.reject","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.reject","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.reject token').toBeDefined();
   return match![1]!;
 }

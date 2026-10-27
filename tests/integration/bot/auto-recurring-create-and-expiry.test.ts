@@ -406,7 +406,7 @@ function confirmToken(cardJson: string): string {
 }
 
 function tokenFor(cardJson: string, cmd: string): string {
-  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_cb\\.v1\\.[^"]+)"`));
+  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_cb\\.v[0-9]+\\.[^"]+)"`));
   expect(match?.[1], `expected ${cmd} token`).toBeDefined();
   return match![1]!;
 }

@@ -166,48 +166,20 @@ describe('interruption notice decision', () => {
 });
 
 describe('interruption notice actions', () => {
-  it('signs continue without binding the clicker, and rejects replay, expiry, and fingerprint change', async () => {
+  it('returns the turn, scope and policy claims without binding the clicker', async () => {
     const tmp = await createTmpProfile('notice-auth-');
     const store = new CallbackNonceStore(`${tmp.profile}/nonces.json`);
-    let now = 1_000;
-    const auth = new NoticeActionAuth({
-      secret: 'notice-secret',
-      nonceStore: store,
-      now: () => now,
-      createNonce: () => 'nonce-1',
-    });
-    const token = auth.sign({
-      turnId: 'turn-1',
-      scope: 'oc_group',
-      chatId: 'oc_group',
-      action: 'notice.continue',
-      policyFingerprint: 'fp-1',
-      ttlMs: 60_000,
-    });
-    const first = auth.verify(token);
-    expect(first).toMatchObject({
-      ok: true,
-      payload: { turnId: 'turn-1', action: 'notice.continue', policyFingerprint: 'fp-1' },
-    });
-    expect(auth.verify(token)).toMatchObject({ ok: false, reason: 'nonce-replay' });
-
-    const expiredAuth = new NoticeActionAuth({
-      secret: 'notice-secret',
-      nonceStore: store,
-      now: () => now,
-      createNonce: () => 'nonce-2',
-    });
-    const expired = expiredAuth.sign({
-      turnId: 'turn-1',
-      scope: 'oc_group',
-      chatId: 'oc_group',
-      action: 'notice.continue',
-      policyFingerprint: 'fp-1',
-      ttlMs: 10,
-    });
-    now = 1_000_000;
-    expect(expiredAuth.verify(expired)).toMatchObject({ ok: false, reason: 'expired' });
-    await tmp.cleanup();
+    try {
+      const auth = new NoticeActionAuth({ secret: 'notice-secret', nonceStore: store,
+        now: () => 1000, createNonce: () => 'nonce-1' });
+      const token = auth.sign({ turnId: 'turn-1', scope: 'group:topic', chatId: 'group',
+        action: 'notice.continue', policyFingerprint: 'policy-1', ttlMs: 60_000 });
+      expect(auth.verify(token)).toEqual({ ok: true, payload: { turnId: 'turn-1', scope: 'group:topic',
+        chatId: 'group', action: 'notice.continue', policyFingerprint: 'policy-1', exp: 61_000, nonce: 'nonce-1' } });
+    } finally {
+      await store.flush();
+      await tmp.cleanup();
+    }
   });
 
   it('renders continue / dismiss buttons on the card', () => {

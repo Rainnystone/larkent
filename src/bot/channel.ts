@@ -28,6 +28,7 @@ import { descriptorFor, isAgentKind } from '../agent/registry';
 import type { AgentAdapter, AgentEvent } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
+import { ActionTokenCodec } from '../card/action-token';
 import { CallbackNonceStore } from '../card/callback-store';
 import {
   NOTICE_RESTART_GAP_MS,
@@ -407,21 +408,17 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     ? new CallbackNonceStore(join(dirname(deps.appPaths.mediaDir), 'callback-nonces.json'))
     : undefined;
   await callbackNonceStore?.load();
-  const callbackAuth = callbackNonceStore
-    ? new CallbackAuth({
-        keys: [{ version: 1, secret: appSecret }],
-        nonceStore: callbackNonceStore,
-      })
-    : undefined;
+  const actionTokens = new ActionTokenCodec({
+    keys: [{ version: 1, secret: appSecret }],
+    nonceStore: callbackNonceStore,
+    ...(deps.now ? { now: deps.now } : {}),
+  });
+  const callbackAuth = callbackNonceStore ? new CallbackAuth(actionTokens) : undefined;
   const noticeAuth = callbackNonceStore
-    ? new NoticeActionAuth({ secret: appSecret, nonceStore: callbackNonceStore })
+    ? new NoticeActionAuth(actionTokens)
     : undefined;
   const autoAuth = callbackNonceStore
-    ? new AutoActionAuth({
-        secret: appSecret,
-        nonceStore: callbackNonceStore,
-        ...(deps.now ? { now: deps.now } : {}),
-      })
+    ? new AutoActionAuth(actionTokens)
     : undefined;
   const automationsCtl: {
     scheduler?: AutomationScheduler;
@@ -918,10 +915,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   if (deps.automations) {
     const automations = deps.automations;
     if (controls.profileConfig.automations.enabled) {
-      automationsCtl.boardAuth = new BoardActionAuth({
-        secret: appSecret,
-        ...(deps.now ? { now: deps.now } : {}),
-      });
+      automationsCtl.boardAuth = new BoardActionAuth(actionTokens);
       automationsCtl.board = createAutomationBoard({
         store: deps.automations,
         channel,

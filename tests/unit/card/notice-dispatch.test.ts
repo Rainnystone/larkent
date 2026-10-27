@@ -47,6 +47,22 @@ describe('notice card dispatch', () => {
     expect(h.actions).toEqual(['ou_user']);
   });
 
+  it('keeps a valid continue usable after a mismatched dismiss click', async () => {
+    const h = await harness();
+    const token = h.token();
+    await h.dispatch('ou_user', token, 'notice.dismiss');
+    expect(JSON.stringify(h.channel.sent)).toContain('此继续已失效。');
+    await h.dispatch('ou_user', token);
+    expect(h.actions).toEqual(['ou_user']);
+  });
+
+  it('keeps the existing invalid-click response for pre-deploy tokens', async () => {
+    const h = await harness();
+    await h.dispatch('ou_user', h.token().replace('.v2.', '.v1.'));
+    expect(h.actions).toEqual([]);
+    expect(JSON.stringify(h.channel.sent)).toContain('此继续已失效。');
+  });
+
   it('rejects a continue whose policy fingerprint no longer matches', async () => {
     const h = await harness();
     h.journal.noteTurnMeta('turn-1', { policyFingerprint: 'fp-other' });
@@ -142,11 +158,11 @@ async function harness(opts: { fence?: boolean } = {}) {
         ttlMs: 60_000,
       });
     },
-    async dispatch(operatorId: string, token: string) {
+    async dispatch(operatorId: string, token: string, cmd = 'notice.continue') {
       await handleCardAction({
         channel: channel as unknown as Parameters<typeof handleCardAction>[0]['channel'],
         evt: {
-          action: { value: { cmd: 'notice.continue', notice_token: token } },
+          action: { value: { cmd, notice_token: token } },
           chatId: 'oc_group',
           messageId: 'om_card',
           operator: { openId: operatorId, name: 'Op' },

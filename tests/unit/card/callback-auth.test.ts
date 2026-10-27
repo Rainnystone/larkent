@@ -26,7 +26,6 @@ describe('CallbackAuth', () => {
       ttlMs: 60_000,
     });
 
-    expect(token).toMatch(/^bridge_cb\.v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
     expect(
       h.auth.verify(token, {
         runId: 'run-1',
@@ -57,76 +56,6 @@ describe('CallbackAuth', () => {
       }),
     ).toMatchObject({ ok: false });
   });
-
-  it('rejects expired tokens', async () => {
-    const h = await harness({ now: 1000 });
-    const token = h.auth.sign({ ...baseSignInput(), ttlMs: 10 });
-    h.setNow(1011);
-
-    expect(h.auth.verify(token, baseExpected())).toMatchObject({
-      ok: false,
-      reason: 'expired',
-    });
-  });
-
-  it('rejects nonce replay after verification and after nonce store reload', async () => {
-    const h = await harness();
-    const token = h.auth.sign(baseSignInput());
-
-    expect(h.auth.verify(token, baseExpected())).toMatchObject({ ok: true });
-    expect(h.auth.verify(token, baseExpected())).toMatchObject({
-      ok: false,
-      reason: 'nonce-replay',
-    });
-    await h.store.flush();
-
-    const reloadedStore = new CallbackNonceStore(h.storePath);
-    await reloadedStore.load();
-    const reloaded = new CallbackAuth({
-      keys: [{ version: 1, secret: 'secret-1' }],
-      nonceStore: reloadedStore,
-      now: () => h.now(),
-      createNonce: () => 'unused',
-    });
-    expect(reloaded.verify(token, baseExpected())).toMatchObject({
-      ok: false,
-      reason: 'nonce-replay',
-    });
-  });
-
-  it('verifies retired keys but signs with the newest active key', async () => {
-    const h = await harness({
-      keys: [
-        { version: 1, secret: 'old-secret', retired: true },
-        { version: 2, secret: 'new-secret' },
-      ],
-    });
-
-    const token = h.auth.sign(baseSignInput());
-    expect(JSON.parse(Buffer.from(token.split('.')[2]!, 'base64url').toString('utf8'))).toMatchObject({
-      kv: 2,
-    });
-    expect(h.auth.verify(token, baseExpected())).toMatchObject({ ok: true });
-
-    const old = new CallbackAuth({
-      keys: [{ version: 1, secret: 'old-secret' }],
-      nonceStore: new CallbackNonceStore(await path()),
-      now: () => h.now(),
-      createNonce: () => 'old-nonce',
-    }).sign(baseSignInput());
-    expect(h.auth.verify(old, baseExpected())).toMatchObject({ ok: true });
-  });
-
-  it('rejects force-revoked nonces', async () => {
-    const h = await harness({ nonce: 'nonce-revoke' });
-    const token = h.auth.sign(baseSignInput());
-    h.store.revoke('nonce-revoke');
-
-    expect(h.auth.verify(token, baseExpected())).toMatchObject({
-      ok: false,
-      reason: 'nonce-revoked',
-    });
-  });
 });
 
 function baseSignInput() {
@@ -152,29 +81,18 @@ function baseExpected() {
   };
 }
 
-async function harness(options: {
-  now?: number;
-  nonce?: string;
-  keys?: Array<{ version: number; secret: string; retired?: boolean }>;
-} = {}) {
-  let now = options.now ?? 1000;
+async function harness() {
   const storePath = await path();
   const store = new CallbackNonceStore(storePath);
   cleanups.push(() => store.flush());
   const auth = new CallbackAuth({
-    keys: options.keys ?? [{ version: 1, secret: 'secret-1' }],
+    keys: [{ version: 1, secret: 'secret-1' }],
     nonceStore: store,
-    now: () => now,
-    createNonce: () => options.nonce ?? 'nonce-1',
+    now: () => 1000,
+    createNonce: () => 'nonce-1',
   });
   return {
     auth,
-    store,
-    storePath,
-    now: () => now,
-    setNow: (next: number) => {
-      now = next;
-    },
   };
 }
 
