@@ -1,8 +1,10 @@
+import { setImmediate as yieldIO } from 'node:timers/promises';
 import { describe, expect, it } from 'vitest';
 import { descriptorFor } from '../../../src/agent/registry';
 import type { AgentAdapter, AgentEvent } from '../../../src/agent/types';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { ProcessPool } from '../../../src/bot/process-pool';
+import { shouldDeliverAgentEvent } from '../../../src/bot/run-outcome';
 import type { RunPolicyAllow } from '../../../src/policy/run-policy';
 import { RunExecutor, type RunExecutorDeps } from '../../../src/runtime/run-executor';
 
@@ -21,6 +23,44 @@ describe('executor-owned run outcome', () => {
     for await (const _event of execution.subscribe()) { /* replay the settled stream */ }
     await execution.stop();
     expect(execution.handle.outcome).toBe(outcome);
+  });
+
+  it('keeps buffered progress before a terminal interruption for delayed readers', async () => {
+    const h = harness({}, { events: [
+      { type: 'text', delta: 'Synthetic prior progress' },
+      { type: 'done', terminationReason: 'interrupted' },
+    ] });
+    const execution = await h.executor.submit({ scopeId: 'synthetic', policy });
+    h.settle();
+    await execution.finished;
+    const visible: AgentEvent[] = [];
+    for await (const event of execution.subscribe()) {
+      if (shouldDeliverAgentEvent(execution.handle, event)) visible.push(event);
+    }
+    expect(visible).toEqual([
+      { type: 'text', delta: 'Synthetic prior progress' },
+      { type: 'done', terminationReason: 'interrupted' },
+    ]);
+  });
+
+  it('joins terminal settlement when another subscriber is still active', async () => {
+    const h = harness();
+    const execution = await h.executor.submit({ scopeId: 'synthetic', policy });
+    const first = execution.subscribe()[Symbol.asyncIterator]();
+    const second = execution.subscribe()[Symbol.asyncIterator]();
+    await Promise.all([first.next(), second.next()]);
+    let returned = false;
+    const leaving = first.return!().then(() => { returned = true; });
+    try {
+      await yieldIO();
+      expect(returned).toBe(false);
+      expect(execution.handle.outcome).toBeUndefined();
+    } finally {
+      h.settle();
+      await leaving;
+      await second.return?.();
+    }
+    expect(execution.handle.outcome).toEqual({ kind: 'completed', retriable: false, needsHuman: false });
   });
 
   it('classifies an outage from the live link getter after terminal and before settlement', async () => {
@@ -101,7 +141,8 @@ describe('executor-owned run outcome', () => {
 });
 
 function harness(overrides: Partial<RunExecutorDeps> = {}, evidence: {
-  terminal?: AgentEvent | null; stderr?: string; exit?: number | null; signal?: string | null;
+  terminal?: AgentEvent | null; events?: readonly AgentEvent[];
+  stderr?: string; exit?: number | null; signal?: string | null;
 } = {}) {
   let release!: () => void;
   const cleanup = new Promise<void>(resolve => { release = resolve; });
@@ -110,7 +151,8 @@ function harness(overrides: Partial<RunExecutorDeps> = {}, evidence: {
     run: options => ({
       runId: options.runId,
       events: (async function* (): AsyncGenerator<AgentEvent> {
-        if (evidence.terminal !== null) yield evidence.terminal ?? { type: 'done', terminationReason: 'normal' };
+        if (evidence.events) yield* evidence.events;
+        else if (evidence.terminal !== null) yield evidence.terminal ?? { type: 'done', terminationReason: 'normal' };
       })(),
       get stderrSnapshot() { return evidence.stderr; },
       get exit() { return evidence.exit; },

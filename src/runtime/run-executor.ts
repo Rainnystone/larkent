@@ -13,9 +13,9 @@ import {
   deriveRunOutcome,
   formatRunOutcome,
   formatStopRequest,
-  noteTerminalStop,
   requestStop,
   runOverlappedOutage,
+  stopRequestFromTerminal,
 } from '../bot/run-outcome';
 import { ProcessPool } from '../bot/process-pool';
 import type { RunPolicyAllow } from '../policy/run-policy';
@@ -56,6 +56,8 @@ export interface SubmitRunInput {
    */
   bypassPool?: boolean;
   promptVariant?: AgentPromptVariant;
+  /** Synchronous run decisions must precede buffering and outcome settlement. */
+  onEvent?: (event: AgentEvent, handle: RunHandle) => void;
   observability?: {
     profile: string;
     agent: string;
@@ -302,8 +304,8 @@ export class RunExecutor {
     });
     let terminalEvent: AgentEvent | undefined;
     const fanout = new EventFanout(observeRunEvents(rawRun.events, event => {
-      terminalEvent = event;
-      noteTerminalStop(handle, event);
+      input.onEvent?.(event, handle);
+      if (isTerminalEvent(event)) terminalEvent = event;
     }), finish, () => {
       const failure = cliFailureInput(rawRun.stderrSnapshot,
         terminalEvent?.type === 'error' ? terminalEvent.message : undefined,
@@ -317,12 +319,13 @@ export class RunExecutor {
         outageOverlapped: runOverlappedOutage(this.getLink?.(), startedEpoch, startedDown),
       });
       if (terminalEvent?.type === 'error') {
+        const stopRequest = handle.stopRequest ?? stopRequestFromTerminal(terminalEvent);
         log.warn('run', 'failed', {
           ...dimensions,
           result: terminalEvent.terminationReason,
           durationMs: this.now() - startedAt,
           error: terminalEvent.message,
-          ...(handle.stopRequest ? { stopReason: formatStopRequest(handle.stopRequest) } : {}),
+          ...(stopRequest ? { stopReason: formatStopRequest(stopRequest) } : {}),
           outcome: formatRunOutcome(handle.outcome),
         });
       } else if (terminalEvent?.type === 'done') {
@@ -353,13 +356,13 @@ export class RunExecutor {
 
 function observeRunEvents(
   events: AsyncIterable<AgentEvent>,
-  onTerminal: (event: AgentEvent) => void,
+  onEvent: (event: AgentEvent) => void,
 ): AsyncIterable<AgentEvent> {
   return {
     async *[Symbol.asyncIterator](): AsyncIterator<AgentEvent> {
       for await (const event of events) {
+        onEvent(event);
         if (isTerminalEvent(event)) {
-          onTerminal(event);
           yield event;
           return;
         }
@@ -449,9 +452,9 @@ class EventFanout {
             leave();
             returned = true;
             this.wakeAll();
-            if (wasActive && this.subscribers === 0 && !this.done) {
-              if (!this.terminal) await this.stop();
-              else await this.finished;
+            if (wasActive && !this.done) {
+              if (this.terminal) await this.finished;
+              else if (this.subscribers === 0) await this.stop();
             }
             if (this.failed) throw this.error;
             return { done: true, value: undefined };

@@ -113,6 +113,9 @@ export function runOverlappedOutage(
 }
 
 function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
+  // A guarded tool ends consumption before any later buffered terminal. Keep
+  // that decision even when the source pump has already observed the terminal.
+  if (input.stopRequest?.type === 'policy-guard') return interrupted(input.stopRequest);
   const signed = matchCliSignature(input.stderrTail, input.signatures);
   if (signed && signatureApplies(signed.classify, input)) {
     return applySignatureOverlay(signed.classify);

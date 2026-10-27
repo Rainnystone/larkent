@@ -62,6 +62,7 @@ import {
   cardTerminalFromOutcome,
   formatRunOutcome,
   formatStopRequest,
+  noteTerminalStop,
   shouldDeliverAgentEvent,
   type RunOutcome,
   type StopRequest,
@@ -2431,6 +2432,7 @@ async function processAgentStream(
 
       if (evt.type === 'done' || evt.type === 'error') {
         lastTerminal = evt;
+        noteTerminalStop(handle, evt);
       }
 
       const prevTerminal = state.terminal;

@@ -376,7 +376,26 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(continuationBodies(h.channel)).toEqual([]);
   });
 
+  it.each(['failed', 'normal', 'eof'] as const)('keeps the guard notice when a forbidden tool precedes %s', async terminal => {
+    const h = await harness({
+      nowMs: t0, seed: true,
+      events: [[
+        { type: 'tool_use', id: 'synthetic-guard', name: 'Bash', input: { command: 'lark-cli auth logout' } },
+        ...(terminal === 'failed'
+          ? [{ type: 'error' as const, message: 'Synthetic failure', terminationReason: 'failed' as const }]
+          : terminal === 'normal' ? [{ type: 'done' as const, terminationReason: 'normal' as const }] : []),
+      ]],
+    });
+    await waitFor(() => h.store.get(1)?.lastStatus !== 'running' && bodies(h.channel).length > 0);
+    expect(h.store.get(1)).toMatchObject({ paused: true, lastStatus: 'failed' });
+    expect(h.journal.list().find(entry => entry.turnId.startsWith('af:'))?.outcome).toEqual({
+      kind: 'interrupted', reason: { type: 'policy-guard', code: 'auth-config' }, retriable: false, needsHuman: false,
+    });
+    expect(bodies(h.channel).join('\n')).toContain('策略拦截');
+  });
+
   it('uses the settled outage outcome for an automation failure and its journal', async () => {
+    const warn = vi.spyOn(log, 'warn');
     let release!: () => void;
     const hold = new Promise<void>(resolve => { release = resolve; });
     const h = await harness({
@@ -396,6 +415,9 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
         kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false,
       });
       expect(bodies(h.channel).join('\n')).toContain('自动化任务中断：上游网络中断');
+      expect(warn).toHaveBeenCalledWith('run', 'failed', expect.objectContaining({
+        outcome: 'failed:transient-upstream',
+      }));
       expect(continuationBodies(h.channel)).toEqual([]);
     } finally {
       release();
