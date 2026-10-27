@@ -1,3 +1,4 @@
+import { readAutomationReceipt } from './task-mutation';
 import { replyState } from '../bot/turn-journal';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { createHash } from 'node:crypto';
@@ -21,13 +22,13 @@ export async function getAutomationOperation(operationId: unknown, context: Auto
   const invalid = validateAutomationOperationId(operationId, context);
   if (invalid) return invalid;
   try {
-    const operation = context.store!.getOperation(operationId as string);
+    const operation = readAutomationReceipt(context.store!, operationId as string)?.operation;
     if (!operation) return toolResult('execution-failed', 'operation-not-found', { operationId, state: 'not-applied', applied: false });
     if (operation.profile !== context.profile || operation.chatId !== context.chatId) return toolResult('unauthorized', 'operation-scope-mismatch');
     if (context.drafts) await flushDraftConfirmations(context.drafts, operation.draftId);
     return automationOperationResult(operation, context);
   } catch {
-    try { const operation = context.store!.getOperation(operationId as string); if (operation) return automationOperationResult(operation, context); } catch {}
+    try { const operation = readAutomationReceipt(context.store!, operationId as string)?.operation; if (operation) return automationOperationResult(operation, context); } catch {}
     return unknownAutomationOperation(operationId as string, 'persistence-or-delivery-unknown');
   }
 }
@@ -49,7 +50,7 @@ export async function createAutomationOperation(params: Record<string, unknown>,
       const now = (context.now ?? Date.now)();
       const issued = readAutomationOperationId(operationId)!;
       if (issued.issuedAt + AUTOMATION_OPERATION_TTL_MS <= now) return toolResult('validation-failed', 'operation-expired', { operationId });
-      const previous = context.store!.getOperation(operationId as string);
+      const previous = readAutomationReceipt(context.store!, operationId as string)?.operation;
       const at = previous?.createdAt ?? now;
       if (params.taskType !== 'reminder' && params.taskType !== 'agent') return toolResult('validation-failed', 'invalid-task-type');
       if (params.taskType === 'agent' && !context.agentTasks) return toolResult('unavailable', 'agent-tasks-disabled');
@@ -93,11 +94,11 @@ export async function createAutomationOperation(params: Record<string, unknown>,
       }, { operationId: operationId as string, profile: context.profile, chatId: context.chatId, fingerprint,
         ...(typeof params.supersedesOperationId === 'string' ? { supersedesOperationId: params.supersedesOperationId } : {}),
       });
-      return automationOperationResult(context.store!.getOperation(operationId as string)!, context);
+      return automationOperationResult(readAutomationReceipt(context.store!, operationId as string)!.operation, context);
     } catch (error) {
       if (error instanceof DraftSupersessionConflict) return toolResult('validation-failed', 'draft-supersession-conflict', { operationId });
       try {
-        const operation = context.store!.getOperation(operationId as string);
+        const operation = readAutomationReceipt(context.store!, operationId as string)?.operation;
         if (operation) return automationOperationResult(operation, context);
       } catch {}
       return unknownAutomationOperation(operationId as string, 'persistence-or-delivery-unknown');
@@ -106,7 +107,8 @@ export async function createAutomationOperation(params: Record<string, unknown>,
 }
 
 function automationOperationResult(operation: AutomationOperation, context: AutomationToolContext): ToolResult {
-  const current = context.store!.getOperation(operation.operationId)!;
+  const receipt = readAutomationReceipt(context.store!, operation.operationId)!;
+  const current = receipt.operation;
   const executions = context.journal?.list().filter(entry => current.taskId && entry.turnId.startsWith(`af:${current.taskId}@`)) ?? [];
   const deliveryState = (entry: (typeof executions)[number]) => entry.cliAlreadySent ? 'sent' : replyState(entry) ?? 'pending';
   const delivered = executions.filter(entry => deliveryState(entry) === 'sent');
@@ -124,9 +126,9 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   };
   const last = executions.at(-1);
   const now = (context.now ?? Date.now)();
-  const liveDraft = context.store!.getOperationDraft(current.draftId);
-  const occurrence = liveDraft && liveDraft.op !== 'delete' && !liveDraft.pendingRecurring
-    ? scheduleFromDraft(liveDraft.schedule, now) : undefined;
+  const committedDraft = receipt.draft;
+  const occurrence = committedDraft && committedDraft.op !== 'delete' && !committedDraft.pendingRecurring
+    ? scheduleFromDraft(committedDraft.schedule, now) : undefined;
   const base = {
     operationId: current.operationId, draftId: current.draftId, received: true,
     ...(occurrence ? { occurrenceCount: occurrence.count, ...(occurrence.capped ? { occurrenceCountCapped: true } : {}) } : {}),
@@ -140,7 +142,7 @@ function automationOperationResult(operation: AutomationOperation, context: Auto
   };
   if (current.state === 'applied') return toolResult('applied', 'applied', { ...base, state: 'applied', applied: true });
   if (current.state === 'not-applied') return toolResult('execution-failed', current.code ?? 'not-applied', { ...base, state: 'not-applied', applied: false });
-  const draft = liveDraft;
+  const draft = committedDraft;
   if (draftConfirmationDelivery(draft).state === 'sending') return unknownAutomationOperation(current.operationId, 'card-delivery-unknown', base);
   if (!draft || draft.createdAt + AUTOMATION_OPERATION_TTL_MS <= now) return toolResult('execution-failed', 'draft-expired', { ...base, state: 'not-applied', applied: false });
   const needsEnd = draft.op !== 'delete' && Boolean(draft.pendingRecurring);

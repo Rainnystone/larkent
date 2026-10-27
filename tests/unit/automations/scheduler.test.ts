@@ -1,3 +1,4 @@
+import { mutateAutomationTask } from '../../../src/automations/task-mutation';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -883,7 +884,7 @@ describe('automation scheduler', () => {
     expect(h.store.get(item.id)?.nextFireAt).toBe(t0);
     expect(h.store.get(item.id)?.missed).toBe(0);
 
-    await h.scheduler.resume(item.id);
+    await mutateAutomationTask({ store: h.store, scheduler: h.scheduler, chatId: item.chatId }, { actor: 'human', operation: 'resume', id: item.id });
     await h.scheduler.idle();
     expect(h.fires).toEqual([]);
     expect(h.store.get(item.id)?.paused).toBe(false);
@@ -923,7 +924,7 @@ describe('automation scheduler', () => {
     await h.scheduler.idle();
     await expectStatusMatchesStore(h);
 
-    await h.scheduler.delete(item.id);
+    await mutateAutomationTask({ store: h.store, scheduler: h.scheduler, chatId: item.chatId }, { actor: 'human', operation: 'delete', id: item.id });
     await h.scheduler.idle();
     await expectStatusMatchesStore(h);
   });
