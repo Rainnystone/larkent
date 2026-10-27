@@ -335,7 +335,7 @@ export async function consumeCotEvents(
 
   try {
     for await (const evt of events) {
-      if (evt.type === 'system' || evt.type === 'usage') continue;
+      if (evt.type === 'system' || evt.type === 'liveness' || evt.type === 'usage') continue;
       if (evt.type === 'thinking') {
         closeTextIfNeeded();
         if (!reasoningOpen) {

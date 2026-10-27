@@ -1,14 +1,10 @@
 import type { AgentEvent } from '../types';
+import { FinalAnswerCore, type ProtocolDriftState } from '../final-answer/core';
+import { isRecord, nonEmptyString as stringValue, finiteNumber as numberValue, truncate } from '../final-answer/values';
 import { stripTerminalText } from '../terminal-text';
 import { isShellTool } from '../shell-tool';
-import { log } from '../../core/logger';
 
 export type GrokFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
-
-export interface ProtocolDriftState {
-  unknownEvents: number;
-  anomalies: number;
-}
 
 /**
  * Translates `grok -p --output-format streaming-json` NDJSON into bridge
@@ -25,7 +21,7 @@ export interface ProtocolDriftState {
  * `text` lines are incremental chunks of the same answer, not complete
  * messages. They are concatenated and held back as `final_text` on `end`
  * (same hold-back as kimi/codex, so showToolCalls:false sends one reply).
- * Each non-empty chunk also emits a bare `system` event so the idle
+ * Each non-empty chunk also emits a `liveness` event so the idle
  * watchdog stays armed while that answer is held back. Text that arrived
  * before a tool call is emitted as a progress `text` delta and is not part of
  * the answer; if no text follows the last tool, the last non-empty pre-tool
@@ -34,20 +30,16 @@ export interface ProtocolDriftState {
  */
 export class GrokJsonlTranslator {
   private sessionId: string | undefined;
-  private terminal = false;
-  private pendingText = '';
-  private lastPreToolSegment: string | undefined;
+  // D03a: transcripts/grok/narration-tool-answer.jsonl has deltas around tools;
+  // The legacy fallback is pinned by D03b synthetic boundaries; D03a does not exercise missing post-tool text.
+  private readonly core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'fallback', separator: 'line', clean: stripTerminalText, hasAnswer: hasAnswerText });
   private readonly startedToolCalls = new Map<string, string>();
   private lastUsage: AgentEvent | undefined;
-  private drift: ProtocolDriftState = {
-    unknownEvents: 0,
-    anomalies: 0,
-  };
 
   translate(raw: unknown): AgentEvent[] {
-    if (this.terminal) return [];
+    if (this.core.terminalEmitted()) return [];
     if (!isRecord(raw) || typeof raw.type !== 'string') {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
     }
 
@@ -57,10 +49,12 @@ export class GrokJsonlTranslator {
         if (!delta) return [];
         return [{ type: 'thinking', delta }];
       }
-      case 'text':
-        return this.queueText(stringValue(raw.data) ?? stringValue(raw.text));
+      case 'text': {
+        const text = stringValue(raw.data) ?? stringValue(raw.text);
+        return text ? this.core.accept({ type: 'answer', text }) : [];
+      }
       case 'tool_call':
-        return [...this.takePreToolProgress(), ...this.translateToolCall(raw)];
+        return [...this.core.accept({ type: 'boundary' }), ...this.translateToolCall(raw)];
       case 'tool_call_update':
         return this.translateToolCallUpdate(raw);
       case 'usage':
@@ -74,83 +68,44 @@ export class GrokJsonlTranslator {
       case 'available_commands':
         return [];
       default:
-        this.drift.unknownEvents++;
-        log.warn('jsonl', 'unknown_event', { eventType: raw.type });
+        this.core.unknown(raw.type);
         return [];
     }
   }
 
   finish(reason: GrokFinishReason = 'failed'): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    if (reason === 'failed') {
-      return this.flushPendingText([
-        {
-          type: 'error',
-          message: 'grok stream ended before a terminal event',
-          terminationReason: 'failed',
-        },
-      ]);
-    }
-    return [...this.takeUsage(), ...this.finalTextEvents(), this.doneEvent(reason)];
+    return reason === 'failed' ? this.fail('grok stream ended before a terminal event')
+      : this.core.accept({ type: 'complete', terminal: this.doneEvent(reason), prefix: this.takeUsage() });
   }
 
   fail(message: string): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    return this.flushPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
-    ]);
+    return this.core.accept({ type: 'error', message: truncate(message, 4096), terminationReason: 'failed' });
   }
 
   protocolDrift(): ProtocolDriftState {
-    return { ...this.drift };
+    return this.core.protocolDrift();
   }
 
   terminalEmitted(): boolean {
-    return this.terminal;
-  }
-
-  private queueText(message: string | undefined): AgentEvent[] {
-    if (!message) return [];
-    this.pendingText += message;
-    // Liveness only. The channel rearms the idle watchdog and renders nothing.
-    return [{ type: 'system' }];
-  }
-
-  /**
-   * Commentary before a tool is progress, not the answer. The last non-empty
-   * segment is kept as the fallback answer when no text follows the last tool.
-   */
-  private takePreToolProgress(): AgentEvent[] {
-    const segment = this.takePendingText();
-    if (!hasAnswerText(segment)) return [];
-    this.lastPreToolSegment = segment;
-    return [progressEvent(segment)];
-  }
-
-  private takePendingText(): string {
-    const content = stripTerminalText(this.pendingText);
-    this.pendingText = '';
-    return content;
+    return this.core.terminalEmitted();
   }
 
   private translateToolCall(raw: Record<string, unknown>): AgentEvent[] {
     const id = stringValue(raw.toolCallId) ?? stringValue(raw.id);
     const name = stringValue(raw.toolName) ?? stringValue(raw.name) ?? stringValue(raw.title);
     if (!id || !name) {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
     }
     const events: AgentEvent[] = [];
     if (!this.startedToolCalls.has(id)) {
       this.startedToolCalls.set(id, name);
-      events.push({
+      events.push(...this.core.accept({
         type: 'tool_use',
         id,
         name,
         input: raw.rawInput ?? raw.input ?? {},
-      });
+      }));
     }
     const status = stringValue(raw.status);
     if (status === 'completed' || status === 'failed' || status === 'error') {
@@ -162,18 +117,17 @@ export class GrokJsonlTranslator {
   private translateToolCallUpdate(raw: Record<string, unknown>): AgentEvent[] {
     const id = stringValue(raw.toolCallId) ?? stringValue(raw.id);
     if (!id) {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
     }
     const status = stringValue(raw.status);
-    if (status === 'in_progress' || status === 'pending') return [];
+    if (status === 'in_progress' || status === 'pending') return [{ type: 'liveness' }];
     const finished = status === 'completed' || status === 'failed' || status === 'error';
     // Grok 1.0.41 sends a statusless metadata update (kind/title/rawInput, no
     // rawOutput) before `completed`. Missing status is a result only when that
     // update itself carries rawOutput (older builds that omit status entirely).
     this.refineStartedTool(id, raw);
-    if (!finished && !(status === undefined && raw.rawOutput != null)) return [];
-    if (!this.startedToolCalls.has(id)) this.drift.anomalies++;
+    if (!finished && !(status === undefined && raw.rawOutput != null)) return [{ type: 'liveness' }];
     return this.toolResult(id, raw, status === 'failed' || status === 'error');
   }
 
@@ -199,14 +153,14 @@ export class GrokJsonlTranslator {
     const exitCode = isShellTool(name) && isRecord(output)
       ? numberValue(output.exitCode) ?? numberValue(output.exit_code)
       : undefined;
-    return [
+    return this.core.accept(
       {
         type: 'tool_result',
         id,
         output: serializeToolOutput(output),
         isError: isError || (exitCode !== undefined && exitCode !== 0),
       },
-    ];
+    );
   }
 
   private rememberUsage(raw: Record<string, unknown>): void {
@@ -221,26 +175,20 @@ export class GrokJsonlTranslator {
   }
 
   private translateEnd(raw: Record<string, unknown>): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
+    if (this.core.terminalEmitted()) return [];
     const sessionId = stringValue(raw.sessionId) ?? stringValue(raw.session_id);
     if (sessionId) this.sessionId = sessionId;
     const events: AgentEvent[] = [];
     if (sessionId) events.push({ type: 'system', resumeHandle: sessionId });
     this.rememberUsage(raw);
     events.push(...this.takeUsage());
-    events.push(...this.finalTextEvents());
-    events.push(this.doneEvent('normal'));
-    return events;
+    return this.core.accept({ type: 'complete', terminal: this.doneEvent('normal'), prefix: events });
   }
 
   private translateError(raw: Record<string, unknown>): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
+    if (this.core.terminalEmitted()) return [];
     const message = stringValue(raw.message) ?? stringValue(raw.error) ?? 'grok reported an error';
-    return this.flushPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
-    ]);
+    return this.fail(message);
   }
 
   private usageEvent(raw: Record<string, unknown>): AgentEvent | undefined {
@@ -276,14 +224,7 @@ export class GrokJsonlTranslator {
     };
   }
 
-  private finalTextEvents(): AgentEvent[] {
-    const pending = this.takePendingText();
-    const content = !hasAnswerText(pending) && this.lastPreToolSegment ? this.lastPreToolSegment : pending;
-    if (!content || isControlTokenOnly(content)) return [];
-    return [{ type: 'final_text', content }];
-  }
-
-  private doneEvent(reason: 'normal' | 'interrupted' | 'timeout'): AgentEvent {
+  private doneEvent(reason: 'normal' | 'interrupted' | 'timeout'): Extract<AgentEvent, { type: 'done' }> {
     return {
       type: 'done',
       ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
@@ -291,17 +232,6 @@ export class GrokJsonlTranslator {
     };
   }
 
-  private flushPendingText(events: AgentEvent[]): AgentEvent[] {
-    if (events.length === 0 || !this.pendingText) return events;
-    const pending = this.takePendingText();
-    if (isControlTokenOnly(pending)) return events;
-    return [progressEvent(pending), ...events];
-  }
-}
-
-/** Progress is a `text` delta ending in a line break, the shape the Devin transcript emits. */
-function progressEvent(text: string): AgentEvent {
-  return { type: 'text', delta: text.endsWith('\n') ? text : `${text}\n\n` };
 }
 
 /** A buffer that is only a Grok control token, such as `<|eos|>`, is not an answer. */
@@ -370,24 +300,8 @@ function readFileContent(value: unknown): string | undefined {
   return file.content;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
 function explicitToolName(raw: Record<string, unknown>): string | undefined {
   const meta = isRecord(raw._meta) ? raw._meta['x.ai/tool'] : undefined;
   const metaName = isRecord(meta) ? stringValue(meta.name) : undefined;
   return stringValue(raw.toolName) ?? stringValue(raw.name) ?? metaName;
-}
-
-function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
 }

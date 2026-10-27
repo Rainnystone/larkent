@@ -84,7 +84,7 @@ export function noteTerminalStop(handle: StoppableHandle, event: AgentEvent): bo
 
 /**
  * System and terminal events still land after stop. Only an explicit user stop
- * admits a buffered final answer. Grok and Codex can hold that answer until
+ * admits held-back partial progress or a buffered final answer. Grok and Codex can hold that answer until
  * interruption; other stop reasons must not publish it. Later text deltas stay
  * suppressed for every stop reason.
  */
@@ -92,9 +92,9 @@ export function shouldDeliverAgentEvent(
   handle: StoppableHandle,
   event: AgentEvent,
 ): boolean {
-  if (event.type === 'system') return true;
+  if (event.type === 'system' || event.type === 'liveness') return true;
   if (!handle.interrupted) return true;
-  if (event.type === 'final_text') return handle.stopRequest?.type === 'user-stop';
+  if (event.type === 'final_text' || (event.type === 'text' && event.heldBack)) return handle.stopRequest?.type === 'user-stop';
   return event.type === 'done' || event.type === 'error';
 }
 

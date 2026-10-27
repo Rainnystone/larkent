@@ -25,7 +25,9 @@ describe('Grok held-back answers and the idle watchdog', () => {
     try {
       for (const chunk of CHUNKS) {
         await vi.advanceTimersByTimeAsync(GAP_MS);
-        consume(watchdog, handle, translator.translate({ type: 'text', data: chunk }), delivered);
+        const activity = translator.translate({ type: 'text', data: chunk });
+        expect(activity).toEqual([{ type: 'liveness' }]);
+        consume(watchdog, handle, activity, delivered);
       }
       await vi.advanceTimersByTimeAsync(GAP_MS);
       consume(watchdog, handle, translator.translate({
@@ -48,7 +50,7 @@ describe('Grok held-back answers and the idle watchdog', () => {
   });
 });
 
-/** Same liveness rules as processAgentStream: system rearms, other events call noteDelivered. */
+/** Same liveness rules as processAgentStream: metadata and liveness rearm without rendering. */
 function consume(
   watchdog: IdleWatchdog,
   handle: RunHandle,
@@ -56,12 +58,9 @@ function consume(
   delivered: AgentEvent[],
 ): void {
   for (const event of events) {
-    if (event.type === 'system') {
-      if (!handle.interrupted) watchdog.arm();
-      continue;
-    }
+    if (!handle.interrupted) watchdog.noteDelivered(event);
+    if (event.type === 'system' || event.type === 'liveness') continue;
     if (!shouldDeliverAgentEvent(handle, event)) continue;
-    watchdog.noteDelivered(event);
     delivered.push(event);
   }
 }

@@ -72,6 +72,10 @@ export function* translateEvent(raw: unknown): Generator<AgentEvent> {
   const evt = raw as ClaudeRawEvent;
 
   if (evt.type === 'system' && evt.subtype === 'init') {
+    if (!evt.session_id && !evt.cwd && !evt.model) {
+      yield { type: 'liveness' };
+      return;
+    }
     yield {
       type: 'system',
       resumeHandle: evt.session_id,

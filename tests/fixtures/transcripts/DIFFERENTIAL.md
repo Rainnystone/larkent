@@ -87,3 +87,31 @@ The synthetic boundary group covers empty success, narration ending at EOF,
 an unfinished tool, repeated messages, an error after text, interruption after
 text, and late text / repeated terminals. It pins current quirks, including
 unpaired tools and bare `system` liveness, for D04's explicit contract changes.
+
+## D04 reviewed contract changes
+
+The original D03b literals remain available at the fixed pre-D04 product commit
+`2adc9543b55b9aff8e4f8c253ec449545efda01b`. D04 changes 194 of the 425
+snapshots. An explicit comparison of every changed literal, after removing only
+empty-system/liveness records, found these disjoint categories:
+
+| Changed sequences | Reviewed difference |
+| ---: | --- |
+| 131 | Activity only: empty `system` becomes `liveness`, and captured held answers, thinking, turn/version records and tool updates report liveness |
+| 42 | Stop/timeout releases held text as `text` with `heldBack: true`, preserving the existing explicit `/stop` partial reply through the bot's delivery filter; one also closes an unfinished tool |
+| 11 | Terminal emits a failed result for an unfinished tool |
+| 8 | Antigravity failure/unterminated EOF flushes scrubbed progress instead of incorrectly emitting successful `final_text` |
+| 2 | Orphan Codex results are suppressed instead of emitting a result without a use |
+
+Successful answer content, progress separators, usage values/order, resume
+metadata and error messages retain their baseline values. All 425 sequences also
+check that system events contain metadata; the six final-answer kinds additionally
+check ordered pairing and terminal closure. These checks include the frozen unit
+inputs even where their now-redundant originating hold-back tests were deleted.
+
+Policy comments cite the D03a narration/tool captures. Grok's last-segment fallback
+and Antigravity's envelope scrub retain existing characterized behavior: the D03a
+captures do not demonstrate missing post-tool text or envelopes. Those details are
+supported by the original D03b synthetic boundaries and existing incident fixtures,
+not claimed as new real CLI observations. D04's silent-activity tests select actual
+records from D03a captures; they establish event handling, not heartbeat timing.

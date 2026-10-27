@@ -7,6 +7,21 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "cachedInputTokens": 0,
     "inputTokens": 19469,
     "outputTokens": 0,
@@ -32,6 +47,9 @@ exports[`D03b existing fixture baseline > antigravity/system-message-envelope-in
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
     "cachedInputTokens": 0,
     "inputTokens": 19469,
     "outputTokens": 80,
@@ -55,6 +73,21 @@ exports[`D03b existing fixture baseline > antigravity/tool-checkpoint-steps.json
   {
     "resumeHandle": "f8c7af3a-4080-4505-981e-87dc09f7f50e",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "message": "antigravity stream ended before a terminal event",
@@ -389,7 +422,7 @@ line-two
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -456,7 +489,7 @@ exports[`D03b existing fixture baseline > grok/s2-thoughts.jsonl 1`] = `
     "type": "thinking",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",
@@ -930,12 +963,15 @@ exports[`D03b existing fixture baseline > stderr/network/socket-tls-disconnect.t
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > A1: prependHeldBack strips a fingerprinted envelope and keeps the prose / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<ID_1>",
     "type": "system",
   },
   {
-    "content": "收到！已经根据你的要求整理完初稿。",
-    "type": "final_text",
+    "delta": "收到！已经根据你的要求整理完初稿。",
+    "type": "text",
   },
   {
     "message": "agy exited with code 1",
@@ -1081,14 +1117,17 @@ FAIL tests/unit/agent/antigravity-jsonl.test.ts
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > B4: prependHeldBack leaves a vitest-title unclosed opener byte-identical / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<ID_1>",
     "type": "system",
   },
   {
-    "content": "FAIL tests/unit/agent/antigravity-jsonl.test.ts
+    "delta": "FAIL tests/unit/agent/antigravity-jsonl.test.ts
 <SYSTEM_MESSAGE> blocks must not peel the rest of the answer
 请看后面的说明。",
-    "type": "final_text",
+    "type": "text",
   },
   {
     "message": "agy exited with code 1",
@@ -1186,6 +1225,21 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
   {
     "resumeHandle": "<ID_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "Antigravity print-timeout reached before a reply was produced.",
@@ -1406,13 +1460,16 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > TN1: prependHeldBack drops task_notification and keeps the title citation plus Chinese answer / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<ID_1>",
     "type": "system",
   },
   {
-    "content": "FAIL tests/unit/agent/antigravity-jsonl.test.ts > scrubs multi-line and nested <SYSTEM_MESSAGE> blocks
+    "delta": "FAIL tests/unit/agent/antigravity-jsonl.test.ts > scrubs multi-line and nested <SYSTEM_MESSAGE> blocks
 这是给用户看的中文答复。",
-    "type": "final_text",
+    "type": "text",
   },
   {
     "message": "agy exited with code 1",
@@ -1581,6 +1638,21 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "pong
 ",
     "type": "final_text",
@@ -1598,6 +1670,21 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
   {
     "resumeHandle": "<ID_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "cachedInputTokens": 0,
@@ -1621,12 +1708,15 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > fail() flushes held-back reply text and a resume handle from step_update / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<ID_1>",
     "type": "system",
   },
   {
-    "content": "partial answer",
-    "type": "final_text",
+    "delta": "partial answer",
+    "type": "text",
   },
   {
     "message": "agy exited with code 1",
@@ -1639,13 +1729,16 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > finish(failed) flushes held-back reply text when the stream had no result / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<ID_1>",
     "type": "system",
   },
   {
-    "content": "truncated
+    "delta": "truncated
 ",
-    "type": "final_text",
+    "type": "text",
   },
   {
     "message": "antigravity stream ended before a terminal event",
@@ -1672,6 +1765,24 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "partial answer
 ",
     "type": "final_text",
@@ -1691,6 +1802,21 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
   {
     "resumeHandle": "<ID_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "message": "timeout waiting for response",
@@ -1820,6 +1946,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
     "cachedInputTokens": 0,
     "inputTokens": 19469,
     "outputTokens": 15,
@@ -1860,6 +1989,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "ping
 ",
     "type": "final_text",
@@ -1878,6 +2013,21 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "resumeHandle": "<ID_1>",
     "type": "system",
   },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
 ]
 `;
 
@@ -1886,6 +2036,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
   {
     "resumeHandle": "<ID_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
   },
   {
     "cachedInputTokens": 0,
@@ -1909,12 +2062,15 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > scrubs held-back agent_response text flushed through prependHeldBack / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<ID_1>",
     "type": "system",
   },
   {
-    "content": "收到！已经根据你的要求整理完初稿。",
-    "type": "final_text",
+    "delta": "收到！已经根据你的要求整理完初稿。",
+    "type": "text",
   },
   {
     "message": "agy exited with code 1",
@@ -2147,6 +2303,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
     "content": "after retry",
     "type": "final_text",
   },
@@ -2209,8 +2368,14 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > streams earlier agent messages but reserves the last one as the final answer / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "progress one",
     "type": "text",
+  },
+  {
+    "type": "liveness",
   },
   {
     "delta": "progress two",
@@ -2225,8 +2390,17 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
     "content": "final answer",
     "type": "final_text",
+  },
+  {
+    "id": "cmd-after-progress",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "resumeHandle": undefined,
@@ -2239,16 +2413,16 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > tracks protocol drift while ignoring unknown and anomalous events / 1 1`] = `
 [
   {
-    "id": "cmd-late",
-    "isError": true,
-    "output": "late",
-    "type": "tool_result",
+    "type": "liveness",
   },
 ]
 `;
 
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > translates current Codex agent messages emitted as completed items / 1 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "content": "hello from item",
     "type": "final_text",
@@ -2278,6 +2452,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
     "id": "cmd-1",
     "input": {
       "command": "pwd",
@@ -2291,6 +2468,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "output": "/repo
 ",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "hello",
@@ -2314,6 +2494,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > treats a message announced twice as one message / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "hello world",
     "type": "final_text",
   },
@@ -2328,10 +2514,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > treats missing command exit codes as successful command results / 1 1`] = `
 [
   {
-    "id": "cmd-no-code",
-    "isError": false,
-    "output": "done",
-    "type": "tool_result",
+    "type": "liveness",
   },
 ]
 `;
@@ -2339,8 +2522,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'account-restart' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2353,8 +2540,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'bridge-idle-watchdog' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2367,8 +2558,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'exit-command' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2381,8 +2576,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'external-signal' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2395,8 +2594,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'meeting' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2409,8 +2612,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'policy-guard', …(1) } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2423,8 +2630,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'reconnect-command' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2437,8 +2648,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'runner-timeout' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2451,8 +2666,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'shutdown-signal' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2465,8 +2684,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'subscriber-abandoned' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2479,8 +2702,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'cd' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2493,8 +2720,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'new' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2507,8 +2738,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'resume' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2521,8 +2756,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'ws' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2535,8 +2774,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'user-stop' } / 1 1`] = `
 [
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -2548,6 +2791,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > clears pending assistant text on each tool_call and keeps only the last answer as final_text / 1 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "id": "tool_1",
     "input": {
@@ -2561,6 +2807,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "isError": false,
     "output": "{"content":"","totalLines":0}",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "tool_2",
@@ -2577,6 +2826,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
     "content": "Both files are empty.",
     "type": "final_text",
   },
@@ -2590,6 +2842,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > does not emit text for a duplicated pre-tool assistant segment / 1 1`] = `
 [
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
   {
     "id": "tool_1",
     "input": {
@@ -2606,6 +2864,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
     "content": "Done.",
     "type": "final_text",
   },
@@ -2620,12 +2881,21 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > does not resurrect discarded pre-tool assistant text on finish(failed) or fail() / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "id": "tool_1",
     "input": {
       "path": "README.md",
     },
     "name": "Read",
     "type": "tool_use",
+  },
+  {
+    "id": "tool_1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "message": "cursor stream ended before a terminal event",
@@ -2638,12 +2908,21 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > does not resurrect discarded pre-tool assistant text on finish(failed) or fail() / 2 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "id": "tool_1",
     "input": {
       "path": "README.md",
     },
     "name": "Read",
     "type": "tool_use",
+  },
+  {
+    "id": "tool_1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "message": "cursor exited",
@@ -2660,6 +2939,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "model": "Composer 2.5",
     "resumeHandle": "<ID_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "Last message",
@@ -2708,6 +2990,18 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "tool_1",
     "input": {
       "path": "README.md",
@@ -2720,6 +3014,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "isError": false,
     "output": "{"content":"# Larkent","totalLines":1}",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "The README describes Larkent.",
@@ -2736,6 +3033,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > holds back pre-tool assistant text instead of streaming it as text deltas / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "id": "tool_1",
     "input": {
       "fileText": "x",
@@ -2749,6 +3049,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "isError": false,
     "output": "{"path":"/tmp/summary.txt","linesCreated":1}",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "Done.",
@@ -2771,6 +3074,15 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "OK",
     "type": "final_text",
   },
@@ -2791,6 +3103,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "model": "Composer 2.5",
     "resumeHandle": "<ID_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "OK",
@@ -2840,6 +3155,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
     "content": "The command printed hi.",
     "type": "final_text",
   },
@@ -2853,6 +3171,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > replaces a held assistant segment without emitting the earlier one as text / 1 1`] = `
 [
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
   {
     "content": "Better answer.",
     "type": "final_text",
@@ -2874,6 +3198,18 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<ID_1>",
     "terminationReason": "normal",
     "type": "done",
@@ -2884,7 +3220,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > does not publish pre-tool narration as a final answer / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Starting.
@@ -2897,6 +3233,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "input": {},
     "name": "read",
     "type": "tool_use",
+  },
+  {
+    "id": "c",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "terminationReason": "normal",
@@ -2917,11 +3259,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > emits the held-back answer as final_text on cancel / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "Partial answer",
-    "type": "final_text",
+    "delta": "Partial answer",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -2943,7 +3286,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > flushes held-back text before the error on failure / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Partial answer
@@ -2962,10 +3305,10 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > flushes the previous message as progress text when the message id changes / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "First thought.
@@ -2974,7 +3317,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "type": "text",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Second.",
@@ -2990,10 +3333,10 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > holds back the answer and emits it once as final_text at end_turn / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "The answer is 4.",
@@ -3009,7 +3352,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > ignores replayed history including tool events / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Current answer",
@@ -3025,7 +3368,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > merges late tool input, deduplicates updates and preserves the command / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "I will check.
@@ -3042,13 +3385,16 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
     "id": "a",
     "isError": false,
     "output": "{"code":0,"data":{"message_id":"<IDENTITY_2>"}}",
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Finished.",
@@ -3064,10 +3410,10 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > preserves paragraph whitespace and code indentation across chunks / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Intro
@@ -3112,7 +3458,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Corrected.",
@@ -3127,6 +3473,15 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > waits for an actual command when execute input arrives in partial updates / 1 1`] = `
 [
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
   {
     "id": "late",
     "input": {
@@ -3163,19 +3518,19 @@ YELLOWERR
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-idle-liveness.test.ts > Grok held-back answers and the idle watchdog > delivers one final_text when text chunks outlast the idle timeout / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3204,6 +3559,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
     "id": "call-test-1",
     "isError": true,
     "output": "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory
@@ -3216,7 +3574,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > answers with the last non-empty pre-tool segment when no text follows the last tool / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Checking the schedule.
@@ -3249,7 +3607,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3270,10 +3628,10 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > concatenates incremental text chunks into one final_text / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3398,6 +3756,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
     "id": "call-test-1",
     "isError": true,
     "output": "ls: cannot access '/nonexistent-p09-retest-path': No such file or directory
@@ -3410,7 +3771,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > does not prefix a failed finish with a control-token-only buffer / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "message": "grok stream ended before a terminal event",
@@ -3499,7 +3860,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > drops a final answer that is only a model control token / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3516,10 +3877,10 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > drops a final answer that is only a model control token / 2 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3542,7 +3903,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > drops a final answer that is only a model control token / 3 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3563,13 +3924,13 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > emits one bare system event per non-empty text chunk and none for an empty chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3590,7 +3951,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > emits pre-tool text as progress before the tool and keeps it out of the answer / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Let me check.
@@ -3607,7 +3968,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_use",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3616,6 +3977,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
   {
     "content": "Done.",
     "type": "final_text",
+  },
+  {
+    "id": "call_1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3638,7 +4005,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > flushes buffered text before an error and before fail / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "partial
@@ -3657,7 +4024,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > flushes buffered text before an error and before fail / 2 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "partial
@@ -3684,6 +4051,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     },
     "name": "grep",
     "type": "tool_use",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "call-test-grep",
@@ -3817,7 +4187,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > maps a plain text run to system + final_text + done / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3907,10 +4277,10 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > shows every pre-tool segment as progress and answers with the text after the last tool / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "First look.
@@ -3931,7 +4301,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Second look.
@@ -3952,7 +4322,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -3977,7 +4347,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "thinking",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Let me check.
@@ -4000,7 +4370,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -4049,6 +4419,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     },
     "name": "run_terminal_command",
     "type": "tool_use",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "call-test-ansi",
@@ -4537,7 +4910,7 @@ line-two
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -4576,11 +4949,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'account-restart' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4592,11 +4966,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'bridge-idle-watchdog' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4608,11 +4983,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'exit-command' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4624,11 +5000,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'external-signal' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4640,11 +5017,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'meeting' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4656,11 +5034,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'policy-guard', …(1) } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4672,11 +5051,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'reconnect-command' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4688,11 +5068,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'runner-timeout' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4704,11 +5085,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'shutdown-signal' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4720,11 +5102,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'subscriber-abandoned' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4736,11 +5119,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'cd' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4752,11 +5136,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'new' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4768,11 +5153,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'resume' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4784,11 +5170,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'ws' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4800,11 +5187,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'user-stop' } / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "BUFFERED_ANSWER",
-    "type": "final_text",
+    "delta": "BUFFERED_ANSWER",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4816,7 +5204,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > answers with the last pre-tool text after a user stop with no text after the tool / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "checking the file
@@ -4833,8 +5221,15 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_use",
   },
   {
-    "content": "checking the file",
-    "type": "final_text",
+    "delta": "checking the file",
+    "heldBack": true,
+    "type": "text",
+  },
+  {
+    "id": "call_1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "terminationReason": "interrupted",
@@ -4846,14 +5241,15 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > delivers held text as the card answer after a user stop / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "answer before stop",
-    "type": "final_text",
+    "delta": "answer before stop",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4865,7 +5261,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > shows text that arrived before a tool call as progress, not as the answer / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "before the tool
@@ -4882,7 +5278,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_use",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -4891,6 +5287,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
   {
     "content": "after",
     "type": "final_text",
+  },
+  {
+    "id": "call_1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -4927,11 +5329,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "RED",
-    "type": "final_text",
+    "delta": "RED",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -4955,7 +5358,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "thinking",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<ID_1>",
@@ -4985,7 +5388,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts EOF / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5008,7 +5411,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5031,7 +5434,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5054,7 +5457,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5077,7 +5480,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts EOF / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5100,7 +5503,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5123,7 +5526,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5146,7 +5549,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5169,7 +5572,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts EOF / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5192,7 +5595,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5215,7 +5618,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5238,7 +5641,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5261,7 +5664,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts EOF / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5288,7 +5691,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5315,7 +5718,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5342,7 +5745,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5369,10 +5772,10 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > applies the cap per line when several valid records share a chunk / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5395,7 +5798,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > counts CR and whitespace before trimming, excluding only the LF delimiter / 1 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": {
@@ -5558,6 +5961,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > dedupes an identical assistant message repeat / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "session_00000000-0000-4000-8000-000000000000",
     "type": "system",
   },
@@ -5586,6 +5995,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > finish(failed) surfaces an error and carries no session when none was seen / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "message": "kimi stream ended before a terminal event",
     "terminationReason": "failed",
     "type": "error",
@@ -5596,12 +6008,16 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > finish(interrupted) flushes pending text and marks done interrupted / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "session_00000000-0000-4000-8000-000000000000",
     "type": "system",
   },
   {
-    "content": "partial",
-    "type": "final_text",
+    "delta": "partial",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": "session_00000000-0000-4000-8000-000000000000",
@@ -5629,6 +6045,12 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > maps a plain text run to system + final_text + done / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "session_00000000-0000-4000-8000-000000000000",
     "type": "system",
   },
@@ -5647,6 +6069,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > maps tool calls and results, holding the last assistant text as final / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "id": "tool_1",
     "input": {
       "command": "echo hi",
@@ -5660,6 +6085,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
     "output": "hi
 ",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "resumeHandle": "session_00000000-0000-4000-8000-000000000000",
@@ -5680,6 +6108,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > streams intermediate assistant messages as text deltas / 1 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "Let me check.
 
 ",
@@ -5696,6 +6127,9 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
     "isError": false,
     "output": "file body",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "resumeHandle": "session_00000000-0000-4000-8000-000000000000",
@@ -5718,6 +6152,12 @@ exports[`D03b real capture baseline > antigravity/answer-only.jsonl 1`] = `
   {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "cachedInputTokens": 0,
@@ -5770,6 +6210,30 @@ exports[`D03b real capture baseline > antigravity/long-tool.jsonl 1`] = `
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "cachedInputTokens": 31093,
     "inputTokens": 22194,
     "outputTokens": 269,
@@ -5798,6 +6262,36 @@ exports[`D03b real capture baseline > antigravity/narration-tool-answer.jsonl 1`
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "cachedInputTokens": 11171,
     "inputTokens": 15467,
     "outputTokens": 116,
@@ -5823,6 +6317,756 @@ exports[`D03b real capture baseline > antigravity/stop-mid-answer.jsonl 1`] = `
   {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "cachedInputTokens": 0,
@@ -6148,6 +7392,45 @@ exports[`D03b real capture baseline > antigravity/two-tools.jsonl 1`] = `
   {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "cachedInputTokens": 22545,
@@ -6486,6 +7769,12 @@ exports[`D03b real capture baseline > codex/answer-only.jsonl 1`] = `
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "TRANSCRIPT-OK",
     "type": "final_text",
   },
@@ -6511,6 +7800,9 @@ exports[`D03b real capture baseline > codex/error-unknown-model.jsonl 1`] = `
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
     "message": "{"type":"error","status":400,"error":{"type":"invalid_request_error","message":"The 'lark-nonexistent-model-0' model is not supported when using Codex with a ChatGPT account.","code":"model_not_found"}}",
     "terminationReason": "failed",
     "type": "error",
@@ -6523,6 +7815,12 @@ exports[`D03b real capture baseline > codex/long-tool.jsonl 1`] = `
   {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "delta": "我会等待 45 秒，命令完成后回复 DONE。
@@ -6543,6 +7841,9 @@ exports[`D03b real capture baseline > codex/long-tool.jsonl 1`] = `
     "output": "done
 ",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "DONE",
@@ -6570,6 +7871,12 @@ exports[`D03b real capture baseline > codex/narration-tool-answer.jsonl 1`] = `
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "delta": "我会运行 \`echo hello\`，然后告诉你输出结果。
 ",
     "type": "text",
@@ -6588,6 +7895,9 @@ exports[`D03b real capture baseline > codex/narration-tool-answer.jsonl 1`] = `
     "output": "hello
 ",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "输出结果是：
@@ -6617,6 +7927,12 @@ exports[`D03b real capture baseline > codex/stop-mid-answer.jsonl 1`] = `
   {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "one
@@ -6943,6 +8259,12 @@ exports[`D03b real capture baseline > codex/two-tools.jsonl 1`] = `
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "delta": "我会依次执行这两个命令。
 ",
     "type": "text",
@@ -6978,6 +8300,9 @@ exports[`D03b real capture baseline > codex/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
     "content": "DONE",
     "type": "final_text",
   },
@@ -7003,6 +8328,36 @@ exports[`D03b real capture baseline > cursor/answer-only.jsonl 1`] = `
     "model": "Grok 4.6 High",
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "TRANSCRIPT-OK",
@@ -7033,6 +8388,69 @@ exports[`D03b real capture baseline > cursor/long-tool.jsonl 1`] = `
     "model": "Grok 4.6 High",
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "<TOOL_2>",
@@ -7096,6 +8514,21 @@ exports[`D03b real capture baseline > cursor/long-tool.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "DONE",
     "type": "final_text",
   },
@@ -7114,6 +8547,57 @@ exports[`D03b real capture baseline > cursor/narration-tool-answer.jsonl 1`] = `
     "model": "Grok 4.6 High",
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "<TOOL_2>",
@@ -7166,6 +8650,21 @@ exports[`D03b real capture baseline > cursor/narration-tool-answer.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "The command finished successfully. The output was:
 
 \`\`\`
@@ -7188,6 +8687,99 @@ exports[`D03b real capture baseline > cursor/stop-mid-answer.jsonl 1`] = `
     "model": "Grok 4.6 High",
     "resumeHandle": "<SESSION_1>",
     "type": "system",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "content": "one
@@ -7509,6 +9101,81 @@ exports[`D03b real capture baseline > cursor/two-tools.jsonl 1`] = `
     "type": "system",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_2>",
     "input": {
       "adminCommandDenylist": [],
@@ -7609,6 +9276,18 @@ exports[`D03b real capture baseline > cursor/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "DONE",
     "type": "final_text",
   },
@@ -7623,10 +9302,10 @@ exports[`D03b real capture baseline > cursor/two-tools.jsonl 1`] = `
 exports[`D03b real capture baseline > devin/answer-only.jsonl 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "TRANSCRIPT-OK",
@@ -7661,6 +9340,15 @@ exports[`D03b real capture baseline > devin/long-tool.jsonl 1`] = `
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_2>",
     "input": {
       "shell_id": "c7aa29",
@@ -7670,10 +9358,19 @@ exports[`D03b real capture baseline > devin/long-tool.jsonl 1`] = `
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_2>",
     "isError": false,
     "output": "",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "<TOOL_1>",
@@ -7682,22 +9379,22 @@ exports[`D03b real capture baseline > devin/long-tool.jsonl 1`] = `
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "The command \`sleep 45 && echo done\` finished with exit code 0 and printed \`done\`.
@@ -7715,16 +9412,16 @@ DONE",
 exports[`D03b real capture baseline > devin/narration-tool-answer.jsonl 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "我会用 shell 跑一下 \`echo hello\`，然后把输出告诉你。
@@ -7741,25 +9438,37 @@ exports[`D03b real capture baseline > devin/narration-tool-answer.jsonl 1`] = `
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_1>",
     "isError": false,
     "output": "hello",
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "\`echo hello\` 打印出 \`hello\`，exit code 是 0。",
@@ -7829,127 +9538,127 @@ exports[`D03b real capture baseline > devin/stop-mid-answer.jsonl 1`] = `
     "type": "thinking",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "one
+    "delta": "one
 two
 three
 four
@@ -8011,7 +9720,8 @@ fifty-nine
 sixty
 sixty-one
 six",
-    "type": "final_text",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -8031,6 +9741,18 @@ exports[`D03b real capture baseline > devin/two-tools.jsonl 1`] = `
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_1>",
     "isError": false,
     "output": "one",
@@ -8045,31 +9767,43 @@ exports[`D03b real capture baseline > devin/two-tools.jsonl 1`] = `
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_2>",
     "isError": false,
     "output": "two",
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "I ran the two commands as separate shell calls: \`echo one\` printed \`one\`, and \`echo two\` printed \`two\`.
@@ -8087,16 +9821,16 @@ DONE",
 exports[`D03b real capture baseline > grok/answer-only.jsonl 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<SESSION_1>",
@@ -8173,64 +9907,64 @@ Setting \`block_until_ms\`",
     "type": "thinking",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "I'll run \`sleep 45 && echo done\` and wait for it to finish before replying.
@@ -8249,6 +9983,15 @@ Setting \`block_until_ms\`",
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_1>",
     "isError": false,
     "output": "done
@@ -8256,7 +9999,7 @@ Setting \`block_until_ms\`",
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<UUID_1>",
@@ -8297,49 +10040,49 @@ exports[`D03b real capture baseline > grok/narration-tool-answer.jsonl 1`] = `
     "type": "thinking",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "I'll run \`echo hello\` in the shell and report what it prints.
@@ -8357,6 +10100,15 @@ exports[`D03b real capture baseline > grok/narration-tool-answer.jsonl 1`] = `
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_1>",
     "isError": false,
     "output": "hello
@@ -8364,61 +10116,61 @@ exports[`D03b real capture baseline > grok/narration-tool-answer.jsonl 1`] = `
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<UUID_1>",
@@ -8498,46 +10250,46 @@ exports[`D03b real capture baseline > grok/two-tools.jsonl 1`] = `
     "type": "thinking",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "I'll run the two commands as separate shell calls, then report DONE.
@@ -8553,6 +10305,15 @@ exports[`D03b real capture baseline > grok/two-tools.jsonl 1`] = `
     },
     "name": "run_terminal_command",
     "type": "tool_use",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
   },
   {
     "id": "<TOOL_1>",
@@ -8571,6 +10332,15 @@ exports[`D03b real capture baseline > grok/two-tools.jsonl 1`] = `
     "type": "tool_use",
   },
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "id": "<TOOL_2>",
     "isError": false,
     "output": "two
@@ -8578,7 +10348,7 @@ exports[`D03b real capture baseline > grok/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "resumeHandle": "<UUID_1>",
@@ -8607,6 +10377,12 @@ exports[`D03b real capture baseline > grok/two-tools.jsonl 1`] = `
 exports[`D03b real capture baseline > kimi/answer-only.jsonl 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
   },
@@ -8625,6 +10401,9 @@ exports[`D03b real capture baseline > kimi/answer-only.jsonl 1`] = `
 exports[`D03b real capture baseline > kimi/error-unknown-model.jsonl 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "message": "kimi exited with code 1: error: failed to run prompt: Model "lark-nonexistent-model-0" is not configured in config.toml.
 See log: <HOME>/.kimi-code/logs/kimi-code.log",
     "terminationReason": "failed",
@@ -8635,6 +10414,9 @@ See log: <HOME>/.kimi-code/logs/kimi-code.log",
 
 exports[`D03b real capture baseline > kimi/long-tool.jsonl 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "id": "<ID_1>",
     "input": {
@@ -8650,6 +10432,9 @@ exports[`D03b real capture baseline > kimi/long-tool.jsonl 1`] = `
     "output": "done
 ",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "resumeHandle": "<SESSION_1>",
@@ -8670,6 +10455,9 @@ exports[`D03b real capture baseline > kimi/long-tool.jsonl 1`] = `
 exports[`D03b real capture baseline > kimi/narration-tool-answer.jsonl 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "id": "<ID_1>",
     "input": {
       "command": "echo hello",
@@ -8683,6 +10471,9 @@ exports[`D03b real capture baseline > kimi/narration-tool-answer.jsonl 1`] = `
     "output": "hello
 ",
     "type": "tool_result",
+  },
+  {
+    "type": "liveness",
   },
   {
     "resumeHandle": "<SESSION_1>",
@@ -8706,6 +10497,12 @@ hello
 
 exports[`D03b real capture baseline > kimi/stop-mid-answer.jsonl 1`] = `
 [
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
   {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
@@ -9024,6 +10821,9 @@ Three hundred",
 exports[`D03b real capture baseline > kimi/two-tools.jsonl 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "id": "<ID_1>",
     "input": {
       "command": "echo one",
@@ -9054,6 +10854,9 @@ exports[`D03b real capture baseline > kimi/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "type": "liveness",
+  },
+  {
     "resumeHandle": "<SESSION_1>",
     "type": "system",
   },
@@ -9081,8 +10884,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'empt
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'error after text' 1`] = `
 [
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "Narration.",
+    "type": "text",
   },
   {
     "message": "synthetic connection lost",
@@ -9095,8 +10901,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'erro
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'interrupted after text' 1`] = `
 [
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "Narration.",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -9107,6 +10917,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'inte
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'late text and repeated terminal' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "content": "Narration.",
     "type": "final_text",
@@ -9121,8 +10934,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'late
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'narration only before EOF' 1`] = `
 [
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "Narration.",
+    "type": "text",
   },
   {
     "message": "antigravity stream ended before a terminal event",
@@ -9134,6 +10950,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'narr
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'repeated message' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
   {
     "content": "Narration.Narration.",
     "type": "final_text",
@@ -9147,6 +10969,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'repe
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'tool without result' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
   {
     "content": "Narration.",
     "type": "final_text",
@@ -9282,6 +11110,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'empty answ
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'error after text' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "Narration.",
     "type": "text",
   },
@@ -9296,8 +11127,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'error afte
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'interrupted after text' 1`] = `
 [
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "Narration.",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "resumeHandle": undefined,
@@ -9309,6 +11144,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'interrupte
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'late text and repeated terminal' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "content": "Narration.",
     "type": "final_text",
@@ -9324,6 +11162,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'late text 
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'narration only before EOF' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "Narration.",
     "type": "text",
   },
@@ -9337,6 +11178,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'narration 
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'repeated message' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
   {
     "content": "Narration.",
     "type": "final_text",
@@ -9352,6 +11199,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'repeated m
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'tool without result' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "Narration.",
     "type": "text",
   },
@@ -9362,6 +11212,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'tool witho
     },
     "name": "command_execution",
     "type": "tool_use",
+  },
+  {
+    "id": "tool-1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "resumeHandle": undefined,
@@ -9383,6 +11239,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'empty ans
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'error after text' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "Narration.
 
 ",
@@ -9399,8 +11258,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'error aft
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'interrupted after text' 1`] = `
 [
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "Narration.",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -9411,6 +11274,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'interrupt
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'late text and repeated terminal' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "content": "Narration.",
     "type": "final_text",
@@ -9424,6 +11290,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'late text
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'narration only before EOF' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "delta": "Narration.
 
@@ -9441,6 +11310,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'narration
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'repeated message' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "Narration.",
     "type": "final_text",
   },
@@ -9454,12 +11329,21 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'repeated 
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'tool without result' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "id": "tool-1",
     "input": {
       "path": "README.md",
     },
     "name": "Read",
     "type": "tool_use",
+  },
+  {
+    "id": "tool-1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "terminationReason": "normal",
@@ -9480,7 +11364,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'empty answ
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'error after text' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Narration.
@@ -9499,11 +11383,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'error afte
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'interrupted after text' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "delta": "Narration.",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -9515,7 +11400,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'interrupte
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'late text and repeated terminal' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Narration.",
@@ -9531,7 +11416,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'late text 
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'narration only before EOF' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Narration.",
@@ -9547,10 +11432,10 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'narration 
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'repeated message' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Narration.Narration.",
@@ -9566,7 +11451,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'repeated m
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'tool without result' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Narration.
@@ -9581,6 +11466,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'tool witho
     },
     "name": "read",
     "type": "tool_use",
+  },
+  {
+    "id": "tool-1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "terminationReason": "normal",
@@ -9601,7 +11492,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'empty answe
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'error after text' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Narration.
@@ -9620,11 +11511,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'error after
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'interrupted after text' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "delta": "Narration.",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -9636,7 +11528,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'interrupted
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'late text and repeated terminal' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Narration.",
@@ -9652,7 +11544,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'late text a
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'narration only before EOF' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Narration.
@@ -9671,10 +11563,10 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'narration o
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'repeated message' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "content": "Narration.Narration.",
@@ -9690,7 +11582,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'repeated me
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'tool without result' 1`] = `
 [
   {
-    "type": "system",
+    "type": "liveness",
   },
   {
     "delta": "Narration.
@@ -9711,6 +11603,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'tool withou
     "type": "final_text",
   },
   {
+    "id": "tool-1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
+  },
+  {
     "terminationReason": "normal",
     "type": "done",
   },
@@ -9729,6 +11627,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'empty answe
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'error after text' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "Narration.
 
 ",
@@ -9745,8 +11646,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'error after
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'interrupted after text' 1`] = `
 [
   {
-    "content": "Narration.",
-    "type": "final_text",
+    "type": "liveness",
+  },
+  {
+    "delta": "Narration.",
+    "heldBack": true,
+    "type": "text",
   },
   {
     "terminationReason": "interrupted",
@@ -9757,6 +11662,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'interrupted
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'late text and repeated terminal' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "content": "Narration.",
     "type": "final_text",
@@ -9770,6 +11678,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'late text a
 
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'narration only before EOF' 1`] = `
 [
+  {
+    "type": "liveness",
+  },
   {
     "delta": "Narration.
 
@@ -9787,6 +11698,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'narration o
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'repeated message' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
+    "type": "liveness",
+  },
+  {
     "content": "Narration.",
     "type": "final_text",
   },
@@ -9800,6 +11717,9 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'repeated me
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'tool without result' 1`] = `
 [
   {
+    "type": "liveness",
+  },
+  {
     "delta": "Narration.
 
 ",
@@ -9812,6 +11732,12 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'tool withou
     },
     "name": "Read",
     "type": "tool_use",
+  },
+  {
+    "id": "tool-1",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
   },
   {
     "terminationReason": "normal",

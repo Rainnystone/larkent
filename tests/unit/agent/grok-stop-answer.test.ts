@@ -83,9 +83,10 @@ describe('buffered answers after stop', () => {
       rawInput: { path: 'a.ts' },
     });
     const events = translator.finish('interrupted');
-    expect(events.find((event) => event.type === 'final_text')).toEqual({
-      type: 'final_text',
-      content: 'checking the file',
+    expect(events.find((event) => event.type === 'text')).toEqual({
+      type: 'text',
+      delta: 'checking the file',
+      heldBack: true,
     });
     const card = JSON.stringify(renderCard(cardAfterStop(events, { type: 'user-stop' })));
     expect(card).toContain('checking the file');

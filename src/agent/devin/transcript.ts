@@ -1,25 +1,23 @@
 import type { AgentEvent } from '../types';
+import { FinalAnswerCore } from '../final-answer/core';
+import { record, isRecord } from '../final-answer/values';
 type Tool = { name: string; input?: unknown; output?: unknown; content?: unknown; used: boolean; finished: boolean };
 
 /** Per-prompt ACP state. History replay is deliberately excluded by the caller. */
 export class DevinTranscriptTranslator {
-  private pending = '';
-  private messageId: unknown;
-  private terminal = false;
+  // D03a: transcripts/devin/narration-tool-answer.jsonl: message chunks surround tool updates.
+  private readonly core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'progress', separator: 'line' });
   private readonly tools = new Map<string, Tool>();
 
   translate(value: unknown, replay = false): AgentEvent[] {
-    if (replay || this.terminal) return [];
+    if (replay || this.core.terminalEmitted()) return [];
     const u = record(value);
     switch (u.sessionUpdate) {
       case 'agent_message_chunk': {
         const content = record(u.content);
         if (content.type !== 'text' || typeof content.text !== 'string') return [];
         const id = record(u._meta)['cognition.ai/messageId'] ?? u.messageId;
-        const events = id !== undefined && this.messageId !== undefined && id !== this.messageId ? this.flush() : [];
-        if (id !== undefined) this.messageId = id;
-        this.pending += content.text;
-        return [...events, { type: 'system' }];
+        return this.core.accept({ type: 'answer', text: content.text, messageId: id });
       }
       case 'agent_thought_chunk': {
         const c = record(u.content);
@@ -34,24 +32,18 @@ export class DevinTranscriptTranslator {
   }
 
   finish(reason = 'end_turn'): AgentEvent[] {
-    if (this.terminal) return [];
+    if (this.core.terminalEmitted()) return [];
     if (reason !== 'end_turn' && reason !== 'cancelled') return this.fail(`Devin stopped: ${reason}`);
-    this.terminal = true;
-    const events: AgentEvent[] = this.pending ? [{ type: 'final_text', content: this.pending }] : [];
-    this.pending = '';
-    events.push({ type: 'done', terminationReason: reason === 'cancelled' ? 'interrupted' : 'normal' });
-    return events;
+    return this.core.accept({ type: 'done', terminationReason: reason === 'cancelled' ? 'interrupted' : 'normal' });
   }
 
   fail(error: unknown): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
     const message = error instanceof Error ? error.message : String(error);
-    return [...this.flush(), { type: 'error', message: message.slice(0, 4096), terminationReason: 'failed' }];
+    return this.core.accept({ type: 'error', message: message.slice(0, 4096), terminationReason: 'failed' });
   }
 
   terminalEmitted(): boolean {
-    return this.terminal;
+    return this.core.terminalEmitted();
   }
 
   private tool(u: Record<string, unknown>): AgentEvent[] {
@@ -62,8 +54,7 @@ export class DevinTranscriptTranslator {
     if (!tool) {
       tool = { name: typeof u.kind === 'string' ? u.kind : 'tool', used: false, finished: false };
       this.tools.set(id, tool);
-      events.push(...this.flush());
-      this.messageId = undefined;
+      events.push(...this.core.accept({ type: 'boundary' }));
     }
     if (tool.finished) return [];
     if (typeof u.kind === 'string') tool.name = u.kind;
@@ -82,27 +73,16 @@ export class DevinTranscriptTranslator {
       || (Array.isArray(command) && command.length > 0 && command.every(v => typeof v === 'string') && Boolean(command[0]));
     if (!tool.used && ((tool.input !== undefined && inputReady) || terminal)) {
       tool.used = true;
-      events.push({ type: 'tool_use', id, name: tool.name, input: tool.input ?? {} });
+      events.push(...this.core.accept({ type: 'tool_use', id, name: tool.name, input: tool.input ?? {} }));
     }
     if (terminal) {
       tool.finished = true;
-      events.push({ type: 'tool_result', id, output: tool.output === undefined ? toolText(tool.content) : stringify(tool.output), isError: u.status === 'failed' });
+      events.push(...this.core.accept({ type: 'tool_result', id, output: tool.output === undefined ? toolText(tool.content) : stringify(tool.output), isError: u.status === 'failed' }));
     }
-    return events;
+    return events.length ? events : [{ type: 'liveness' }];
   }
 
-  private flush(): AgentEvent[] {
-    const text = this.pending;
-    this.pending = '';
-    return text ? [{ type: 'text', delta: text.endsWith('\n') ? text : `${text}\n\n` }] : [];
-  }
 }
-
-function record(value: unknown): Record<string, unknown> {
-  return isRecord(value) ? value : {};
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 
 function stringify(value: unknown): string { return typeof value === 'string' ? value : JSON.stringify(value) ?? ''; }
 

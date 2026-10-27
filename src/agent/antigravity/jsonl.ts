@@ -1,4 +1,6 @@
 import type { AgentEvent } from '../types';
+import { FinalAnswerCore, type ProtocolDriftState } from '../final-answer/core';
+import { isRecord, nonEmptyString as stringValue, finiteNumber as numberValue, truncate } from '../final-answer/values';
 import { log } from '../../core/logger';
 import { scrubSystemMessageEnvelopes } from './envelopes';
 
@@ -6,11 +8,6 @@ export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'tim
 
 const PRINT_TIMEOUT_HINT =
   'Antigravity print-timeout reached before a reply was produced.';
-
-export interface ProtocolDriftState {
-  unknownEvents: number;
-  anomalies: number;
-}
 
 /**
  * Translates `agy -p --output-format stream-json` NDJSON into bridge
@@ -33,20 +30,17 @@ export interface ProtocolDriftState {
  */
 export class AntigravityJsonlTranslator {
   private conversationId: string | undefined;
-  private terminal = false;
-  private pendingText = '';
+  // D03a: transcripts/antigravity/narration-tool-answer.jsonl: result.response is authoritative;
+  // Envelope scrubbing retains the existing system-message-envelope-incident.jsonl behavior (D03b).
+  private readonly core = new FinalAnswerCore({ accumulation: 'delta', preTool: 'progress', separator: 'none', clean: text => scrubFinalText(text, this.sawSystemMessageStep) });
   private systemEmitted = false;
   private sawRecognizedToolOrCheckpoint = false;
   private sawSystemMessageStep = false;
-  private drift: ProtocolDriftState = {
-    unknownEvents: 0,
-    anomalies: 0,
-  };
 
   translate(raw: unknown): AgentEvent[] {
-    if (this.terminal) return [];
+    if (this.core.terminalEmitted()) return [];
     if (!isRecord(raw) || typeof raw.event !== 'string') {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
     }
 
@@ -58,41 +52,26 @@ export class AntigravityJsonlTranslator {
       case 'result':
         return this.translateResult(raw);
       default:
-        this.drift.unknownEvents++;
-        log.warn('jsonl', 'unknown_event', { eventType: raw.event });
+        this.core.unknown(raw.event);
         return [];
     }
   }
 
   finish(reason: AntigravityFinishReason = 'failed'): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    if (reason === 'failed') {
-      return this.prependHeldBack([
-        {
-          type: 'error',
-          message: 'antigravity stream ended before a terminal event',
-          terminationReason: 'failed',
-        },
-      ]);
-    }
-    return this.prependHeldBack([this.doneEvent(reason)]);
+    return reason === 'failed' ? this.fail('antigravity stream ended before a terminal event')
+      : this.core.accept({ type: 'complete', terminal: this.doneEvent(reason), prefix: this.systemEvents(), progressOnly: true });
   }
 
   fail(message: string): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    return this.prependHeldBack([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
-    ]);
+    return this.core.accept({ type: 'complete', terminal: { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' }, prefix: this.systemEvents() });
   }
 
   protocolDrift(): ProtocolDriftState {
-    return { ...this.drift };
+    return this.core.protocolDrift();
   }
 
   terminalEmitted(): boolean {
-    return this.terminal;
+    return this.core.terminalEmitted();
   }
 
   private translateInit(raw: Record<string, unknown>): AgentEvent[] {
@@ -108,8 +87,7 @@ export class AntigravityJsonlTranslator {
     const stepType = stringValue(step.step_type);
     if (stepType === 'agent_response') {
       const delta = stringValue(step.text_delta);
-      if (delta) this.pendingText += delta;
-      return [];
+      return delta ? this.core.accept({ type: 'answer', text: delta }) : [];
     }
     if (stepType === 'system_message') {
       this.sawSystemMessageStep = true;
@@ -120,20 +98,18 @@ export class AntigravityJsonlTranslator {
     }
     if (stepType === 'tool' || stepType === 'checkpoint') {
       this.sawRecognizedToolOrCheckpoint = true;
-      return [];
+      return [{ type: 'liveness' }];
     }
     if (stepType) {
-      this.drift.unknownEvents++;
-      log.warn('jsonl', 'unknown_event', { eventType: stepType });
+      this.core.unknown(stepType);
     } else {
-      this.drift.anomalies++;
+      this.core.anomaly();
     }
     return [];
   }
 
   private translateResult(raw: Record<string, unknown>): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
+    if (this.core.terminalEmitted()) return [];
     const result = isRecord(raw.result) ? raw.result : raw;
     this.rememberConversation(result.conversation_id ?? raw.conversation_id);
     const events: AgentEvent[] = [...this.systemEvents()];
@@ -143,23 +119,11 @@ export class AntigravityJsonlTranslator {
     if (status === 'ERROR' || status === 'FAILED') {
       const message =
         stringValue(result.error) ?? stringValue(result.message) ?? 'antigravity reported an error';
-      events.push({ type: 'error', message: truncate(message, 4096), terminationReason: 'failed' });
-      return events;
+      return this.core.accept({ type: 'complete', terminal: { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' }, prefix: events });
     }
     const response = typeof result.response === 'string' ? result.response : undefined;
-    const content = response !== undefined && response.length > 0 ? response : this.pendingText;
-    this.pendingText = '';
-    const finalText = content
-      ? emitScrubbedFinalText(content, this.sawSystemMessageStep)
-      : undefined;
-    if (finalText) {
-      events.push(finalText);
-    } else {
-      const hint = this.emptySuccessHint(result);
-      if (hint) events.push({ type: 'final_text', content: hint });
-    }
-    events.push(this.doneEvent('normal'));
-    return events;
+    return this.core.accept({ type: 'complete', terminal: this.doneEvent('normal'),
+      prefix: events, ...(response ? { content: response } : {}), emptyHint: this.emptySuccessHint(result) });
   }
 
   private emptySuccessHint(result: Record<string, unknown>): string | undefined {
@@ -173,23 +137,13 @@ export class AntigravityJsonlTranslator {
     if (id) this.conversationId = id;
   }
 
-  private prependHeldBack(events: AgentEvent[]): AgentEvent[] {
-    const prefix: AgentEvent[] = [...this.systemEvents()];
-    if (this.pendingText) {
-      const finalText = emitScrubbedFinalText(this.pendingText, this.sawSystemMessageStep);
-      this.pendingText = '';
-      if (finalText) prefix.push(finalText);
-    }
-    return prefix.length > 0 ? [...prefix, ...events] : events;
-  }
-
   private systemEvents(): AgentEvent[] {
     if (this.systemEmitted || !this.conversationId) return [];
     this.systemEmitted = true;
     return [{ type: 'system', resumeHandle: this.conversationId }];
   }
 
-  private doneEvent(reason: 'normal' | 'interrupted' | 'timeout'): AgentEvent {
+  private doneEvent(reason: 'normal' | 'interrupted' | 'timeout'): Extract<AgentEvent, { type: 'done' }> {
     return {
       type: 'done',
       ...(this.conversationId ? { resumeHandle: this.conversationId } : {}),
@@ -227,14 +181,6 @@ function nonzero(value: number | undefined): boolean {
   return value !== undefined && value !== 0;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
-
 function officialPrintTimeoutSignal(result: Record<string, unknown>): boolean {
   return isTimeoutSignal(stringValue(result.error)) || isTimeoutSignal(stringValue(result.reason));
 }
@@ -243,18 +189,10 @@ function isTimeoutSignal(value: string | undefined): boolean {
   return value !== undefined && /timeout/i.test(value);
 }
 
-function numberValue(value: unknown): number | undefined {
-  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
-}
-
-function emitScrubbedFinalText(
+function scrubFinalText(
   content: string,
   sawSystemMessageStep: boolean,
-): AgentEvent | undefined {
+): string {
   const scrubbed = scrubSystemMessageEnvelopes(content);
   if (scrubbed.removedByFamily.system_message > 0) {
     log.info('jsonl', 'system_message_scrubbed', {
@@ -283,6 +221,5 @@ function emitScrubbedFinalText(
   for (const reason of scrubbed.taskNotificationRetainedReasons) {
     log.info('jsonl', 'task_notification_tag_retained', { reason });
   }
-  if (!scrubbed.text) return undefined;
-  return { type: 'final_text', content: scrubbed.text };
+  return scrubbed.text;
 }
