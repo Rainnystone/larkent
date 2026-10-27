@@ -106,7 +106,7 @@ it('delivers the same captured answer as an automation result with its own prese
       formatPost: (body, followUp) => `${body}${followUp ? '\n\nfollow up' : ''}`,
     },
   });
-  expect(result.ok && result.replyOk).toBe(true);
+  expect(result.ok && result.handle.outcome?.kind).toBe('completed');
   expect(h.channel.sent.map(row => row.content)).toEqual([{ markdown: 'TRANSCRIPT-OK\n\nfollow up' }]);
   expect(h.journal.get('turn')?.outcome?.kind).toBe('completed');
 });
@@ -146,6 +146,17 @@ it('uses the settled outage overlap for the automation state, result and journal
   expect(result.ok && result.state.terminal).toBe('error');
   expect(h.journal.get('turn')?.outcome).toEqual(result.ok && result.handle.outcome);
   expect(h.channel.sent.map(row => row.content)).toEqual([{ markdown: 'failed: 上游网络中断' }]);
+});
+
+it('reports an automation result before a rejected delivery can fail the caller', async () => {
+  const h = await fixture();
+  h.channel.sendErrors.send = { code: 230002, response: { status: 400, data: { code: 230002 } } };
+  let resultStatus = 'failed';
+  await expect(executeTurn({ run: h.run, delivery: { ...automationDelivery(h),
+    onResult: (ok: boolean) => { resultStatus = ok ? 'ok' : 'failed'; },
+  } })).rejects.toMatchObject({ code: 230002 });
+  expect(resultStatus).toBe('ok');
+  expect(h.journal.get('turn')?.outcome?.kind).toBe('completed');
 });
 
 it('stops a silent chat on its idle bound and delivers its continuation notice', async () => {

@@ -57,6 +57,8 @@ export interface AutomationTurnDelivery extends TurnTarget {
   failureBody(outcome: RunOutcome): string;
   formatPost(body: string, followUp: boolean): string;
   onSettled?: (outcome: RunOutcome) => void | Promise<void>;
+  /** Execution status precedes delivery; a failed send must not undo a successful task. */
+  onResult?: (ok: boolean) => void;
 }
 
 export interface TurnInput {
@@ -71,8 +73,6 @@ export type TurnResult = Exclude<StartRunFlowResult, { ok: true }> | {
   ok: true;
   state: RunState;
   handle: RunHandle;
-  /** A normal result (or CLI-owned send), including a partial answer; delivery may be staged. */
-  replyOk: boolean;
 };
 
 /** A launch error is distinct from event consumption or child settlement failure. */
@@ -124,7 +124,7 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
   delivery.activePolicyFingerprints?.set(run.scopeId, flow.policy.policyFingerprint);
   try {
     const state = await deliverChatTurn(input, flow, delivery, recordSession);
-    return { ok: true, state, handle: flow.execution.handle, replyOk: true };
+    return { ok: true, state, handle: flow.execution.handle };
   } finally {
     delivery.activePolicyFingerprints?.delete(run.scopeId);
   }
@@ -152,7 +152,8 @@ async function deliverAutomationTurn(
       await journal.flush();
     }
     log.info('outbound', 'skip-cli-already-sent', { scope, chatId, mode: 'text' });
-    return { ok: true, state, handle: flow.execution.handle, replyOk: true };
+    delivery.onResult?.(true);
+    return { ok: true, state, handle: flow.execution.handle };
   }
   let body: string;
   let followUp = false;
@@ -168,10 +169,11 @@ async function deliverAutomationTurn(
       followUp = true;
     }
   }
+  delivery.onResult?.(followUp);
   if (journal && turnId) await delivery.outbox.deliverAutomation({
     kind: 'result', turnId, chatId, scope, actor: delivery.actor, markdown: delivery.formatPost(body, followUp),
   });
-  return { ok: true, state, handle: flow.execution.handle, replyOk: followUp };
+  return { ok: true, state, handle: flow.execution.handle };
 }
 
 async function deliverChatTurn(

@@ -279,6 +279,7 @@ async function runAutomationAgentFireBody(
         return { type: 'policy-guard', code: hit.reason };
       },
       delivery: {
+        onResult: ok => { if (ok) setStatus('ok'); },
         onSettled: async outcome => {
           if (policyGuard && runtime.automations) await applyPolicyGuard(runtime, fire, policyGuard);
           log.info('auto', 'result', { id: fire.id, fireAt: fire.fireAt, outcome: formatRunOutcome(outcome) });
@@ -320,7 +321,6 @@ async function runAutomationAgentFireBody(
     return;
   }
 
-  if (flow.replyOk) setStatus('ok');
 }
 
 async function persistFireStatus(
