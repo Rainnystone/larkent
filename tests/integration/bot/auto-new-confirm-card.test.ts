@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { access, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -59,7 +60,7 @@ describe('/auto new confirm card', () => {
     expect(card).toContain('提醒交周报');
     const updatesBefore = h.channel.updatedCards.length;
     const confirmed = await h.channel.handlers.cardAction?.(
-      cardClick(MATE, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!),
+      cardClick(MATE, confirmToken(card), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!),
     );
     expect(confirmed).toEqual({ toast: { type: 'success', content: '已确认 #1' } });
     expect(h.channel.updatedCards).toHaveLength(updatesBefore);
@@ -91,7 +92,7 @@ describe('/auto new confirm card', () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const token = confirmToken(confirmCard(h));
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
 
     const forged = await h.channel.handlers.cardAction?.(cardClick(USER, 'forged-token', messageId));
     expect(forged).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
@@ -109,7 +110,7 @@ describe('/auto new confirm card', () => {
 
     await h.channel.handlers.message?.(mention('om_stale', '/auto new in 20m | 过期 | 过期任务'));
     const staleToken = confirmToken(confirmCard(h));
-    const staleId = h.store.listDrafts()[0]!.cardMessageId!;
+    const staleId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     h.setNow(NOW + 24 * 60 * 60 * 1000 + 1);
     const stale = await h.channel.handlers.cardAction?.(cardClick(USER, staleToken, staleId));
     expect(stale).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
@@ -120,7 +121,7 @@ describe('/auto new confirm card', () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const token = confirmToken(confirmCard(h));
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     const mismatch = await h.channel.handlers.cardAction?.(cardClick(USER, token, messageId, 'auto.reject'));
     expect(mismatch).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     const legacy = await h.channel.handlers.cardAction?.(cardClick(USER, token.replace('.v2.', '.v1.'), messageId));
@@ -139,7 +140,7 @@ describe('/auto new confirm card', () => {
     expect(card).not.toContain('仅 bot 身份');
     expect(card).toContain('已快照工作目录');
     await h.channel.handlers.cardAction?.(
-      cardClick(MATE, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!),
+      cardClick(MATE, confirmToken(card), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!),
     );
     expect(h.store.list()[0]).toMatchObject({
       taskType: 'agent',
@@ -155,7 +156,7 @@ describe('/auto new confirm card', () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const token = confirmToken(confirmCard(h));
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     const botTap = await h.channel.handlers.cardAction?.(cardClick('ou_bot', token, messageId));
     expect(botTap).toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
     expect(h.store.list()).toEqual([]);
@@ -170,7 +171,7 @@ describe('/auto new confirm card', () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const card = confirmCard(h);
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     const updatesBefore = h.channel.updatedCards.length;
     const rejected = await h.channel.handlers.cardAction?.(cardClick(MATE, rejectToken(card), messageId, 'auto.reject'));
     expect(rejected).toEqual({ toast: { type: 'success', content: '已取消' } });
@@ -205,7 +206,7 @@ describe('/auto new confirm card', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const card = confirmCard(h);
     const token = confirmToken(card);
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     h.setNow(NOW + AUTOMATIONS_DRAFT_TTL_MS + 1);
     await h.restart();
     await waitFor(() => settledCardUpdates(h).some((text) => text.includes('已过期')));
@@ -226,7 +227,7 @@ describe('/auto new confirm card', () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const token = confirmToken(confirmCard(h));
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     const [first, second] = await Promise.all([
       h.channel.handlers.cardAction?.(cardClick(USER, token, messageId)),
       h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId)),
@@ -286,7 +287,7 @@ describe('/auto new confirm card', () => {
     const fires: Array<{ id: number; fireAt: number }> = [];
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     await h.channel.handlers.cardAction?.(
-      cardClick(MATE, confirmToken(confirmCard(h)), h.store.listDrafts()[0]!.cardMessageId!),
+      cardClick(MATE, confirmToken(confirmCard(h)), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!),
     );
     const item = h.store.list()[0]!;
     expect(item.nextFireAt).toBe(FIRE_AT);

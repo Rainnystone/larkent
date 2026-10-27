@@ -1,4 +1,4 @@
-import { flushPendingDraftCards } from '../automations/draft-confirmation';
+import { flushDraftConfirmations, expireDraftConfirmations } from '../automations/draft-confirmation';
 import { bridgeToolInstructions } from '../bridge-tools/prompt';
 import type {
   LarkChannel,
@@ -138,9 +138,6 @@ import {
   automationScopeForReply,
 } from '../automations/agent-run';
 import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
-import {
-} from '../automations/command';
-import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
 import { stripLegacyAutomationTagsFromState } from '../card/legacy-automation-tags';
 import {
@@ -849,7 +846,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         });
         return Promise.resolve();
       },
-      onExpireDrafts: () => expireDueDraftCards({ store: automations, channel }),
+      onExpireDrafts: () => expireDraftConfirmations({ store: automations, channel }),
       wakeDir: deps.appPaths?.automationsWakeDir
         ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
       statusPush: {
@@ -872,7 +869,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       void trackConsumer((async () => {
         await automationsScheduler?.onLinkRecovered();
         if (deps.automations && autoAuth) {
-          await flushPendingDraftCards({
+          await flushDraftConfirmations({
             channel,
             automations: deps.automations,
             botAppId: controls.profileConfig.accounts.app.id,

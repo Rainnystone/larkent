@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
@@ -96,7 +97,7 @@ describe('suspend amendment after an early wake frame', () => {
       expect(recovered[0]!.hostSuspended).toBe(false);
       await until(() => confirmCreates === 1 || h.channel.sent.length > 0);
       if (confirmCreates !== 1) {
-        throw new Error(`flush missed creates=${confirmCreates} sent=${h.channel.sent.length} drafts=${h.store.listDrafts().length} card=${h.store.listDrafts()[0]?.cardMessageId ?? 'none'}`);
+        throw new Error(`flush missed creates=${confirmCreates} sent=${h.channel.sent.length} drafts=${h.store.listDrafts().length} card=${draftConfirmationDelivery(h.store.listDrafts()[0]).messageId ?? 'none'}`);
       }
 
       const gapTick = h.bridge.tickLink();
@@ -108,7 +109,7 @@ describe('suspend amendment after an early wake frame', () => {
       expect(recovered).toHaveLength(1);
       expect(confirmCreates).toBe(1);
       releaseCreate();
-      await until(() => Boolean(h.store.listDrafts()[0]?.cardMessageId));
+      await until(() => Boolean(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId));
       expect(confirmCards(h.channel)).toHaveLength(1);
       expect(confirmCreates).toBe(1);
     } finally {

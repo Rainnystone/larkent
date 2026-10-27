@@ -3,7 +3,7 @@ import { toolResult, type ToolResult } from '../bridge-tools/protocol';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { AUTOMATION_OPERATION_TTL_MS, readAutomationOperationId } from './operation-id';
 import { validateAutomationOperationId, getAutomationOperation, unknownAutomationOperation } from './operation';
-import { flushDraftCardOnce } from './draft-confirmation';
+import { submitDraft } from './draft-confirmation';
 import { automationTargetSnapshot } from './confirm-card';
 import { automationTargetRevision, taskMutationError } from './store';
 import { normalizeAutomationSchedule } from './schedule-input';
@@ -61,16 +61,14 @@ export async function manageAutomationOperation(operation: string, params: Recor
         if (!workspace.ok) return toolResult('unavailable', 'agent-cwd-unavailable', { operationId, reason: workspace.reason });
       }
       if (!replacement.pendingRecurring && !replacement.nextFireAt) return toolResult('validation-failed', 'no-remaining-fires', { operationId });
-      const draft = await context.store!.saveDraft({ ...replacement, op: 'replace', operationId, cardReply: context.cardReply,
+      const draft = await submitDraft(context.drafts!, { ...replacement, op: 'replace', operationId, cardReply: context.cardReply,
         targetId: item.id, target: automationTargetSnapshot(item) }, registration);
-      await flushDraftCardOnce(context.drafts, draft.draftId, (context.now ?? Date.now)());
       return getAutomationOperation(operationId, context);
     }
     if (operation === 'automation.delete') {
       if (!context.drafts?.autoAuth) return toolResult('unavailable', 'automation-confirmation-unavailable');
-      const draft = await context.store!.saveDraft({ op: 'delete', operationId, cardReply: context.cardReply, chatId: context.chatId, createdBy: context.actorId,
+      const draft = await submitDraft(context.drafts!, { op: 'delete', operationId, cardReply: context.cardReply, chatId: context.chatId, createdBy: context.actorId,
         targetId: item.id, target: automationTargetSnapshot(item) }, registration);
-      await flushDraftCardOnce(context.drafts, draft.draftId, (context.now ?? Date.now)());
       return getAutomationOperation(operationId, context);
     }
     const result = await mutateAutomationTask({ store: context.store!, scheduler, chatId: context.chatId, now: context.now },

@@ -1,4 +1,4 @@
-import type { DraftCardItem } from '../bot/outbox-draft-item';
+import { cloneDraft, hasDraftCard, matchesDraftCard, draftReceipt, invalidateDraftCard, patchDraftCard, resetsDraftCard, parseCardState, migrateDraftCards, getDraftDelivery, associateDraftDelivery, viewDraft, bindDraftReceipt, serializeDraft, draftHasUnknownDelivery } from './draft-confirmation/state';
 import { dirname, join } from 'node:path';
 import { TurnJournal } from '../bot/turn-journal';
 import type { Outbox } from '../bot/outbox';
@@ -7,8 +7,6 @@ import { automationOperationScope, readAutomationOperationId } from './operation
 import { createHash, randomBytes } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import {
-  cloneDraftCardBody,
-  parseDraftCardBody,
   type DraftCardBody,
 } from './card-body';
 import type { PolicyGuardReason } from './policy-guard';
@@ -100,6 +98,7 @@ export class DraftSupersessionConflict extends Error {
 }
 
 export interface TaskMutationGuard {
+  confirmedDraftId?: string;
   chatId: string;
   revision?: string;
   operationId?: string;
@@ -130,6 +129,8 @@ export interface DraftCardReply {
   threadId?: string;
 }
 export interface CreateAutomationInput {
+  /** Close this confirmation in the same durable write as its task mutation. */
+  confirmedDraftId?: string;
   cardReply?: DraftCardReply;
   operationId?: string;
   taskType: AutomationTaskType;
@@ -149,17 +150,10 @@ export interface CreateAutomationInput {
 export interface AutomationDraftBase {
   draftId: string;
   operationId?: string;
-  delivery?: DraftDelivery;
-  deliveryId?: string;
   cardReply?: DraftCardReply;
   createdAt: number;
   chatId: string;
   createdBy: string;
-  cardMessageId?: string;
-  cardId?: string;
-  sequence?: number;
-  /** Rendered body captured when the card was registered. Settle reuses it. */
-  cardBody?: DraftCardBody;
 }
 
 /** Frozen when confirmation is requested so a later delete still leaves the card body intact. */
@@ -219,10 +213,6 @@ export interface UpdateDraftPatch {
   endAt?: number;
   nextFireAt?: number;
   pendingRecurring?: PendingRecurring | null;
-  /** `null` drops the bound card so recovery can send a replacement. */
-  cardMessageId?: string | null;
-  cardId?: string;
-  sequence?: number;
 }
 
 export interface AutomationsLogEntry {
@@ -419,7 +409,7 @@ export class AutomationsStore {
     this.assertMutable();
     const old = this.items.find(item => item.id === draft.targetId && item.chatId === draft.chatId);
     if (taskMutationError(old, { chatId: draft.chatId, revision: draft.target.revision })) return undefined;
-    const created = this.insertItem({ ...input, ...(draft.operationId ? { operationId: draft.operationId } : {}) });
+    const created = this.insertItem({ ...input, confirmedDraftId: draft.draftId, ...(draft.operationId ? { operationId: draft.operationId } : {}) });
     this.items = this.items.filter(item => item.id !== draft.targetId);
     await this.persistNow();
     return created;
@@ -453,6 +443,7 @@ export class AutomationsStore {
       missedInstants: [],
       skippedInstants: [],
     };
+    if (input.confirmedDraftId) this.drafts = this.drafts.filter(draft => draft.draftId !== input.confirmedDraftId);
     if (input.operationId) this.settleAppliedOperation(input.operationId, item.id, 0);
     this.items.push(item);
     return cloneItem(item);
@@ -668,29 +659,19 @@ export class AutomationsStore {
   }
 
   private draftDelivery(draft: AutomationDraft): DraftDelivery | undefined {
-    const item = draft.deliveryId ? this.outboxJournal.getDraftCard(draft.deliveryId) : undefined;
-    if (!item || item.state === 'voided') return undefined;
-    return { state: item.state === 'staged' ? (item.cardId ? 'sending' : 'prepared') : item.state,
-      deliveryId: item.deliveryId, card: item.payload.card, ...(item.cardId ? { cardId: item.cardId } : {}) };
+    return getDraftDelivery(draft, this.outboxJournal);
   }
 
   async setDraftDeliveryId(draftId: string, deliveryId: string): Promise<void> {
     this.assertMutable();
     const draft = this.drafts.find(entry => entry.draftId === draftId);
     const item = this.outboxJournal.getDraftCard(deliveryId);
-    if (!draft || item?.payload.draftId !== draftId) throw new Error('Draft Outbox association unavailable');
-    if (draft.deliveryId && draft.deliveryId !== deliveryId) throw new Error('Draft Outbox association conflict');
-    draft.deliveryId = deliveryId;
-    const cardReply = draftCardReply(item);
-    if (cardReply) draft.cardReply = cardReply;
+    associateDraftDelivery(draft, item, deliveryId);
     await this.persistNow();
   }
 
   private draftView(draft: AutomationDraft): AutomationDraft {
-    const view = cloneDraft(draft);
-    const delivery = this.draftDelivery(draft);
-    if (delivery) view.delivery = delivery;
-    return view;
+    return viewDraft(draft, this.outboxJournal);
   }
 
   listDrafts(): AutomationDraft[] {
@@ -706,8 +687,14 @@ export class AutomationsStore {
 
   findDraftByCardMessageId(cardMessageId: string): AutomationDraft | undefined {
     this.pruneDrafts();
-    const draft = this.drafts.find((entry) => entry.cardMessageId === cardMessageId);
+    const draft = this.drafts.find((entry) => matchesDraftCard(entry, cardMessageId));
     return draft ? this.draftView(draft) : undefined;
+  }
+
+  /** Outbox receipt port; the confirmation module owns its representation. */
+  getDraftCardReceipt(draftId: string) {
+    const draft = this.getDraft(draftId);
+    return draft ? draftReceipt(draft) : undefined;
   }
 
   async bindDraftCard(
@@ -720,18 +707,7 @@ export class AutomationsStore {
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.draftId === draftId);
     if (!draft) return false;
-    if (draft.deliveryId && draft.cardMessageId && draft.cardMessageId !== cardMessageId) return false;
-    if (draft.cardMessageId === cardMessageId && draft.cardId === cardId && draft.cardBody) return true;
-    draft.cardMessageId = cardMessageId;
-    if (cardId) draft.cardId = cardId;
-    else delete draft.cardId;
-    delete draft.sequence;
-    if (draft.deliveryId) {
-      this.outboxJournal.updateDraftCard(draft.deliveryId, { receipt: { messageId: cardMessageId, ...(cardId ? { cardId } : {}) } });
-      await this.outboxJournal.flush();
-    }
-    if (cardBody) draft.cardBody = cloneDraftCardBody(cardBody);
-    else delete draft.cardBody;
+    if (!await bindDraftReceipt(draft, this.outboxJournal, cardMessageId, cardId, cardBody)) return false;
     await this.persistNow();
     return true;
   }
@@ -739,7 +715,7 @@ export class AutomationsStore {
   listExpiredDrafts(): AutomationDraft[] {
     const cutoff = this.now() - AUTOMATIONS_DRAFT_TTL_MS;
     return this.drafts
-      .filter((draft) => draft.createdAt <= cutoff && Boolean(draft.cardMessageId))
+      .filter((draft) => draft.createdAt <= cutoff && hasDraftCard(draft))
       .map((draft) => cloneDraft(draft));
   }
 
@@ -761,12 +737,7 @@ export class AutomationsStore {
     this.pruneDrafts();
     const draft = this.drafts.find((entry) => entry.draftId === draftId);
     if (!draft) return undefined;
-    if (patch.cardMessageId === null && draft.deliveryId) {
-      // Commit invalidation before mutating the draft: even another queued
-      // automations snapshot must not publish the new phase first.
-      this.outboxJournal.updateDraftCard(draft.deliveryId, { state: 'voided' });
-      await this.outboxJournal.flush();
-    }
+    if (resetsDraftCard(patch)) await invalidateDraftCard(draft, this.outboxJournal);
     if (draft.op !== 'delete') {
       if (patch.schedule !== undefined) draft.schedule = patch.schedule;
       if (patch.endAt !== undefined) draft.endAt = patch.endAt;
@@ -775,24 +746,7 @@ export class AutomationsStore {
       else if (patch.pendingRecurring !== undefined) draft.pendingRecurring = patch.pendingRecurring;
     }
     if (patch.cardReply) draft.cardReply = { ...patch.cardReply };
-    if (patch.cardMessageId === null) {
-      delete draft.deliveryId;
-      delete draft.delivery;
-      delete draft.cardMessageId;
-      delete draft.cardId;
-      delete draft.sequence;
-      delete draft.cardBody;
-    } else if (patch.cardMessageId !== undefined) {
-      draft.cardMessageId = patch.cardMessageId;
-    }
-    if (patch.cardId !== undefined) {
-      if (patch.cardId) draft.cardId = patch.cardId;
-      else delete draft.cardId;
-    }
-    if (patch.sequence !== undefined) {
-      if (typeof patch.sequence === 'number') draft.sequence = patch.sequence;
-      else delete draft.sequence;
-    }
+    patchDraftCard(draft, patch as import('./draft-confirmation/state').DraftCardPatch);
     await this.persistNow();
     return cloneDraft(draft);
   }
@@ -913,6 +867,7 @@ export class AutomationsStore {
       if (this.operations.some(entry => entry.operationId === operation.operationId || entry.aliases?.includes(operation.operationId))) throw new Error('operation already exists');
       this.operations.push({ ...operation, draftId: `operation:${operation.operationId}`, createdAt: this.now(), state: 'applied', taskId: id, dispatchedCount, ...(dispatchedCountKnown ? {} : { dispatchedCountKnown: false }) });
     }
+    if (guard?.confirmedDraftId) this.drafts = this.drafts.filter(draft => draft.draftId !== guard.confirmedDraftId);
     if (guard?.operationId) this.settleAppliedOperation(guard.operationId, id, dispatchedCount, dispatchedCountKnown);
   }
 
@@ -1023,40 +978,7 @@ export class AutomationsStore {
         return;
       }
       let { document, upgraded } = parseAutomationsDocument(text);
-      // Journal first, automations second: either crash point can repeat the
-      // transfer by deliveryId without losing or resetting an unknown send.
-      for (const draft of document.drafts) {
-        const delivery = draft.delivery;
-        if (!delivery) continue;
-        this.outboxJournal.stageDraftCard({
-          kind: 'draft-card', deliveryId: delivery.deliveryId,
-          state: delivery.state === 'prepared' || delivery.state === 'sending' ? 'staged' : delivery.state,
-          createdAt: draft.createdAt, target: { chatId: draft.chatId, ...draft.cardReply },
-          payload: { draftId: draft.draftId, card: delivery.card },
-          ...(delivery.cardId ? { cardId: delivery.cardId } : {}),
-          ...(delivery.state === 'sent' && draft.cardMessageId ? { receipt: { messageId: draft.cardMessageId, cardId: delivery.cardId } } : {}),
-        });
-        draft.deliveryId = delivery.deliveryId;
-        delete draft.delivery;
-      }
-      const stagedCards = this.outboxJournal.listDraftCards().filter(item => item.state === 'staged');
-      for (const draft of document.drafts) {
-        if (draft.deliveryId) continue;
-        const candidates = stagedCards.filter(item => item.payload.draftId === draft.draftId && item.target.chatId === draft.chatId);
-        if (candidates.length > 1) throw new Error('Invalid ambiguous automation delivery reference');
-        const item = candidates[0];
-        if (!item) continue;
-        draft.deliveryId = item.deliveryId;
-        const cardReply = draftCardReply(item);
-        if (cardReply) draft.cardReply = cardReply;
-        upgraded = true;
-      }
-      for (const draft of document.drafts) {
-        if (!draft.deliveryId) continue;
-        const item = this.outboxJournal.getDraftCard(draft.deliveryId);
-        if (!item || item.payload.draftId !== draft.draftId || item.target.chatId !== draft.chatId) throw new Error('Invalid automation delivery reference');
-      }
-      await this.outboxJournal.flush();
+      upgraded = await migrateDraftCards(document.drafts, this.outboxJournal) || upgraded;
       this.publish(document, false, true);
       if (upgraded) await this.persistNow();
       this.logEntries = await this.loadLogEntries();
@@ -1092,7 +1014,7 @@ export class AutomationsStore {
     const cutoff = this.now() - AUTOMATIONS_DRAFT_TTL_MS;
     const before = this.drafts.length;
     this.drafts = this.drafts.filter((draft) =>
-      draft.createdAt > cutoff || Boolean(draft.cardMessageId) || this.draftDelivery(draft)?.state === 'sending',
+      draft.createdAt > cutoff || hasDraftCard(draft) || this.draftDelivery(draft)?.state === 'sending',
     );
     return this.drafts.length !== before;
   }
@@ -1210,7 +1132,7 @@ export class AutomationsStore {
       schemaVersion: AUTOMATIONS_SCHEMA_VERSION,
       nextId: this.nextId,
       items: this.items.map(cloneItem),
-      drafts: this.drafts.map((draft) => { const { delivery: _delivery, ...stored } = cloneDraft(draft); return stored; }),
+      drafts: this.drafts.map(serializeDraft),
       started: [...this.started],
       boards: this.boards.map((board) => cloneBoard(board)),
       operations: this.operations.map(cloneOperation),
@@ -1311,21 +1233,7 @@ function parseOperation(raw: unknown): AutomationOperation {
   };
 }
 
-function parseDraftCardReply(raw: unknown): DraftCardReply {
-  if (!isObject(raw) || typeof raw.replyTo !== 'string' || !raw.replyTo
-    || (raw.replyInThread !== undefined && typeof raw.replyInThread !== 'boolean')
-    || (raw.threadId !== undefined && (typeof raw.threadId !== 'string' || !raw.threadId))
-    || (raw.replyInThread === true && !raw.threadId)) throw new Error('Invalid automation card reply');
-  return { replyTo: raw.replyTo, ...(raw.replyInThread === true ? { replyInThread: true } : {}), ...(raw.threadId ? { threadId: raw.threadId as string } : {}) };
-}
 
-function parseDraftDelivery(raw: unknown): DraftDelivery {
-  if (!isObject(raw) || typeof raw.state !== 'string' || !['prepared', 'sending', 'sent', 'rejected'].includes(raw.state)
-    || typeof raw.deliveryId !== 'string' || !/^[a-f0-9]{32}$/.test(raw.deliveryId) || !isObject(raw.card)
-    || (raw.cardId !== undefined && (typeof raw.cardId !== 'string' || !raw.cardId))
-    || ((raw.state === 'sending' || raw.state === 'sent') && !raw.cardId)) throw new Error('Invalid automation draft delivery');
-  return { state: raw.state as DraftDelivery['state'], deliveryId: raw.deliveryId, card: structuredClone(raw.card), ...(raw.cardId ? { cardId: raw.cardId as string } : {}) };
-}
 
 function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
   if (!isObject(raw)) return undefined;
@@ -1546,22 +1454,9 @@ function parseDraft(raw: unknown): AutomationDraft | undefined {
   if (typeof raw.draftId !== 'string' || !raw.draftId) return undefined;
   if (!isFiniteNumber(raw.createdAt)) return undefined;
   if (typeof raw.chatId !== 'string' || typeof raw.createdBy !== 'string') return undefined;
-  if (raw.deliveryId !== undefined && (typeof raw.deliveryId !== 'string' || !/^[a-f0-9]{32}$/.test(raw.deliveryId))) throw new Error('Invalid automation delivery reference');
   const op = raw.op;
   if (op !== undefined && op !== 'create' && op !== 'delete' && op !== 'replace') return undefined;
-  const card = {
-    ...(typeof raw.operationId === 'string' ? { operationId: raw.operationId } : {}),
-    ...(typeof raw.deliveryId === 'string' && raw.deliveryId ? { deliveryId: raw.deliveryId } : {}),
-    ...(raw.cardReply !== undefined ? { cardReply: parseDraftCardReply(raw.cardReply) } : {}),
-    ...(raw.delivery !== undefined ? { delivery: parseDraftDelivery(raw.delivery) } : {}),
-    ...(typeof raw.cardMessageId === 'string' && raw.cardMessageId ? { cardMessageId: raw.cardMessageId } : {}),
-    ...(typeof raw.cardId === 'string' && raw.cardId ? { cardId: raw.cardId } : {}),
-    ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
-    ...parsedCardBody(raw.cardBody),
-  };
-  if (raw.delivery !== undefined && (typeof raw.operationId !== 'string' || !raw.operationId)) throw new Error('Invalid automation delivery association');
-  if (card.delivery?.state === 'sent' && (!card.cardMessageId || card.cardId !== card.delivery.cardId)) throw new Error('Invalid automation delivery receipt');
-  if (card.delivery && card.delivery.state !== 'sent' && card.cardMessageId) throw new Error('Invalid automation delivery state');
+  const card = parseCardState(raw);
   if (op === 'delete') {
     const target = parseTargetSnapshot(raw.target);
     if (!isPositiveInt(raw.targetId) || !target || target.id !== raw.targetId) return undefined;
@@ -1657,7 +1552,7 @@ function canCloseCreateDraft(
   return Boolean(prior && prior.state === 'received' && prior.profile === operation.profile && prior.chatId === operation.chatId
     && oldDraft && oldDraft.op === 'create' && draft.op === 'create' && oldDraft.createdBy === draft.createdBy
     && oldDraft.chatId === draft.chatId && oldDraft.createdAt + AUTOMATIONS_DRAFT_TTL_MS > createdAt
-    && oldDraft.delivery?.state !== 'sending');
+    && !draftHasUnknownDelivery(oldDraft));
 }
 
 function draftFromInput(input: SaveAutomationDraftInput, draftId: string, createdAt: number): AutomationDraft {
@@ -1670,27 +1565,7 @@ function draftFromInput(input: SaveAutomationDraftInput, draftId: string, create
   return { ...input, op: 'create', draftId, createdAt };
 }
 
-function parsedCardBody(raw: unknown): { cardBody: DraftCardBody } | undefined {
-  const cardBody = parseDraftCardBody(raw);
-  return cardBody ? { cardBody } : undefined;
-}
 
-function cloneDraft(draft: AutomationDraft): AutomationDraft {
-  draft = { ...draft, ...(draft.cardReply ? { cardReply: { ...draft.cardReply } } : {}), ...(draft.delivery ? { delivery: structuredClone(draft.delivery) } : {}) };
-  const cardBody = draft.cardBody ? { cardBody: cloneDraftCardBody(draft.cardBody) } : {};
-  switch (draft.op) {
-    case 'delete':
-      return { ...draft, target: { ...draft.target }, ...cardBody };
-    case 'replace':
-      return { ...draft, target: { ...draft.target }, ...cardBody };
-    case 'create':
-      return { ...draft, ...cardBody };
-    default: {
-      const _exhaustive: never = draft;
-      return _exhaustive;
-    }
-  }
-}
 
 function isPendingRecurring(value: unknown): value is PendingRecurring {
   if (!isObject(value)) return false;
@@ -1798,12 +1673,4 @@ function parsePolicyGuardReason(value: unknown): AutomationPolicyGuardReason | u
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function draftCardReply(item: DraftCardItem): DraftCardReply | undefined {
-  const target = item.target;
-  return target.replyTo ? { replyTo: target.replyTo,
-    ...(target.replyInThread ? { replyInThread: true } : {}),
-    ...(target.threadId ? { threadId: target.threadId } : {}),
-  } : undefined;
 }

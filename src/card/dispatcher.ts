@@ -1,4 +1,4 @@
-import { completeDraftEnd, confirmAutomationDraft, resolveEndAt } from '../automations/draft-confirmation';
+import { handleDraftAction } from '../automations/draft-confirmation';
 import type {
   CardActionEvent,
   CardActionResponse,
@@ -13,29 +13,18 @@ import type { PendingQueue } from '../bot/pending-queue';
 import type { ProcessPool } from '../bot/process-pool';
 import {
   isAutoCardAction,
-  isAutoEndAction,
   type AutoActionAuth,
   type AutoCardAction,
 } from '../automations/action-auth';
 import type { BoardActionAuth, BoardCardAction } from '../automations/board-auth';
 import {
-  AUTO_END_BUSY,
-  AUTO_INVALID_END,
   AUTO_BOARD_UPDATED_HINT,
   AUTO_INVALID_HINT,
   AUTO_UNKNOWN_ID,
 } from '../automations/command';
-import { cloneDraftCardBody } from '../automations/card-body';
-import {
-  DRAFT_SETTLED_CANCELLED,
-  DRAFT_SETTLED_END_CHOSEN,
-  type DraftCardRef,
-  scheduleDraftCardSettle,
-} from '../automations/draft-card';
 import { mutateAutomationTask, taskMutationLabels } from '../automations/task-mutation';
 import type { AutomationScheduler } from '../automations/scheduler';
 import {
-  AUTOMATIONS_DRAFT_TTL_MS,
   type AutomationItem,
   type AutomationsStore,
 } from '../automations/store';
@@ -414,111 +403,15 @@ async function dispatchAutoAction(
   if (botOpenId && deps.evt.operator.openId === botOpenId) {
     return actionToast('error', AUTO_INVALID_HINT);
   }
-  const token = typeof payload.auto_token === 'string' ? payload.auto_token : '';
-  if (!deps.autoAuth || !deps.automations || !token) {
-    log.info('cardAction', 'skip-auto-auth-missing', { cmd });
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
-  const registered = deps.automations.findDraftByCardMessageId(deps.evt.messageId);
-  if (!registered) {
-    log.info('cardAction', 'skip-auto-unregistered', { cmd, messageId: deps.evt.messageId });
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
-  if (!deps.controls.profileConfig.automations.enabled) {
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
-  const verified = deps.autoAuth.verify(token, {
-    chatId: deps.evt.chatId, draftId: registered.draftId, action: cmd,
+  if (!deps.controls.profileConfig.automations.enabled) return actionToast('error', AUTO_INVALID_HINT);
+  const result = await handleDraftAction(deps, {
+    action: cmd,
+    token: typeof payload.auto_token === 'string' ? payload.auto_token : '',
+    chatId: deps.evt.chatId,
+    messageId: deps.evt.messageId,
+    customText: readEndInput(payload, formValue),
   });
-  if (!verified.ok || verified.payload.action !== cmd) {
-    log.info('cardAction', 'skip-auto-auth-failed', {
-      cmd,
-      reason: verified.ok ? 'action-mismatch' : verified.reason,
-    });
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
-  const now = (deps.now ?? Date.now)();
-  if (registered.createdAt + AUTOMATIONS_DRAFT_TTL_MS <= now) {
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
-  if (!isAutoEndAction(cmd) && !registered.operationId && !deps.autoAuth.consume(verified.payload.nonce)) {
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
-  if (isAutoEndAction(cmd)) {
-    if (registered.op === 'delete') return actionToast('error', AUTO_INVALID_HINT);
-    const snapshot = draftCardRef(registered);
-    const nonce = verified.payload.nonce;
-    if (!deps.autoAuth.claimNonce(nonce)) {
-      return actionToast('error', AUTO_END_BUSY);
-    }
-    let failure: string | undefined;
-    try {
-      const customText = readEndInput(payload, formValue);
-      const endAt = resolveEndAt(cmd, {
-        timezone: registered.timezone,
-        now,
-        startAt: registered.startAt,
-        ...(customText ? { customText } : {}),
-      });
-      if (endAt === undefined) {
-        failure = AUTO_INVALID_END;
-      } else {
-        const result = await completeDraftEnd({
-          automations: deps.automations,
-          autoAuth: deps.autoAuth,
-          automationsScheduler: deps.automationsScheduler,
-          channel: deps.channel,
-          now: deps.now,
-        }, registered, endAt, deps.evt.messageId);
-        if (!result.ok) failure = result.message;
-        else if (!deps.autoAuth.consume(nonce)) failure = AUTO_INVALID_HINT;
-      }
-    } finally {
-      deps.autoAuth.releaseNonce(nonce);
-    }
-    if (failure) return actionToast('error', failure);
-    scheduleDraftCardSettle(deps.channel, snapshot, DRAFT_SETTLED_END_CHOSEN, deps.automations);
-    return actionToast('success', DRAFT_SETTLED_END_CHOSEN);
-  }
-
-  if (registered.operationId && cmd === 'auto.confirm') {
-    if (!deps.autoAuth.claimNonce(verified.payload.nonce)) return actionToast('error', AUTO_INVALID_HINT);
-    try {
-      const result = await confirmAutomationDraft({ automations: deps.automations, automationsScheduler: deps.automationsScheduler, onAutomationConfirmed: deps.onAutomationConfirmed, now: deps.now }, registered);
-      if (result.ok) deps.autoAuth.consume(verified.payload.nonce);
-      scheduleDraftCardSettle(deps.channel, registered, result.status, deps.automations);
-      return actionToast(result.ok ? 'success' : 'error', result.toast);
-    } finally { deps.autoAuth.releaseNonce(verified.payload.nonce); }
-  }
-  const taken = await deps.automations.takeDraft(registered.draftId);
-  if (!taken) {
-    return actionToast('error', AUTO_INVALID_HINT);
-  }
-  switch (cmd) {
-    case 'auto.reject':
-      if (taken.operationId) deps.autoAuth.consume(verified.payload.nonce);
-      log.info('auto', 'rejected', {
-        draftId: taken.draftId,
-        chatId: taken.chatId,
-        source: 'confirm-card',
-      });
-      scheduleDraftCardSettle(deps.channel, taken, DRAFT_SETTLED_CANCELLED);
-      return actionToast('success', DRAFT_SETTLED_CANCELLED);
-    case 'auto.confirm': {
-      const result = await confirmAutomationDraft({
-        automations: deps.automations,
-        automationsScheduler: deps.automationsScheduler,
-        onAutomationConfirmed: deps.onAutomationConfirmed,
-        now: deps.now,
-      }, taken);
-      scheduleDraftCardSettle(deps.channel, taken, result.status, deps.automations);
-      return actionToast(result.ok ? 'success' : 'error', result.toast);
-    }
-    default: {
-      const _exhaustive: never = cmd;
-      return _exhaustive;
-    }
-  }
+  return actionToast(result.ok ? 'success' : 'error', result.message);
 }
 
 async function dispatchBoardAction(
@@ -563,16 +456,6 @@ async function dispatchBoardAction(
 
 function actionToast(type: 'success' | 'error', content: string): CardActionResponse {
   return { toast: { type, content } };
-}
-
-function draftCardRef(draft: DraftCardRef): DraftCardRef {
-  return {
-    draftId: draft.draftId,
-    ...(draft.cardMessageId ? { cardMessageId: draft.cardMessageId } : {}),
-    ...(draft.cardId ? { cardId: draft.cardId } : {}),
-    ...(draft.sequence !== undefined ? { sequence: draft.sequence } : {}),
-    ...(draft.cardBody ? { cardBody: cloneDraftCardBody(draft.cardBody) } : {}),
-  };
 }
 
 function readEndInput(

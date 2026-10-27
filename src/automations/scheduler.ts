@@ -1,3 +1,4 @@
+import { nextDraftConfirmationExpiry } from './draft-confirmation';
 import { isNotInChat } from '../bot/feishu-error';
 import { log } from '../core/logger';
 import {
@@ -11,7 +12,6 @@ import {
   type Schedule,
 } from './schedule';
 import {
-  AUTOMATIONS_DRAFT_TTL_MS,
   AUTOMATIONS_MISSED_TTL_MS,
   type AutomationItem,
   type AutomationTaskType,
@@ -707,13 +707,8 @@ class Scheduler implements AutomationScheduler {
   }
 
   private nextDraftDeadline(now: number): number | undefined {
-    let next = Number.POSITIVE_INFINITY;
-    for (const draft of this.store.listDrafts()) {
-      if (!draft.cardMessageId) continue;
-      const expiry = draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS;
-      next = Math.min(next, expiry <= now ? now + SCHEDULER_SEGMENT_MS : expiry);
-    }
-    return Number.isFinite(next) ? next : undefined;
+    const expiry = nextDraftConfirmationExpiry(this.store);
+    return expiry === undefined ? undefined : expiry <= now ? now + SCHEDULER_SEGMENT_MS : expiry;
   }
 
   private clearTimers(): void {

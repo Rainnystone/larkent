@@ -1,12 +1,13 @@
+import { cardDraft } from './state';
 import type { LarkChannel } from '@larksuite/channel';
-import { classify, isGoneMessage } from '../bot/feishu-error';
-import { updateCardByCardId } from '../card/cardkit-update';
-import { readCardApiError } from '../card/card-api-error';
-import { card2, md } from '../card/v2';
-import { log } from '../core/logger';
-import { renderSettledCard } from './card-body';
-import { monotonicCardSequence } from './card-sequence';
-import type { AutomationDraft, AutomationDraftBase, AutomationsStore } from './store';
+import { classify, isGoneMessage } from '../../bot/feishu-error';
+import { updateCardByCardId } from '../../card/cardkit-update';
+import { readCardApiError } from '../../card/card-api-error';
+import { card2, md } from '../../card/v2';
+import { log } from '../../core/logger';
+import { renderSettledCard } from '../card-body';
+import { monotonicCardSequence } from '../card-sequence';
+import type { AutomationDraft, AutomationsStore } from '../store';
 
 export const DRAFT_SETTLED_SUPERSEDED = '已被新卡取代';
 export const DRAFT_SETTLED_CANCELLED = '已取消';
@@ -47,17 +48,15 @@ export function automationSettledCard(status: string): object {
   });
 }
 
-export type DraftCardRef = Pick<AutomationDraft, 'draftId' | 'cardMessageId' | 'cardId' | 'sequence' | 'cardBody'>
-  & Partial<Pick<AutomationDraftBase, 'operationId' | 'chatId' | 'cardReply'>>
-  & { op?: AutomationDraft['op']; targetId?: number };
-
+type DraftCardRef = AutomationDraft;
 export async function settleDraftCard(
   channel: LarkChannel,
-  draft: DraftCardRef,
+  input: DraftCardRef,
   status: string,
   store?: AutomationsStore,
   now: () => number = Date.now,
 ): Promise<void> {
+  const draft = cardDraft(input);
   try {
     await updateSettledCard(channel, draft, status, store, now);
   } catch (error) {
@@ -68,19 +67,21 @@ export async function settleDraftCard(
 
 async function updateSettledCard(
   channel: LarkChannel,
-  draft: DraftCardRef,
+  input: DraftCardRef,
   status: string,
   store: AutomationsStore | undefined,
   now: () => number,
 ): Promise<void> {
+  const draft = cardDraft(input);
   if (!draft.cardMessageId) return;
   const card = draft.cardBody ? renderSettledCard(draft.cardBody, status) : automationSettledCard(status);
   if (draft.cardId) {
     const sequence = monotonicCardSequence(draft.sequence, now());
     await updateCardByCardId(channel, draft.cardId, card, sequence);
-    const live = store?.getDraft(draft.draftId);
+    const found = store?.getDraft(draft.draftId);
+    const live = found ? cardDraft(found) : undefined;
     if (store && live?.cardId === draft.cardId) {
-      await store.updateDraft(draft.draftId, { sequence });
+      await store.updateDraft(draft.draftId, { sequence } as import('../store').UpdateDraftPatch);
     }
     log.info('auto', 'draft-card-settled', { draftId: draft.draftId, status });
     return;
@@ -109,10 +110,11 @@ export async function expireDueDraftCards(input: {
 
 export function scheduleDraftCardSettle(
   channel: LarkChannel,
-  draft: DraftCardRef,
+  input: DraftCardRef,
   status: string,
   store?: AutomationsStore,
 ): void {
+  const draft = cardDraft(input);
   setImmediate(() => {
     void settleDraftCardWithRetry(channel, draft, status, store);
   });
@@ -120,10 +122,11 @@ export function scheduleDraftCardSettle(
 
 async function settleDraftCardWithRetry(
   channel: LarkChannel,
-  draft: DraftCardRef,
+  input: DraftCardRef,
   status: string,
   store: AutomationsStore | undefined,
 ): Promise<void> {
+  const draft = cardDraft(input);
   for (let attempt = 0; attempt < DRAFT_SETTLE_RETRY_ATTEMPTS; attempt += 1) {
     try {
       await updateSettledCard(channel, draft, status, store, Date.now);
@@ -141,9 +144,10 @@ async function settleDraftCardWithRetry(
 
 async function replyCardUpdateFallback(
   channel: LarkChannel,
-  draft: DraftCardRef,
+  input: DraftCardRef,
   store: AutomationsStore | undefined,
 ): Promise<void> {
+  const draft = cardDraft(input);
   if (!store || !draft.operationId || !draft.cardMessageId || !draft.chatId) return;
   try {
     const operation = store.getOperation(draft.operationId);

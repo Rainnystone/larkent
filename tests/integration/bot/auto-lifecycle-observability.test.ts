@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -199,7 +200,7 @@ describe('automation lifecycle and observability', () => {
     await h.channel.handlers.message?.(mention('om_reject', '/auto new in 15m | 交周报 | 提醒交周报'));
     const rejectCard = confirmCard(h);
     await h.channel.handlers.cardAction?.(
-      cardClick(USER, rejectToken(rejectCard), h.store.listDrafts()[0]!.cardMessageId!, CHAT, 'auto.reject'),
+      cardClick(USER, rejectToken(rejectCard), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!, CHAT, 'auto.reject'),
     );
     expect(h.store.listDrafts()).toEqual([]);
     expect(autoEvents().some((entry) => entry.event === 'draft')).toBe(true);
@@ -337,7 +338,7 @@ async function confirmOne(
   await h.channel.handlers.message?.(mention(messageId, '/auto new in 15m | 交周报 | 提醒交周报', { chatId }));
   const card = confirmCard(h);
   await h.channel.handlers.cardAction?.(
-    cardClick(USER, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!, chatId),
+    cardClick(USER, confirmToken(card), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!, chatId),
   );
   await waitFor(() => {
     const board = h.store.getBoard(chatId);

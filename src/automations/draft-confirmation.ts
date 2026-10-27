@@ -1,18 +1,19 @@
-import { reconcileDraftCard, sendAutomationDraftCard } from './draft-delivery';
+import { cardDraft, type DraftCardPatch } from './draft-confirmation/state';
+import { reconcileDraftCard, sendAutomationDraftCard } from './draft-confirmation/delivery';
 import { log } from '../core/logger';
 import { classify, isNotInChat } from '../bot/feishu-error';
 import { readCardApiError } from '../card/card-api-error';
 import { abandonIfNotInChat } from './chat-lifecycle';
 import type { CommandContext } from '../commands';
-import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction } from './action-auth';
+import { AUTO_CARD_TTL_MS, type AutoActionAuth, type AutoCardAction, isAutoEndAction } from './action-auth';
 import { automationConfirmCard, automationDeleteCard, automationReplaceCard } from './confirm-card';
 import { automationEndCard, type EndCardTokens } from './end-card';
 import { nextFireAfter, parseSchedule, readSchedule, type Schedule } from './schedule';
 import { zonedParts } from './zoned-time';
-import { draftConfirmedStatus, draftDeletedStatus, draftReplacedStatus, draftSameNameExistsStatus, draftTargetGoneStatus, draftTargetChangedStatus, DRAFT_SETTLED_CANCELLED } from './draft-card';
-import { taskMutationError, type AutomationDraft, type AutomationItem, type AutomationsStore, type DeleteAutomationDraft, type ReplaceAutomationDraft, type SaveAutomationDraftInput, type RegisterAutomationOperationInput } from './store';
-import { AUTO_INVALID_HINT, AUTO_END_NOT_AFTER_START, AUTO_NO_REMAINING_FIRES, AUTO_AGENT_NEEDS_CWD, assessAutomationSchedule, hasRemainingFire, noteAutomationRejected, rejectMessage, completePendingSchedule, presetEndAt, parseEndAtText, scheduleStartAt, scheduleEndAt, type AutomationScheduleVerdict } from './command-schedule';
-export type DraftFlushContext = {
+import { draftConfirmedStatus, draftDeletedStatus, draftReplacedStatus, draftSameNameExistsStatus, draftTargetGoneStatus, draftTargetChangedStatus, DRAFT_SETTLED_SUPERSEDED, DRAFT_SETTLED_CANCELLED, DRAFT_SETTLED_END_CHOSEN, scheduleDraftCardSettle } from './draft-confirmation/settlement';
+import { AUTOMATIONS_DRAFT_TTL_MS, taskMutationError, type AutomationDraft, type AutomationItem, type AutomationsStore, type DeleteAutomationDraft, type ReplaceAutomationDraft, type SaveAutomationDraftInput, type RegisterAutomationOperationInput } from './store';
+import { AUTO_INVALID_HINT, AUTO_INVALID_END, AUTO_END_BUSY, AUTO_END_NOT_AFTER_START, AUTO_NO_REMAINING_FIRES, AUTO_AGENT_NEEDS_CWD, assessAutomationSchedule, hasRemainingFire, noteAutomationRejected, rejectMessage, completePendingSchedule, resolveEndAt, scheduleStartAt, scheduleEndAt, type AutomationScheduleVerdict } from './command-schedule';
+export type DraftConfirmationContext = {
   botAppId?: string;
   channel: CommandContext['channel'];
   automations?: AutomationsStore;
@@ -20,16 +21,17 @@ export type DraftFlushContext = {
   automationsScheduler?: CommandContext['automationsScheduler'];
   now?: () => number;
   isLinkDown?: () => boolean;
+  onAutomationConfirmed?: CommandContext['onAutomationConfirmed'];
 };
 
 /** In-flight card claim per draft. Bind happens after send, so a second flush must wait. */
-const draftCardClaims = new Map<string, Promise<void>>();
+const draftCardClaims = new WeakMap<AutomationsStore, Map<string, Promise<void>>>();
 
-export async function flushPendingDraftCards(ctx: DraftFlushContext): Promise<void> {
+async function flushPendingDraftCards(ctx: DraftConfirmationContext): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth || ctx.isLinkDown?.()) return;
   const now = (ctx.now ?? Date.now)();
   for (const draft of ctx.automations.listDrafts()) {
-    if (draft.cardMessageId) continue;
+    if (cardDraft(draft).cardMessageId) continue;
     try {
       await flushDraftCardOnce(ctx, draft.draftId, now);
     } catch (error) {
@@ -38,72 +40,82 @@ export async function flushPendingDraftCards(ctx: DraftFlushContext): Promise<vo
   }
 }
 
-export async function flushDraftCardOnce(ctx: DraftFlushContext, draftId: string, now: number): Promise<void> {
+async function flushDraftCardOnce(ctx: DraftConfirmationContext, draftId: string, now: number): Promise<void> {
   const automations = ctx.automations;
   if (!automations || !ctx.autoAuth || ctx.isLinkDown?.()) return;
+  let claims = draftCardClaims.get(automations);
+  if (!claims) { claims = new Map(); draftCardClaims.set(automations, claims); }
   for (;;) {
-    const inflight = draftCardClaims.get(draftId);
+    const inflight = claims.get(draftId);
     if (inflight) {
       await inflight;
       continue;
     }
     const draft = automations.getDraft(draftId);
-    if (!draft || draft.cardMessageId) return;
-    if (draft.delivery?.state === 'sending') { await reconcileDraftCard(ctx.channel, automations, draft, ctx.botAppId); return; }
-    if (draft.operationId && draft.delivery?.state === 'rejected') return;
+    if (!draft || cardDraft(draft).cardMessageId) return;
+    if (cardDraft(draft).delivery?.state === 'sending') { await reconcileDraftCard(ctx.channel, automations, draft, ctx.botAppId); return; }
+    if (draft.operationId && cardDraft(draft).delivery?.state === 'rejected') return;
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    draftCardClaims.set(draftId, gate);
+    claims.set(draftId, gate);
     try {
       await deliverUnboundDraftCard(ctx, draft, now);
     } finally {
-      if (draftCardClaims.get(draftId) === gate) draftCardClaims.delete(draftId);
+      if (claims.get(draftId) === gate) claims.delete(draftId);
       release();
     }
     return;
   }
 }
 
-async function deliverUnboundDraftCard(
-  ctx: DraftFlushContext,
-  draft: AutomationDraft,
-  now: number,
-): Promise<void> {
+async function deliverUnboundDraftCard(ctx: DraftConfirmationContext, draft: AutomationDraft, now: number): Promise<void> {
   if (!ctx.automations || !ctx.autoAuth) return;
-  const cardCtx = {
-    channel: ctx.channel,
-    automations: ctx.automations,
-    autoAuth: ctx.autoAuth,
-    automationsScheduler: ctx.automationsScheduler,
-    chatMode: draft.cardReply?.replyInThread ? 'topic' as const : 'group' as const,
-    msg: { chatId: draft.chatId, messageId: draft.cardReply?.replyTo ?? '', threadId: draft.cardReply?.threadId },
-  };
-  switch (draft.op) {
-    case 'delete':
-      await postDeleteCard(cardCtx, draft);
-      return;
-    case 'create':
-    case 'replace':
-      if (draft.pendingRecurring) {
-        await postEndCard(cardCtx, draft);
+  const replyTo = draft.cardReply?.replyTo ?? '';
+  const cardCtx = { ...ctx, chatMode: draft.cardReply?.replyInThread ? 'topic' as const : 'group' as const,
+    msg: { chatId: draft.chatId, threadId: draft.cardReply?.threadId } };
+  let card: object;
+  const sign = (action: AutoCardAction) => ctx.autoAuth!.sign({ draftId: draft.draftId, chatId: draft.chatId, action, ttlMs: AUTO_CARD_TTL_MS });
+  if (draft.op !== 'delete' && draft.pendingRecurring) {
+    card = automationEndCard(signEndTokens(ctx.autoAuth, draft));
+  } else {
+    const tokens = { confirmToken: sign('auto.confirm'), rejectToken: sign('auto.reject') };
+    if (draft.op === 'delete') card = automationDeleteCard({ target: draft.target, ...tokens });
+    else {
+      const schedule = readSchedule(draft.schedule);
+      if (!schedule) return;
+      if (!hasRemainingFire(schedule, now)) {
+        try {
+          await ctx.channel.send(draft.chatId, { markdown: AUTO_NO_REMAINING_FIRES }, {
+            ...(replyTo ? { replyTo } : {}), ...(draft.cardReply?.replyInThread ? { replyInThread: true } : {}),
+          });
+        } catch (error) {
+          if (await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId))) return;
+          if (classify(error) === 'link') return;
+          log.warn('auto', 'reply-failed', { err: error instanceof Error ? error.message : String(error) });
+        }
+        await ctx.automations.takeDraft(draft.draftId);
+        noteAutomationRejected('no-remaining-fires', 'command');
         return;
       }
-      {
-        const schedule = readSchedule(draft.schedule);
-        if (!schedule) return;
-        await postConfirmCard(cardCtx, draft, schedule, now, cardCtx.msg.messageId);
-      }
-      return;
-    default: {
-      const _exhaustive: never = draft;
-      return _exhaustive;
+      const body = { taskType: draft.taskType, name: draft.name, taskText: draft.taskText,
+        timezone: draft.timezone, schedule, now, ...tokens, ...(draft.cwd ? { cwd: draft.cwd } : {}) };
+      card = draft.op === 'replace' ? automationReplaceCard({ ...body, target: draft.target }) : automationConfirmCard(body);
     }
+  }
+  try {
+    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, draft.cardReply ?? {});
+  } catch (error) {
+    if (draft.operationId) {
+      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
+      throw error;
+    }
+    await settleDraftCardFailure(cardCtx, draft, error, replyTo);
   }
 }
 
-export async function completeDraftEnd(
+async function completeDraftEnd(
   ctx: {
     automations: AutomationsStore;
     autoAuth: AutoActionAuth;
@@ -139,56 +151,21 @@ export async function completeDraftEnd(
     endAt,
     nextFireAt,
     pendingRecurring: null,
-    cardMessageId: null,
-    ...(draft.operationId || draft.cardReply ? { cardReply: { ...(draft.cardReply ?? {}), replyTo } } : {}),
+    ...({ cardMessageId: null } as DraftCardPatch),
+    cardReply: { ...(draft.cardReply ?? {}), replyTo },
   });
   if (!updated || updated.op === 'delete') return { ok: false, message: AUTO_INVALID_HINT };
-  if (updated.operationId) {
-    await flushDraftCardOnce(ctx, updated.draftId, now);
-    return { ok: true };
-  }
-  await postConfirmCard({
-    channel: ctx.channel,
-    automations: ctx.automations,
-    autoAuth: ctx.autoAuth,
-    automationsScheduler: ctx.automationsScheduler,
-    chatMode: updated.cardReply?.replyInThread ? 'topic' : ctx.chatMode ?? 'group',
-    msg: { chatId: draft.chatId, threadId: updated.cardReply?.threadId },
-  }, updated, parsed.schedule, now, replyTo);
+  await flushDraftConfirmations(ctx, updated.draftId);
   return { ok: true };
 }
 
-export function resolveEndAt(
-  action: AutoCardAction,
-  input: { timezone: string; now: number; startAt?: number; customText?: string },
-): number | undefined {
-  switch (action) {
-    case 'auto.end.1w':
-    case 'auto.end.2w':
-    case 'auto.end.1m':
-    case 'auto.end.3m':
-    case 'auto.end.eoy':
-    case 'auto.end.1y':
-      return presetEndAt(action, input.timezone, input.now, input.startAt ?? input.now);
-    case 'auto.end.custom':
-      return input.customText ? parseEndAtText(input.customText, input.timezone) : undefined;
-    case 'auto.confirm':
-    case 'auto.reject':
-      return undefined;
-    default: {
-      const _exhaustive: never = action;
-      return _exhaustive;
-    }
-  }
-}
-
-export interface AutomationConfirmOutcome {
+interface AutomationConfirmOutcome {
   ok: boolean;
   status: string;
   toast: string;
 }
 
-export async function confirmAutomationDraft(
+async function confirmAutomationDraft(
   ctx: Pick<CommandContext, 'automations' | 'automationsScheduler' | 'onAutomationConfirmed'> & {
     now?: () => number;
   },
@@ -228,6 +205,7 @@ async function confirmCreateDraft(
     return { ok: false, status, toast: status };
   }
   const item = await ctx.automations.create({
+    confirmedDraftId: draft.draftId,
     ...(draft.operationId ? { operationId: draft.operationId } : {}),
     taskType: draft.taskType,
     schedule: draft.schedule,
@@ -257,7 +235,7 @@ async function confirmDeleteDraft(
     const status = draftTargetGoneStatus(draft.targetId);
     return { ok: false, status, toast: status };
   }
-  const ok = await ctx.automationsScheduler.delete(draft.targetId, { chatId: draft.chatId, revision: draft.target.revision, operationId: draft.operationId });
+  const ok = await ctx.automationsScheduler.delete(draft.targetId, { chatId: draft.chatId, revision: draft.target.revision, operationId: draft.operationId, confirmedDraftId: draft.draftId });
   if (!ok) {
     const code = taskMutationError(ctx.automations.get(draft.targetId), { chatId: draft.chatId, revision: draft.target.revision }) ?? 'target-not-found';
     const status = code === 'target-state-conflict' ? draftTargetChangedStatus(draft.targetId) : draftTargetGoneStatus(draft.targetId);
@@ -385,156 +363,6 @@ function replaceConfirmBlock(draft: ReplaceAutomationDraft, now: number): Automa
   return { outcome: 'confirm', schedule: parsed.schedule };
 }
 
-async function postEndCard(
-  ctx: {
-    channel: CommandContext['channel'];
-    automations?: AutomationsStore;
-    autoAuth?: AutoActionAuth;
-    automationsScheduler?: CommandContext['automationsScheduler'];
-    chatMode: CommandContext['chatMode'];
-    msg: { chatId: string; messageId?: string; threadId?: string };
-  },
-  draft: Exclude<AutomationDraft, DeleteAutomationDraft>,
-): Promise<void> {
-  if (!ctx.automations || !ctx.autoAuth) return;
-  const tokens = signEndTokens(ctx.autoAuth, draft);
-  const card = automationEndCard(tokens);
-  try {
-    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
-      replyTo: ctx.msg.messageId,
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
-    });
-  } catch (error) {
-    if (draft.operationId) {
-      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
-      throw error;
-    }
-    await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
-    return;
-  }
-}
-
-async function postConfirmCard(
-  ctx: {
-    channel: CommandContext['channel'];
-    automations?: AutomationsStore;
-    autoAuth?: AutoActionAuth;
-    automationsScheduler?: CommandContext['automationsScheduler'];
-    chatMode: CommandContext['chatMode'];
-    msg: { chatId: string; threadId?: string };
-  },
-  draft: Exclude<AutomationDraft, DeleteAutomationDraft>,
-  schedule: Schedule,
-  now: number,
-  replyTo: string,
-): Promise<void> {
-  if (!ctx.automations || !ctx.autoAuth) return;
-  if (!hasRemainingFire(schedule, now)) {
-    try {
-      await ctx.channel.send(
-        ctx.msg.chatId,
-        { markdown: AUTO_NO_REMAINING_FIRES },
-        {
-          ...(replyTo ? { replyTo } : {}),
-          ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true } : {}),
-        },
-      );
-    } catch (error) {
-      if (await abandonIfNotInChat(error, ctx.msg.chatId, (chatId) => ctx.automationsScheduler?.removeFromChat(chatId))) {
-        return;
-      }
-      if (classify(error) === 'link') return;
-      log.warn('auto', 'reply-failed', { err: error instanceof Error ? error.message : String(error) });
-    }
-    await ctx.automations.takeDraft(draft.draftId);
-    noteAutomationRejected('no-remaining-fires', 'command');
-    return;
-  }
-  const confirmToken = ctx.autoAuth.sign({
-    draftId: draft.draftId,
-    chatId: draft.chatId,
-    action: 'auto.confirm',
-    ttlMs: AUTO_CARD_TTL_MS,
-  });
-  const rejectToken = ctx.autoAuth.sign({
-    draftId: draft.draftId,
-    chatId: draft.chatId,
-    action: 'auto.reject',
-    ttlMs: AUTO_CARD_TTL_MS,
-  });
-  const body = {
-    taskType: draft.taskType,
-    name: draft.name,
-    taskText: draft.taskText,
-    timezone: draft.timezone,
-    schedule,
-    now,
-    confirmToken,
-    rejectToken,
-    ...(draft.cwd ? { cwd: draft.cwd } : {}),
-  };
-  const card = draft.op === 'replace'
-    ? automationReplaceCard({ ...body, target: draft.target })
-    : automationConfirmCard(body);
-  try {
-    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
-      replyTo,
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
-    });
-  } catch (error) {
-    if (draft.operationId) {
-      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
-      throw error;
-    }
-    await settleDraftCardFailure(ctx, draft, error, replyTo);
-    return;
-  }
-}
-
-async function postDeleteCard(
-  ctx: {
-    channel: CommandContext['channel'];
-    automations?: AutomationsStore;
-    autoAuth?: AutoActionAuth;
-    automationsScheduler?: CommandContext['automationsScheduler'];
-    chatMode: CommandContext['chatMode'];
-    msg: { chatId: string; messageId?: string; threadId?: string };
-  },
-  draft: DeleteAutomationDraft,
-): Promise<void> {
-  if (!ctx.automations || !ctx.autoAuth) return;
-  const confirmToken = ctx.autoAuth.sign({
-    draftId: draft.draftId,
-    chatId: draft.chatId,
-    action: 'auto.confirm',
-    ttlMs: AUTO_CARD_TTL_MS,
-  });
-  const rejectToken = ctx.autoAuth.sign({
-    draftId: draft.draftId,
-    chatId: draft.chatId,
-    action: 'auto.reject',
-    ttlMs: AUTO_CARD_TTL_MS,
-  });
-  const card = automationDeleteCard({
-    target: draft.target,
-    confirmToken,
-    rejectToken,
-  });
-  try {
-    await sendAutomationDraftCard(ctx.channel, ctx.automations, draft, card, {
-      ...(ctx.msg.messageId ? { replyTo: ctx.msg.messageId } : {}),
-      ...(ctx.chatMode === 'topic' && ctx.msg.threadId ? { replyInThread: true, threadId: ctx.msg.threadId } : {}),
-    });
-  } catch (error) {
-    if (draft.operationId) {
-      await abandonIfNotInChat(error, draft.chatId, chatId => ctx.automationsScheduler?.removeFromChat(chatId));
-      throw error;
-    }
-    await settleDraftCardFailure(ctx, draft, error, ctx.msg.messageId ?? '');
-    return;
-  }
-}
-
 async function settleDraftCardFailure(
   ctx: {
     channel: CommandContext['channel'];
@@ -551,7 +379,7 @@ async function settleDraftCardFailure(
     return;
   }
   if (isNotInChat(error)) throw error;
-  if (ctx.automations?.getDraft(draft.draftId)?.delivery?.state === 'sending') return;
+  if (draftConfirmationDelivery(ctx.automations?.getDraft(draft.draftId)).state === 'sending') return;
   const kind = classify(error);
   const { code } = readCardApiError(error);
   switch (kind) {
@@ -639,14 +467,88 @@ function signEndTokens(auth: AutoActionAuth, draft: AutomationDraft): EndCardTok
 
 
 /** Persist submission before attempting any external card delivery. */
-export async function submitDraft(ctx: DraftFlushContext, input: SaveAutomationDraftInput, operation?: RegisterAutomationOperationInput): Promise<AutomationDraft> {
+export async function submitDraft(ctx: DraftConfirmationContext, input: SaveAutomationDraftInput, operation?: RegisterAutomationOperationInput): Promise<AutomationDraft> {
   if (!ctx.automations) throw new Error('Automation confirmations unavailable');
+  const staleDrafts = ctx.automations.listDrafts().filter(draft => draft.op === 'create' && input.op !== 'delete'
+    && draft.createdBy === input.createdBy && draft.chatId === input.chatId && draft.name.trim() === input.name.trim());
+  const prior = operation?.supersedesOperationId ? ctx.automations.getOperation(operation.supersedesOperationId) : undefined;
+  const explicit = prior ? ctx.automations.getOperationDraft(prior.draftId) : undefined;
+  if (explicit && !staleDrafts.some(draft => draft.draftId === explicit.draftId)) staleDrafts.push(explicit);
   const draft = await ctx.automations.saveDraft(input, operation);
+  for (const old of staleDrafts) {
+    if (cardDraft(old).cardMessageId && !ctx.automations.getDraft(old.draftId)) scheduleDraftCardSettle(ctx.channel, old, DRAFT_SETTLED_SUPERSEDED);
+  }
   await flushDraftConfirmations(ctx, draft.draftId);
   return draft;
 }
 
-export async function flushDraftConfirmations(ctx: DraftFlushContext, draftId?: string): Promise<void> {
+export async function flushDraftConfirmations(ctx: DraftConfirmationContext, draftId?: string): Promise<void> {
   if (draftId) await flushDraftCardOnce(ctx, draftId, (ctx.now ?? Date.now)());
   else await flushPendingDraftCards(ctx);
+}
+
+export interface DraftActionInput {
+  action: AutoCardAction;
+  token: string;
+  chatId: string;
+  messageId: string;
+  customText?: string;
+}
+export interface DraftActionResult { ok: boolean; message: string }
+const activeActions = new WeakMap<AutomationsStore, Set<string>>();
+
+/** Registration, token verification and the durable transition share one owner. */
+export async function handleDraftAction(ctx: DraftConfirmationContext, input: DraftActionInput): Promise<DraftActionResult> {
+  const invalid = { ok: false, message: AUTO_INVALID_HINT };
+  const store = ctx.automations;
+  const auth = ctx.autoAuth;
+  if (!store || !auth) return invalid;
+  const draft = store.findDraftByCardMessageId(input.messageId);
+  if (!draft || draft.chatId !== input.chatId || draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS <= (ctx.now ?? Date.now)()) return invalid;
+  const verified = auth.verify(input.token, { chatId: input.chatId, draftId: draft.draftId, action: input.action });
+  if (!verified.ok) return invalid;
+  const nonce = verified.payload.nonce;
+  let active = activeActions.get(store);
+  if (!active) { active = new Set(); activeActions.set(store, active); }
+  if (active.has(draft.draftId) || !auth.claimNonce(nonce)) return isAutoEndAction(input.action) ? { ok: false, message: AUTO_END_BUSY } : invalid;
+  active.add(draft.draftId);
+  try {
+    if (isAutoEndAction(input.action)) {
+      if (draft.op === 'delete') return invalid;
+      const endAt = resolveEndAt(input.action, { timezone: draft.timezone, now: (ctx.now ?? Date.now)(), startAt: draft.startAt, customText: input.customText });
+      if (endAt === undefined) return { ok: false, message: AUTO_INVALID_END };
+      const result = await completeDraftEnd({ ...ctx, automations: store, autoAuth: auth }, draft, endAt, input.messageId);
+      if (!result.ok) return { ok: false, message: result.message };
+      auth.consume(nonce);
+      scheduleDraftCardSettle(ctx.channel, draft, DRAFT_SETTLED_END_CHOSEN, store);
+      return { ok: true, message: DRAFT_SETTLED_END_CHOSEN };
+    }
+    if (input.action === 'auto.reject') {
+      if (!await store.takeDraft(draft.draftId)) return invalid;
+      auth.consume(nonce);
+      log.info('auto', 'rejected', { draftId: draft.draftId, chatId: draft.chatId, source: 'confirm-card' });
+      scheduleDraftCardSettle(ctx.channel, draft, DRAFT_SETTLED_CANCELLED, store);
+      return { ok: true, message: DRAFT_SETTLED_CANCELLED };
+    }
+    const result = await confirmAutomationDraft(ctx, draft);
+    // Failed validations also close the confirmation, as the old taken-draft path did.
+    if (!result.ok) await store.takeDraft(draft.draftId);
+    auth.consume(nonce);
+    scheduleDraftCardSettle(ctx.channel, draft, result.status, store);
+    return { ok: result.ok, message: result.toast };
+  } finally {
+    active.delete(draft.draftId);
+    auth.releaseNonce(nonce);
+  }
+}
+
+/** A receipt is observable; the card body and update sequence remain private. */
+export function draftConfirmationDelivery(draft: AutomationDraft | undefined) {
+  const card = draft ? cardDraft(draft) : undefined;
+  return { messageId: card?.cardMessageId, state: card?.delivery?.state };
+}
+export { expireDueDraftCards as expireDraftConfirmations } from './draft-confirmation/settlement';
+export function nextDraftConfirmationExpiry(store: AutomationsStore): number | undefined {
+  const expiries = store.listDrafts().filter(draft => Boolean(cardDraft(draft).cardMessageId)).map(draft => draft.createdAt + AUTOMATIONS_DRAFT_TTL_MS);
+  return expiries.length ? Math.min(...expiries) : undefined;
 }

@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -46,7 +47,7 @@ describe('automation board card', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const confirm = confirmCard(h);
     await h.channel.handlers.cardAction?.(
-      cardClick(MATE, confirmToken(confirm), h.store.listDrafts()[0]!.cardMessageId!),
+      cardClick(MATE, confirmToken(confirm), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!),
     );
     await waitForBoard(h);
 
@@ -344,7 +345,7 @@ describe('automation board card', () => {
     await h.bridge.tickLink();
     await h.channel.handlers.message?.(mention('om_a', '/auto new in 15m | 甲 | 提醒甲'));
     await h.channel.handlers.message?.(mention('om_b', '/auto new in 20m | 乙 | 提醒乙'));
-    expect(h.store.listDrafts().map((draft) => draft.cardMessageId)).toEqual([undefined, undefined]);
+    expect(h.store.listDrafts().map((draft) => draftConfirmationDelivery(draft).messageId)).toEqual([undefined, undefined]);
 
     const order: string[] = [];
     const origCreate = h.channel.createCard.bind(h.channel);
@@ -365,7 +366,7 @@ describe('automation board card', () => {
       const first = drafts[0];
       return drafts.length === 1
         && Boolean(first && 'name' in first && first.name === '乙')
-        && Boolean(first?.cardMessageId)
+        && Boolean(draftConfirmationDelivery(first).messageId)
         && order.at(-1) === 'update';
     });
 
@@ -589,7 +590,7 @@ async function confirmOne(h: Awaited<ReturnType<typeof harness>>): Promise<void>
   await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
   const card = confirmCard(h);
   await h.channel.handlers.cardAction?.(
-    cardClick(USER, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!),
+    cardClick(USER, confirmToken(card), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!),
   );
   await waitForBoard(h);
 }

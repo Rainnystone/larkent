@@ -2,7 +2,7 @@ import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
-import { confirmAutomationDraft } from '../../../src/automations/draft-confirmation';
+import { confirmAutomationDraft } from '../../helpers/draft-confirmation';
 import { automationOperationScope, newAutomationOperationId } from '../../../src/automations/operation-id';
 import { AUTOMATIONS_SCHEMA_VERSION, AutomationsStore } from '../../../src/automations/store';
 

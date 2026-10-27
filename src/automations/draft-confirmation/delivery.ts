@@ -1,8 +1,9 @@
+import { cardDraft } from './state';
 import type { LarkChannel } from '@larksuite/channel';
 import { createHash } from 'node:crypto';
-import { Outbox } from '../bot/outbox';
-import type { ManagedCardSendResult } from '../card/managed';
-import type { AutomationDraft, AutomationsStore } from './store';
+import { Outbox } from '../../bot/outbox';
+import type { ManagedCardSendResult } from '../../card/managed';
+import type { AutomationDraft, AutomationsStore } from '../store';
 
 export async function sendAutomationDraftCard(channel: LarkChannel, store: AutomationsStore, draft: AutomationDraft, card: object,
   options: { replyTo?: string; replyInThread?: boolean; threadId?: string }): Promise<ManagedCardSendResult> {
@@ -17,7 +18,7 @@ export async function sendAutomationDraftCard(channel: LarkChannel, store: Autom
 }
 
 export async function reconcileDraftCard(channel: LarkChannel, store: AutomationsStore, draft: AutomationDraft, botAppId?: string): Promise<void> {
-  const deliveryId = draft.deliveryId;
+  const deliveryId = cardDraft(draft).deliveryId;
   if (!deliveryId) return;
   await (store.draftOutbox ?? new Outbox({ channel, journal: store.outboxJournal, botAppId: botAppId ?? '', draftCards: store, liveSweep: false })).reconcileDraftCard(deliveryId);
 }

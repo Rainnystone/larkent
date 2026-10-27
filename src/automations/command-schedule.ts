@@ -627,3 +627,27 @@ export function scheduleEndAt(schedule: Schedule): number | undefined {
   }
 }
 
+export function resolveEndAt(
+  action: AutoCardAction,
+  input: { timezone: string; now: number; startAt?: number; customText?: string },
+): number | undefined {
+  switch (action) {
+    case 'auto.end.1w':
+    case 'auto.end.2w':
+    case 'auto.end.1m':
+    case 'auto.end.3m':
+    case 'auto.end.eoy':
+    case 'auto.end.1y':
+      return presetEndAt(action, input.timezone, input.now, input.startAt ?? input.now);
+    case 'auto.end.custom':
+      return input.customText ? parseEndAtText(input.customText, input.timezone) : undefined;
+    case 'auto.confirm':
+    case 'auto.reject':
+      return undefined;
+    default: {
+      const _exhaustive: never = action;
+      return _exhaustive;
+    }
+  }
+}
+

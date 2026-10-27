@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -5,13 +6,14 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
 import { handleAutoCommand, presetEndAt } from '../../../src/automations/command';
-import { completeDraftEnd, confirmAutomationDraft, flushPendingDraftCards } from '../../../src/automations/draft-confirmation';
+import { flushDraftConfirmations } from '../../../src/automations/draft-confirmation';
+import { completeDraftEnd, confirmAutomationDraft } from '../../helpers/draft-confirmation';
 import {
   automationDeleteCard,
   automationReplaceCard,
   automationTargetSnapshot,
 } from '../../../src/automations/confirm-card';
-import { expireDueDraftCards } from '../../../src/automations/draft-card';
+import { expireDraftConfirmations } from '../../../src/automations/draft-confirmation';
 import { createAutomationScheduler } from '../../../src/automations/scheduler';
 import {
   AUTOMATIONS_DRAFT_TTL_MS,
@@ -193,8 +195,8 @@ describe('delete and replace drafts', () => {
     });
     const waiting = scheduleDraft(h.store.listDrafts()[0]);
     expect(waiting.pendingRecurring?.kind).toBe('weekday');
-    expect(waiting.cardMessageId).toBeTruthy();
-    const endMessageId = waiting.cardMessageId!;
+    expect(draftConfirmationDelivery(waiting).messageId).toBeTruthy();
+    const endMessageId = draftConfirmationDelivery(waiting).messageId!;
 
     h.channel.cardErrors.create = axiosErrno('ECONNRESET', 'connect ECONNRESET');
     const chosen = await completeDraftEnd({
@@ -215,11 +217,11 @@ describe('delete and replace drafts', () => {
     await restarted.load();
     const stuck = scheduleDraft(restarted.listDrafts()[0]);
     expect(stuck.pendingRecurring).toBeUndefined();
-    expect(stuck.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(stuck).messageId).toBeUndefined();
     expect(stuck.op).toBe('replace');
 
     h.channel.cardErrors.create = undefined;
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: restarted,
       autoAuth: h.autoAuth,
@@ -227,8 +229,8 @@ describe('delete and replace drafts', () => {
       now: () => h.now(),
     });
     const recovered = scheduleDraft(restarted.listDrafts()[0]);
-    expect(recovered.cardMessageId).toBeTruthy();
-    expect(recovered.cardMessageId).not.toBe(endMessageId);
+    expect(draftConfirmationDelivery(recovered).messageId).toBeTruthy();
+    expect(draftConfirmationDelivery(recovered).messageId).not.toBe(endMessageId);
     const cards = h.channel.sent.map((entry) => JSON.stringify(entry.content));
     expect(cards.some((body) => body.includes('确认替换 #') && body.includes('确认后原 #1 将由新编号取代'))).toBe(true);
     expect(h.store.get(item.id)?.name).toBe('总结马斯克推特');
@@ -252,7 +254,7 @@ describe('delete and replace drafts', () => {
       target,
       scheduleText: '2026-10-19 09:00',
     });
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -275,15 +277,15 @@ describe('delete and replace drafts', () => {
       targetId: item.id,
       target: automationTargetSnapshot(item),
     });
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
       now: () => h.now(),
     });
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeTruthy();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeTruthy();
     h.setNow(h.now() + AUTOMATIONS_DRAFT_TTL_MS + 1);
-    await expireDueDraftCards({ store: h.store, channel: h.channel as never });
+    await expireDraftConfirmations({ store: h.store, channel: h.channel as never });
     const settled = h.channel.updatedCards.map((entry) => JSON.stringify(entry.card)).join('\n');
     expect(settled).toContain('已过期');
     expect(settled).toContain('确认删除');
@@ -313,7 +315,7 @@ describe('delete and replace drafts', () => {
       automationsScheduler: h.scheduler,
       channel: h.channel as never,
       now: () => h.now(),
-    }, waiting, endAt, waiting.cardMessageId!);
+    }, waiting, endAt, draftConfirmationDelivery(waiting).messageId!);
     expect(chosen).toEqual({ ok: true });
     expect(scheduleDraft(h.store.listDrafts()[0]).endAt).toBe(Date.UTC(2026, 11, 17, 16, 0, 0));
   });
@@ -340,7 +342,7 @@ describe('delete and replace drafts', () => {
       automationsScheduler: h.scheduler,
       channel: h.channel as never,
       now: () => h.now(),
-    }, waiting, endAt, waiting.cardMessageId!);
+    }, waiting, endAt, draftConfirmationDelivery(waiting).messageId!);
     expect(chosen).toEqual({ ok: true });
     expect(scheduleDraft(h.store.listDrafts()[0]).endAt).toBe(Date.UTC(2027, 11, 31, 16, 0, 0));
   });
@@ -410,7 +412,7 @@ describe('confirming a delete or replace', () => {
   it('reports past-time at confirm and changes nothing', async () => {
     const h = await harness();
     const item = await h.store.create(reminderInput());
-    const pastAt = Date.UTC(2026, 9, 17, 1, 0, 0);
+    const pastAt = NOW + 15 * 60_000;
     const draft = await h.store.saveDraft({
       ...reminderInput({
         name: '过点',
@@ -421,16 +423,17 @@ describe('confirming a delete or replace', () => {
       op: 'replace',
       targetId: item.id,
       target: automationTargetSnapshot(item),
-      scheduleText: '今天 09:00',
+      scheduleText: '今天 11:15',
     });
-    const result = await confirmAutomationDraft(h.ctx(), draft);
+    await flushDraftConfirmations({ ...h.ctx(), channel: h.channel as never, autoAuth: h.autoAuth }, draft.draftId);
+    const result = await confirmAutomationDraft({ ...h.ctx(), now: () => NOW + 16 * 60_000 }, draft);
     expect(result.ok).toBe(false);
     expect(result.status).toContain('已过');
     expect(h.store.get(item.id)?.name).toBe('总结马斯克推特');
     expect(h.store.list()).toHaveLength(1);
     const rejected = await logEvents(h.logsDir, 'rejected');
     expect(rejected).toEqual([expect.objectContaining({ reason: 'past-time', source: 'confirmation' })]);
-    expect(JSON.stringify(rejected)).not.toContain('今天 09:00');
+    expect(JSON.stringify(rejected)).not.toContain('今天 11:15');
   });
 
   it('still deletes immediately from /auto delete', async () => {
@@ -607,5 +610,5 @@ async function savePendingReplace(h: Awaited<ReturnType<typeof harness>>, input:
   await h.store.saveDraft({ op: 'replace', targetId: input.id, target: automationTargetSnapshot(h.store.get(input.id)!),
     taskType: input.taskType, scheduleText: input.scheduleText, name: input.name, taskText: input.taskText,
     schedule: parsed.pending, pendingRecurring: parsed.pending, timezone: TZ, startAt: parsed.startAt ?? h.now(), nextFireAt: 0, chatId: CHAT, createdBy: USER });
-  await flushPendingDraftCards({ channel: h.channel as never, automations: h.store, autoAuth: h.autoAuth, automationsScheduler: h.scheduler, now: h.now });
+  await flushDraftConfirmations({ channel: h.channel as never, automations: h.store, autoAuth: h.autoAuth, automationsScheduler: h.scheduler, now: h.now });
 }

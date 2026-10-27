@@ -9,7 +9,7 @@ import type { DraftCardItem } from './outbox-draft-item';
 import { log } from '../core/logger';
 
 export interface DraftCardReceipts {
-  getDraft(draftId: string): { draftId: string; operationId?: string; deliveryId?: string; cardMessageId?: string; cardId?: string } | undefined;
+  getDraftCardReceipt(draftId: string): { draftId: string; operationId?: string; deliveryId?: string; cardMessageId?: string; cardId?: string } | undefined;
   setDraftDeliveryId(draftId: string, deliveryId: string): Promise<void>;
   bindDraftCard(draftId: string, messageId: string, cardId?: string, body?: DraftCardBody): Promise<boolean>;
 }
@@ -49,7 +49,7 @@ async function deliverOwned(input: Parameters<typeof deliverDraftCard>[0], deliv
   let item = journal.getDraftCard(deliveryId);
   if (!item || item.state === 'voided') return;
   if (item.state === 'rejected') throw Object.assign(new Error(item.rejection?.message ?? 'draft card rejected'), { code: item.rejection?.code });
-  const draft = draftCards.getDraft(item.payload.draftId);
+  const draft = draftCards.getDraftCardReceipt(item.payload.draftId);
   if (!draft) { journal.updateDraftCard(deliveryId, { state: 'voided' }); await journal.flush(); return; }
   // Recovery can observe staging before its cross-file association committed.
   // Establish that durable association before any external send or binding.
@@ -75,7 +75,7 @@ async function deliverOwned(input: Parameters<typeof deliverDraftCard>[0], deliv
     // Commit the entity before attempting a send. Restart must only read back.
     await journal.flush();
     item = journal.getDraftCard(deliveryId)!;
-    if (item.state !== 'staged' || input.isDown?.() || !draftCards.getDraft(item.payload.draftId)) return;
+    if (item.state !== 'staged' || input.isDown?.() || !draftCards.getDraftCardReceipt(item.payload.draftId)) return;
     const { threadId: _thread, chatId, ...options } = item.target;
     const sent = await channel.send(chatId, { cardId }, withDeliveryUuid(options, deliveryId));
     if (!sent.messageId?.trim()) throw new Error('draft card missing message receipt');
@@ -100,7 +100,7 @@ async function deliverOwned(input: Parameters<typeof deliverDraftCard>[0], deliv
   async function bind(current: DraftCardItem): Promise<void> {
     const latest = journal.getDraftCard(deliveryId);
     if (!latest || latest.state === 'voided' || latest.state === 'rejected') return;
-    if (draftCards.getDraft(current.payload.draftId)?.deliveryId !== deliveryId) return;
+    if (draftCards.getDraftCardReceipt(current.payload.draftId)?.deliveryId !== deliveryId) return;
     const receipt = current.receipt!;
     const bound = await draftCards.bindDraftCard(current.payload.draftId, receipt.messageId, receipt.cardId, draftCardBodyFromCard(current.payload.card));
     if (!bound) throw new Error('Draft Outbox receipt could not bind');
