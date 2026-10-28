@@ -8,6 +8,7 @@ import { CONTINUE_HINT } from '../../../src/bot/interruption-notice';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import type { BridgeChannel } from '../../../src/bot/channel';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { log } from '../../../src/core/logger';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
@@ -57,17 +58,33 @@ describe('T14 link and REST intake before connect', { timeout: 20_000 }, () => {
       },
     });
 
+    // REST comes back the moment the inbound-triggered backfill's delay-line
+    // thread lookup gives up on the hang: no delay line goes out, and the
+    // backfill intake right after it succeeds. A wall-clock sleep raced the
+    // backfill's ledger fsyncs on CI.
+    let delayLookupFailed!: () => void;
+    const restBack = new Promise<void>((resolve) => {
+      delayLookupFailed = resolve;
+    });
+    const realWarn = log.warn.bind(log);
+    vi.spyOn(log, 'warn').mockImplementation((phase, event, fields) => {
+      if (phase === 'backfill' && event === 'delay-thread-resolve-failed') {
+        rest.up = true;
+        delayLookupFailed();
+      }
+      realWarn(phase, event, fields);
+    });
+
     const postedAt = NOW - 30_000;
     history[CHAT] = [mentionItem('om_first', 'hello during rest outage', postedAt)];
-    void h.channel.handlers.message?.(mention('om_first', 'hello during rest outage', postedAt));
-    await sleep(REST_DEADLINE_MS + 40);
+    await h.channel.handlers.message?.(mention('om_first', 'hello during rest outage', postedAt));
 
     expect(h.agent.runOptions).toHaveLength(0);
     expect(h.ledger.has('om_first')).toBe(false);
     expect(answerSends(h.channel)).toHaveLength(0);
 
     const answered = waitUntilAnswered(h.channel);
-    rest.up = true;
+    await restBack;
     await h.bridge.tickLink();
     expect(recovered.length).toBeGreaterThanOrEqual(1);
     await answered;
@@ -506,10 +523,6 @@ function waitUntilAnswered(channel: ReturnType<typeof createRecordingLarkChannel
       return pending;
     }) as typeof channel.stream;
   });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function whenMessageHandler(

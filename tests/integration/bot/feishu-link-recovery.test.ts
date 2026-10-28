@@ -361,6 +361,10 @@ describe('FeishuLink recovery through the bridge', () => {
     const holdOk = new Promise<void>((resolve) => {
       releaseOk = resolve;
     });
+    let sawOk!: () => void;
+    const okEntered = new Promise<void>((resolve) => {
+      sawOk = resolve;
+    });
     let holdingOk = true;
     await startHarness({
       now: () => NOW,
@@ -375,14 +379,19 @@ describe('FeishuLink recovery through the bridge', () => {
           const nested = isRecord(params) && isRecord(params.params) ? params.params : isRecord(params) ? params : {};
           const chatId = typeof nested.container_id === 'string' ? nested.container_id : undefined;
           if (chatId === BAD) throw axiosHttpError(429);
-          if (holdingOk && chatId === OK) await holdOk;
+          if (holdingOk && chatId === OK) {
+            sawOk();
+            await holdOk;
+          }
           return orig(params);
         };
       },
     });
 
     await vi.advanceTimersByTimeAsync(0);
-    for (let n = 0; lists < 2 && n < 20_000; n++) await yieldIO();
+    // Startup Recovery reaches history only after real ledger fsyncs. Join the
+    // OK list call instead of a yield budget that slow CI disks outlast.
+    await okEntered;
     expect(lists).toBeGreaterThanOrEqual(2);
     holdingOk = false;
     releaseOk();
