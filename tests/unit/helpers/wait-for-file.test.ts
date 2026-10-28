@@ -5,6 +5,8 @@ import * as fs from 'node:fs/promises';
 import { mkdtemp, open, rm, writeFile, type FileHandle } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
+import { setFlagsFromString } from 'node:v8';
+import { runInNewContext } from 'node:vm';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { waitForPidFile } from '../../helpers/wait-for-file';
 
@@ -47,8 +49,9 @@ async function openWriter(path: string) {
 
 function observePid(path: string, timeout = 10_000) {
   const stop = new AbortController();
-  const pending = waitForPidFile(path, AbortSignal.any([stop.signal, AbortSignal.timeout(timeout)]));
-  waits.push({ abort: () => stop.abort(), settled: pending.then(() => {}, () => {}) });
+  const deadline = setTimeout(() => stop.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), timeout);
+  const pending = waitForPidFile(path, stop.signal);
+  waits.push({ abort: () => stop.abort(), settled: pending.then(() => {}, () => {}).then(() => clearTimeout(deadline)) });
   return pending;
 }
 
@@ -63,6 +66,16 @@ describe('scripted CLI PID readiness', () => {
     } finally {
       await writer.close();
     }
+  });
+
+  it('reaches its deadline when garbage collection runs during the wait', async () => {
+    const path = await readyPath();
+    const pid = observePid(path, 100);
+    // WeakRef targets survive until the current job ends, so collect on a later turn.
+    await new Promise(resolve => setImmediate(resolve));
+    setFlagsFromString('--expose-gc');
+    runInNewContext('gc')();
+    await expect(pid).rejects.toMatchObject({ name: 'TimeoutError' });
   });
 
   it.each(['0', '-1', 'NaN', '1.5', '1e3', '9007199254740992'])('rejects invalid PID content %s', async content => {

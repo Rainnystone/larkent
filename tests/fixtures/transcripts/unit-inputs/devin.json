@@ -1,0 +1,579 @@
+[
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > preserves paragraph whitespace and code indentation across chunks / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Intro\n\n```python\n"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "if True:\n    print(\"hello\")\n```\n"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > merges late tool input, deduplicates updates and preserves the command / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "I will check."
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "a",
+            "title": "Run command",
+            "kind": "execute"
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "a",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "lark-cli im +send --chat-id <IDENTITY_1>"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "a",
+            "status": "in_progress",
+            "rawInput": {
+              "command": "lark-cli im +send --chat-id <IDENTITY_1>"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "a",
+            "status": "completed",
+            "rawOutput": {
+              "code": 0,
+              "data": {
+                "message_id": "<IDENTITY_2>"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "a",
+            "status": "completed",
+            "rawOutput": {
+              "code": 0,
+              "data": {
+                "message_id": "<IDENTITY_2>"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Finished."
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > reports failed tools without ending a turn the model can correct / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "b",
+            "kind": "read",
+            "rawInput": {
+              "path": "/missing"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "b",
+            "status": "failed",
+            "content": [
+              {
+                "type": "content",
+                "content": {
+                  "type": "text",
+                  "text": "Not found"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Corrected."
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > waits for an actual command when execute input arrives in partial updates / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "late",
+            "kind": "execute",
+            "rawInput": {}
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "late",
+            "rawInput": {
+              "command": ""
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "late",
+            "rawInput": {
+              "timeout": 30
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call_update",
+            "toolCallId": "late",
+            "rawInput": {
+              "command": "lark-cli auth login"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > ignores replayed history including tool events / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Old answer"
+            }
+          },
+          true
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "old",
+            "kind": "execute",
+            "rawInput": {
+              "command": "old"
+            }
+          },
+          true
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Current answer"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > does not publish pre-tool narration as a final answer / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Starting."
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "tool_call",
+            "toolCallId": "c",
+            "kind": "read",
+            "rawInput": {}
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > holds back the answer and emits it once as final_text at end_turn / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "The answer "
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "is 4."
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > flushes the previous message as progress text when the message id changes / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "First "
+            },
+            "_meta": {
+              "cognition.ai/messageId": "m1"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "thought."
+            },
+            "_meta": {
+              "cognition.ai/messageId": "m1"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Second."
+            },
+            "_meta": {
+              "cognition.ai/messageId": "m2"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > emits the held-back answer as final_text on cancel / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Partial answer"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "cancelled"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > rearms activity only for accepted text chunks / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "replayed"
+            }
+          },
+          true
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "image",
+              "data": "x"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "late"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > flushes held-back text before the error on failure / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "sessionUpdate": "agent_message_chunk",
+            "content": {
+              "type": "text",
+              "text": "Partial answer"
+            }
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          {
+            "$error": "connection lost"
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > emits no final_text for an empty answer / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "devin",
+    "name": "Devin ACP translation > fails unsupported terminal reasons and does not emit a second terminal / 1",
+    "source": "tests/unit/agent/devin-acp.test.ts",
+    "steps": [
+      {
+        "method": "finish",
+        "args": [
+          "max_tokens"
+        ]
+      },
+      {
+        "method": "finish",
+        "args": [
+          "end_turn"
+        ]
+      }
+    ]
+  }
+]

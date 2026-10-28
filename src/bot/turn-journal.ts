@@ -1,6 +1,9 @@
 import { readFile } from 'node:fs/promises';
+import { parseDraftCardItem, type DraftCardItem } from './outbox-draft-item';
+import * as outboxState from './outbox-state';
+import { replyState, noticeState, replyDeliveryKey, noticeDeliveryKey } from './outbox-state';
+export { replyState, noticeState, replyDeliveryKey, noticeDeliveryKey, noticeOwnerDeliveryKey, streamDeliveryKey, FEISHU_DELIVERY_ID_MAX_CHARS } from './outbox-state';
 import type { RunOutcome } from './run-outcome';
-import { classify } from './feishu-error';
 import { log } from '../core/logger';
 import { writeFileAtomic } from '../platform/atomic-write';
 import { PersistenceQueue } from '../platform/persistence-queue';
@@ -10,7 +13,7 @@ import {
   readProcessStartMs,
 } from '../platform/process-info';
 
-export const TURN_JOURNAL_SCHEMA_VERSION = 1 as const;
+export const TURN_JOURNAL_SCHEMA_VERSION = 2 as const;
 export const TURN_JOURNAL_MAX_ENTRIES = 200;
 export const TURN_JOURNAL_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 export const TURN_JOURNAL_ORPHAN_GRACE_MS = 2_000;
@@ -29,6 +32,7 @@ export type TurnJournalStatus =
 export type OutboxItemState = 'staged' | 'sent' | 'rejected' | 'voided';
 
 export interface TurnReply {
+  kind?: 'reminder' | 'result';
   markdown: string;
   replyTo: string;
   replyInThread?: boolean;
@@ -127,11 +131,8 @@ export interface TurnJournalOptions {
 }
 
 export interface JournalRecoverOptions {
-  resend?: (entry: TurnJournalEntry) => Promise<boolean>;
-  resendNotice?: (entry: TurnJournalEntry) => Promise<boolean>;
   /** Crash recovery: notify the user that a running/queued turn was interrupted. */
   onInterrupted?: (entry: TurnJournalEntry) => Promise<boolean>;
-  noticeGapMs?: number;
   sleep?: (ms: number) => Promise<void>;
   kill?: (pid: number, signal: NodeJS.Signals) => void;
   isAlive?: (pid: number) => boolean;
@@ -145,6 +146,8 @@ export interface JournalRecoverOptions {
 
 interface JournalDocument {
   entries: TurnJournalEntry[];
+  draftCards?: DraftCardItem[];
+  upgrade?: boolean;
 }
 
 const TERMINAL_PRUNE: ReadonlySet<TurnJournalStatus> = new Set([
@@ -159,12 +162,12 @@ export class TurnJournal {
   private readonly maxEntries: number;
   private readonly maxAgeMs: number;
   private entries: TurnJournalEntry[] = [];
+  private draftCards: DraftCardItem[] = [];
   private queue = new PersistenceQueue();
   private persistScheduled = false;
   private persistDirty = false;
   private loading: Promise<void> | undefined;
   private persistenceDisabled = false;
-  private redelivering: Promise<void> | undefined;
   private readonly enqueuedThisProcess = new Set<string>();
 
   constructor(path: string, opts: TurnJournalOptions = {}) {
@@ -199,6 +202,46 @@ export class TurnJournal {
   get(turnId: string): TurnJournalEntry | undefined {
     const entry = this.entries.find((item) => item.turnId === turnId);
     return entry ? { ...entry } : undefined;
+  }
+
+  listDraftCards(): DraftCardItem[] {
+    return structuredClone(this.draftCards);
+  }
+
+  getDraftCard(deliveryId: string): DraftCardItem | undefined {
+    const item = this.draftCards.find(item => item.deliveryId === deliveryId);
+    return item ? structuredClone(item) : undefined;
+  }
+
+  stageDraftCard(item: DraftCardItem): void {
+    if (this.persistenceDisabled) throw new Error('Turn journal is not writable');
+    this.queue.assertHealthy();
+    const existing = this.draftCards.find(entry => entry.deliveryId === item.deliveryId);
+    if (existing) {
+      if (existing.payload.draftId !== item.payload.draftId || existing.target.chatId !== item.target.chatId) throw new Error('Outbox deliveryId conflict');
+      return;
+    }
+    this.draftCards.push(parseDraftCardItem(item, item.deliveryId));
+    this.schedulePersist();
+  }
+
+  updateDraftCard(deliveryId: string, change: Pick<Partial<DraftCardItem>, 'state' | 'cardId' | 'sendAttempted' | 'receipt' | 'rejection'>): void {
+    if (this.persistenceDisabled) throw new Error('Turn journal is not writable');
+    this.queue.assertHealthy();
+    const item = this.draftCards.find(entry => entry.deliveryId === deliveryId);
+    if (!item || item.state === 'voided') return;
+    if (item.cardId && change.cardId && item.cardId !== change.cardId) throw new Error('Outbox card entity conflict');
+    if (item.receipt && change.receipt && (item.receipt.messageId !== change.receipt.messageId || item.receipt.cardId !== change.receipt.cardId)) throw new Error('Outbox receipt conflict');
+    Object.assign(item, parseDraftCardItem({ ...item, ...change }, deliveryId));
+    this.schedulePersist();
+  }
+
+  retainDraftCards(referenced: ReadonlySet<string>): void {
+    if (this.persistenceDisabled) return;
+    const kept = this.draftCards.filter(item => item.state === 'staged' || referenced.has(item.deliveryId));
+    if (kept.length === this.draftCards.length) return;
+    this.draftCards = kept;
+    this.schedulePersist();
   }
 
   enqueue(input: Omit<TurnJournalEntry, 'createdAt' | 'updatedAt'>): TurnJournalEntry {
@@ -242,77 +285,21 @@ export class TurnJournal {
     this.patch(turnId, { status: 'settled', outcome });
   }
 
-  stageReply(turnId: string, reply: {
-    markdown: string;
-    replyTo: string;
-    replyInThread?: boolean;
-    threadId?: string;
-    replyMode?: string;
-    deliveryId?: string;
-    messageId?: string;
-    interactive?: boolean;
-    supersedes?: string;
-  }): void {
-    const current = this.entries.find((item) => item.turnId === turnId);
-    const threadId = reply.threadId?.trim() || current?.threadId;
-    const nextReply: TurnReply = {
-      markdown: reply.markdown,
-      replyTo: reply.replyTo,
-      replyMode: reply.replyMode ?? 'text',
-      ...(reply.replyInThread ? { replyInThread: true } : {}),
-      ...(threadId ? { threadId } : {}),
-      deliveryId: reply.deliveryId ?? replyDeliveryKey(turnId),
-      ...(reply.messageId ? { messageId: reply.messageId } : {}),
-      ...(reply.interactive === true ? { interactive: true } : {}),
-      ...(reply.supersedes?.trim() ? { supersedes: reply.supersedes.trim() } : {}),
-      state: 'staged',
-    };
-    this.patch(turnId, {
-      status: current && isStagedNotice({ ...current, reply: nextReply })
-        ? 'notice-pending'
-        : 'completed-undelivered',
-      reply: nextReply,
-    });
+  // Compatibility writers for callers migrated in D02. Delivery policy and
+  // item transitions live in Outbox; this journal only commits their changes.
+  stageReply(turnId: string, reply: outboxState.StageReply): void {
+    this.changeItem(turnId, (entry) => outboxState.stageReply(entry, reply));
   }
 
   replyDelivered(turnId: string, messageId?: string): void {
     if (messageId?.trim()) this.noteReplyReceipt(turnId, messageId);
-    const current = this.entries.find((item) => item.turnId === turnId);
-    if (!current) return;
-    const existing = replyState(current);
-    if (existing === 'rejected' || existing === 'voided') return;
-    const reply = current.reply ? { ...current.reply, state: 'sent' as const } : current.reply;
-    this.patch(turnId, {
-      ...(reply ? { reply } : {}),
-      status: isStagedNotice({ ...current, reply: reply ?? current.reply })
-        ? 'notice-pending'
-        : 'reply-delivered',
-    });
+    this.changeItem(turnId, outboxState.replyDelivered);
   }
 
-  replyRejected(turnId: string): void {
-    const current = this.entries.find((item) => item.turnId === turnId);
-    if (!current?.reply) return;
-    const reply = { ...current.reply, state: 'rejected' as const };
-    this.patch(turnId, {
-      reply,
-      status: isStagedNotice({ ...current, reply }) ? 'notice-pending' : 'reply-delivered',
-    });
-  }
+  replyRejected(turnId: string): void { this.changeItem(turnId, outboxState.replyRejected); }
 
   noteReplyReceipt(turnId: string, messageId: string, interactive?: boolean): void {
-    const entry = this.entries.find((item) => item.turnId === turnId);
-    if (!entry?.reply || !messageId.trim()) return;
-    const { interactive: previousInteractive, ...rest } = entry.reply;
-    const keepInteractive = interactive === true
-      || (interactive !== false && previousInteractive === true);
-    this.patch(turnId, {
-      reply: {
-        ...rest,
-        messageId,
-        ...(keepInteractive ? { interactive: true } : {}),
-      },
-    });
+    this.changeItem(turnId, (entry) => outboxState.noteReplyReceipt(entry, messageId, interactive));
   }
 
   noteCliAlreadySent(turnId: string): void {
@@ -345,39 +332,12 @@ export class TurnJournal {
   }
 
   stageNotice(turnId: string, notice: TurnNotice): void {
-    const current = this.entries.find((item) => item.turnId === turnId);
-    const nextNotice: TurnNotice = {
-      ...notice,
-      deliveryId: notice.deliveryId ?? noticeDeliveryKey(turnId),
-      state: notice.state ?? 'staged',
-    };
-    this.patch(turnId, {
-      status: 'notice-pending',
-      noticeStatus: 'pending',
-      notice: nextNotice,
-      ...(current?.reply ? { reply: current.reply } : {}),
-    });
+    this.changeItem(turnId, (entry) => outboxState.stageNotice(entry, notice));
   }
 
-  noticeRejected(turnId: string): void {
-    const current = this.entries.find((item) => item.turnId === turnId);
-    if (!current?.notice) return;
-    const notice = { ...current.notice, state: 'rejected' as const };
-    this.patch(turnId, {
-      notice,
-      status: isStagedReply({ ...current, notice }) ? 'completed-undelivered' : 'notice-delivered',
-    });
-  }
+  noticeRejected(turnId: string): void { this.changeItem(turnId, outboxState.noticeRejected); }
 
-  noticeDelivered(turnId: string): void {
-    const current = this.entries.find((item) => item.turnId === turnId);
-    const notice = current?.notice ? { ...current.notice, state: 'sent' as const } : current?.notice;
-    this.patch(turnId, {
-      ...(notice ? { notice } : {}),
-      noticeStatus: 'delivered',
-      status: current && isStagedReply(current) ? 'completed-undelivered' : 'notice-delivered',
-    });
-  }
+  noticeDelivered(turnId: string): void { this.changeItem(turnId, outboxState.noticeDelivered); }
 
   recordNotice(turnId: string, notice: TurnNotice): void {
     this.patch(turnId, { notice });
@@ -387,8 +347,7 @@ export class TurnJournal {
     const current = this.entries.find((item) => item.turnId === turnId);
     this.patch(turnId, {
       status: 'voided',
-      ...(current?.reply ? { reply: { ...current.reply, state: 'voided' as const } } : {}),
-      ...(current?.notice ? { notice: { ...current.notice, state: 'voided' as const } } : {}),
+      ...(current ? outboxState.voidItems(current) : {}),
     });
   }
 
@@ -402,16 +361,14 @@ export class TurnJournal {
     extra?: { consecutiveInterrupts?: number; noticeInvalidated?: boolean },
   ): void {
     const current = this.entries.find((item) => item.turnId === turnId);
-    const notice = extra?.noticeInvalidated === true && current?.notice
-      ? { ...current.notice, state: 'voided' as const }
-      : undefined;
+    const notice = extra?.noticeInvalidated === true && current ? outboxState.voidNotice(current) : {};
     this.patch(turnId, {
       continuation: { status },
       ...(extra?.consecutiveInterrupts !== undefined
         ? { consecutiveInterrupts: extra.consecutiveInterrupts }
         : {}),
       ...(extra?.noticeInvalidated === true ? { noticeInvalidated: true } : {}),
-      ...(notice ? { notice } : {}),
+      ...notice,
     });
   }
 
@@ -419,7 +376,7 @@ export class TurnJournal {
     const current = this.entries.find((item) => item.turnId === turnId);
     this.patch(turnId, {
       noticeInvalidated: true,
-      ...(current?.notice ? { notice: { ...current.notice, state: 'voided' as const } } : {}),
+      ...(current ? outboxState.voidNotice(current) : {}),
     });
   }
 
@@ -436,8 +393,7 @@ export class TurnJournal {
       }
       if (!isIncomplete(entry.status)) continue;
       entry.status = 'voided';
-      if (entry.reply) entry.reply = { ...entry.reply, state: 'voided' };
-      if (entry.notice) entry.notice = { ...entry.notice, state: 'voided' };
+      Object.assign(entry, outboxState.voidItems(entry));
       entry.updatedAt = this.now();
       changed = true;
     }
@@ -450,136 +406,6 @@ export class TurnJournal {
   async reapOrphans(opts: JournalRecoverOptions = {}): Promise<void> {
     await this.reapOrphansOwned(opts);
     await this.flush();
-  }
-
-  async redeliver(opts: JournalRecoverOptions = {}): Promise<void> {
-    if (this.redelivering) return this.redelivering;
-    this.redelivering = this.finishRedeliver(opts).finally(() => {
-      this.redelivering = undefined;
-    });
-    return this.redelivering;
-  }
-
-  private async finishRedeliver(opts: JournalRecoverOptions): Promise<void> {
-    try {
-      await this.redeliverOwned(opts);
-    } catch (error) {
-      // replyDelivered already scheduled a persist. Join that writer before
-      // rejecting so its atomic tmp file is not still in the journal directory.
-      await this.queue.flush().catch(() => {});
-      throw error;
-    }
-    await this.flush();
-  }
-
-  private async redeliverOwned(
-    opts: JournalRecoverOptions,
-  ): Promise<{ resent: number; notices: number }> {
-    const snapshot = this.entries.filter((entry) => isStagedReply(entry) || isStagedNotice(entry));
-    if (snapshot.length === 0) return { resent: 0, notices: 0 };
-
-    let resent = 0;
-    let notices = 0;
-    const pendingNoticeCount = snapshot.filter((item) => isStagedNotice(item)).length;
-
-    for (const entry of snapshot) {
-      if (opts.isDown?.()) break;
-      const current = this.entries.find((item) => item.turnId === entry.turnId);
-      if (!current) continue;
-
-      if (isStagedReply(current)) {
-        if (current.cliAlreadySent) {
-          this.replyDelivered(current.turnId);
-        } else if (opts.resend) {
-          try {
-            const ok = await opts.resend({ ...current });
-            if (ok) {
-              this.replyDelivered(current.turnId);
-              resent += 1;
-            }
-          } catch (error) {
-            const kind = classify(error);
-            switch (kind) {
-              case 'rejected':
-                log.warn('journal', 'resend-rejected', {
-                  turnId: current.turnId,
-                  err: error instanceof Error ? error.message : String(error),
-                });
-                this.replyRejected(current.turnId);
-                break;
-              case 'link':
-                log.warn('journal', 'resend-failed', {
-                  turnId: current.turnId,
-                  err: error instanceof Error ? error.message : String(error),
-                });
-                throw error;
-              case 'local':
-                log.warn('journal', 'resend-failed', {
-                  turnId: current.turnId,
-                  err: error instanceof Error ? error.message : String(error),
-                });
-                break;
-              default: {
-                const _exhaustive: never = kind;
-                throw _exhaustive;
-              }
-            }
-          }
-        }
-      }
-
-      if (opts.isDown?.()) break;
-      const latest = this.entries.find((item) => item.turnId === entry.turnId);
-      if (!latest || !isStagedNotice(latest)) continue;
-      if (opts.isActive?.(latest.scope)) continue;
-      if (!opts.resendNotice) continue;
-      if (latest.notice?.messageId) {
-        this.noticeDelivered(latest.turnId);
-        continue;
-      }
-      try {
-        const ok = await opts.resendNotice({ ...latest });
-        if (ok) {
-          this.noticeDelivered(latest.turnId);
-          notices += 1;
-          if (opts.noticeGapMs && notices < pendingNoticeCount) {
-            await (opts.sleep ?? defaultSleep)(opts.noticeGapMs);
-          }
-        }
-      } catch (error) {
-        const kind = classify(error);
-        switch (kind) {
-          case 'rejected':
-            log.warn('journal', 'resend-rejected', {
-              turnId: latest.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-            this.noticeRejected(latest.turnId);
-            break;
-          case 'link':
-            log.warn('journal', 'notice-resend-failed', {
-              turnId: latest.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-            throw error;
-          case 'local':
-            log.warn('journal', 'notice-resend-failed', {
-              turnId: latest.turnId,
-              err: error instanceof Error ? error.message : String(error),
-            });
-            break;
-          default: {
-            const _exhaustive: never = kind;
-            throw _exhaustive;
-          }
-        }
-      }
-    }
-
-    if (resent > 0 || notices > 0) {
-      log.info('journal', 'recovered', { orphans: 0, resent, notices, interrupted: 0 });
-    }
-    return { resent, notices };
   }
 
   private async reapOrphansOwned(
@@ -654,6 +480,11 @@ export class TurnJournal {
     return { orphans, interrupted: interruptedCount, notices };
   }
 
+  private changeItem(turnId: string, change: (entry: TurnJournalEntry) => Partial<TurnJournalEntry>): void {
+    const entry = this.entries.find((item) => item.turnId === turnId);
+    if (entry) this.patch(turnId, change(entry));
+  }
+
   private patch(turnId: string, fields: Partial<TurnJournalEntry>): void {
     const entry = this.entries.find((item) => item.turnId === turnId);
     if (!entry || entry.status === 'voided') return;
@@ -675,6 +506,11 @@ export class TurnJournal {
         return;
       }
       const document = parseJournalDocument(text);
+      // Write the complete upgraded snapshot before publishing it. A failed
+      // atomic replacement leaves the original v1 file available for retry.
+      if (document.upgrade) {
+        await writeFileAtomic(this.path, `${JSON.stringify(serializeDocument(document.entries, document.draftCards), null, 2)}\n`, { mode: 0o600 });
+      }
       this.publish(document, false);
       if (this.prune()) this.schedulePersist();
     } catch (error) {
@@ -687,6 +523,7 @@ export class TurnJournal {
 
   private publish(document: JournalDocument, persistenceDisabled: boolean): void {
     this.entries = document.entries;
+    this.draftCards = document.draftCards ?? [];
     this.enqueuedThisProcess.clear();
     this.persistenceDisabled = persistenceDisabled;
     this.persistScheduled = false;
@@ -746,14 +583,8 @@ export class TurnJournal {
     });
   }
 
-  private serialize(): {
-    schemaVersion: typeof TURN_JOURNAL_SCHEMA_VERSION;
-    entries: TurnJournalEntry[];
-  } {
-    return {
-      schemaVersion: TURN_JOURNAL_SCHEMA_VERSION,
-      entries: this.entries.map((entry) => ({ ...entry })),
-    };
+  private serialize(): ReturnType<typeof serializeDocument> {
+    return serializeDocument(this.entries, this.draftCards);
   }
 }
 
@@ -761,19 +592,112 @@ function emptyDocument(): JournalDocument {
   return { entries: [] };
 }
 
+interface StoredOutboxItem {
+  kind: 'reply' | 'notice' | 'reminder' | 'result';
+  turnId: string;
+  deliveryId: string;
+  target: { chatId: string; replyTo?: string; replyInThread?: boolean; threadId?: string };
+  payload: Record<string, unknown>;
+  state: OutboxItemState;
+  receipt?: { messageId: string; interactive?: boolean };
+  supersedes?: string;
+}
+
+function serializeDocument(entries: TurnJournalEntry[], draftCards: DraftCardItem[] = []) {
+  const items: Record<string, StoredOutboxItem | DraftCardItem> = Object.create(null);
+  for (const item of draftCards) {
+    if (items[item.deliveryId]) throw new Error('Duplicate Outbox deliveryId');
+    items[item.deliveryId] = structuredClone(item);
+  }
+  const turns = entries.map((entry) => {
+    const { reply, notice, ...turn } = entry;
+    const replyId = reply ? reply.deliveryId ?? replyDeliveryKey(entry.turnId) : undefined;
+    const noticeId = notice ? notice.deliveryId ?? noticeDeliveryKey(entry.turnId) : undefined;
+    if (reply && replyId) {
+      const { deliveryId: _id, state: _state, messageId, interactive, supersedes,
+        replyTo, replyInThread, threadId, ...payload } = reply;
+      if (items[replyId]) throw new Error('Duplicate Outbox deliveryId');
+      items[replyId] = {
+        kind: reply.kind ?? 'reply', turnId: entry.turnId, deliveryId: replyId,
+        target: { chatId: entry.chatId, replyTo, ...(replyInThread ? { replyInThread } : {}), ...(threadId ? { threadId } : {}) },
+        payload, state: replyState(entry) ?? 'staged',
+        ...(messageId ? { receipt: { messageId, ...(interactive ? { interactive } : {}) } } : {}),
+        ...(supersedes ? { supersedes } : {}),
+      };
+    }
+    if (notice && noticeId) {
+      const { deliveryId: _id, state: _state, messageId, recipientChatId, replyTo, replyInThread, ...payload } = notice;
+      if (items[noticeId]) throw new Error('Duplicate Outbox deliveryId');
+      items[noticeId] = {
+        kind: 'notice', turnId: entry.turnId, deliveryId: noticeId,
+        target: { chatId: recipientChatId, ...(replyTo ? { replyTo } : {}), ...(replyInThread ? { replyInThread } : {}) },
+        payload, state: noticeState(entry) ?? 'staged',
+        ...(messageId ? { receipt: { messageId } } : {}),
+      };
+    }
+    return { ...turn, ...(replyId ? { replyDeliveryId: replyId } : {}), ...(noticeId ? { noticeDeliveryId: noticeId } : {}) };
+  });
+  return { schemaVersion: TURN_JOURNAL_SCHEMA_VERSION, entries: turns, items };
+}
+
 function parseJournalDocument(text: string): JournalDocument {
   const raw: unknown = JSON.parse(text);
   if (!isObject(raw)) throw new Error('Invalid turn journal: expected object');
-  if (raw.schemaVersion !== TURN_JOURNAL_SCHEMA_VERSION) {
+  if (raw.schemaVersion !== 1 && raw.schemaVersion !== TURN_JOURNAL_SCHEMA_VERSION) {
     throw new Error(`Unsupported turn journal schemaVersion: ${String(raw.schemaVersion)}`);
   }
   if (!Array.isArray(raw.entries)) throw new Error('Invalid turn journal entries');
+  const upgrade = raw.schemaVersion === 1;
+  if (!upgrade && !isObject(raw.items)) throw new Error('Invalid Outbox items');
   const entries: TurnJournalEntry[] = [];
-  for (const item of raw.entries) {
-    const entry = parseEntry(item);
-    if (entry) entries.push(entry);
+  const referenced = new Set<string>();
+  const draftCards: DraftCardItem[] = [];
+  if (!upgrade && isObject(raw.items)) {
+    for (const [id, item] of Object.entries(raw.items)) {
+      if (isObject(item) && item.kind === 'draft-card') {
+        draftCards.push(parseDraftCardItem(item, id));
+        referenced.add(id);
+      }
+    }
   }
-  return { entries };
+  for (const item of raw.entries) {
+    let materialized = item;
+    if (!upgrade && isObject(item)) {
+      materialized = { ...item };
+      for (const kind of ['reply', 'notice'] as const) {
+        const id = item[`${kind}DeliveryId`];
+        if (id === undefined) continue;
+        if (typeof id !== 'string' || referenced.has(id)) throw new Error('Invalid Outbox reference');
+        const stored = isObject(raw.items) ? raw.items[id] : undefined;
+        if (!isObject(stored) || !(stored.kind === kind || (kind === 'reply' && (stored.kind === 'reminder' || stored.kind === 'result'))) || stored.deliveryId !== id || stored.turnId !== item.turnId
+          || !isObject(stored.target) || !isObject(stored.payload) || !isOutboxItemState(stored.state)) {
+          throw new Error('Invalid Outbox item');
+        }
+        const target = stored.target;
+        const receipt = isObject(stored.receipt) ? stored.receipt : {};
+        const payload = {
+          ...stored.payload, deliveryId: id, state: stored.state,
+          ...(stored.kind === 'reminder' || stored.kind === 'result' ? { kind: stored.kind } : {}),
+          ...(kind === 'notice' ? { recipientChatId: target.chatId } : {}),
+          replyTo: target.replyTo, replyInThread: target.replyInThread, threadId: target.threadId,
+          messageId: receipt.messageId, interactive: receipt.interactive, supersedes: stored.supersedes,
+        };
+        if (!(kind === 'reply' ? parseReply(payload) : parseNotice(payload))) throw new Error('Invalid Outbox payload');
+        (materialized as Record<string, unknown>)[kind] = payload;
+        referenced.add(id);
+      }
+    }
+    const entry = parseEntry(materialized);
+    if (entry) {
+      if (entry.reply) entry.reply = { ...entry.reply, deliveryId: entry.reply.deliveryId ?? replyDeliveryKey(entry.turnId), state: replyState(entry) ?? 'staged' };
+      if (entry.notice) entry.notice = { ...entry.notice, deliveryId: entry.notice.deliveryId ?? noticeDeliveryKey(entry.turnId), state: noticeState(entry) ?? 'staged' };
+      entries.push(entry);
+    }
+  }
+  if (!upgrade && isObject(raw.items) && Object.keys(raw.items).some((id) => !referenced.has(id))) {
+    throw new Error('Unreferenced Outbox item');
+  }
+  return { entries, draftCards, ...(upgrade ? { upgrade: true } : {}) };
 }
 
 function parseEntry(raw: unknown): TurnJournalEntry | undefined {
@@ -895,6 +819,7 @@ function parseReply(raw: unknown): TurnReply | undefined {
   if (typeof raw.replyMode !== 'string') return undefined;
   return {
     markdown: raw.markdown,
+    ...(raw.kind === 'reminder' || raw.kind === 'result' ? { kind: raw.kind } : {}),
     replyTo: raw.replyTo,
     replyMode: raw.replyMode,
     ...(raw.replyInThread === true ? { replyInThread: true } : {}),
@@ -953,54 +878,6 @@ function isOutboxItemState(value: unknown): value is OutboxItemState {
       return true;
     default:
       return false;
-  }
-}
-
-export function replyState(entry: TurnJournalEntry): OutboxItemState | undefined {
-  if (!entry.reply) return undefined;
-  if (entry.status === 'voided') return 'voided';
-  if (entry.reply.state) return entry.reply.state;
-  switch (entry.status) {
-    case 'reply-delivered':
-      return 'sent';
-    case 'completed-undelivered':
-    case 'settled':
-    case 'notice-pending':
-    case 'queued':
-    case 'running':
-    case 'interrupted':
-      return 'staged';
-    case 'notice-delivered':
-      return entry.reply.messageId ? 'sent' : 'staged';
-    default: {
-      const _exhaustive: never = entry.status;
-      return _exhaustive;
-    }
-  }
-}
-
-export function noticeState(entry: TurnJournalEntry): OutboxItemState | undefined {
-  if (!entry.notice) return undefined;
-  if (entry.noticeInvalidated || entry.status === 'voided') return 'voided';
-  if (entry.notice.state) return entry.notice.state;
-  switch (entry.status) {
-    case 'notice-pending':
-      return 'staged';
-    case 'notice-delivered':
-      return 'sent';
-    case 'queued':
-    case 'running':
-    case 'settled':
-    case 'reply-delivered':
-    case 'completed-undelivered':
-    case 'interrupted':
-      if (entry.noticeStatus === 'pending') return 'staged';
-      if (entry.noticeStatus === 'delivered' || entry.notice.messageId) return 'sent';
-      return 'staged';
-    default: {
-      const _exhaustive: never = entry.status;
-      return _exhaustive;
-    }
   }
 }
 
@@ -1077,28 +954,6 @@ function defaultSleep(ms: number): Promise<void> {
 
 function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export const FEISHU_DELIVERY_ID_MAX_CHARS = 50;
-
-export function replyDeliveryKey(turnId: string): string {
-  return clipDeliveryId(`reply:${turnId}`);
-}
-
-export function noticeDeliveryKey(turnId: string): string {
-  return clipDeliveryId(`notice:${turnId}`);
-}
-
-export function noticeOwnerDeliveryKey(turnId: string): string {
-  return clipDeliveryId(`notice-owner:${turnId}`);
-}
-
-export function streamDeliveryKey(turnId: string): string {
-  return clipDeliveryId(`stream:${turnId}`);
-}
-
-function clipDeliveryId(id: string): string {
-  return id.length <= FEISHU_DELIVERY_ID_MAX_CHARS ? id : id.slice(0, FEISHU_DELIVERY_ID_MAX_CHARS);
 }
 
 export { readProcessStartMs, isProcessAlive };

@@ -44,7 +44,9 @@
                   "type": "default",
                   "value": {
                     "cmd": "resume.use",
-                    "arg": "<nonce>"
+                    "arg": "<nonce>",
+                    "limit": 5,
+                    "card": "resume"
                   }
                 }
               ]
@@ -92,7 +94,8 @@
                   },
                   "type": "primary",
                   "value": {
-                    "cmd": "new"
+                    "cmd": "new",
+                    "card": "status"
                   }
                 },
                 {
@@ -103,7 +106,8 @@
                   },
                   "type": "default",
                   "value": {
-                    "cmd": "resume"
+                    "cmd": "resume",
+                    "card": "status"
                   }
                 },
                 {
@@ -114,7 +118,8 @@
                   },
                   "type": "default",
                   "value": {
-                    "cmd": "ws.list"
+                    "cmd": "ws.list",
+                    "card": "status"
                   }
                 },
                 {
@@ -125,7 +130,8 @@
                   },
                   "type": "default",
                   "value": {
-                    "cmd": "help"
+                    "cmd": "help",
+                    "card": "status"
                   }
                 }
               ]

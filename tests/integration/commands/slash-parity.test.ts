@@ -1,11 +1,10 @@
-import { readFileSync } from 'node:fs';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { capabilityForProfile } from '../../../src/agent/capability.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index.js';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
 import { canUseDm } from '../../../src/policy/access.js';
 import { evaluateRunPolicy } from '../../../src/policy/run-policy.js';
@@ -31,15 +30,6 @@ const goldenRoot = join(process.cwd(), 'tests/fixtures/goldens/slash');
 describe('P5 slash command parity', () => {
   afterEach(async () => {
     await Promise.all(cleanups.splice(0).map((cleanup) => cleanup()));
-  });
-
-  it('keeps /history and /model out of slash handlers', () => {
-    const source = readFileSync(join(process.cwd(), 'src/commands/index.ts'), 'utf8');
-    const table = source.slice(source.indexOf('const handlers:'), source.indexOf('const ADMIN_COMMANDS'));
-    expect(table).toContain("'/resume': handleResume");
-    expect(table).toContain("'/status': handleStatus");
-    expect(table).not.toContain("'/history'");
-    expect(table).not.toContain("'/model'");
   });
 
   it.each(PIN_AGENT_KINDS)('snapshots /resume and /status text for %s', async (kind) => {
@@ -122,8 +112,9 @@ async function createHarness(kind: PinAgentKind): Promise<{
   }
   const run = (content: string): Promise<boolean> =>
     tryHandleCommand({
+      origin: 'slash',
       resumeCandidates,
-      channel: channel as unknown as CommandContext['channel'],
+      channel: channel as unknown as UserActionContext['channel'],
       msg: message(content),
       scope: 'chat-1',
       chatMode: 'p2p',

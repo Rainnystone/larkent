@@ -98,6 +98,7 @@ class ManagedProfile {
     this.journal = new TurnJournal(appPaths.turnJournalFile);
     this.automations = new AutomationsStore({
       path: appPaths.automationsFile,
+      journal: this.journal,
       logPath: appPaths.automationsLogFile,
       statusPath: appPaths.automationsStatusFile,
     });

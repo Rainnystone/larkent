@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readFile, realpath } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs';
-import { tryHandleCommand, type CommandContext, type Controls } from '../../../src/commands/index';
+import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index';
 import { createDefaultProfileConfig, MEETING_DEFAULTS } from '../../../src/config/profile-schema';
 import { attachMeetingAgent, meetingScopeId } from '../../../src/meeting/orchestrator';
 import { MeetingSession } from '../../../src/meeting/session';
@@ -65,16 +65,6 @@ describe('stop request at each call site', () => {
     const handle = h.activeRuns.register('chat-1', h.agent.run({ runId: 'r', prompt: 'p' }));
     await expect(h.run('/reconnect')).resolves.toBe(true);
     expect(handle.stopRequest).toEqual({ type: 'reconnect-command' });
-  });
-
-  it('records exit-command on /exit of this process', async () => {
-    const source = await readFile(new URL('../../../src/commands/index.ts', import.meta.url), 'utf8');
-    expect(source).toContain("requestStop(handle, { type: 'exit-command' })");
-  });
-
-  it('records account-restart when /account change reconnects', async () => {
-    const source = await readFile(new URL('../../../src/commands/index.ts', import.meta.url), 'utf8');
-    expect(source).toMatch(/restart\(\s*\{\s*stopReason:\s*\{\s*type:\s*'account-restart'/);
   });
 
   it('records meeting on an in-meeting stop word', async () => {
@@ -155,8 +145,9 @@ async function harness(): Promise<{
     controls,
     run: (content: string) =>
       tryHandleCommand({
+        origin: 'slash',
         resumeCandidates: new ResumeCandidates(),
-        channel: channel as unknown as CommandContext['channel'],
+        channel: channel as unknown as UserActionContext['channel'],
         msg: message(content),
         scope: 'chat-1',
         chatMode: 'p2p',

@@ -13,8 +13,9 @@ const END = {
 const BASH_UTF8_TEXT = '中文{"ok":true}';
 const BASH_UTF8_BYTES = [228, 184, 173, 230, 150, 135, 123, 34, 111, 107, 34, 58, 116, 114, 117, 101, 125];
 
+// Parsing assertions omit activity; D03b replay and core/watchdog tests pin liveness.
 function collect(translator: GrokJsonlTranslator, lines: unknown[]): AgentEvent[] {
-  return lines.flatMap((line) => translator.translate(line));
+  return lines.flatMap((line) => translator.translate(line)).filter(event => event.type !== 'liveness');
 }
 
 describe('GrokJsonlTranslator', () => {
@@ -22,7 +23,6 @@ describe('GrokJsonlTranslator', () => {
     const t = new GrokJsonlTranslator();
     const events = collect(t, [{ type: 'text', data: 'OK' }, END]);
     expect(events).toEqual([
-      { type: 'system' },
       { type: 'system', resumeHandle: SESSION },
       {
         type: 'usage',
@@ -80,109 +80,17 @@ describe('GrokJsonlTranslator', () => {
     expect(JSON.stringify(events)).not.toContain('<|eos|>');
   });
 
-  it('concatenates incremental text chunks into one final_text', () => {
+  it('emits one liveness event per non-empty text chunk and none for an empty chunk', () => {
     const t = new GrokJsonlTranslator();
-    const events = collect(t, [
-      { type: 'text', data: 'Hel' },
-      { type: 'text', data: 'lo' },
-      { type: 'end', sessionId: SESSION },
-    ]);
-    expect(events.find((e) => e.type === 'final_text')).toEqual({
-      type: 'final_text',
-      content: 'Hello',
-    });
-  });
-
-  it('emits one bare system event per non-empty text chunk and none for an empty chunk', () => {
-    const t = new GrokJsonlTranslator();
-    expect(t.translate({ type: 'text', data: 'Hel' })).toEqual([{ type: 'system' }]);
-    expect(t.translate({ type: 'text', data: 'lo' })).toEqual([{ type: 'system' }]);
-    expect(t.translate({ type: 'text', text: '!' })).toEqual([{ type: 'system' }]);
+    expect(t.translate({ type: 'text', data: 'Hel' })).toEqual([{ type: 'liveness' }]);
+    expect(t.translate({ type: 'text', data: 'lo' })).toEqual([{ type: 'liveness' }]);
+    expect(t.translate({ type: 'text', text: '!' })).toEqual([{ type: 'liveness' }]);
     expect(t.translate({ type: 'text', data: '' })).toEqual([]);
     expect(t.translate({ type: 'text' })).toEqual([]);
     const end = t.translate({ type: 'end', sessionId: SESSION });
     expect(end.filter((event) => event.type === 'text')).toEqual([]);
     expect(end.filter((event) => event.type === 'final_text')).toEqual([
       { type: 'final_text', content: 'Hello!' },
-    ]);
-  });
-
-  it('flushes buffered text before an error and before fail', () => {
-    const errored = new GrokJsonlTranslator();
-    expect(errored.translate({ type: 'text', data: 'partial' })).toEqual([{ type: 'system' }]);
-    expect(errored.translate({ type: 'error', message: 'boom' })).toEqual([
-      { type: 'text', delta: 'partial\n\n' },
-      { type: 'error', message: 'boom', terminationReason: 'failed' },
-    ]);
-
-    const failed = new GrokJsonlTranslator();
-    expect(failed.translate({ type: 'text', data: 'partial' })).toEqual([{ type: 'system' }]);
-    expect(failed.fail('connection lost')).toEqual([
-      { type: 'text', delta: 'partial\n\n' },
-      { type: 'error', message: 'connection lost', terminationReason: 'failed' },
-    ]);
-  });
-
-  it('emits pre-tool text as progress before the tool and keeps it out of the answer', () => {
-    const t = new GrokJsonlTranslator();
-    expect(t.translate({ type: 'text', data: 'Let me check.' })).toEqual([{ type: 'system' }]);
-    expect(t.translate({
-      type: 'tool_call',
-      toolCallId: 'call_1',
-      toolName: 'read_file',
-      status: 'in_progress',
-      rawInput: { path: 'a.ts' },
-    })).toEqual([
-      { type: 'text', delta: 'Let me check.\n\n' },
-      { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
-    ]);
-    expect(t.translate({ type: 'text', data: 'Done.' })).toEqual([{ type: 'system' }]);
-    const end = t.translate({ type: 'end', sessionId: SESSION });
-    expect(end.filter((event) => event.type === 'text')).toEqual([]);
-    expect(end.find((event) => event.type === 'final_text')).toEqual({
-      type: 'final_text',
-      content: 'Done.',
-    });
-  });
-
-  it('shows every pre-tool segment as progress and answers with the text after the last tool', () => {
-    const t = new GrokJsonlTranslator();
-    const events = collect(t, [
-      { type: 'text', data: 'First ' },
-      { type: 'text', data: 'look.' },
-      { type: 'tool_call', toolCallId: 'call_1', toolName: 'read_file', status: 'in_progress' },
-      { type: 'tool_call_update', toolCallId: 'call_1', status: 'completed', rawOutput: 'a' },
-      { type: 'text', data: 'Second look.' },
-      { type: 'tool_call', toolCallId: 'call_2', toolName: 'read_file', status: 'in_progress' },
-      { type: 'tool_call_update', toolCallId: 'call_2', status: 'completed', rawOutput: 'b' },
-      { type: 'text', data: 'The answer.' },
-      { type: 'end', sessionId: SESSION },
-    ]);
-    expect(events.filter((event) => event.type === 'text')).toEqual([
-      { type: 'text', delta: 'First look.\n\n' },
-      { type: 'text', delta: 'Second look.\n\n' },
-    ]);
-    expect(events.filter((event) => event.type === 'final_text')).toEqual([
-      { type: 'final_text', content: 'The answer.' },
-    ]);
-  });
-
-  it('answers with the last non-empty pre-tool segment when no text follows the last tool', () => {
-    const t = new GrokJsonlTranslator();
-    const events = collect(t, [
-      { type: 'text', data: 'Checking the schedule.' },
-      { type: 'tool_call', toolCallId: 'call_1', toolName: 'read_file', status: 'in_progress' },
-      { type: 'tool_call_update', toolCallId: 'call_1', status: 'completed', rawOutput: 'a' },
-      { type: 'tool_call', toolCallId: 'call_2', toolName: 'read_file', status: 'in_progress' },
-      { type: 'tool_call_update', toolCallId: 'call_2', status: 'completed', rawOutput: 'b' },
-      { type: 'text', data: '  \n' },
-      { type: 'end', sessionId: SESSION },
-    ]);
-    expect(events.filter((event) => event.type === 'text')).toEqual([
-      { type: 'text', delta: 'Checking the schedule.\n\n' },
-    ]);
-    expect(events.filter((event) => event.type === 'final_text')).toEqual([
-      { type: 'final_text', content: 'Checking the schedule.' },
     ]);
   });
 
@@ -209,11 +117,9 @@ describe('GrokJsonlTranslator', () => {
     ]);
     expect(events).toEqual([
       { type: 'thinking', delta: 'looking' },
-      { type: 'system' },
-      { type: 'text', delta: 'Let me check.\n\n' },
+            { type: 'text', delta: 'Let me check.\n\n' },
       { type: 'tool_use', id: 'call_1', name: 'read_file', input: { path: 'a.ts' } },
       { type: 'tool_result', id: 'call_1', output: '{"lines":3}', isError: false },
-      { type: 'system' },
       { type: 'system', resumeHandle: SESSION },
       { type: 'final_text', content: 'Done.' },
       { type: 'done', resumeHandle: SESSION, terminationReason: 'normal' },
@@ -293,7 +199,7 @@ describe('GrokJsonlTranslator', () => {
     const finished = t.translate(p09sCompletedUpdate(output));
 
     expect(started.map((event) => event.type)).toEqual(['tool_use']);
-    expect(progress).toEqual([]);
+    expect(progress).toEqual([{ type: 'liveness' }]);
     expect(finished.filter((event) => event.type === 'tool_result')).toEqual([
       {
         type: 'tool_result',

@@ -1,0 +1,2908 @@
+[
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > maps a captured print-mode success stream to system + final_text + done / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "pong\n",
+              "duration_seconds": 4.381362,
+              "usage": {
+                "input_tokens": 19469,
+                "output_tokens": 15,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 19484
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "pong\n",
+              "duration_seconds": 4.415612,
+              "num_turns": 1,
+              "usage": {
+                "input_tokens": 19469,
+                "output_tokens": 15,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 19484
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > prefers result.response over concatenated text_delta fragments / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 4,
+              "state": "ACTIVE",
+              "step_type": "agent_response",
+              "text_delta": "ping"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 4,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "\n"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "ping\n"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > maps result ERROR to a terminal error and not a successful empty reply / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "error_message"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "ERROR",
+              "response": "",
+              "error": "FAILED_PRECONDITION (code 400): User location is not supported for the API use.",
+              "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 0
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > recognizes official tool and checkpoint steps without tool events or drift / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file",
+                "grep_search"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                },
+                "output": "# README\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                }
+              },
+              "subagent_info": {
+                "name": "explore"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                },
+                "output": "no matches"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 3,
+              "state": "DONE",
+              "step_type": "checkpoint"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > keeps already-silent official steps from incrementing drift / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_type": "user_input",
+              "state": "DONE"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_type": "system_message",
+              "state": "DONE"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_type": "error_message",
+              "state": "DONE"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > ignores unknown events and step types without throwing / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_type": "system_message",
+              "state": "DONE"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "step_type": "not_a_real_step",
+              "state": "DONE"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "not-a-real-event"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > finish(failed) surfaces an error when the stream had no result / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "finish",
+        "args": []
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > fail() flushes held-back reply text and a resume handle from step_update / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "agent_response",
+              "text_delta": "partial answer"
+            }
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "agy exited with code 1"
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "again"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > emits a print-timeout hint for the incident empty SUCCESS after tools and checkpoint / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file",
+                "grep_search"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                },
+                "output": "# README\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                }
+              },
+              "subagent_info": {
+                "name": "explore"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                },
+                "output": "no matches"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 3,
+              "state": "DONE",
+              "step_type": "checkpoint"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "",
+              "duration_seconds": 300.12,
+              "num_turns": 1,
+              "usage": {
+                "input_tokens": 19469,
+                "output_tokens": 0,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 19469
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > keeps a short clean empty SUCCESS silent so outbound may skip-empty / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": ""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > does not classify a SUCCESS with real response text as print-timeout / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file",
+                "grep_search"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                },
+                "output": "# README\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                }
+              },
+              "subagent_info": {
+                "name": "explore"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                },
+                "output": "no matches"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 3,
+              "state": "DONE",
+              "step_type": "checkpoint"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "pong\n"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > flushes held-back agent_response text instead of a print-timeout hint / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file",
+                "grep_search"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                },
+                "output": "# README\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                }
+              },
+              "subagent_info": {
+                "name": "explore"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                },
+                "output": "no matches"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 3,
+              "state": "DONE",
+              "step_type": "checkpoint"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 4,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "partial answer\n"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": ""
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > keeps FAILED results as terminal errors after recognized tools / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file",
+                "grep_search"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                },
+                "output": "# README\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                }
+              },
+              "subagent_info": {
+                "name": "explore"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                },
+                "output": "no matches"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 3,
+              "state": "DONE",
+              "step_type": "checkpoint"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "FAILED",
+              "response": "",
+              "error": "timeout waiting for response"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > trusts an official result error field that means print-timeout / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "",
+              "error": "timeout waiting for response"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > finish(failed) flushes held-back reply text when the stream had no result / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "truncated\n"
+            }
+          }
+        ]
+      },
+      {
+        "method": "finish",
+        "args": []
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > scrubs a SYSTEM_MESSAGE envelope prepended to incident prose from result.response / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "system_message"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。\n"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。\n",
+              "duration_seconds": 12.4,
+              "num_turns": 1,
+              "usage": {
+                "input_tokens": 19469,
+                "output_tokens": 80,
+                "thinking_tokens": 0,
+                "cache_read_tokens": 0,
+                "total_tokens": 19549
+              }
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > leaves a clean SUCCESS reply byte-identical when no envelope is present / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "pong\n"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > C2: treats envelope-only SUCCESS as empty so existing skip-empty rules apply / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > C2: falls through to the print-timeout hint when envelope-only SUCCESS follows tools / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file",
+                "grep_search"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 0,
+              "state": "DONE",
+              "step_type": "user_input"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                }
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "view_file",
+              "tool_info": {
+                "name": "view_file",
+                "parameters": {
+                  "path": "/tmp/README.md"
+                },
+                "output": "# README\n"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "ACTIVE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                }
+              },
+              "subagent_info": {
+                "name": "explore"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 2,
+              "state": "DONE",
+              "step_type": "tool",
+              "tool_name": "grep_search",
+              "tool_info": {
+                "name": "grep_search",
+                "parameters": {
+                  "query": "timeout"
+                },
+                "output": "no matches"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 3,
+              "state": "DONE",
+              "step_type": "checkpoint"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > scrubs held-back agent_response text flushed through prependHeldBack / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。\n"
+            }
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "agy exited with code 1"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B4: keeps an unclosed non-fingerprinted opener and trailing prose byte-identical / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n前半段\n<SYSTEM_MESSAGE>mid</SYSTEM_MESSAGE>\n后半段\nFAIL tests/unit/agent/antigravity-jsonl.test.ts\n<SYSTEM_MESSAGE> blocks must not peel the rest of the answer\n请看后面的说明。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B1: translateResult leaves citation or stray closer byte-identical / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "See also <SYSTEM_MESSAGE> in the docs.\n- a list item cites <SYSTEM_MESSAGE> mid-content\n> a blockquote cites <SYSTEM_MESSAGE> mid-content"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B2: translateResult leaves citation or stray closer byte-identical / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "Use `<SYSTEM_MESSAGE>` when writing the prompt."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B3: translateResult leaves citation or stray closer byte-identical / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "```\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-18T00:00:00Z\n```\nkept after fence"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B5: translateResult leaves citation or stray closer byte-identical / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "oops </SYSTEM_MESSAGE> leftover closer"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B7: translateResult leaves citation or stray closer byte-identical / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "````md\n```js\n<SYSTEM_MESSAGE>\n[Message] content=task_complete\n</SYSTEM_MESSAGE>\n````\nkept after fence"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B6: translateResult strips a real envelope after a nested longer fence / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "````md\n```js\nexample\n````\n<SYSTEM_MESSAGE>\n[Message] content=task_complete\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > A3: strips an unclosed fingerprinted envelope through end on result.response / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-18T12:26:00+08:00\n[Message] sender=antigravity\ntruncated envelope body that must not leak"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > A4: removes the preamble companion with the envelope on result.response / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "The following is a <SYSTEM_MESSAGE> not actually sent by the user.\n<SYSTEM_MESSAGE>\n[Message] content=task_complete\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > C1: first closer wins on nested-looking opens without a depth matcher / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>outer<SYSTEM_MESSAGE>inner</SYSTEM_MESSAGE>keep</SYSTEM_MESSAGE>after"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > A2: scrubs the Incident A envelope shape cited by <MESSAGE_ID> / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > B4: prependHeldBack leaves a vitest-title unclosed opener byte-identical / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "FAIL tests/unit/agent/antigravity-jsonl.test.ts\n<SYSTEM_MESSAGE> blocks must not peel the rest of the answer\n请看后面的说明。"
+            }
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "agy exited with code 1"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > A1: prependHeldBack strips a fingerprinted envelope and keeps the prose / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-18T12:26:00+08:00\n[Message] content=task_complete\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。"
+            }
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "agy exited with code 1"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > C3: does not rewrite ERROR results that mention SYSTEM_MESSAGE in the error text / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "ERROR",
+              "response": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。",
+              "error": "FAILED_PRECONDITION: leaked <SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > C3: does not rewrite FAILED results that mention SYSTEM_MESSAGE in the error text / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "FAILED",
+              "response": "<SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>\n收到！已经根据你的要求整理完初稿。",
+              "error": "FAILED: leaked <SYSTEM_MESSAGE>\n{\"type\":\"task_complete\",\"task_id\":\"bg-1\",\"cwd\":\"/tmp/workspace\"}\n</SYSTEM_MESSAGE>"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > T1: logs scrub lengths plus classifier fields and never logs the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "system_message"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<SYSTEM_MESSAGE>\n[Message] content=task_complete\n</SYSTEM_MESSAGE>\nSee <SYSTEM_MESSAGE> cited.\n收到！已经根据你的要求整理完初稿。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN1: translateResult drops task_notification and keeps the title citation plus Chinese answer / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification>\nFAIL tests/unit/agent/antigravity-jsonl.test.ts > scrubs multi-line and nested <SYSTEM_MESSAGE> blocks\n这是给用户看的中文答复。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN2: translateResult strips a balanced task_notification and keeps clean prose / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification>\n干净的答复。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN7: translateResult strips a system envelope exposed after task_notification removal / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification><SYSTEM_MESSAGE>\n[Message] content=task_complete\n</SYSTEM_MESSAGE>\n干净的答复。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN8: translateResult keeps four-space Markdown indentation after dropping task_notification / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "    def foo():\n        return 1\n<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification>"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN3: translateResult retains a task_notification citation or unclosed non-fingerprinted opener / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "See also <task_notification> in the docs."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN4: translateResult retains a task_notification citation or unclosed non-fingerprinted opener / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "Use `<task_notification>` when writing the prompt."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN5: translateResult retains a task_notification citation or unclosed non-fingerprinted opener / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "```\n<task_notification>\n{\"type\":\"task_update\"}\n```\nkept after fence"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN6: translateResult retains a task_notification citation or unclosed non-fingerprinted opener / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-open\"}\n这是给用户看的中文答复。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN1: prependHeldBack drops task_notification and keeps the title citation plus Chinese answer / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "step_update",
+            "step_update": {
+              "conversation_id": "<ID_1>",
+              "step_index": 1,
+              "state": "DONE",
+              "step_type": "agent_response",
+              "text_delta": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification>\nFAIL tests/unit/agent/antigravity-jsonl.test.ts > scrubs multi-line and nested <SYSTEM_MESSAGE> blocks\n这是给用户看的中文答复。"
+            }
+          }
+        ]
+      },
+      {
+        "method": "fail",
+        "args": [
+          "agy exited with code 1"
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > C3: does not rewrite ERROR results that mention task_notification in the error text / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "ERROR",
+              "response": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification>\n这是给用户看的中文答复。",
+              "error": "FAILED_PRECONDITION: leaked <task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification>"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > TN1: logs task_notification_scrubbed lengths plus SYSTEM_MESSAGE retain and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-1\"}\n</task_notification>\nFAIL tests/unit/agent/antigravity-jsonl.test.ts > scrubs multi-line and nested <SYSTEM_MESSAGE> blocks\n这是给用户看的中文答复。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > logs task_notification_tag_retained with the TN3 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "See also <task_notification> in the docs."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > logs task_notification_tag_retained with the TN4 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "Use `<task_notification>` when writing the prompt."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > logs task_notification_tag_retained with the TN5 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "```\n<task_notification>\n{\"type\":\"task_update\"}\n```\nkept after fence"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > logs task_notification_tag_retained with the TN6 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "<task_notification>\n{\"type\":\"task_update\",\"task_id\":\"tn-open\"}\n这是给用户看的中文答复。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > T1: logs system_message_tag_retained with the B1 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "See also <SYSTEM_MESSAGE> in the docs.\n- a list item cites <SYSTEM_MESSAGE> mid-content\n> a blockquote cites <SYSTEM_MESSAGE> mid-content"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > T1: logs system_message_tag_retained with the B2 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "Use `<SYSTEM_MESSAGE>` when writing the prompt."
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > T1: logs system_message_tag_retained with the B3 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "```\n<SYSTEM_MESSAGE>\n[Message] timestamp=2026-09-18T00:00:00Z\n```\nkept after fence"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > T1: logs system_message_tag_retained with the B4 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "FAIL tests/unit/agent/antigravity-jsonl.test.ts\n<SYSTEM_MESSAGE> blocks must not peel the rest of the answer\n请看后面的说明。"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "kind": "antigravity",
+    "name": "AntigravityJsonlTranslator > T1: logs system_message_tag_retained with the B7 reason and never the body / 1",
+    "source": "tests/unit/agent/antigravity-jsonl.test.ts",
+    "steps": [
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "init",
+            "conversation_id": "<ID_1>",
+            "init": {
+              "model": "claude-sonnet-4-6",
+              "cwd": "/tmp",
+              "tools": [
+                "view_file"
+              ],
+              "permission_mode": "always-proceed"
+            }
+          }
+        ]
+      },
+      {
+        "method": "translate",
+        "args": [
+          {
+            "event": "result",
+            "result": {
+              "conversation_id": "<ID_1>",
+              "status": "SUCCESS",
+              "response": "````md\n```js\n<SYSTEM_MESSAGE>\n[Message] content=task_complete\n</SYSTEM_MESSAGE>\n````\nkept after fence"
+            }
+          }
+        ]
+      }
+    ]
+  }
+]

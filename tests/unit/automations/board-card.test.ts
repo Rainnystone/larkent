@@ -57,7 +57,7 @@ describe('automation board card', () => {
     expect(card).toContain('已错过 原定 2026-01-02 13:00');
     expect(card).toContain('暂停');
     expect(card).toContain('删除');
-    expect(card).toContain('auto_board.v1.');
+    expect(card).toContain('auto_board.');
     expect(card).not.toContain('secret ping body');
     expect(card).not.toContain('ou_alice');
     expect(card).not.toContain('"v":1');

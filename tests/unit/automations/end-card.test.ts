@@ -3,12 +3,9 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
-import {
-  completeDraftEnd,
-  parseScheduleText,
-  presetEndAt,
-  resolveEndAt,
-} from '../../../src/automations/command';
+import { parseScheduleText, presetEndAt } from '../../../src/automations/command';
+import { resolveEndAt } from '../../../src/automations/command-schedule';
+import { completeDraftEnd } from '../../helpers/draft-confirmation';
 import { END_CARD_PRESETS, automationEndCard, type EndCardTokens } from '../../../src/automations/end-card';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';

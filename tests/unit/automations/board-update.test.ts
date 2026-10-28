@@ -2,12 +2,12 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createAutomationBoard } from '../../../src/automations/board';
+import { AUTO_PIN_FAILED_HINT, createAutomationBoard } from '../../../src/automations/board';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { AutomationsStore } from '../../../src/automations/store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
 import { createFakeChannel } from '../../helpers/fake-channel';
-import { axiosErrno } from '../../helpers/sdk-feishu-errors';
+import { axiosErrno, axiosHttpError, axiosLike } from '../../helpers/sdk-feishu-errors';
 
 const CHAT = 'oc_group';
 const NOW = Date.UTC(2026, 9, 18, 3, 0, 0);
@@ -513,7 +513,148 @@ describe('board card.update', () => {
     expect(overflow).not.toContain(first.messageId);
     expect(overflow).not.toContain('om_pending_1');
   });
+
+  it.each([
+    {
+      name: '230011',
+      error: () => axiosLike('Request failed with status code 400', {
+        response: { status: 400, data: { code: 230011, msg: 'The message was withdrawn.' } },
+      }),
+    },
+    { name: '404 without code', error: () => axiosHttpError(404) },
+  ])('resends once when pinning a patched board fails because the message is gone ($name)', async ({ error }) => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    withdrawBoardMessage(h, first.messageId, error);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    const next = h.store.getBoard(CHAT)!;
+    expect(next.messageId).not.toBe(first.messageId);
+    expect(next.cardId).toBeTruthy();
+    expect(next.cardId).not.toBe(first.cardId);
+    expect(h.channel.sent.length).toBe(sent + 1);
+    expect(JSON.stringify(h.channel.sent)).not.toContain(AUTO_PIN_FAILED_HINT);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next.messageId]);
+    expect(pendingMessageIds(next)).toEqual([]);
+    expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([
+      expect.objectContaining({ _chatId: CHAT, reason: 'message-deleted' }),
+    ]);
+
+    await h.store.resume(h.itemId, NOW + 2 * 60 * 60_000);
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(next.messageId);
+    expect(h.channel.sent.length).toBe(sent + 1);
+    expect(await boardEvents(h.logsDir, 'board.resend')).toHaveLength(1);
+  });
+
+  it.each([
+    {
+      name: 'rate limit 99991400',
+      error: () => axiosLike('Request failed with status code 400', {
+        response: { status: 400, data: { code: 99991400, msg: 'request trigger frequency limit' } },
+      }),
+    },
+    { name: '403 without code', error: () => axiosHttpError(403) },
+    { name: 'ECONNRESET', error: () => axiosErrno('ECONNRESET', 'connect ECONNRESET') },
+  ])('does not resend when pinning fails with $name', async ({ error }) => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    withdrawBoardMessage(h, first.messageId, error);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.channel.sent.length).toBe(sent + 1);
+    expect(JSON.stringify(h.channel.sent.at(-1))).toContain(AUTO_PIN_FAILED_HINT);
+    expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([]);
+  });
+
+  it('sends one replacement per refresh when the replacement pin also reports the message gone', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    h.channel.pins.splice(0);
+    h.channel.rawClient.im.v1.pin.create = async () => {
+      throw axiosLike('Request failed with status code 400', {
+        response: { status: 400, data: { code: 230011, msg: 'The message was withdrawn.' } },
+      });
+    };
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    const next = h.store.getBoard(CHAT)!;
+    expect(next.messageId).not.toBe(first.messageId);
+    expect(pendingMessageIds(next)).toEqual([]);
+    expect(h.channel.sent.length).toBe(sent + 2);
+    expect(JSON.stringify(h.channel.sent.at(-1))).toContain(AUTO_PIN_FAILED_HINT);
+    expect(await boardEvents(h.logsDir, 'board.resend')).toHaveLength(1);
+    expect(await failEvents(h.logsDir, 'board.pin')).toHaveLength(1);
+  });
+
+  it('does not resend when listing pins fails with 404 without code', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    h.channel.rawClient.im.v1.pin.list = async () => {
+      throw axiosHttpError(404);
+    };
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([]);
+  });
+
+  it('drops a pending unpin entry when unpin reports the message gone', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    await h.store.setBoard({ ...first, pendingUnpinMessageIds: ['om_gone', 'om_busy'] });
+    const pin = h.channel.rawClient.im.v1.pin;
+    const orig = pin.delete.bind(pin);
+    pin.delete = async (params) => {
+      const messageId = (params as { path?: { message_id?: string } } | undefined)?.path?.message_id;
+      if (messageId === 'om_gone') {
+        throw axiosLike('Request failed with status code 400', {
+          response: { status: 400, data: { code: 230011, msg: 'The message was withdrawn.' } },
+        });
+      }
+      if (messageId === 'om_busy') throw new Error('unpin rate limited');
+      return orig(params);
+    };
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(pendingMessageIds(h.store.getBoard(CHAT))).toEqual(['om_busy']);
+  });
 });
+
+async function failEvents(logsDir: string, event: string): Promise<Array<Record<string, unknown>>> {
+  return (await boardEvents(logsDir, 'fail')).filter((entry) => entry._event === event);
+}
+
+function withdrawBoardMessage(
+  h: Awaited<ReturnType<typeof harness>>,
+  messageId: string,
+  error: () => unknown,
+): void {
+  const index = h.channel.pins.findIndex((pin) => pin.messageId === messageId);
+  if (index >= 0) h.channel.pins.splice(index, 1);
+  const pin = h.channel.rawClient.im.v1.pin;
+  const orig = pin.create.bind(pin);
+  pin.create = async (params) => {
+    const data = (params as { data?: { message_id?: string } } | undefined)?.data;
+    if (data?.message_id === messageId) throw error();
+    return orig(params);
+  };
+}
 
 function timeSequence(nowMs: number): number {
   return Math.floor((nowMs - Date.UTC(2026, 0, 1)) / 1000);

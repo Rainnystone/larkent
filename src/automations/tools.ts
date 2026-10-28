@@ -1,8 +1,9 @@
+import { automationMutationNeedsConfirmation, readAutomationTasks } from './task-mutation';
 import { manageAutomationOperation } from './manage-operation';
 import { AUTOMATION_OPERATION_TTL_MS } from './operation-id';
 import type { TurnJournal } from '../bot/turn-journal';
 import { createAutomationOperation, getAutomationOperation, serializeAutomationWrite } from './operation';
-import type { DraftFlushContext } from './command';
+import type { DraftConfirmationContext } from './draft-confirmation';
 import { formatZonedDateTime } from './confirm-card';
 import { fireTurnId } from './delivery';
 import { policyGuardReasonLabel } from './policy-guard';
@@ -20,7 +21,7 @@ export interface AutomationToolContext {
   /** Bound at intake, never derived from model arguments. Rechecked on every call. */
   availability(): string | undefined;
   store?: AutomationsStore;
-  drafts?: DraftFlushContext;
+  drafts?: DraftConfirmationContext;
   journal?: TurnJournal;
   cardReply?: DraftCardReply;
   timezone: string;
@@ -53,13 +54,13 @@ export function automationSchema(context: AutomationToolContext) {
       ['automation.preview', { available: !reason, ...(reason ? { reason } : {}), params: AUTOMATION_PREVIEW_SCHEMA }],
       ['automation.create', { available: !createReason, ...(createReason ? { reason: createReason } : {}), params: { type: 'object', additionalProperties: false, required: ['taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, taskType: { enum: context.agentTasks ? ['reminder', 'agent'] : ['reminder'] }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, supersedesOperationId: { type: 'string', description: 'Explicit operation ID of one pending create draft owned by this actor in this profile/chat; invalidates its old confirmation atomically. Omit for independent drafts.' }, operationId: { type: 'string', description: 'Client assigns before submission; retain for queries and retries' } } } }],
       ['automation.operation.get', { available: !reason, ...(reason ? { reason } : {}), params: { type: 'object', additionalProperties: false, required: ['operationId'], properties: { operationId: { type: 'string' } } } }],
-      ...['pause', 'resume', 'delete'].map(name => { const unavailable = name === 'delete' ? confirmedMutationReason : mutationReason; return [`automation.${name}`, { available: !unavailable, ...(unavailable ? { reason: unavailable } : {}), params: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'integer', minimum: 1 }, revision: { type: 'string', description: 'Expected management revision from automation.list; stale state is rejected' }, operationId: { type: 'string' } } } }]; }),
+      ...['pause', 'resume', 'delete'].map(name => { const unavailable = automationMutationNeedsConfirmation('model', name as 'pause' | 'resume' | 'delete') ? confirmedMutationReason : mutationReason; return [`automation.${name}`, { available: !unavailable, ...(unavailable ? { reason: unavailable } : {}), params: { type: 'object', additionalProperties: false, required: ['id'], properties: { id: { type: 'integer', minimum: 1 }, revision: { type: 'string', description: 'Expected management revision from automation.list; stale state is rejected' }, operationId: { type: 'string' } } } }]; }),
       ['automation.replace', { available: !confirmedMutationReason, ...(confirmedMutationReason ? { reason: confirmedMutationReason } : {}), params: { type: 'object', additionalProperties: false, required: ['id', 'taskType', 'name', 'taskText', 'schedule'], properties: { ...AUTOMATION_PREVIEW_SCHEMA.properties, schedule: { oneOf: scheduleSchema.oneOf.map(shape => ({ ...shape, required: shape.required.filter(key => key !== 'endAt') })) }, id: { type: 'integer', minimum: 1 }, revision: { type: 'string' }, name: { type: 'string', minLength: 1 }, taskText: { type: 'string', minLength: 1 }, operationId: { type: 'string' } } } }],
     ]),
     defaults: { timezone: context.timezone }, agentTasks: context.agentTasks,
     limits: { reminderMinIntervalMs: REMINDER_MIN_INTERVAL_MS, agentMinIntervalMs: AGENT_MIN_INTERVAL_MS, maxHorizonMs: ONE_YEAR_MS },
     boundary: 'start-inclusive-end-exclusive', timestampUnit: 'UTC epoch milliseconds',
-    confirmation: { create: 'human-card-only', replace: 'human-card-only', delete: 'human-card-only', pause: 'immediate', resume: 'immediate' },
+    confirmation: { create: 'human-card-only', ...Object.fromEntries((['replace', 'delete', 'pause', 'resume'] as const).map(operation => [operation, automationMutationNeedsConfirmation('model', operation) ? 'human-card-only' : 'immediate'])) },
     operationIds: { submissionTtlMs: AUTOMATION_OPERATION_TTL_MS, scope: 'profile-chat', retention: 'durable', recovery: 'query-original-id-before-retry' },
     execution: { scope: 'task', dispatchedCount: 'integer-or-null', unknownCount: 'dispatchedCountLowerBound', history: 'retained-journal-evidence', executedCount: 'successful-runtime-outcome-or-reminder-delivery', failedCount: 'failed-or-interrupted', deliveredCount: 'sent-results-including-failure-notices', executionState: 'queued-running-or-runtime-outcome', lastDelivery: 'independent-outbox-state' },
     lastStatus: { never: 'not-yet-fired', running: 'in-flight', ok: 'last-run-succeeded', failed: 'last-run-failed', missed: 'last-fire-missed' },
@@ -75,7 +76,7 @@ export async function callAutomationTool(operation: string, params: Record<strin
     ? toolResult('validation-failed', 'unknown-field') : toolResult('ok', 'schema', automationSchema(context));
   if (operation === 'automation.list') {
     if (Object.keys(params).length) return toolResult('validation-failed', 'unknown-field');
-    return toolResult('ok', 'tasks', { tasks: context.store!.listCommitted().filter(item => item.chatId === context.chatId).map(item => {
+    return toolResult('ok', 'tasks', { tasks: readAutomationTasks(context.store!, { chatId: context.chatId, consistency: 'committed' }).map(item => {
       const outcome = context.journal?.get(fireTurnId(formatFireKey(item.id, item.lastFireAt)))?.outcome;
       const code = outcome?.kind === 'interrupted' && outcome.reason.type === 'policy-guard'
         ? outcome.reason.code : undefined;

@@ -73,15 +73,16 @@ async function harness(opts: {
   let nowMs = NOW;
   const now = () => nowMs;
   const statusPath = join(tmp.profile, 'automations-status.json');
+  const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
+  await journal.load();
   const store = new AutomationsStore({
+    journal,
     path: join(tmp.profile, 'automations.json'),
     logPath: join(tmp.profile, 'automations.log'),
     statusPath,
     now,
   });
   await store.load();
-  const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'), { now });
-  await journal.load();
   const agentKind = opts.agentKind ?? 'claude';
   const cfg = createDefaultProfileConfig({
     agentKind,

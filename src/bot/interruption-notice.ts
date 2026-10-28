@@ -1,15 +1,10 @@
-import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { ActionTokenCodec, type ActionTokenInvalidReason, type ActionTokenPurpose } from '../card/action-token';
 import type { CallbackNonceStore } from '../card/callback-store';
 import { interruptionNoticeCard } from '../card/templates';
 import { log } from '../core/logger';
 import { describeRunOutcome, type RunOutcome } from './run-outcome';
-import { withDeliveryUuid } from './feishu-delivery';
 import {
-  noticeDeliveryKey,
-  noticeOwnerDeliveryKey,
   type TurnJournal,
-  type TurnJournalEntry,
-  type TurnNotice,
 } from './turn-journal';
 
 export const CONTINUE_HINT =
@@ -124,105 +119,48 @@ export interface NoticePayload {
   nonce: string;
 }
 
+type NoticeClaims = Omit<NoticeSignInput, 'ttlMs'>;
+
 export type NoticeVerifyResult =
   | { ok: true; payload: NoticePayload }
-  | {
-      ok: false;
-      reason: 'malformed' | 'bad-signature' | 'expired' | 'nonce-replay' | 'nonce-revoked';
-    };
+  | { ok: false; reason: ActionTokenInvalidReason };
 
-const PREFIX = 'notice_cb.v1';
+export const noticeActionPurpose: ActionTokenPurpose<NoticeClaims> = {
+  prefix: 'notice_cb.v2',
+  noncePolicy: 'consume-on-verify',
+  parseClaims(value) {
+    const raw = value as Partial<NoticeClaims> | null;
+    if (!raw || typeof raw.turnId !== 'string' || typeof raw.scope !== 'string'
+      || typeof raw.chatId !== 'string' || typeof raw.policyFingerprint !== 'string'
+      || (raw.action !== 'notice.continue' && raw.action !== 'notice.dismiss')) return undefined;
+    return { turnId: raw.turnId, scope: raw.scope, chatId: raw.chatId,
+      action: raw.action, policyFingerprint: raw.policyFingerprint };
+  },
+};
 
 export class NoticeActionAuth {
-  private readonly secret: string;
-  private readonly nonceStore: CallbackNonceStore;
-  private readonly now: () => number;
-  private readonly createNonce: () => string;
+  private readonly codec: ActionTokenCodec;
 
-  constructor(options: {
+  constructor(options: ActionTokenCodec | {
     secret: string;
     nonceStore: CallbackNonceStore;
     now?: () => number;
     createNonce?: () => string;
   }) {
-    this.secret = options.secret;
-    this.nonceStore = options.nonceStore;
-    this.now = options.now ?? Date.now;
-    this.createNonce = options.createNonce ?? (() => randomBytes(16).toString('base64url'));
+    this.codec = options instanceof ActionTokenCodec ? options : new ActionTokenCodec({
+      ...options, keys: [{ version: 1, secret: options.secret }],
+    });
   }
 
-  sign(input: NoticeSignInput): string {
-    const payload = {
-      t: input.turnId,
-      s: input.scope,
-      c: input.chatId,
-      a: input.action,
-      fp: input.policyFingerprint,
-      exp: this.now() + input.ttlMs,
-      n: this.createNonce(),
-    };
-    const encoded = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-    return `${PREFIX}.${encoded}.${sign(encoded, this.secret)}`;
+  sign({ ttlMs, ...claims }: NoticeSignInput): string {
+    return this.codec.sign(noticeActionPurpose, claims, ttlMs);
   }
 
-  verify(token: string): NoticeVerifyResult {
-    const parts = token.split('.');
-    if (parts.length !== 4 || `${parts[0]}.${parts[1]}` !== PREFIX) {
-      return { ok: false, reason: 'malformed' };
-    }
-    const encoded = parts[2];
-    const signature = parts[3];
-    if (!encoded || !signature) return { ok: false, reason: 'malformed' };
-    if (!signatureMatches(signature, sign(encoded, this.secret))) {
-      return { ok: false, reason: 'bad-signature' };
-    }
-    const payload = decodePayload(encoded);
-    if (!payload) return { ok: false, reason: 'malformed' };
-    if (payload.exp <= this.now()) return { ok: false, reason: 'expired' };
-    const nonceState = this.nonceStore.state(payload.nonce);
-    if (nonceState === 'revoked') return { ok: false, reason: 'nonce-revoked' };
-    if (nonceState === 'used') return { ok: false, reason: 'nonce-replay' };
-    if (!this.nonceStore.consume(payload.nonce)) return { ok: false, reason: 'nonce-replay' };
-    return { ok: true, payload };
+  verify(token: string, context: Partial<NoticeClaims> = {}): NoticeVerifyResult {
+    const result = this.codec.verify(token, noticeActionPurpose, context);
+    if (!result.ok) return result;
+    return { ok: true, payload: { ...result.claims, exp: result.exp, nonce: result.nonce! } };
   }
-}
-
-function decodePayload(encoded: string): NoticePayload | undefined {
-  try {
-    const raw = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Record<string, unknown>;
-    if (
-      typeof raw.t !== 'string'
-      || typeof raw.s !== 'string'
-      || typeof raw.c !== 'string'
-      || (raw.a !== 'notice.continue' && raw.a !== 'notice.dismiss')
-      || typeof raw.fp !== 'string'
-      || typeof raw.exp !== 'number'
-      || typeof raw.n !== 'string'
-    ) {
-      return undefined;
-    }
-    return {
-      turnId: raw.t,
-      scope: raw.s,
-      chatId: raw.c,
-      action: raw.a,
-      policyFingerprint: raw.fp,
-      exp: raw.exp,
-      nonce: raw.n,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function sign(payload: string, secret: string): string {
-  return createHmac('sha256', secret).update(payload).digest('base64url');
-}
-
-function signatureMatches(actual: string, expected: string): boolean {
-  const actualBytes = Buffer.from(actual);
-  const expectedBytes = Buffer.from(expected);
-  return actualBytes.length === expectedBytes.length && timingSafeEqual(actualBytes, expectedBytes);
 }
 
 export type NoticeSender = (
@@ -264,311 +202,4 @@ export async function resolveInterruptionNotice(input: {
       err: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-export function authNoticeAlreadyDelivered(journal: TurnJournal): boolean {
-  return journal.list().some((entry) => (
-    entry.notice?.kind === 'auth' && (entry.status === 'notice-delivered' || entry.notice.initiatorDelivered)
-  ));
-}
-
-export async function deliverInterruptionNotice(input: {
-  send: NoticeSender;
-  journal: TurnJournal;
-  turnId: string;
-  outcome: RunOutcome;
-  noticeAuth?: NoticeActionAuth;
-  consecutive: number;
-  requireBotMention: boolean;
-  ownerId?: string;
-  authNotified: boolean;
-}): Promise<{ delivered: boolean; pending: boolean }> {
-  const entry = stageInterruptionNotice(input);
-  if (!entry) return { delivered: false, pending: false };
-  const plan = planInterruptionNotice(input.outcome);
-  if (plan.kind === 'auth') return sendAuthNotice(input, entry);
-  return sendContinueNotice(input, entry);
-}
-
-export function stageInterruptionNotice(input: {
-  journal: TurnJournal;
-  turnId: string;
-  outcome: RunOutcome;
-  noticeAuth?: NoticeActionAuth;
-  consecutive: number;
-  requireBotMention: boolean;
-  ownerId?: string;
-  authNotified: boolean;
-}): TurnJournalEntry | undefined {
-  const entry = input.journal.get(input.turnId);
-  if (!entry) return undefined;
-  const plan = planInterruptionNotice(input.outcome);
-  if (plan.kind === 'none') return undefined;
-  if (plan.kind === 'auth') {
-    if (input.authNotified || authNoticeAlreadyDelivered(input.journal)) return undefined;
-    return stageAuthNotice(input, entry);
-  }
-  return stageContinueNotice(input, entry);
-}
-
-export async function resendPendingNotice(input: {
-  send: NoticeSender;
-  entry: TurnJournalEntry;
-  journal?: TurnJournal;
-  noticeAuth?: NoticeActionAuth;
-}): Promise<boolean> {
-  const notice = input.entry.notice;
-  if (!notice || input.entry.noticeInvalidated) return false;
-  if (notice.messageId) return true;
-  return sendExistingNotice(input, notice);
-}
-
-async function sendExistingNotice(
-  input: {
-    send: NoticeSender;
-    entry: TurnJournalEntry;
-    journal?: TurnJournal;
-    noticeAuth?: NoticeActionAuth;
-  },
-  notice: TurnNotice,
-): Promise<boolean> {
-  if (notice.kind === 'auth') {
-    return sendAuthPayload(input.send, input.entry, notice, input.journal);
-  }
-  await postNotice(input.send, input.entry, notice, input.noticeAuth, input.journal);
-  return true;
-}
-
-function stageContinueNotice(
-  input: {
-    journal: TurnJournal;
-    turnId: string;
-    outcome: RunOutcome;
-    noticeAuth?: NoticeActionAuth;
-    consecutive: number;
-    requireBotMention: boolean;
-  },
-  entry: TurnJournalEntry,
-): TurnJournalEntry {
-  const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
-  const buttons = noticeUsesButtons(input.consecutive) && Boolean(input.noticeAuth);
-  let notice: TurnNotice = existing ?? {
-    kind: buttons ? 'continue' : 'plain',
-    recipientChatId: entry.chatId,
-    markdown: buildNoticeMarkdown({
-      initiatorId: entry.initiatorId || entry.senderId,
-      requireBotMention: input.requireBotMention,
-      outcome: input.outcome,
-      includeButtons: buttons,
-      mentionInitiator: entry.initiatorType !== 'bot',
-    }),
-    replyTo: entry.messageIds.at(-1),
-    ...(entry.threadId ? { replyInThread: true } : {}),
-    includeButtons: buttons,
-    deliveryId: noticeDeliveryKey(input.turnId),
-  };
-  if (!notice.deliveryId) notice = { ...notice, deliveryId: noticeDeliveryKey(input.turnId) };
-  if (!existing) {
-    input.journal.markInterrupted(input.turnId, input.outcome, input.consecutive);
-    input.journal.stageNotice(input.turnId, notice);
-  } else if (!existing.deliveryId) {
-    input.journal.stageNotice(input.turnId, notice);
-  }
-  return input.journal.get(input.turnId) ?? { ...entry, notice };
-}
-
-async function sendContinueNotice(
-  input: {
-    send: NoticeSender;
-    journal: TurnJournal;
-    turnId: string;
-    outcome: RunOutcome;
-    noticeAuth?: NoticeActionAuth;
-    consecutive: number;
-    requireBotMention: boolean;
-  },
-  entry: TurnJournalEntry,
-): Promise<{ delivered: boolean; pending: boolean }> {
-  const staged = stageContinueNotice(input, entry);
-  const notice = staged.notice;
-  if (!notice) return { delivered: false, pending: false };
-  if (notice.messageId) {
-    input.journal.noticeDelivered(input.turnId);
-    return { delivered: true, pending: false };
-  }
-  try {
-    await postNotice(input.send, { ...staged, notice }, notice, input.noticeAuth, input.journal);
-    input.journal.noticeDelivered(input.turnId);
-    log.info('notice', 'sent', { turnId: input.turnId, kind: notice.kind, consecutive: input.consecutive });
-    return { delivered: true, pending: false };
-  } catch (error) {
-    log.warn('notice', 'send-failed', {
-      turnId: input.turnId,
-      err: error instanceof Error ? error.message : String(error),
-    });
-    return { delivered: false, pending: true };
-  }
-}
-
-function stageAuthNotice(
-  input: {
-    journal: TurnJournal;
-    turnId: string;
-    ownerId?: string;
-  },
-  entry: TurnJournalEntry,
-): TurnJournalEntry {
-  const existing = entry.status === 'notice-pending' ? entry.notice : undefined;
-  const notice: TurnNotice = existing ?? {
-    kind: 'auth',
-    recipientChatId: entry.chatId,
-    markdown: buildAuthInitiatorMarkdown(
-      entry.initiatorId || entry.senderId,
-      entry.initiatorType !== 'bot',
-    ),
-    replyTo: entry.messageIds.at(-1),
-    ...(entry.threadId ? { replyInThread: true } : {}),
-    ...(input.ownerId ? { ownerChatId: input.ownerId } : {}),
-    deliveryId: noticeDeliveryKey(input.turnId),
-  };
-  if (!existing) input.journal.stageNotice(input.turnId, notice);
-  return input.journal.get(input.turnId) ?? { ...entry, notice };
-}
-
-async function sendAuthNotice(
-  input: {
-    send: NoticeSender;
-    journal: TurnJournal;
-    turnId: string;
-    ownerId?: string;
-  },
-  entry: TurnJournalEntry,
-): Promise<{ delivered: boolean; pending: boolean }> {
-  const staged = stageAuthNotice(input, entry);
-  const notice = staged.notice;
-  if (!notice) return { delivered: false, pending: false };
-  if (notice.messageId || (notice.initiatorDelivered && (!notice.ownerChatId || notice.ownerDelivered))) {
-    input.journal.noticeDelivered(input.turnId);
-    return { delivered: true, pending: false };
-  }
-  try {
-    const ok = await sendAuthPayload(input.send, { ...staged, notice }, notice, input.journal);
-    if (ok) {
-      input.journal.noticeDelivered(input.turnId);
-      log.info('notice', 'sent', { turnId: input.turnId, kind: 'auth' });
-      return { delivered: true, pending: false };
-    }
-    return { delivered: false, pending: true };
-  } catch (error) {
-    log.warn('notice', 'send-failed', {
-      turnId: input.turnId,
-      err: error instanceof Error ? error.message : String(error),
-    });
-    return { delivered: false, pending: true };
-  }
-}
-
-async function sendAuthPayload(
-  send: NoticeSender,
-  entry: TurnJournalEntry,
-  notice: TurnNotice,
-  journal?: TurnJournal,
-): Promise<boolean> {
-  const next: TurnNotice = { ...notice };
-  try {
-    if (!next.initiatorDelivered) {
-      const result = await send(
-        next.recipientChatId,
-        { markdown: next.markdown },
-        sendOpts(entry, next),
-      );
-      requireReceipt(result, 'auth-initiator');
-      next.initiatorDelivered = true;
-      journal?.recordNotice(entry.turnId, next);
-    }
-    if (next.ownerChatId && !next.ownerDelivered) {
-      const result = await send(
-        next.ownerChatId,
-        { markdown: buildAuthOwnerMarkdown() },
-        withDeliveryUuid({}, noticeOwnerDeliveryKey(entry.turnId)),
-      );
-      requireReceipt(result, 'auth-owner');
-      next.ownerDelivered = true;
-      journal?.recordNotice(entry.turnId, next);
-    }
-    return Boolean(next.initiatorDelivered && (!next.ownerChatId || next.ownerDelivered));
-  } catch (error) {
-    journal?.recordNotice(entry.turnId, next);
-    throw error;
-  }
-}
-
-async function postNotice(
-  send: NoticeSender,
-  entry: TurnJournalEntry,
-  notice: TurnNotice,
-  noticeAuth?: NoticeActionAuth,
-  journal?: TurnJournal,
-): Promise<void> {
-  const opts = sendOpts(entry, notice);
-  if (notice.includeButtons && noticeAuth && entry.policyFingerprint) {
-    const continueToken = noticeAuth.sign({
-      turnId: entry.turnId,
-      scope: entry.scope,
-      chatId: entry.chatId,
-      action: 'notice.continue',
-      policyFingerprint: entry.policyFingerprint,
-      ttlMs: NOTICE_TTL_MS,
-    });
-    const dismissToken = noticeAuth.sign({
-      turnId: entry.turnId,
-      scope: entry.scope,
-      chatId: entry.chatId,
-      action: 'notice.dismiss',
-      policyFingerprint: entry.policyFingerprint,
-      ttlMs: NOTICE_TTL_MS,
-    });
-    const result = await send(
-      notice.recipientChatId,
-      { card: interruptionNoticeCard({ body: notice.markdown, continueToken, dismissToken }) },
-      opts,
-    );
-    requireReceipt(result, 'notice-card');
-    persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
-    return;
-  }
-  const result = await send(
-    notice.recipientChatId,
-    { markdown: notice.markdown },
-    opts,
-  );
-  requireReceipt(result, 'notice-text');
-  persistNoticeMessageId(journal, entry.turnId, notice, result.messageId);
-}
-
-function persistNoticeMessageId(
-  journal: TurnJournal | undefined,
-  turnId: string,
-  notice: TurnNotice,
-  messageId: string | undefined,
-): void {
-  if (!journal || !messageId?.trim()) return;
-  const current = journal.get(turnId)?.notice ?? notice;
-  journal.recordNotice(turnId, { ...current, messageId });
-  journal.noteNonAnswerId(turnId, messageId);
-}
-
-function sendOpts(
-  entry: TurnJournalEntry,
-  notice: TurnNotice,
-): { replyTo?: string; replyInThread?: boolean; uuid?: string } {
-  const replyTo = notice.replyTo ?? entry.messageIds.at(-1);
-  return withDeliveryUuid({
-    ...(replyTo ? { replyTo } : {}),
-    ...(notice.replyInThread || entry.threadId ? { replyInThread: true } : {}),
-  }, notice.deliveryId ?? noticeDeliveryKey(entry.turnId));
-}
-
-function requireReceipt(result: { messageId?: string }, type: string): void {
-  if (!result.messageId?.trim()) throw new Error(`${type} notice missing message receipt`);
 }

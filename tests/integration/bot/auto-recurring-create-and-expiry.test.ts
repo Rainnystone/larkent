@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -45,6 +46,21 @@ afterEach(async () => {
 });
 
 describe('A2 recurring creation and expiry', () => {
+  it.each(['in 15m', '每个工作日 09:00'])('keeps a manual %s draft card in its originating topic', async schedule => {
+    const h = await harness({ chatMode: 'topic' });
+    await h.channel.handlers.message?.({ ...mention('om_topic', `/auto new ${schedule} | 话题提醒 | 提醒`), threadId: 'omt_topic' });
+    const card = h.channel.sent.find(item => JSON.stringify(item.content).includes(schedule === 'in 15m' ? 'auto.confirm' : 'auto.end.'));
+    expect(card?.options).toMatchObject({ replyTo: 'om_topic', replyInThread: true });
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeTypeOf('string');
+    if (schedule !== 'in 15m') {
+      const draft = h.store.listDrafts()[0]!;
+      const endCard = JSON.stringify(card!.content);
+      await h.channel.handlers.cardAction?.(cardClick(MATE, tokenFor(endCard, 'auto.end.1w'), draftConfirmationDelivery(draft).messageId!, 'auto.end.1w'));
+      const confirm = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'));
+      expect(confirm?.options).toMatchObject({ replyTo: draftConfirmationDelivery(draft).messageId, replyInThread: true });
+    }
+  });
+
   it('asks for an end on a weekday draft, then confirms, fires the last catch-up, and expires off the status file', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
@@ -64,7 +80,7 @@ describe('A2 recurring creation and expiry', () => {
     await h.channel.handlers.cardAction?.(cardClick(
       MATE,
       tokenFor(endCard, 'auto.end.custom'),
-      h.store.listDrafts()[0]!.cardMessageId!,
+      draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!,
       'auto.end.custom',
       { end_at: '2026-10-21' },
     ));
@@ -80,7 +96,7 @@ describe('A2 recurring creation and expiry', () => {
     await h.channel.handlers.cardAction?.(cardClick(
       MATE,
       confirmToken(confirm),
-      h.store.listDrafts()[0]!.cardMessageId!,
+      draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!,
     ));
     expect(h.store.list()[0]).toMatchObject({
       id: 1,
@@ -109,7 +125,7 @@ describe('A2 recurring creation and expiry', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
     const endCard = cardContaining(h, 'auto.end.');
     const token = tokenFor(endCard, 'auto.end.custom');
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
 
     const empty = await h.channel.handlers.cardAction?.(cardClick(
       MATE,
@@ -147,7 +163,7 @@ describe('A2 recurring creation and expiry', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
     const endCard = cardContaining(h, 'auto.end.');
     const token = tokenFor(endCard, 'auto.end.custom');
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     const click = (operatorId: string, endAt: string) => h.channel.handlers.cardAction?.(cardClick(
       operatorId,
       token,
@@ -187,7 +203,7 @@ describe('A2 recurring creation and expiry', () => {
     await retry.channel.handlers.message?.(mention('om_typo', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
     const retryCard = cardContaining(retry, 'auto.end.');
     const retryToken = tokenFor(retryCard, 'auto.end.custom');
-    const retryMessage = retry.store.listDrafts()[0]!.cardMessageId!;
+    const retryMessage = draftConfirmationDelivery(retry.store.listDrafts()[0]!).messageId!;
     const retryTypo = await retry.channel.handlers.cardAction?.(cardClick(
       MATE,
       retryToken,
@@ -212,7 +228,7 @@ describe('A2 recurring creation and expiry', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
     const endCard = cardContaining(h, 'auto.end.1m');
     const token = tokenFor(endCard, 'auto.end.1m');
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
 
     const updatesBefore = h.channel.updatedCards.length;
     const chosen = await h.channel.handlers.cardAction?.(cardClick(MATE, token, messageId, 'auto.end.1m'));
@@ -238,7 +254,7 @@ describe('A2 recurring creation and expiry', () => {
     const h = await harness();
     await h.channel.handlers.message?.(mention('om_new', '/auto new 每个工作日 09:00 | 站会 | 提醒站会'));
     const endCard = cardContaining(h, 'auto.end.1m');
-    const messageId = h.store.listDrafts()[0]!.cardMessageId!;
+    const messageId = draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!;
     const updatesBefore = h.channel.updatedCards.length;
     const rejected = await h.channel.handlers.cardAction?.(
       cardClick(MATE, tokenFor(endCard, 'auto.reject'), messageId, 'auto.reject'),
@@ -276,7 +292,7 @@ function pendingOf(
   return draft.pendingRecurring;
 }
 
-async function harness(opts: { agentTasks?: boolean } = {}) {
+async function harness(opts: { agentTasks?: boolean; chatMode?: 'group' | 'topic' } = {}) {
   const tmp = await createTmpProfile('auto-recurring-');
   const mediaDir = join(tmp.profile, 'media');
   await mkdir(mediaDir, { recursive: true });
@@ -317,7 +333,7 @@ async function harness(opts: { agentTasks?: boolean } = {}) {
   const start = async () => {
     const channel = createRecordingLarkChannel({
       chats: [{ id: CHAT, name: 'G' }],
-      chatMode: 'group',
+      chatMode: opts.chatMode ?? 'group',
       botIdentity: { openId: 'ou_bot', name: 'Pin Bot' },
     });
     sdk.channel = channel;
@@ -406,7 +422,7 @@ function confirmToken(cardJson: string): string {
 }
 
 function tokenFor(cardJson: string, cmd: string): string {
-  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_cb\\.v1\\.[^"]+)"`));
+  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_cb\\.v[0-9]+\\.[^"]+)"`));
   expect(match?.[1], `expected ${cmd} token`).toBeDefined();
   return match![1]!;
 }

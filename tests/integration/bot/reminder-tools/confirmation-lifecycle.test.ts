@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../../src/automations/draft-confirmation';
 import type { AgentRunOptions } from '../../../../src/agent/types';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -35,7 +36,7 @@ it('recovers every submitted semantic-retry ID after its response is lost and th
   });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   await h.restart();
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId: retriedId })).toMatchObject({ category: 'applied', data: { operationId: originalId, taskId: 1, applied: true } });
@@ -45,11 +46,16 @@ it('recovers every submitted semantic-retry ID after its response is lost and th
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
 }, 30000);
 
-it.each(['delivery', 'operations', 'delivery-state', 'operation-state'] as const)('refuses malformed v2 %s data without losing the original uncertain receipt', async field => {
+it.each(['delivery', 'operations', 'delivery-state', 'operation-state'] as const)('refuses malformed legacy %s data without losing the original uncertain receipt', async field => {
   const h = await harness();
   h.channel.sendErrors.send = new Error('synthetic uncertain send');
   await h.turn(async call => { expect(await call('automation.create', reminder)).toMatchObject({ category: 'unknown' }); });
   const document = JSON.parse(await readFile(h.store.getFilePath(), 'utf8'));
+  document.schemaVersion = 2;
+  const item = h.store.outboxJournal.getDraftCard(h.store.getDraftCardReceipt(document.drafts[0].draftId)!.deliveryId!)!;
+  const delivery = { state: 'sending', deliveryId: item.deliveryId, card: item.payload.card, cardId: item.cardId };
+  document.drafts[0].delivery = delivery;
+  delete document.drafts[0].deliveryId;
   if (field === 'delivery') document.drafts[0].delivery = {};
   else if (field === 'delivery-state') document.drafts[0].delivery.state = ['sending'];
   else if (field === 'operation-state') document.operations[0].state = ['received'];
@@ -82,10 +88,10 @@ it('serializes end completion with a concurrent recovery query so one confirmati
   fsFault.beforeRename = async destination => {
     if (armed && destination === h.store.getFilePath()) { armed = false; entered(); await gate; }
   };
-  const completing = Promise.resolve(h.channel.handlers.cardAction?.(click(draft.cardMessageId!, { ...button(card, 'auto.end.custom'), end_at: '2026-10-21' })));
+  const completing = Promise.resolve(h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, { ...button(card, 'auto.end.custom'), end_at: '2026-10-21' })));
   void completing.catch(() => {}); await writing;
   const querying = h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation' }); });
-  try { await vi.waitFor(() => expect(h.store.listDrafts()[0]?.delivery?.state).toBe('prepared'), { timeout: 12000 }); } finally { release(); }
+  try { await vi.waitFor(() => expect(draftConfirmationDelivery(h.store.listDrafts()[0]).state).toBe('prepared'), { timeout: 12000 }); } finally { release(); }
   await completing; await querying;
   expect(createdCards).toHaveLength(2); // one end card and one confirmation card
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
@@ -96,7 +102,7 @@ it('records human rejection as not-applied and keeps the same operation closed a
   await h.turn(async call => { operationId = (await call('automation.create', reminder)).data.operationId; });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.reject')))).toMatchObject({ toast: { type: 'success' } });
+  expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.reject')))).toMatchObject({ toast: { type: 'success' } });
   await h.restart();
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'execution-failed', code: 'draft-closed', data: { state: 'not-applied', applied: false } });
@@ -161,7 +167,7 @@ it('deletes only after the human confirms, then recovers the applied receipt wit
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
-  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+  expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
   expect(h.store.list()).toHaveLength(0);
   await h.restart();
   await h.turn(async call => {
@@ -203,7 +209,7 @@ it('replaces a task with the previewed structured schedule only after confirmati
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   for (const text of ['2026-10-19 10:00', '2026-10-20 10:00', '2026-10-21 10:00', '共 3 次']) expect(JSON.stringify(card)).toContain(text);
-  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+  expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: 2, applied: true } });
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 2, schedule: replacement.schedule, name: 'Replacement' }]);

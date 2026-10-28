@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../../src/automations/draft-confirmation';
 import type { AgentRunOptions } from '../../../../src/agent/types';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -118,8 +119,8 @@ it('recovers a sent card after the receipt write fails without sending a second 
     expect(await call('automation.create', { ...reminder, operationId })).toMatchObject({ category: 'waiting-confirmation' });
   });
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(0);
-  const draft = h.store.listDrafts()[0]!; expect(draft.cardMessageId).toEqual(expect.any(String));
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(originalCard, 'auto.confirm')));
+  const draft = h.store.listDrafts()[0]!; expect(draftConfirmationDelivery(draft).messageId).toEqual(expect.any(String));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(originalCard, 'auto.confirm')));
   await h.restart();
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: 1, applied: true } }); });
   expect(h.store.list()).toHaveLength(1); expect(h.store.listDrafts()).toHaveLength(0);
@@ -162,7 +163,7 @@ it.each(['create', 'delete', 'replace'] as const)('revokes a cancelled run crede
   const denied = await client.call({ version: 1, operation: 'automation.list' }, env);
   expect(JSON.parse(denied.stdout)).toMatchObject({ category: 'unavailable', code: 'run-connection-closed' });
   release();
-  await vi.waitFor(() => expect(h.store.listDrafts()[0]?.cardMessageId).toEqual(expect.any(String)), { timeout: 12000 });
+  await vi.waitFor(() => expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toEqual(expect.any(String)), { timeout: 12000 });
   await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'waiting-confirmation', data: { applied: false } }); });
   expect(h.store.listDrafts()).toHaveLength(1); expect(h.store.list()).toHaveLength(operation === 'create' ? 0 : 1);
 }, 30000);
@@ -217,10 +218,10 @@ it('upgrades an existing v1 manual draft and completes its original confirmation
   await writeFile(h.store.getFilePath(), JSON.stringify(document));
   await h.restart();
   const upgraded = await readFile(h.store.getFilePath(), 'utf8');
-  expect(JSON.parse(upgraded).schemaVersion).toBe(2);
+  expect(JSON.parse(upgraded).schemaVersion).toBe(3);
   await h.restart();
   expect(await readFile(h.store.getFilePath(), 'utf8')).toBe(upgraded);
-  await h.channel.handlers.cardAction?.(click(original.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(original).messageId!, button(card, 'auto.confirm')));
   await h.turn(async call => { expect(await call('automation.list')).toMatchObject({ category: 'ok', data: { tasks: [{ id: 1, taskType: 'reminder', name: 'Synthetic legacy', nextFireAt: NOW + 900000 }] } }); });
   expect(h.store.list()).toHaveLength(1); expect(h.store.listDrafts()).toHaveLength(0);
 }, 30000);
@@ -262,7 +263,7 @@ it('never reports an applied operation before the confirmation write commits', a
   fsFault.beforeRename = async destination => {
     if (armed && destination === h.store.getFilePath()) { armed = false; entered(); await gate; }
   };
-  const confirming = Promise.resolve(h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm'))));
+  const confirming = Promise.resolve(h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm'))));
   void confirming.catch(() => {});
   await writing;
   try {

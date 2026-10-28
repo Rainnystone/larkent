@@ -5,6 +5,7 @@ import { automationButton as button, automationClick as click, createAutomationT
 import { buildToolProcess } from '../../helpers/bridge-tool-process';
 import type { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
 import fixture from '../../fixtures/automations/pre-tools-v1.json';
+import { AUTO_INVALID_HINT } from '../../../src/automations/command';
 
 const sdk = vi.hoisted(() => ({ channel: undefined as ReturnType<typeof createRecordingLarkChannel> | undefined }));
 vi.mock('@larksuite/channel', async original => ({
@@ -56,42 +57,53 @@ it('resumes a pre-tools session with the current short contract and client while
   });
 }, 30000);
 
-it('upgrades fixed v1 tasks, unfinished drafts and original cards through confirmation, scheduling and delivery', async () => {
+it('preserves v1 tasks and drafts while pre-deploy buttons get the existing invalid response', async () => {
   const h = await harness();
   const upgraded = await readFile(join(h.tmp.profile, 'automations.json'), 'utf8');
-  expect(JSON.parse(upgraded).schemaVersion).toBe(2);
+  expect(JSON.parse(upgraded).schemaVersion).toBe(3);
   await h.restart({ messages });
   const restarted = JSON.parse(await readFile(join(h.tmp.profile, 'automations.json'), 'utf8'));
   expect(restarted.items).toEqual(JSON.parse(upgraded).items);
   expect(restarted.drafts).toEqual(JSON.parse(upgraded).drafts);
   expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
 
-  // The original dashboard and manual commands still share the current task state.
-  expect(await h.channel.handlers.cardAction?.(click(fixture.board.messageId, button(fixture.board.content, 'auto.pause')))).toMatchObject({ toast: { type: 'success' } });
+  // Spec D1 permits the token format to change; the fixed fixture bytes stay original.
+  expect(await h.channel.handlers.cardAction?.(click(fixture.board.messageId, button(fixture.board.content, 'auto.pause'))))
+    .toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+  expect(h.store.get(1)?.paused).toBe(false);
+  await h.command('/auto pause 1');
   await h.turn(async call => { expect((await call('automation.list')).data.tasks[0]).toMatchObject({ id: 1, paused: true }); });
   await h.command('/auto resume 1');
   await h.turn(async call => { expect((await call('automation.list')).data.tasks[0]).toMatchObject({ id: 1, paused: false }); });
 
+  // A normal task update refreshes the existing board with current signed buttons.
+  const boardUpdates = () => h.channel.rawClient.requests.filter(item => item.method === 'cardkit.v1.card.update')
+    .map(item => item.params as { path: { card_id: string }; data: { card: { data: string } } })
+    .filter(item => item.path.card_id === fixture.automations.boards[0]!.cardId);
+  await vi.waitFor(() => expect(boardUpdates().length).toBeGreaterThan(0));
+  expect(await h.channel.handlers.cardAction?.(click(fixture.board.messageId, button(JSON.parse(boardUpdates().at(-1)!.data.card.data), 'auto.pause'))))
+    .toMatchObject({ toast: { type: 'success' } });
+  await h.command('/auto resume 1');
+
   for (const index of [0, 2, 3]) {
     const original = fixture.cards[index]!;
-    expect(await h.channel.handlers.cardAction?.(click(original.messageId, button(original.content, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+    expect(await h.channel.handlers.cardAction?.(click(original.messageId, button(original.content, 'auto.confirm'))))
+      .toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
   }
   const incomplete = fixture.cards[1]!;
-  expect(await h.channel.handlers.cardAction?.(click(incomplete.messageId, { ...button(incomplete.content, 'auto.end.custom'), end_at: '2026-10-19' }))).toMatchObject({ toast: { type: 'success' } });
-  const completion = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm') && JSON.stringify(item.content).includes('Old incomplete reminder'))!;
-  expect(completion).toBeDefined();
-  // Supplying the end only produces a confirmation card; no task is silently created.
-  await h.turn(async call => { expect((await call('automation.list')).data.tasks.map((task: any) => task.id)).toEqual([1, 2, 5, 6]); });
-  const completedDraft = h.store.listDrafts()[0]!;
-  expect(await h.channel.handlers.cardAction?.(click(completedDraft.cardMessageId!, button(completion.content, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+  expect(await h.channel.handlers.cardAction?.(click(incomplete.messageId, { ...button(incomplete.content, 'auto.end.custom'), end_at: '2026-10-19' })))
+    .toEqual({ toast: { type: 'error', content: AUTO_INVALID_HINT } });
+  const afterInvalidClicks = JSON.parse(await readFile(join(h.tmp.profile, 'automations.json'), 'utf8'));
+  expect(afterInvalidClicks.drafts).toEqual(restarted.drafts);
+  expect(h.channel.sent.some(item => JSON.stringify(item.content).includes('auto.confirm'))).toBe(false);
   await h.restart();
+  expect(JSON.parse(await readFile(join(h.tmp.profile, 'automations.json'), 'utf8')).drafts).toEqual(restarted.drafts);
   await h.turn(async call => {
     expect((await call('automation.list')).data.tasks).toMatchObject([
       { id: 1, name: 'Old saved reminder', nextFireAt: 1792368900000 },
       { id: 2, name: 'Old saved agent', nextFireAt: 1792369200000 },
-      { id: 5, name: 'Old pending confirmation', nextFireAt: 1792369800000 },
-      { id: 6, name: 'Old replacement', nextFireAt: 1792370400000 },
-      { id: 7, name: 'Old incomplete reminder', nextFireAt: 1792371600000 },
+      { id: 3, name: 'Old delete target', nextFireAt: 1792368900000 },
+      { id: 4, name: 'Old replace target', nextFireAt: 1792368900000 },
     ]);
   });
 
@@ -103,14 +115,14 @@ it('upgrades fixed v1 tasks, unfinished drafts and original cards through confir
     expect(await call('automation.create', {})).toMatchObject({ category: 'unavailable', code: 'automation-management-unavailable-in-run' });
     return 'Old saved agent executed using the current client';
   });
-  for (const [id, fireAt] of [[1, 1792368900000], [2, 1792369200000], [5, 1792369800000], [6, 1792370400000], [7, 1792371600000]]) {
+  for (const [id, fireAt] of [[1, 1792368900000], [3, 1792368900000], [4, 1792368900000], [2, 1792369200000]]) {
     await h.advanceConnectedTo(fireAt!); await h.bridge.wakeAutomation(`${id}@${fireAt}`);
     await vi.waitFor(() => expect(h.journal.get(`af:${id}@${fireAt}`)?.reply?.state).toBe('sent'), { timeout: 12000 });
     h.checkFailure();
   }
   const sent = JSON.stringify(h.channel.sent);
-  for (const body of ['⏰ Old saved reminder', 'Old saved agent executed using the current client', '⏰ Old pending confirmation', '⏰ Old replacement', '⏰ Old incomplete reminder']) expect(sent.split(body)).toHaveLength(2);
-  expect(sent).not.toContain('⏰ Old delete target'); expect(sent).not.toContain('⏰ Old replace target');
+  for (const body of ['⏰ Old saved reminder', 'Old saved agent executed using the current client', '⏰ Old delete target', '⏰ Old replace target']) expect(sent.split(body)).toHaveLength(2);
+  for (const body of ['⏰ Old pending confirmation', '⏰ Old replacement', '⏰ Old incomplete reminder']) expect(sent).not.toContain(body);
   await h.turn(async call => { expect((await call('automation.list')).data.tasks.every((task: any) => task.lastStatus === 'ok')).toBe(true); });
   expect(await readFile(join(h.tmp.profile, 'lark-cli/config.json'), 'utf8')).toBe(identityConfig);
   expect(JSON.parse(await readFile(join(h.tmp.profile, 'callback-nonces.json'), 'utf8'))['old-revoked-nonce']).toBe('revoked');

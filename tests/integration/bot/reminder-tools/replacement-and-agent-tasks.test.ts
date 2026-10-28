@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../../src/automations/draft-confirmation';
 import type { AgentRunOptions } from '../../../../src/agent/types';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -36,7 +37,7 @@ it('refuses a stale replacement confirmation after a manual pause and records th
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   await h.command('/auto pause 1');
-  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'error' } });
+  expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'error' } });
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'execution-failed', code: 'target-state-conflict', data: { applied: false, state: 'not-applied' } });
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, paused: true, name: reminder.name }]);
@@ -80,11 +81,11 @@ it('completes a structured replacement missing its end without changing the old 
   });
   let draft = h.store.listDrafts()[0]!;
   const endCard = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.end.custom'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, { ...button(endCard, 'auto.end.custom'), end_at: '2026-10-21' }));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, { ...button(endCard, 'auto.end.custom'), end_at: '2026-10-21' }));
   draft = h.store.listDrafts()[0]!;
   expect(h.store.list()).toMatchObject([{ id: 1, name: reminder.name }]);
   const confirm = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(confirm, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(confirm, 'auto.confirm')));
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: 2 } });
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 2, schedule, name: 'Replacement' }]);
@@ -99,7 +100,7 @@ it.each(['delete', 'replace'] as const)('keeps %s not-applied when the original 
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   await h.command('/auto delete 1');
-  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'error', content: '#1 已不存在' } });
+  expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'error', content: '#1 已不存在' } });
   await h.restart();
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'execution-failed', code: 'target-not-found', data: { applied: false } });
@@ -120,7 +121,7 @@ it.each(['pause', 'resume', 'delete', 'replace'] as const)('does not claim %s ap
     const draft = h.store.listDrafts()[0]!;
     const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
     originalDraft = draft; originalCard = card;
-    try { await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm'))); } catch {}
+    try { await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm'))); } catch {}
     await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'unknown', data: { applied: null } }); });
   } else {
     await h.turn(async call => { const result = await call(`automation.${operation}`, { id: 1 }); operationId = result.data.operationId; expect(result).toMatchObject({ category: 'unknown', data: { applied: null } }); });
@@ -135,7 +136,7 @@ it.each(['pause', 'resume', 'delete', 'replace'] as const)('does not claim %s ap
   });
   expect(h.store.list()).toHaveLength(1);
   if (originalDraft) {
-    expect(await h.channel.handlers.cardAction?.(click(originalDraft.cardMessageId!, button(originalCard, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
+    expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(originalDraft).messageId!, button(originalCard, 'auto.confirm')))).toMatchObject({ toast: { type: 'success' } });
     await h.turn(async call => { expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'applied', data: { taskId: operation === 'replace' ? 2 : 1 } }); });
   }
 }, 30000);
@@ -154,7 +155,7 @@ it('manages existing agent tasks, preserves captured cwd, and delivers a replace
   });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   expect(h.store.list()).toMatchObject([{ id: 2, taskType: 'agent' }]);
   expect(await realpath(h.store.list()[0]!.cwd!)).toBe(await realpath(h.tmp.workspace));
   h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`2@${FIRES[0]}`);
@@ -166,7 +167,7 @@ it('manages existing agent tasks, preserves captured cwd, and delivers a replace
   });
   const deletion = h.store.listDrafts()[0]!;
   const deleteCard = h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm')).at(-1)!.content;
-  await h.channel.handlers.cardAction?.(click(deletion.cardMessageId!, button(deleteCard, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(deletion).messageId!, button(deleteCard, 'auto.confirm')));
   expect(h.store.list()).toEqual([]);
 }, 45000);
 
@@ -239,7 +240,7 @@ it.each(['pause', 'resume', 'delete', 'replace'] as const)('recovers %s after a 
   expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(0);
   if (operation === 'delete' || operation === 'replace') {
     const draft = h.store.listDrafts()[0]!;
-    await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(originalCards[0]!.content, 'auto.confirm')));
+    await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(originalCards[0]!.content, 'auto.confirm')));
     await h.turn(async call => {
       expect(await call(`automation.${operation}`, { ...params, operationId })).toMatchObject({ category: 'applied' });
       expect((await call('automation.list')).data.tasks).toHaveLength(operation === 'delete' ? 0 : 1);
@@ -279,7 +280,7 @@ it('does not expose a replacement as applied or list it before the real atomic r
   cleanups.push(async () => { release(); });
   let armed = true;
   fsFault.beforeRename = async destination => { if (armed && destination === h.store.getFilePath()) { armed = false; entered(); await gate; } };
-  const confirming = Promise.resolve(h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm'))));
+  const confirming = Promise.resolve(h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm'))));
   void confirming.catch(() => {}); await writing;
   try {
     await h.turn(async call => {
@@ -305,7 +306,7 @@ it('closes a replacement whose scheduled instant has passed before confirmation 
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
   h.setNow(NOW + 900001);
-  expect(await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'error' } });
+  expect(await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')))).toMatchObject({ toast: { type: 'error' } });
   await h.turn(async call => {
     expect(await call('automation.operation.get', { operationId })).toMatchObject({ category: 'execution-failed', code: 'past-time', data: { applied: false } });
     expect((await call('automation.list')).data.tasks).toMatchObject([{ id: 1, name: reminder.name }]);
@@ -317,7 +318,7 @@ it('reports the same actual dispatch and delivery history through create, pause 
   await h.turn(async call => { creationId = (await call('automation.create', reminder)).data.operationId; });
   const draft = h.store.listDrafts()[0]!;
   const card = h.channel.sent.find(item => JSON.stringify(item.content).includes('auto.confirm'))!.content;
-  await h.channel.handlers.cardAction?.(click(draft.cardMessageId!, button(card, 'auto.confirm')));
+  await h.channel.handlers.cardAction?.(click(draftConfirmationDelivery(draft).messageId!, button(card, 'auto.confirm')));
   h.setNow(FIRES[0]!); await h.bridge.wakeAutomation(`1@${FIRES[0]}`);
   h.setNow(FIRES[0]! + 1000);
   await h.turn(async call => {

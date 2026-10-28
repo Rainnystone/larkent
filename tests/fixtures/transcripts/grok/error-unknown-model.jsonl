@@ -1,0 +1,6 @@
+{"transcript": 1, "kind": "grok", "cliVersion": "grok 1.0.71 (441b85a007ff)", "capturedAt": "2026-10-27", "scenario": "error-unknown-model", "command": "grok --prompt-file <TMP> --output-format streaming-json --rules <RULES> --always-approve --no-auto-update -m lark-nonexistent-model-0", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 3, "note": "spawned pid=32012"}
+{"t": 437, "line": "{\"type\": \"error\", \"message\": \"Couldn't set model 'lark-nonexistent-model-0': Invalid params: \\\"unknown model id\\\". Run 'grok models' to see available models.\", \"cwd\": \"/private<CWD>\"}"}
+{"t": 2837, "stderr": "Error: Couldn't set model 'lark-nonexistent-model-0': Invalid params: \"unknown model id\". Run 'grok models' to see available models."}
+{"t": 2841, "exit": {"code": 1, "signal": null}}
+{"t": 2841, "note": "translator tail event: {\"type\":\"error\",\"message\":\"Couldn't set model 'lark-nonexistent-model-0': Invalid params: \\\"unknown model id\\\". Run 'grok models' to see available models.\",\"terminationReason\":\"failed\"}"}

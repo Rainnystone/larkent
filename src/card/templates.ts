@@ -1,3 +1,8 @@
+import { randomBytes } from 'node:crypto';
+
+/** Command cards re-rendered in place on every click; each button names its card in `value.card`. */
+export type CommandCardKind = 'ws' | 'status' | 'help' | 'resume';
+
 interface ButtonSpec {
   text: string;
   value: Record<string, unknown>;
@@ -17,8 +22,28 @@ function divMd(content: string): object {
   return { tag: 'div', text: { tag: 'lark_md', content } };
 }
 
-function actions(buttons: ButtonSpec[]): object {
-  return { tag: 'action', actions: buttons.map(button) };
+function actions(buttons: ButtonSpec[], card?: CommandCardKind): object {
+  return {
+    tag: 'action',
+    actions: buttons.map((spec) => button(card ? { ...spec, value: { ...spec.value, card } } : spec)),
+  };
+}
+
+/**
+ * A copy of a card whose button values lead with one new click id. The SDK
+ * drops a click whose value was already seen on that message, so a card
+ * re-rendered this way accepts the same button again.
+ */
+export function withFreshClickId(card: object): object {
+  const a = randomBytes(6).toString('base64url');
+  const visit = (node: unknown): unknown => {
+    if (Array.isArray(node)) return node.map(visit);
+    if (!node || typeof node !== 'object') return node;
+    const rec = Object.fromEntries(Object.entries(node).map(([key, value]) => [key, visit(value)]));
+    if (rec.tag === 'button' && rec.value && typeof rec.value === 'object') rec.value = { a, ...rec.value };
+    return rec;
+  };
+  return visit(card) as object;
 }
 
 const HR: object = { tag: 'hr' };
@@ -52,7 +77,7 @@ export function workspacesCard(current: string | undefined, named: Record<string
         actions([
           { text: '切换到此处', value: { cmd: 'ws.use', name }, style: 'primary' },
           { text: '删除', value: { cmd: 'ws.remove', name }, style: 'danger' },
-        ]),
+        ], 'ws'),
       );
       if (i < entries.length - 1) elements.push(HR);
     });
@@ -189,7 +214,7 @@ export function statusCard(info: StatusInfo): object {
       { text: '🔁 恢复会话', value: { cmd: 'resume' } },
       { text: '📂 工作目录', value: { cmd: 'ws.list' } },
       { text: '💡 帮助', value: { cmd: 'help' } },
-    ]),
+    ], 'status'),
   ]);
 }
 
@@ -203,7 +228,8 @@ export interface ResumeEntry {
   current?: boolean;
 }
 
-export function resumeCard(cwd: string, entries: ResumeEntry[]): object {
+/** `limit` is the `/resume N` the card lists, kept so a re-render lists as many. */
+export function resumeCard(cwd: string, entries: ResumeEntry[], limit?: number): object {
   const elements: object[] = [];
   elements.push(divMd(`当前 cwd：\`${escapeCode(cwd)}\``));
 
@@ -227,10 +253,10 @@ export function resumeCard(cwd: string, entries: ResumeEntry[]): object {
       actions([
         {
           text: e.current ? '已是当前会话' : '▸ 恢复此会话',
-          value: { cmd: 'resume.use', arg: e.sessionId },
+          value: { cmd: 'resume.use', arg: e.sessionId, ...(limit ? { limit } : {}) },
           style: e.current ? 'default' : 'primary',
         },
-      ]),
+      ], 'resume'),
     );
     if (i < entries.length - 1) elements.push(HR);
   });
@@ -297,7 +323,7 @@ export function helpCard(agentName = 'Agent'): object {
       { text: '🔁 恢复会话', value: { cmd: 'resume' } },
       { text: '📂 工作目录', value: { cmd: 'ws.list' } },
       { text: '🆕 新会话', value: { cmd: 'new' } },
-    ]),
+    ], 'help'),
   ]);
 }
 

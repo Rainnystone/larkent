@@ -35,9 +35,9 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
     access: { allowedUsers: ['ou_synthetic', 'ou_mate'], allowedChats: ['oc_synthetic', 'oc_other'] },
     preferences: { requireMentionInGroup: true, messageReply: 'text', messageReplyMigrated: true, cotMessages: 'off' } });
   cfg.automations = { enabled: true, agentTasks, timezone: 'Asia/Shanghai' }; cfg.workspaces.default = tmp.workspace;
-  const makeStore = () => new AutomationsStore({ path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now });
-  let store = makeStore(); await store.load();
   const journal = new TurnJournal(join(tmp.profile, 'journal.json'), { now: () => now, maxEntries: journalMaxEntries }); await journal.load();
+  const makeStore = () => new AutomationsStore({ journal, path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'), statusPath: join(tmp.profile, 'status.json'), now: () => now });
+  let store = makeStore(); await store.load();
   const makeChannel = (messages: unknown[] = []) => createRecordingLarkChannel({ chats: [{ id: 'oc_synthetic', name: 'Synthetic' }], chatMode, messagesByChat: messages.length ? { oc_synthetic: messages } : {} });
   let channel = makeChannel(initialMessages); setChannel(channel);
   let script: (call: Call, opts: AgentRunOptions, stopped: Promise<void>) => Promise<void | string | AgentEvent[]> = async () => {};
@@ -71,7 +71,7 @@ export async function createAutomationToolHarness({ client, cleanup, setChannel,
       let stopError: unknown;
       try { await bridge.disconnect(); } catch (error) { stopError = error; }
       if (options.profile) profile = options.profile;
-      store = makeStore(); await store.load(); await journal.load(); await sessions.load();
+      await journal.load(); store = makeStore(); await store.load(); await sessions.load();
       channel = makeChannel(options.messages ?? listed.data.items); setChannel(channel);
       bridge = await start(); return stopError;
     },

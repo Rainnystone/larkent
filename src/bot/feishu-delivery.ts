@@ -1,5 +1,7 @@
+import type { LarkChannel } from '@larksuite/channel';
+import type { DraftCardItem } from './outbox-draft-item';
 import { replyDeliveryKey, type TurnJournalEntry, type TurnReply } from './turn-journal';
-import { classify, isGoneMessage } from './feishu-error';
+import { classify, isGoneMessage, isNotInChat, isFormatError } from './feishu-error';
 
 export const FEISHU_UUID_WINDOW_MS = 60 * 60 * 1000;
 export const FEISHU_LIST_VISIBILITY_LAG_MS = 2_000;
@@ -99,7 +101,10 @@ export async function redeliverStagedReply(input: {
         case 'link':
           throw err;
         case 'rejected':
-          if (!isGoneMessage(err)) throw err;
+          if (isNotInChat(err) || isFormatError(err)) throw err;
+          // The existing card still owns this reply. A permission or other
+          // non-format rejection must not create a second visible answer.
+          if (!isGoneMessage(err)) return { delivered: false, messageId: reply.messageId };
           break;
         case 'local':
           throw err;
@@ -328,4 +333,80 @@ function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+/** A complete, unique marker match is positive evidence; absence is unknown. */
+export async function readBackDraftCard(channel: Pick<LarkChannel, 'rawClient'>, item: DraftCardItem, botAppId?: string): Promise<string | undefined> {
+  if (!botAppId) return undefined;
+  const afterMs = item.createdAt;
+  const delivery = { deliveryId: item.deliveryId, card: item.payload.card };
+  const marker = draftCardReadbackElementId(delivery.deliveryId);
+  if (!collectElementIds(delivery.card).includes(marker)) return;
+  let pageToken: string | undefined;
+  const matches = new Set<string>();
+  const inThread = item.target.replyInThread === true;
+  const container = inThread ? item.target.threadId : item.target.chatId;
+  if (!container) return undefined;
+  for (let page = 0; page < FEISHU_READBACK_MAX_PAGES; page++) {
+    const response = await channel.rawClient.im.v1.message.list({ params: feishuReadbackListParams({
+      containerId: container, inThread, afterMs: item.createdAt, pageToken,
+    }) });
+    const data = response?.data;
+
+    for (const item of data?.items ?? []) {
+      if (item.sender?.id !== botAppId || item.sender?.sender_type !== 'app' || item.msg_type !== 'interactive' || !item.message_id || !Number.isFinite(Number(item.create_time)) || Number(item.create_time) < afterMs) continue;
+      let body: unknown;
+      try { body = JSON.parse(item.body?.content ?? ''); } catch { continue; }
+      if (collectElementIds(body).includes(marker)) matches.add(item.message_id);
+    }
+    if (matches.size > 1) return;
+    if (!data?.has_more) {
+      return matches.size === 1 ? [...matches][0] : undefined;
+    }
+    if (!data.page_token) return;
+    pageToken = data.page_token;
+  }
+}
+
+function draftCardReadbackElementId(deliveryId: string): string {
+  return `lbd${deliveryId.slice(0, 17)}`;
+}
+
+export function withDraftCardReadbackMarker(card: object, deliveryId: string): object {
+  const marked = structuredClone(card);
+  const target = findButton(marked, (button) => buttonLabel(button) === '是')
+    ?? findButton(marked, (button) => button.type === 'primary');
+  if (target) target.element_id = draftCardReadbackElementId(deliveryId);
+  return marked;
+}
+
+function collectElementIds(value: unknown): string[] {
+  if (Array.isArray(value)) return value.flatMap(collectElementIds);
+  if (!value || typeof value !== 'object') return [];
+  const rec = value as Record<string, unknown>;
+  const own = typeof rec.element_id === 'string' && rec.element_id ? [rec.element_id] : [];
+  return own.concat(Object.values(rec).flatMap(collectElementIds));
+}
+
+function findButton(value: unknown, match: (button: Record<string, unknown>) => boolean): Record<string, unknown> | undefined {
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const found = findButton(entry, match);
+      if (found) return found;
+    }
+    return undefined;
+  }
+  if (!value || typeof value !== 'object') return undefined;
+  const rec = value as Record<string, unknown>;
+  if (rec.tag === 'button' && match(rec)) return rec;
+  for (const child of Object.values(rec)) {
+    const found = findButton(child, match);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function buttonLabel(button: Record<string, unknown>): string {
+  const text = button.text && typeof button.text === 'object' ? button.text as Record<string, unknown> : undefined;
+  return typeof text?.content === 'string' ? text.content : '';
 }

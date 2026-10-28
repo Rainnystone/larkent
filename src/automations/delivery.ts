@@ -1,17 +1,9 @@
-import { classify, isNotInChat } from '../bot/feishu-error';
-import { redeliverStagedReply, type DeliveryChannel } from '../bot/feishu-delivery';
-import {
-  replyDeliveryKey,
-  replyState,
-  type TurnJournal,
-  type TurnJournalEntry,
-} from '../bot/turn-journal';
-import { log } from '../core/logger';
+import { Outbox } from '../bot/outbox';
+import type { LarkChannel } from '@larksuite/channel';
+import type { TurnJournal } from '../bot/turn-journal';
+import type { DeliveryChannel } from '../bot/feishu-delivery';
 import type { FireSend, FireSender, MissedNotify, MissedNotifier } from './scheduler';
 import { zonedParts } from './zoned-time';
-
-/** Top-level fire: no triggering message. Empty `replyTo` means a chat root send. */
-const TOP_LEVEL_REPLY_TO = '';
 
 export interface AutomationDeliveryDeps {
   journal?: TurnJournal;
@@ -20,8 +12,7 @@ export interface AutomationDeliveryDeps {
   botOpenId: () => string;
   isLinkDown: () => boolean;
   now?: () => number;
-  deliver?: (entry: TurnJournalEntry) => Promise<boolean>;
-  onUndelivered?: () => void;
+  outbox?: Outbox;
   onNotInChat?: (chatId: string) => void | Promise<unknown>;
   runAgentFire?: (fire: FireSend) => void | Promise<void>;
 }
@@ -128,75 +119,19 @@ export async function deliverAutomationMarkdown(input: AutomationDeliveryDeps & 
   chatId: string;
   markdown: string;
   scope?: string;
+  kind?: 'reminder' | 'result';
 }): Promise<void> {
-  const existing = input.journal.get(input.turnId);
-  if (existing && replyState(existing) === 'sent') return;
-  if (!existing) {
-    const actor = input.botOpenId();
-    input.journal.enqueue({
-      turnId: input.turnId,
-      scope: input.scope ?? `auto:${input.turnId}`,
-      chatId: input.chatId,
-      messageIds: [],
-      senderId: actor,
-      initiatorId: actor,
-      initiatorType: 'bot',
-      status: 'settled',
-    });
-  }
-  const current = input.journal.get(input.turnId);
-  if (!current || replyState(current) !== 'sent') {
-    input.journal.stageReply(input.turnId, {
-      markdown: input.markdown,
-      replyTo: TOP_LEVEL_REPLY_TO,
-      replyMode: 'text',
-      deliveryId: replyDeliveryKey(input.turnId),
-    });
-  }
-  await input.journal.flush();
-  if (input.isLinkDown()) return;
-  const entry = input.journal.get(input.turnId);
-  if (!entry?.reply) return;
-  try {
-    const delivered = input.deliver
-      ? await input.deliver(entry)
-      : (await redeliverStagedReply({
-          channel: input.channel,
-          entry,
-          botAppId: input.botAppId,
-          ...(input.now ? { now: input.now } : {}),
-        })).delivered;
-    if (delivered) {
-      input.journal.replyDelivered(input.turnId);
-      await input.journal.flush();
-      return;
-    }
-    input.onUndelivered?.();
-  } catch (error) {
-    if (isNotInChat(error)) {
-      input.journal.replyRejected(input.turnId);
-      await input.journal.flush();
-      await input.onNotInChat?.(input.chatId);
-      throw error;
-    }
-    const kind = classify(error);
-    switch (kind) {
-      case 'rejected':
-        input.journal.replyRejected(input.turnId);
-        await input.journal.flush();
-        return;
-      case 'link':
-      case 'local':
-        log.warn('auto', 'deliver-failed', {
-          turnId: input.turnId,
-          err: error instanceof Error ? error.message : String(error),
-        });
-        input.onUndelivered?.();
-        return;
-      default: {
-        const _exhaustive: never = kind;
-        throw _exhaustive;
-      }
-    }
-  }
+  const outbox = automationOutbox(input);
+  await outbox.deliverAutomation({
+    kind: input.kind ?? 'reminder', turnId: input.turnId, chatId: input.chatId,
+    markdown: input.markdown, actor: input.botOpenId(), scope: input.scope,
+  });
+}
+
+export function automationOutbox(input: AutomationDeliveryDeps): Outbox {
+  return input.outbox ?? new Outbox({
+    channel: input.channel as LarkChannel, journal: input.journal,
+    botAppId: input.botAppId, isDown: input.isLinkDown,
+    now: input.now, onNotInChat: input.onNotInChat, liveSweep: false,
+  });
 }

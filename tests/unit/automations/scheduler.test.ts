@@ -1,3 +1,4 @@
+import { mutateAutomationTask } from '../../../src/automations/task-mutation';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ import { BoardActionAuth } from '../../../src/automations/board-auth';
 import { automationBoardCard } from '../../../src/automations/board-card';
 import { draftCardBodyFromCard } from '../../../src/automations/card-body';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
-import { expireDueDraftCards } from '../../../src/automations/draft-card';
+import { expireDraftConfirmations } from '../../../src/automations/draft-confirmation';
 import { createFakeChannel } from '../../helpers/fake-channel';
 import { expectSettledKeepsBody } from '../../helpers/settled-oneshot';
 import { simplifiedBoardRender } from '../../../src/automations/status-block';
@@ -316,7 +317,7 @@ describe('automation scheduler', () => {
       rejectToken: 'auto_cb.v1.reject-secret',
     });
     const h = await harness(t0, {
-      onExpireDrafts: () => expireDueDraftCards({ store: h.store, channel: channel as never }),
+      onExpireDrafts: () => expireDraftConfirmations({ store: h.store, channel: channel as never }),
     });
     const draft = await h.store.saveDraft(reminderInput({
       nextFireAt: t0 + 10 * HOUR,
@@ -883,7 +884,7 @@ describe('automation scheduler', () => {
     expect(h.store.get(item.id)?.nextFireAt).toBe(t0);
     expect(h.store.get(item.id)?.missed).toBe(0);
 
-    await h.scheduler.resume(item.id);
+    await mutateAutomationTask({ store: h.store, scheduler: h.scheduler, chatId: item.chatId }, { actor: 'human', operation: 'resume', id: item.id });
     await h.scheduler.idle();
     expect(h.fires).toEqual([]);
     expect(h.store.get(item.id)?.paused).toBe(false);
@@ -923,7 +924,7 @@ describe('automation scheduler', () => {
     await h.scheduler.idle();
     await expectStatusMatchesStore(h);
 
-    await h.scheduler.delete(item.id);
+    await mutateAutomationTask({ store: h.store, scheduler: h.scheduler, chatId: item.chatId }, { actor: 'human', operation: 'delete', id: item.id });
     await h.scheduler.idle();
     await expectStatusMatchesStore(h);
   });

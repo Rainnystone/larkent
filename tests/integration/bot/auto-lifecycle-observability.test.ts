@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -199,7 +200,7 @@ describe('automation lifecycle and observability', () => {
     await h.channel.handlers.message?.(mention('om_reject', '/auto new in 15m | 交周报 | 提醒交周报'));
     const rejectCard = confirmCard(h);
     await h.channel.handlers.cardAction?.(
-      cardClick(USER, rejectToken(rejectCard), h.store.listDrafts()[0]!.cardMessageId!, CHAT, 'auto.reject'),
+      cardClick(USER, rejectToken(rejectCard), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!, CHAT, 'auto.reject'),
     );
     expect(h.store.listDrafts()).toEqual([]);
     expect(autoEvents().some((entry) => entry.event === 'draft')).toBe(true);
@@ -337,7 +338,7 @@ async function confirmOne(
   await h.channel.handlers.message?.(mention(messageId, '/auto new in 15m | 交周报 | 提醒交周报', { chatId }));
   const card = confirmCard(h);
   await h.channel.handlers.cardAction?.(
-    cardClick(USER, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!, chatId),
+    cardClick(USER, confirmToken(card), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!, chatId),
   );
   await waitFor(() => {
     const board = h.store.getBoard(chatId);
@@ -374,7 +375,7 @@ function confirmCard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
 }
 
 function confirmToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.confirm token').toBeDefined();
   return match![1]!;
 }
@@ -409,25 +410,25 @@ function boardClick(
 }
 
 function rejectToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.reject","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.reject","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.reject token').toBeDefined();
   return match![1]!;
 }
 
 function pauseToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.pause","auto_token":"(auto_board\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.pause","auto_token":"(auto_board\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.pause token').toBeDefined();
   return match![1]!;
 }
 
 function resumeToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.resume","auto_token":"(auto_board\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.resume","auto_token":"(auto_board\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.resume token').toBeDefined();
   return match![1]!;
 }
 
 function deleteToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.delete","auto_token":"(auto_board\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.delete","auto_token":"(auto_board\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.delete token').toBeDefined();
   return match![1]!;
 }

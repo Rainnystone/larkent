@@ -1,0 +1,19 @@
+{"transcript": 1, "kind": "grok", "cliVersion": "grok 1.0.71 (441b85a007ff)", "capturedAt": "2026-10-27", "scenario": "stop-mid-answer", "command": "grok --prompt-file <TMP> --output-format streaming-json --rules <RULES> --always-approve --no-auto-update", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 3, "note": "spawned pid=31874"}
+{"t": 456, "line": "{\"type\": \"available_commands\", \"tools\": [\"run_terminal_command\", \"read_file\", \"search_replace\", \"list_dir\", \"grep\", \"kill_command_or_subagent\", \"todo_write\", \"get_command_or_subagent_output\", \"spawn_subagent\", \"scheduler_create\", \"scheduler_delete\", \"scheduler_list\", \"monitor\", \"search_tool\", \"use_tool\", \"workflow\", \"enter_plan_mode\", \"exit_plan_mode\", \"ask_user_question\", \"send_feedback\", \"web_search\", \"web_fetch\", \"image_gen\", \"image_edit\", \"image_to_video\", \"reference_to_video\", \"write\"], \"commands\": [\"<REDACTED_LOCAL_ENV>\"]}"}
+{"t": 456, "line": "{\"type\": \"available_commands\", \"tools\": [\"run_terminal_command\", \"read_file\", \"search_replace\", \"list_dir\", \"grep\", \"kill_command_or_subagent\", \"todo_write\", \"get_command_or_subagent_output\", \"spawn_subagent\", \"scheduler_create\", \"scheduler_delete\", \"scheduler_list\", \"monitor\", \"search_tool\", \"use_tool\", \"workflow\", \"enter_plan_mode\", \"exit_plan_mode\", \"ask_user_question\", \"send_feedback\", \"web_search\", \"web_fetch\", \"image_gen\", \"image_edit\", \"image_to_video\", \"reference_to_video\", \"write\"], \"commands\": [\"<REDACTED_LOCAL_ENV>\"]}"}
+{"t": 5779, "line": "{\"type\": \"thought\", \"data\": \"I will count from one\"}"}
+{"t": 5780, "note": "first thinking event"}
+{"t": 5780, "line": "{\"type\": \"thought\", \"data\": \" to three hundred in\"}"}
+{"t": 5780, "note": "first thinking event"}
+{"t": 5780, "line": "{\"type\": \"thought\", \"data\": \" words, one number per\"}"}
+{"t": 5780, "note": "first thinking event"}
+{"t": 5784, "line": "{\"type\": \"thought\", \"data\": \" line, without using\"}"}
+{"t": 5784, "note": "first thinking event"}
+{"t": 5853, "line": "{\"type\": \"thought\", \"data\": \" any tools.\"}"}
+{"t": 5853, "note": "first thinking event"}
+{"t": 6581, "note": "SIGTERM sent to process group (production stop path)"}
+{"t": 7765, "exit": {"code": 143, "signal": null}}
+{"t": 7765, "note": "translator tail event: {\"type\":\"thinking\",\"delta\":\" words, one number per\"}"}
+{"t": 7765, "note": "translator tail event: {\"type\":\"thinking\",\"delta\":\" line, without using\"}"}
+{"t": 7765, "note": "translator tail event: {\"type\":\"thinking\",\"delta\":\" any tools.\"}"}

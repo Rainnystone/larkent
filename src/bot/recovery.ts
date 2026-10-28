@@ -1,13 +1,13 @@
 import { resolveBackfillWindow } from './backfill';
 import { log } from '../core/logger';
 import type { Outage } from './feishu-link';
+import { RECOVERY_RETRY_MIN_MS, RECOVERY_RETRY_MAX_MS } from './recovery-timing';
+export { RECOVERY_RETRY_MIN_MS, RECOVERY_RETRY_MAX_MS } from './recovery-timing';
 
 export type { Outage };
 
 /** After recovery, a run silent since before `outage.since` may keep running this long. */
 export const STALL_AFTER_RECOVERY_MS = 2 * 60_000;
-export const RECOVERY_RETRY_MIN_MS = 1_000;
-export const RECOVERY_RETRY_MAX_MS = 30_000;
 
 export interface ReviewableRun {
   lastEventAt: number;

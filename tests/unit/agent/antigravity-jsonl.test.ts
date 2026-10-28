@@ -54,8 +54,9 @@ const INIT = {
   },
 };
 
+// Parsing assertions omit activity; D03b replay and core/watchdog tests pin liveness.
 function collect(translator: AntigravityJsonlTranslator, lines: unknown[]): AgentEvent[] {
-  return lines.flatMap((line) => translator.translate(line));
+  return lines.flatMap((line) => translator.translate(line)).filter(event => event.type !== 'liveness');
 }
 
 function projectedRenderText(events: AgentEvent[]): string {
@@ -274,7 +275,7 @@ describe('AntigravityJsonlTranslator', () => {
     ).toEqual([]);
     expect(t.fail('agy exited with code 1')).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
-      { type: 'final_text', content: 'partial answer' },
+      { type: 'text', delta: 'partial answer' },
       { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
     ]);
     expect(t.fail('again')).toEqual([]);
@@ -451,7 +452,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     expect(t.finish()).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
-      { type: 'final_text', content: 'truncated\n' },
+      { type: 'text', delta: 'truncated\n' },
       {
         type: 'error',
         message: 'antigravity stream ended before a terminal event',
@@ -549,7 +550,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     expect(t.fail('agy exited with code 1')).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
-      { type: 'final_text', content: INCIDENT_PROSE },
+      { type: 'text', delta: INCIDENT_PROSE },
       { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
     ]);
   });
@@ -717,7 +718,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     expect(t.fail('agy exited with code 1')).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
-      { type: 'final_text', content: row.input },
+      { type: 'text', delta: row.input },
       { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
     ]);
   });
@@ -739,7 +740,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     expect(t.fail('agy exited with code 1')).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
-      { type: 'final_text', content: row.expectedText },
+      { type: 'text', delta: row.expectedText },
       { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
     ]);
   });
@@ -963,7 +964,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     expect(t.fail('agy exited with code 1')).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
-      { type: 'final_text', content: row.expectedText },
+      { type: 'text', delta: row.expectedText },
       { type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' },
     ]);
   });
@@ -1081,4 +1082,12 @@ describe('AntigravityJsonlTranslator', () => {
       expect(JSON.stringify(info.mock.calls)).not.toContain(row.input);
     },
   );
+  it('flushes held text as scrubbed progress before a native ERROR result', () => {
+    const translator = new AntigravityJsonlTranslator();
+    translator.translate({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: '<SYSTEM_MESSAGE>[Message] internal</SYSTEM_MESSAGE>Partial' } });
+    expect(translator.translate({ event: 'result', result: { status: 'ERROR', error: 'upstream failed' } })).toEqual([
+      { type: 'text', delta: 'Partial' },
+      { type: 'error', message: 'upstream failed', terminationReason: 'failed' },
+    ]);
+  });
 });

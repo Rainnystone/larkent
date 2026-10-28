@@ -1,3 +1,5 @@
+import type { UserActionRuntime } from '../user-actions/context';
+import { flushDraftConfirmations, expireDraftConfirmations } from '../automations/draft-confirmation';
 import { bridgeToolInstructions } from '../bridge-tools/prompt';
 import type {
   LarkChannel,
@@ -16,31 +18,18 @@ import {
   type BridgePromptQuotedMessage,
   type BridgePromptTopicMessage,
 } from '../agent/prompt';
-import {
-  cardUserMessage,
-  cliFailureInput,
-  matchCliSignature,
-  NETWORK_TRANSIENT_SIGNATURES,
-  noteUnclassifiedStderr,
-  type CliSignature,
-} from '../agent/cli-signatures';
-import { descriptorFor, isAgentKind } from '../agent/registry';
-import type { AgentAdapter, AgentEvent } from '../agent/types';
+import { descriptorFor } from '../agent/registry';
+import type { AgentAdapter } from '../agent/types';
 import { handleCardAction } from '../card/dispatcher';
 import { CallbackAuth } from '../card/callback-auth';
+import { ActionTokenCodec } from '../card/action-token';
 import { CallbackNonceStore } from '../card/callback-store';
 import {
   NOTICE_RESTART_GAP_MS,
   NoticeActionAuth,
-  authNoticeAlreadyDelivered,
-  deliverInterruptionNotice,
   planInterruptionNotice,
-  resendPendingNotice,
-  stageInterruptionNotice,
 } from './interruption-notice';
 import { createContinuations, type ContinuationTaken, type Continuations } from './continuation';
-import { renderCard } from '../card/run-renderer';
-import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
 import {
   CliSelfSendTracker,
   OutboundMessageIds,
@@ -48,33 +37,9 @@ import {
   automationUnavailableForSender,
   isSelfSender,
   noteInboundSkipSelf,
-  outboundMessageId,
   senderTypeFromMessage,
-  withOutboundTimeout,
 } from './self-message';
-import {
-  finalizeIfRunning,
-  initialState,
-  markIdleTimeout,
-  markInterrupted,
-  markRunnerTimeout,
-  reduce,
-  seedRunState,
-  shouldSkipFinalReply,
-  type RunState,
-} from '../card/run-state';
-import {
-  cardTerminalFromOutcome,
-  deriveRunOutcome,
-  formatRunOutcome,
-  formatStopRequest,
-  noteTerminalStop,
-  runOverlappedOutage,
-  shouldDeliverAgentEvent,
-  type RunOutcome,
-  type StopRequest,
-} from './run-outcome';
-import { renderText } from '../card/text-renderer';
+import { formatRunOutcome, type StopRequest } from './run-outcome';
 import { commandClearsPending, tryHandleCommand, type Controls } from '../commands';
 import type { AppConfig } from '../config/schema';
 import {
@@ -110,7 +75,7 @@ import type { SessionCatalog } from '../session/catalog';
 import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
-import { ActiveRuns, noteRunEvent, type RunHandle } from './active-runs';
+import { ActiveRuns } from './active-runs';
 import {
   BACKFILL_DELAY_LINE,
   createBackfillRun,
@@ -119,17 +84,15 @@ import {
   type BackfillMark,
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
-import { classify, isNotInChat, isSupersededMessageGone, rateLimitResetDelayMs } from './feishu-error';
+import { classify } from './feishu-error';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
-import { redeliverStagedReply, withDeliveryUuid } from './feishu-delivery';
+import { Outbox } from './outbox';
 import {
   isJournalResourceType,
-  noticeState,
   replyDeliveryKey,
   replyState,
-  streamDeliveryKey,
   type TurnJournal,
   type TurnJournalEntry,
   type TurnJournalResource,
@@ -144,10 +107,6 @@ import {
   automationScopeForReply,
 } from '../automations/agent-run';
 import { attachAutomationChatLifecycle } from '../automations/chat-lifecycle';
-import {
-  flushPendingDraftCards,
-} from '../automations/command';
-import { expireDueDraftCards } from '../automations/draft-card';
 import { createAutomationDelivery, type AutomationDeliveryDeps } from '../automations/delivery';
 import { stripLegacyAutomationTagsFromState } from '../card/legacy-automation-tags';
 import {
@@ -158,34 +117,20 @@ import type { AutomationItem, AutomationsStore } from '../automations/store';
 import { deploymentPluginCatalog, type PluginCatalog } from '../plugins/catalog';
 import type { ToolRunContext } from '../bridge-tools/server';
 import { ChatModeCache, type ChatMode } from './chat-mode-cache';
-import { createIdleWatchdog } from './idle-watchdog';
 import { isAutomationRunScope, isAutomationScope, parseAutomationRunScope } from './scope';
 import { handleCommentMention } from './comments';
-import { recordRunSessionEvent, resolveRunResumeHandle, startRunFlow } from './run-flow';
+import { resolveRunResumeHandle } from './run-flow';
+import { executeTurn, turnStderrSignatures, TurnStartFailed } from './turn';
 import { commandSessionCatalogIdentity } from './session-catalog-identity';
 import { PendingQueue } from './pending-queue';
 import { ProcessPool } from './process-pool';
 import { fetchQuotedContext, fetchTopicContext, type QuotedContext } from './quote';
 import { lookupMessageThreadId } from './thread-id';
-import { addWorkingReaction, removeReaction } from './reaction';
 import { fetchKnownChats } from './lark-info';
 import type { AppPaths } from '../config/app-paths';
-import {
-  consumeCotEvents,
-  CotClient,
-  CotPublisher,
-  appendOutcomeNotice,
-  finalAnswerOnlyState,
-  finalReplyFor,
-} from './cot';
+import { CotClient } from './cot';
 
 const DEBOUNCE_MS = 600;
-const STREAM_TERMINAL_GRACE_MS = 3000;
-const REACTION_CLEANUP_GRACE_MS = 1000;
-/** Retry delay while a live sweep pass is still draining staged items. */
-const OUTBOX_SWEEP_MS = 50;
-/** When a pass delivers nothing, wait for a new trigger instead of spinning. */
-const OUTBOX_IDLE_MS = 60_000;
 
 /** Single handshake attempt. Also the force-reconnect budget via connectTimeoutMs. */
 export const CHANNEL_HANDSHAKE_TIMEOUT_MS = 8_000;
@@ -279,6 +224,43 @@ export function shouldSuppressSdkErrorLog(args: unknown[]): boolean {
   return args.some(isSuppressedSdkMessage);
 }
 
+const SDK_DROP_ACTION_RE =
+  /^safety: drop (duplicate|in-flight) action card:([^:]+):[^:]*:([\s\S]*)$/;
+const SDK_DROP_CMD_RE = /"cmd":"([^"\\]{1,64})"/;
+const SDK_DROP_CLICK_ID_RE = /"a":"([A-Za-z0-9_-]{1,16})"/;
+/** node-sdk LoggerLevel.debug; @larksuiteoapi/node-sdk is not a direct dep. */
+const SDK_DEBUG_LEVEL: LarkChannelOptions['loggerLevel'] = 4;
+
+export type SdkCardActionDrop = {
+  reason: 'duplicate' | 'in-flight';
+  msgId: string;
+  cmd?: string;
+  clickId?: string;
+};
+
+/** Redacted fields from an SDK `safety: drop ... action card:...` debug line. */
+export function sdkCardActionDrop(args: unknown[]): SdkCardActionDrop | undefined {
+  for (const item of args.flat(Infinity)) {
+    if (typeof item !== 'string') continue;
+    const match = SDK_DROP_ACTION_RE.exec(item);
+    if (!match) continue;
+    const [, reason, msgId, clicked] = match;
+    if (reason === undefined || msgId === undefined || clicked === undefined) continue;
+    const drop: SdkCardActionDrop = { reason: reason as SdkCardActionDrop['reason'], msgId };
+    const cmd = SDK_DROP_CMD_RE.exec(clicked);
+    if (cmd?.[1]) drop.cmd = cmd[1];
+    const clickId = SDK_DROP_CLICK_ID_RE.exec(clicked);
+    if (clickId?.[1]) drop.clickId = clickId[1];
+    return drop;
+  }
+  return undefined;
+}
+
+/** Logger + level the bridge passes to @larksuite/channel. */
+export function sdkLoggerOptions(): Pick<LarkChannelOptions, 'logger' | 'loggerLevel'> {
+  return { logger: buildQuietLogger(), loggerLevel: SDK_DEBUG_LEVEL };
+}
+
 function buildQuietLogger(): {
   error: (...m: unknown[]) => void;
   warn: (...m: unknown[]) => void;
@@ -293,7 +275,10 @@ function buildQuietLogger(): {
     },
     warn: (...args: unknown[]) => log.warn('sdk', 'warn', { args: stringifyArgs(args) }),
     info: (...args: unknown[]) => log.info('sdk', 'info', { args: stringifyArgs(args) }),
-    debug: () => {},
+    debug: (...args: unknown[]) => {
+      const drop = sdkCardActionDrop(args);
+      if (drop) log.info('sdk', 'card-action-dropped', drop);
+    },
     trace: () => {},
   };
 }
@@ -366,10 +351,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       return channelForCards.updateCard(id, card);
     },
   });
-  const outboxSweep = {
-    schedule(_delayMs?: number) {},
-    stop() {},
-  };
+  let outbox: Outbox;
   const activeRuns = new ActiveRuns({
     onSupersede: (scope) => {
       continuations.voidScope(scope);
@@ -386,7 +368,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     agent,
     pool,
     activeRuns,
-    stderrSignatures: () => streamReliability(controls.profileConfig).signatures,
+    stderrSignatures: variant => turnStderrSignatures(controls.profileConfig.agentKind, variant),
+    getLink: () => feishuLink,
     ...(deps.now ? { now: deps.now } : {}),
     onSpawn: (input) => {
       journal?.noteSpawn({
@@ -407,21 +390,17 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     ? new CallbackNonceStore(join(dirname(deps.appPaths.mediaDir), 'callback-nonces.json'))
     : undefined;
   await callbackNonceStore?.load();
-  const callbackAuth = callbackNonceStore
-    ? new CallbackAuth({
-        keys: [{ version: 1, secret: appSecret }],
-        nonceStore: callbackNonceStore,
-      })
-    : undefined;
+  const actionTokens = new ActionTokenCodec({
+    keys: [{ version: 1, secret: appSecret }],
+    nonceStore: callbackNonceStore,
+    ...(deps.now ? { now: deps.now } : {}),
+  });
+  const callbackAuth = callbackNonceStore ? new CallbackAuth(actionTokens) : undefined;
   const noticeAuth = callbackNonceStore
-    ? new NoticeActionAuth({ secret: appSecret, nonceStore: callbackNonceStore })
+    ? new NoticeActionAuth(actionTokens)
     : undefined;
   const autoAuth = callbackNonceStore
-    ? new AutoActionAuth({
-        secret: appSecret,
-        nonceStore: callbackNonceStore,
-        ...(deps.now ? { now: deps.now } : {}),
-      })
+    ? new AutoActionAuth(actionTokens)
     : undefined;
   const automationsCtl: {
     scheduler?: AutomationScheduler;
@@ -467,7 +446,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         ? 'https://open.larksuite.com'
         : 'https://open.feishu.cn',
     source: 'lark-channel-bridge',
-    logger: buildQuietLogger(),
+    ...sdkLoggerOptions(),
     policy: {
       dmMode: 'open',
       requireMention: false,
@@ -581,6 +560,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         }
         await runAgentBatch({
           channel,
+          outbox,
           executor,
           sessions,
           sessionCatalog,
@@ -602,7 +582,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           continuations,
           cliSelfSent,
           link,
-          onDeliveryWait: (delayMs) => outboxSweep.schedule(delayMs),
+          onDeliveryWait: (delayMs) => outbox.schedule(delayMs),
           outboundTimeoutMs,
           automations: deps.automations,
           pluginCatalog,
@@ -621,33 +601,22 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // Counter for stdout reconnect escalation; reset on `reconnected`.
   let consecutiveReconnects = 0;
 
+  const userActionRuntime: UserActionRuntime = {
+    channel, agent, sessions, sessionCatalog, resumeCandidates, workspaces, ledger,
+    activeRuns, pending, controls, chatModeCache, runExecutor: executor, processPool: pool,
+    callbackAuth, callbackPolicyFingerprintForScope: scope => activePolicyFingerprints.get(scope),
+    journal, noticeAuth, autoAuth, continuations,
+    automations: deps.automations,
+    get automationsScheduler() { return automationsCtl.scheduler; },
+    get boardAuth() { return automationsCtl.boardAuth; },
+    ...(deps.now ? { now: deps.now } : {}),
+    isLinkDown: () => closing || started.isDown(),
+    onAutomationConfirmed,
+  };
+
   const handOffIntake = (msg: NormalizedMessage, source: IntakeSource): Promise<void> =>
     withTrace({ chatId: msg.chatId, msgId: msg.messageId }, () =>
-      intakeMessage({
-        channel,
-        agent,
-        sessions,
-        sessionCatalog,
-        resumeCandidates,
-        workspaces,
-        ledger,
-        intakeSource: source,
-        activeRuns,
-        pending,
-        msg,
-        controls,
-        chatModeCache,
-        logThreadModeOverride,
-        executor,
-        pool,
-        automations: deps.automations,
-        autoAuth,
-        automationsScheduler: automationsCtl.scheduler,
-        journal,
-        ...(deps.now ? { now: deps.now } : {}),
-        isLinkDown: () => closing || started.isDown(),
-        onAutomationConfirmed,
-      }),
+      intakeMessage({ actions: userActionRuntime, msg, intakeSource: source, logThreadModeOverride }),
     ).catch((err) => {
       log.fail('intake', err);
     });
@@ -687,26 +656,16 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     }), 'backfill');
   };
 
-  const journalRecoverOpts = (owned: TurnJournal) => ({
+  outbox = new Outbox({
+    channel, journal, botAppId: cfg.accounts.app.id,
+    draftCards: deps.automations,
+    draftJournal: deps.automations?.outboxJournal,
     isDown: () => closing || link.isDown(),
-    resend: (entry: TurnJournalEntry) => resendJournalReply({
-      channel,
-      journal: owned,
-      entry,
-      botAppId: cfg.accounts.app.id,
-      now: deps.now,
-      onNotInChat: removeFromChat,
-    }),
-    resendNotice: (entry: TurnJournalEntry) => resendPendingNotice({
-      send: (chatId: string, content: { markdown: string } | { card: object }, options?: {
-        replyTo?: string;
-        replyInThread?: boolean;
-        uuid?: string;
-      }) => channel.send(chatId, content, options),
-      entry,
-      journal: owned,
-      noticeAuth,
-    }),
+    isActive: (scope) => activeRuns.get(scope) !== undefined,
+    now: deps.now,
+    noticeAuth,
+    onNotInChat: removeFromChat,
+    track: (work) => trackConsumer(work, 'journal'),
     onInterrupted: async (entry: TurnJournalEntry) => {
       const outcome = entry.outcome ?? {
         kind: 'interrupted' as const,
@@ -716,12 +675,12 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       };
       if (isAutomationScope(entry.scope)) {
         if (entry.cliAlreadySent || replyState(entry) === 'sent') return true;
-        if (isAutomationRunScope(entry.scope) && !owned.get(entry.turnId)?.reply) {
+        if (isAutomationRunScope(entry.scope) && !journal!.get(entry.turnId)?.reply) {
           const parsed = parseAutomationRunScope(entry.scope);
           const item = parsed ? deps.automations?.get(parsed.id) : undefined;
           const timezone = item?.timezone;
           const fireAt = parsed?.fireAt;
-          owned.stageReply(entry.turnId, {
+          await outbox.stage({ kind: 'reply', turnId: entry.turnId, payload: {
             markdown: formatAgentFailureNotice(outcome, {
               now: (deps.now ?? Date.now)(),
               catchUp: typeof entry.userInput === 'string'
@@ -732,137 +691,41 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
             replyTo: '',
             replyMode: 'text',
             deliveryId: replyDeliveryKey(entry.turnId),
-          });
-          await owned.flush();
+          } });
           log.info('auto', 'result', {
             turnId: entry.turnId,
             scope: entry.scope,
             outcome: formatRunOutcome(outcome),
           });
         }
-        const latest = owned.get(entry.turnId) ?? entry;
+        const latest = journal!.get(entry.turnId) ?? entry;
         if (!latest.reply) return true;
         if (link.isDown()) return false;
-        const delivered = await resendJournalReply({
-          channel,
-          journal: owned,
-          entry: latest,
-          botAppId: cfg.accounts.app.id,
-          now: deps.now,
-          onNotInChat: removeFromChat,
-        });
-        if (delivered) {
-          owned.replyDelivered(entry.turnId);
-          await owned.flush();
-        }
-        return delivered;
+        return outbox.deliver(latest);
       }
       if (planInterruptionNotice(outcome).kind === 'continue') {
         continuations.offer(entry.turnId, outcome);
       }
-      if (link.isDown()) {
-        stageInterruptionNotice({
-          journal: owned,
-          turnId: entry.turnId,
-          outcome,
-          noticeAuth,
-          consecutive: continuations.consecutive(entry.scope),
-          requireBotMention: requireMentionForChat(
-            controls.profileConfig,
-            controls.cfg,
-            entry.chatId,
-          ),
-          ownerId: controls.botOwnerId,
-          authNotified: authNoticeAlreadyDelivered(owned),
-        });
-        return false;
-      }
-      const result = await deliverInterruptionNotice({
-        send: (chatId, content, options) => channel.send(chatId, content, options),
-        journal: owned,
+      return outbox.deliverNotice({
         turnId: entry.turnId,
         outcome,
-        noticeAuth,
         consecutive: continuations.consecutive(entry.scope),
-        requireBotMention: requireMentionForChat(
-          controls.profileConfig,
-          controls.cfg,
-          entry.chatId,
-        ),
+        requireBotMention: requireMentionForChat(controls.profileConfig, controls.cfg, entry.chatId),
         ownerId: controls.botOwnerId,
-        authNotified: authNoticeAlreadyDelivered(owned),
       });
-      return result.delivered;
     },
-    noticeGapMs: NOTICE_RESTART_GAP_MS,
-    isActive: (scope: string) => activeRuns.get(scope) !== undefined,
   });
-
-  let sweepTimer: ReturnType<typeof setTimeout> | undefined;
-  let sweepStopped = false;
-  let sweepDelayMs = OUTBOX_SWEEP_MS;
-  let sweepInFlight = false;
-  let sweepQueued = false;
-  let sweepTail: Promise<void> = Promise.resolve();
-  const armSweepTimer = (delayMs: number): void => {
-    if (sweepTimer) clearTimeout(sweepTimer);
-    sweepTimer = setTimeout(() => {
-      sweepTimer = undefined;
-      void runOutboxSweep();
-    }, delayMs);
-  };
-  const runOutboxSweep = (): Promise<void> => {
-    if (sweepStopped || !journal || link.isDown()) return Promise.resolve();
-    if (sweepInFlight) {
-      sweepQueued = true;
-      return sweepTail;
-    }
-    sweepInFlight = true;
-    const stagedBefore = stagedOutboxCount(journal);
-    sweepTail = trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal').then(() => {
-      if (sweepStopped || link.isDown()) return;
-      const stagedAfter = stagedOutboxCount(journal);
-      if (stagedAfter === 0) {
-        sweepDelayMs = OUTBOX_SWEEP_MS;
-        return;
-      }
-      armSweepTimer(stagedAfter === stagedBefore ? OUTBOX_IDLE_MS : OUTBOX_SWEEP_MS);
-    }, (error: unknown) => {
-      if (sweepStopped) return;
-      const delay = rateLimitResetDelayMs(error) ?? sweepDelayMs;
-      sweepDelayMs = Math.min(sweepDelayMs * 2, RECOVERY_RETRY_MAX_MS);
-      armSweepTimer(delay);
-    }).finally(() => {
-      sweepInFlight = false;
-      if (!sweepQueued) return;
-      sweepQueued = false;
-      return runOutboxSweep();
-    });
-    return sweepTail;
-  };
-  outboxSweep.schedule = (delayMs = 0) => {
-    sweepDelayMs = OUTBOX_SWEEP_MS;
-    if (delayMs > 0) {
-      armSweepTimer(delayMs);
-      return;
-    }
-    void runOutboxSweep();
-  };
-  outboxSweep.stop = () => {
-    sweepStopped = true;
-    if (sweepTimer) clearTimeout(sweepTimer);
-    sweepTimer = undefined;
-  };
+  if (deps.automations) deps.automations.draftOutbox = outbox;
 
   const recovery = createRecovery({
     journal: {
       reapOrphans: () => {
         if (!journal) return Promise.resolve();
-        return trackConsumer(journal.reapOrphans(journalRecoverOpts(journal)), 'journal');
+        return trackConsumer(outbox.reapOrphans(), 'journal');
       },
       redeliver: () => {
         if (!journal) return Promise.resolve();
-        return trackConsumer(journal.redeliver(journalRecoverOpts(journal)), 'journal');
+        return trackConsumer(outbox.redeliver(), 'journal');
       },
     },
     backfill: {
@@ -889,8 +752,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       hostSuspended: outage?.hostSuspended === true,
       ...(outage?.suspendStartedAt !== undefined ? { suspendStartedAt: outage.suspendStartedAt } : {}),
     });
-    sweepDelayMs = OUTBOX_SWEEP_MS;
-    await runOutboxSweep();
+    await outbox.sweep();
   };
 
   const started = startFeishuLink({
@@ -918,10 +780,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   if (deps.automations) {
     const automations = deps.automations;
     if (controls.profileConfig.automations.enabled) {
-      automationsCtl.boardAuth = new BoardActionAuth({
-        secret: appSecret,
-        ...(deps.now ? { now: deps.now } : {}),
-      });
+      automationsCtl.boardAuth = new BoardActionAuth(actionTokens);
       automationsCtl.board = createAutomationBoard({
         store: deps.automations,
         channel,
@@ -938,17 +797,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       botOpenId: () => channel.botIdentity?.openId ?? '',
       isLinkDown: () => closing || started.isDown(),
       ...(deps.now ? { now: deps.now } : {}),
-      ...(journal ? {
-        deliver: (entry) => resendJournalReply({
-          channel,
-          journal,
-          entry,
-          botAppId: cfg.accounts.app.id,
-          now: deps.now,
-          onNotInChat: removeFromChat,
-        }),
-      } : {}),
-      onUndelivered: () => outboxSweep.schedule(),
+      outbox,
       onNotInChat: removeFromChat,
     };
     automationsCtl.scheduler = createAutomationScheduler({
@@ -986,7 +835,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
         });
         return Promise.resolve();
       },
-      onExpireDrafts: () => expireDueDraftCards({ store: automations, channel }),
+      onExpireDrafts: () => expireDraftConfirmations({ store: automations, channel }),
       wakeDir: deps.appPaths?.automationsWakeDir
         ?? join(dirname(deps.automations.getFilePath()), 'automations-wake'),
       statusPush: {
@@ -1009,7 +858,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       void trackConsumer((async () => {
         await automationsScheduler?.onLinkRecovered();
         if (deps.automations && autoAuth) {
-          await flushPendingDraftCards({
+          await flushDraftConfirmations({
             channel,
             automations: deps.automations,
             botAppId: controls.profileConfig.accounts.app.id,
@@ -1054,51 +903,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     cardAction: async (evt) => {
       if (closing) return;
       return withTrace({ chatId: evt.chatId, msgId: evt.messageId }, async () => {
-        return handleCardAction({
-          channel,
-          evt,
-          sessions,
-          resumeCandidates,
-          sessionCatalog,
-          workspaces,
-          ledger,
-          activeRuns,
-          agent,
-          processPool: pool,
-          runExecutor: executor,
-          controls,
-          pending,
-          chatModeCache,
-          callbackAuth,
-          callbackPolicyFingerprintForScope: (scope) => activePolicyFingerprints.get(scope),
-          journal,
-          noticeAuth,
-          autoAuth,
-          boardAuth: automationsCtl.boardAuth,
-          automations: deps.automations,
-          automationsScheduler: automationsCtl.scheduler,
-          ...(deps.now ? { now: deps.now } : {}),
-          onAutomationConfirmed,
-          continuations,
-          onNoticeAction: async ({ action, entry, operatorId, scope, threadId, mode, messageId }) => {
-            if (action !== 'notice.continue') return;
-            pending.push(scope, {
-              messageId: messageId || entry.messageIds.at(-1) || `notice-continue-${entry.turnId}`,
-              chatId: entry.chatId,
-              chatType: mode === 'p2p' ? 'p2p' : 'group',
-              threadId,
-              senderId: operatorId,
-              senderName: '',
-              content: entry.resumeHandle ? '继续' : (entry.userInput ?? '继续'),
-              rawContentType: 'text',
-              resources: journalResourcesToMessage(entry.resources),
-              mentions: [],
-              mentionAll: false,
-              mentionedBot: true,
-              createTime: Date.now(),
-            });
-          },
-        });
+        return handleCardAction({ ...userActionRuntime, evt });
       }).catch((err) => log.fail('cardAction', err));
     },
     comment: async (evt) => {
@@ -1254,7 +1059,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       await automationsScheduler?.idle();
       await awaitDeferredBoard(automationsCtl.board);
       await recovery.stop();
-      outboxSweep.stop();
+      outbox.stop();
       resumeCandidates.clear();
       // Commands can themselves call disconnect, so track run consumers only,
       // never the enclosing message/card command handler (which would self-wait).
@@ -1363,29 +1168,10 @@ async function sendForwardFetchFailedHint(
 }
 
 interface IntakeDeps {
-  channel: LarkChannel;
-  agent: AgentAdapter;
-  sessions: SessionStore;
-  resumeCandidates: ResumeCandidates;
-  sessionCatalog?: SessionCatalog;
-  workspaces: WorkspaceStore;
-  ledger?: BackfillLedger;
-  intakeSource?: IntakeSource;
-  activeRuns: ActiveRuns;
-  pending: PendingQueue;
+  actions: UserActionRuntime;
   msg: NormalizedMessage;
-  controls: Controls;
-  chatModeCache: ChatModeCache;
+  intakeSource?: IntakeSource;
   logThreadModeOverride: LogThreadModeOverride;
-  executor: RunExecutor;
-  pool: ProcessPool;
-  automations?: AutomationsStore;
-  autoAuth?: AutoActionAuth;
-  automationsScheduler?: AutomationScheduler;
-  journal?: TurnJournal;
-  now?: () => number;
-  isLinkDown?: () => boolean;
-  onAutomationConfirmed?: (item: AutomationItem) => void | Promise<void>;
 }
 
 type LogThreadModeOverride = (input: {
@@ -1395,7 +1181,8 @@ type LogThreadModeOverride = (input: {
 }) => void;
 
 async function intakeMessage(deps: IntakeDeps): Promise<void> {
-  const { ledger, msg } = deps;
+  const { msg } = deps;
+  const { ledger } = deps.actions;
   const source = deps.intakeSource ?? 'ws';
   const scopeHint = msg.threadId ? `${msg.chatId}:${msg.threadId}` : msg.chatId;
   if (ledger && !ledger.claim(msg.messageId)) {
@@ -1415,30 +1202,10 @@ async function intakeMessage(deps: IntakeDeps): Promise<void> {
 }
 
 async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
-  const {
-    channel,
-    agent,
-    sessions,
-    sessionCatalog,
-    resumeCandidates,
-    workspaces,
-    ledger,
-    activeRuns,
-    pending,
-    msg,
-    controls,
-    chatModeCache,
-    logThreadModeOverride,
-    executor,
-    pool,
-    automations,
-    autoAuth,
-    automationsScheduler,
-    journal,
-    now,
-    isLinkDown,
-    onAutomationConfirmed,
-  } = deps;
+  const { msg, logThreadModeOverride } = deps;
+  const { channel, workspaces, ledger, controls, journal } = deps.actions;
+  const pending = deps.actions.pending!;
+  const chatModeCache = deps.actions.chatModeCache!;
   const preview = msg.content.length > 80 ? `${msg.content.slice(0, 80)}…` : msg.content;
   // Resolve scope (and underlying chat mode) once at intake — every
   // downstream consumer keys off these.
@@ -1529,35 +1296,10 @@ async function intakeAcceptedOrGated(deps: IntakeDeps): Promise<void> {
   }
 
   const handled = await tryHandleCommand({
-    channel,
-    msg: emsg,
-    scope,
-    chatMode,
-    sessions,
-    resumeCandidates,
-    workspaces,
-    ledger,
-    agent,
-    activeRuns,
-    sessionCatalog,
+    ...deps.actions, msg: emsg, scope, chatMode, origin: 'slash',
     sessionCatalogIdentity: await commandSessionCatalogIdentity({
-      msg: emsg,
-      scope,
-      mode: chatMode,
-      workspaces,
-      controls,
-      access: accessDecision,
+      msg: emsg, scope, mode: chatMode, workspaces, controls, access: accessDecision,
     }),
-    runExecutor: executor,
-    processPool: pool,
-    pending,
-    controls,
-    automations,
-    autoAuth,
-    automationsScheduler,
-    ...(now ? { now } : {}),
-    ...(isLinkDown ? { isLinkDown } : {}),
-    onAutomationConfirmed,
   });
   if (handled) {
     if (commandClearsPending(emsg.content)) {
@@ -1672,6 +1414,7 @@ function markClosingArrival(
 }
 
 interface RunBatchDeps {
+  outbox: Outbox;
   pluginCatalog: PluginCatalog;
   channel: LarkChannel;
   executor: RunExecutor;
@@ -1705,6 +1448,7 @@ interface RunBatchDeps {
 
 async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const {
+    outbox,
     channel,
     executor,
     sessions,
@@ -1944,1472 +1688,74 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     });
   }
 
-  const flow = await startRunFlow({
-    toolContext,
-    scopeId: scope,
-    scope: scopeContext,
-    prompt,
-    attachments: attachments.map(toPolicyAttachment),
-    access: accessDecision,
-    capability,
-    profileConfig: controls.profileConfig,
-    sessions,
-    sessionCatalog,
-    workspaces,
-    executor,
-    now: Date.now(),
-    stopGraceMs: getAgentStopGraceMs(controls.cfg),
-    ...(taken.kind === 'continue'
-      ? taken.resumeHandle
-        ? {
-          forceResumeHandle: taken.resumeHandle,
-          ...(taken.policyFingerprint
-            ? { forceResumeFingerprint: taken.policyFingerprint }
-            : {}),
-        }
-        : { forceResumeHandle: null }
-      : {}),
-    observability: {
-      profile: controls.profile,
-      agent: capability.agentId,
-      source: 'im',
-      stage: 'submit',
-    },
-  });
-  if (!flow.ok) {
-    log.info('run-flow', 'rejected', { scope, code: flow.rejectReason.code });
-    log.warn('policy', 'denied', {
-      scope,
-      source: 'im',
-      code: flow.rejectReason.code,
-    });
-    if (
-      flow.rejectReason.code === 'reconnect-in-progress'
-      && ledger
-    ) {
-      unrecordAcceptedMessages(ledger, batch);
-      log.info('pending', 'handoff', {
-        count: batch.length,
-        reason: 'reconnect-in-progress',
-        incompleteFrom: ledger.getIncompleteFrom(),
-      });
-    }
-    await channel.send(chatId, { markdown: flow.rejectReason.userVisible }, sendOpts);
-    if (journal && turnId) journal.voidTurn(turnId);
-    return;
-  }
-
-  const { execution, cwdRealpath: cwd } = flow;
-  activePolicyFingerprints.set(scope, flow.policy.policyFingerprint);
-  if (journal && turnId) {
-    journal.noteTurnMeta(turnId, {
-      ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}),
-      policyFingerprint: flow.policy.policyFingerprint,
-    });
-  }
-  const handle = execution.handle;
-  const eventStream = execution.subscribe();
-  const noticeCtx = journal && !isAutomationRunScope(scope)
-    ? {
-        enabled: true as const,
-        auth: noticeAuth,
-        continuations,
-        ownerId: controls.botOwnerId,
-        requireBotMention: lastMsg.chatType !== 'p2p'
-          && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
-      }
-    : undefined;
-  if (flow.resumeFrom) {
-    log.info('session', 'resume', { resumeHandle: flow.resumeFrom, cwd });
-  } else {
-    log.info('session', 'fresh', { cwd });
-  }
-  const recordSession = (evt: AgentEvent): void => {
-    if (!deps.canRecordSession()) return;
-    recordRunSessionEvent({
-      scopeId: scope,
-      sessions,
-      sessionCatalog,
-      capability,
-      policy: flow.policy,
-      event: evt,
-    });
-    if (evt.type === 'system' && evt.resumeHandle) {
-      log.info('session', 'set', { resumeHandle: evt.resumeHandle });
-      if (journal && turnId) journal.noteTurnMeta(turnId, { resumeHandle: evt.resumeHandle });
-    }
-    // Ground truth for "which model is actually running": claude reports the
-    // model it loaded in its init event. Logging requested-vs-actual reveals
-    // whether the --model pin took effect or claude silently fell back (e.g.
-    // an id this claude build/account doesn't recognize).
-    if (evt.type === 'system' && evt.model) {
-      log.info('session', 'model', {
-        requested: requestedModel ?? 'default',
-        actual: evt.model,
-      });
-    }
-  };
-
-  // Resolve idle-timeout for this run: scope override (on SessionEntry) wins
-  // over global default (preferences, unset = 15 min). 0 = no watchdog.
   const scopeOverride = sessions.getIdleTimeoutMinutes(scope);
-  const idleTimeoutMs =
-    scopeOverride !== undefined
-      ? scopeOverride > 0
-        ? scopeOverride * 60_000
-        : undefined
-      : getRunIdleTimeoutMs(controls.cfg);
-  if (idleTimeoutMs) {
-    log.info('flush', 'idle-watchdog', { idleTimeoutMs });
-  }
-
-  const replyMode = getMessageReplyMode(controls.cfg);
-  const finalAnswerOnly =
-    descriptorFor(controls.profileConfig.agentKind).replyMode === 'final-answer';
-  const runContext = {
-    currentChatId: chatId,
-    batchMessageIds: batch.map((msg) => msg.messageId),
-  };
-  log.info('flush', 'reply-mode', { mode: replyMode });
+  const idleTimeoutMs = scopeOverride !== undefined
+    ? scopeOverride > 0 ? scopeOverride * 60_000 : undefined
+    : getRunIdleTimeoutMs(controls.cfg);
+  if (idleTimeoutMs) log.info('flush', 'idle-watchdog', { idleTimeoutMs });
   const cotMessages = getCotMessages(controls.cfg);
-  const cotEnabled = cotMessages !== 'off';
-  // Re-read prefs on every flush so toggling /config mid-stream takes
-  // effect immediately. Cheap object lookups, no allocation when on.
-  const filterForPrefs = (state: RunState): RunState => {
-    const withoutTools = getShowToolCalls(controls.cfg)
-      ? state
-      : { ...state, blocks: state.blocks.filter((b) => b.kind !== 'tool') };
-    return stripLegacyAutomationTagsFromState(withoutTools);
-  };
-  const cardRenderOptions = callbackAuth
-    ? {
-        signCallback: (action: string) =>
-          callbackAuth.sign({
-            runId: execution.runId,
-            scope,
-            chatId,
-            operatorOpenId: firstMsg.senderId,
-            action,
-            policyFingerprint: flow.policy.policyFingerprint,
-            ttlMs: 24 * 60 * 60 * 1000,
-          }),
-      }
-    : {};
-
-  // For non-card modes Claude's output doesn't surface visually until either
-  // a first streamed token (markdown mode) or the whole run ends (text mode).
-  // Add a "Typing" reaction to the triggering message as an instant ack, but
-  // never let that outbound API call block agent event draining.
-  const reactionPromise =
-    cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
-
-  const onNotInChat = (chatId: string): Promise<unknown> => (
-    automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve()
-  );
-  cliSelfSent?.begin(scope, turnId);
   try {
-    if (cotEnabled) {
-      const cotPublisher = new CotPublisher({
-        client: cotClient,
-        chatId,
-        // The CoT bubble follows this origin message's thread. In a topic the
-        // triggering message is itself in-topic, so the bubble lands in the
-        // topic; message_cot has no thread_id receive type, so origin is the
-        // only lever we have (see CotClient.create).
-        originMessageId: lastMsg.messageId,
-        runId: execution.runId,
-        scope,
-        inputPreview: lastMsg.content,
-      });
-      await cotPublisher.start();
-      if (!cotPublisher.disabled) {
-        const cotDone = consumeCotEvents(execution.subscribe(), cotPublisher, {
-          detail: cotMessages,
-        });
-        const finalState = await processAgentStream(
-          handle,
-          eventStream,
-          scope,
-          idleTimeoutMs,
-          recordSession,
-          async () => {},
-          runContext,
-          streamReliability(controls.profileConfig, () => link),
-        );
-        await cotDone;
-        if (cotPublisher.degradedReason) {
-          await sendCotDegradedNotice({
-            channel,
-            chatId,
-            scope,
-            sendOpts,
-            reason: cotPublisher.degradedReason,
-            journal,
-            turnId,
-          });
-        }
-        await deliverFinalReply({
-          channel,
-          chatId,
-          scope,
-          state: finalAnswerOnlyState(finalState),
-          skipFrom: finalState,
-          replyMode,
-          sendOpts,
-          cardRenderOptions,
-          journal,
-          turnId,
-          handle,
-          notice: noticeCtx,
-          cliSelfSent,
-          link,
-          onWait: onDeliveryWait,
-          onNotInChat,
-
-        });
-        return;
-      }
-      log.warn('cot', 'fallback-existing-reply', { reason: 'create-disabled' });
-    }
-
-    if (replyMode === 'card') {
-      let latestState: RunState = seedRunState(runContext);
-      let producerStarted = false;
-      let producerRendered = false;
-      let cardCtrl:
-        | { messageId?: string; update(next: object | ((current: object) => object)): Promise<void> }
-        | undefined;
-      const progress = createLazyProgressStream(scope, replyMode, () =>
-        channel.stream(
-          chatId,
-          {
-            card: {
-              initial: renderCard(initialState, cardRenderOptions),
-              producer: async (ctrl) => {
-                producerStarted = true;
-                progress.noteMessageId(ctrl.messageId);
-                if (progress.abandoned()) return;
-                cardCtrl = ctrl;
-                const visible = filterForPrefs(latestState);
-                await ctrl.update(renderCard(visible, cardRenderOptions));
-                producerRendered = true;
-                await renderDone;
-              },
-            },
-          },
-          withDeliveryUuid(sendOpts, turnId ? streamDeliveryKey(turnId) : undefined),
-        ),
-      );
-      const renderDone = processAgentStream(
-        handle,
-        eventStream,
-        scope,
-        idleTimeoutMs,
-        recordSession,
-        async (state) => {
-          latestState = state;
-          if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
-          if (cardCtrl) {
-            try {
-              const visible = filterForPrefs(state);
-              await cardCtrl.update(renderCard(visible, cardRenderOptions));
-            } catch (err) {
-              log.fail('stream', err, { mode: replyMode, step: 'render' });
+    await executeTurn({
+      run: {
+        toolContext,
+        scopeId: scope,
+        scope: scopeContext,
+        prompt,
+        attachments: attachments.map(toPolicyAttachment),
+        access: accessDecision,
+        capability,
+        profileConfig: controls.profileConfig,
+        sessions,
+        sessionCatalog,
+        workspaces,
+        executor,
+        now: Date.now(),
+        stopGraceMs: getAgentStopGraceMs(controls.cfg),
+        ...(taken.kind === 'continue'
+          ? taken.resumeHandle
+            ? {
+              forceResumeHandle: taken.resumeHandle,
+              ...(taken.policyFingerprint
+                ? { forceResumeFingerprint: taken.policyFingerprint }
+                : {}),
             }
-          }
+            : { forceResumeHandle: null }
+          : {}),
+        observability: {
+          profile: controls.profile,
+          agent: capability.agentId,
+          source: 'im',
+          stage: 'submit',
         },
-        runContext,
-        streamReliability(controls.profileConfig, () => link),
-      );
-      const stream = await awaitRenderAwareStream({
-        mode: replyMode,
-        progress,
-        renderDone,
-        producerStarted: () => producerStarted,
-        producerRendered: () => producerRendered,
-        timeoutMs: outboundTimeoutMs,
-      });
-      await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
-      const visible = filterForPrefs(latestState);
-      const terminalState = finalAnswerOnly
-        ? finalReplyState(stream, visible)
-        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
-      await deliverFinalReply({
-        channel,
-        chatId,
-        scope,
-        state: terminalState,
-        skipFrom: latestState,
-        stream,
-        dedicatedFinal: finalAnswerOnly,
-        replyMode,
-        sendOpts,
-        cardRenderOptions,
-        journal,
-        turnId,
-        handle,
-        notice: noticeCtx,
-        cliSelfSent,
-        link,
-        onWait: onDeliveryWait,
-        onNotInChat,
-
-      });
-    } else if (replyMode === 'markdown') {
-      let latestState: RunState = seedRunState(runContext);
-      let producerStarted = false;
-      let producerRendered = false;
-      let markdownCtrl: { messageId?: string; setContent(markdown: string): Promise<void> } | undefined;
-      const progress = createLazyProgressStream(scope, replyMode, () =>
-        channel.stream(
-          chatId,
-          {
-            markdown: async (ctrl) => {
-              producerStarted = true;
-              progress.noteMessageId(ctrl.messageId);
-              if (progress.abandoned()) return;
-              markdownCtrl = ctrl;
-              const visible = filterForPrefs(latestState);
-              await ctrl.setContent(renderText(visible));
-              producerRendered = true;
-              await renderDone;
-            },
-          },
-          withDeliveryUuid(sendOpts, turnId ? streamDeliveryKey(turnId) : undefined),
-        ),
-      );
-      const renderDone = processAgentStream(
-        handle,
-        eventStream,
-        scope,
-        idleTimeoutMs,
-        recordSession,
-        async (state) => {
-          latestState = state;
-          if (shouldOpenProgressStream(filterForPrefs(state))) progress.ensureOpen();
-          if (markdownCtrl) {
-            try {
-              const visible = filterForPrefs(state);
-              await markdownCtrl.setContent(renderText(visible));
-            } catch (err) {
-              log.fail('stream', err, { mode: replyMode, step: 'render' });
-            }
-          }
+      },
+      idleTimeoutMs,
+      delivery: {
+        kind: 'chat', outbox, channel, journal, turnId, chatId, sendOpts,
+        batchMessageIds: batch.map(msg => msg.messageId),
+        replyMode: getMessageReplyMode(controls.cfg), callbackAuth, activePolicyFingerprints,
+        canRecordSession: deps.canRecordSession, requestedModel, cliSelfSent,
+        outboundTimeoutMs, onWait: onDeliveryWait,
+        onRejected: reason => {
+          if (reason.code !== 'reconnect-in-progress' || !ledger) return;
+          unrecordAcceptedMessages(ledger, batch);
+          log.info('pending', 'handoff', { count: batch.length, reason: reason.code, incompleteFrom: ledger.getIncompleteFrom() });
         },
-        runContext,
-        streamReliability(controls.profileConfig, () => link),
-      );
-      const stream = await awaitRenderAwareStream({
-        mode: replyMode,
-        progress,
-        renderDone,
-        producerStarted: () => producerStarted,
-        producerRendered: () => producerRendered,
-        timeoutMs: outboundTimeoutMs,
-      });
-      await recallIfEmptyStreamedReply(channel, progress, filterForPrefs(latestState), scope);
-      const visible = filterForPrefs(latestState);
-      const terminalState = finalAnswerOnly
-        ? finalReplyState(stream, visible)
-        : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
-      await deliverFinalReply({
-        channel,
-        chatId,
-        scope,
-        state: terminalState,
-        skipFrom: latestState,
-        stream,
-        dedicatedFinal: finalAnswerOnly,
-        replyMode,
-        sendOpts,
-        cardRenderOptions,
-        journal,
-        turnId,
-        handle,
-        notice: noticeCtx,
-        cliSelfSent,
-        link,
-        onWait: onDeliveryWait,
-        onNotInChat,
-
-      });
-    } else {
-      // text mode: drain the agent stream without sending anything during
-      // the run, then post the final rendered text once as a plain markdown
-      // (msg_type=post) message — no card, no streaming, no typewriter.
-      const finalState = await processAgentStream(
-        handle,
-        eventStream,
-        scope,
-        idleTimeoutMs,
-        recordSession,
-        async () => {},
-        runContext,
-        streamReliability(controls.profileConfig, () => link),
-      );
-      await deliverFinalReply({
-        channel,
-        chatId,
-        scope,
-        state: finalReplyFor(filterForPrefs(finalState), {
-          replyMode: finalAnswerOnly ? 'final-answer' : 'stream-deltas',
-          streamed: false,
-        }),
-        skipFrom: finalState,
-        replyMode,
-        sendOpts,
-        cardRenderOptions,
-        journal,
-        turnId,
-        handle,
-        notice: noticeCtx,
-        cliSelfSent,
-        link,
-        onWait: onDeliveryWait,
-        onNotInChat,
-
-      });
-    }
-  } catch (err) {
-    log.fail('stream', err);
-  } finally {
-    cliSelfSent?.consume(scope);
-    activePolicyFingerprints.delete(scope);
-    scheduleWorkingReactionCleanup(channel, lastMsg.messageId, reactionPromise);
-  }
-}
-
-type StreamDelivery =
-  | { kind: 'confirmed'; messageId: string }
-  | { kind: 'failed'; err: unknown; messageId?: string }
-  | { kind: 'none' };
-
-interface LazyProgressStream {
-  /**
-   * Mirrors the underlying `channel.stream(...)` promise, and stays pending
-   * forever while no stream has been opened — so callers can race it against
-   * the render loop exactly as if the stream had been created up front.
-   */
-  readonly settled: Promise<unknown>;
-  opened(): boolean;
-  ensureOpen(): void;
-  /**
-   * True once the reply went out without this stream. A producer that starts
-   * after that must render nothing, or the user gets the same answer twice.
-   */
-  abandoned(): boolean;
-  abandon(): void;
-  messageId(): string | undefined;
-  noteMessageId(id: string | undefined): void;
-}
-
-/**
- * Wrap a progress stream so the user-visible message is only created once the
- * run has something worth showing (see `shouldOpenProgressStream`).
- *
- * The SDK starts a stream eagerly: `channel.stream(...)` sends a card before
- * the producer runs, and finishes it with a "(no content)" placeholder when the
- * producer never supplied any text. A Codex round that only produces a final
- * answer (delivered separately by `sendFinalReply`) used to hit exactly that:
- * an empty card sat in the chat for seconds until `recall-empty` cleaned it up.
- */
-function createLazyProgressStream(
-  scope: string,
-  mode: 'card' | 'markdown',
-  open: () => Promise<unknown>,
-): LazyProgressStream {
-  let stream: Promise<unknown> | undefined;
-  let givenUp = false;
-  let createdId: string | undefined;
-  let settle!: (result: Promise<unknown>) => void;
-  const settled = new Promise<unknown>((resolve, reject) => {
-    settle = (result) => {
-      result.then(resolve, reject);
-    };
-  });
-  return {
-    settled,
-    opened: () => stream !== undefined,
-    ensureOpen: () => {
-      if (stream) return;
-      log.info('outbound', 'progress-stream-open', { scope, mode });
-      stream = open();
-      settle(stream);
-    },
-    abandoned: () => givenUp,
-    abandon: () => {
-      givenUp = true;
-    },
-    messageId: () => createdId,
-    noteMessageId: (id) => {
-      if (id) createdId = id;
-    },
-  };
-}
-
-/**
- * Is there anything in this state that will still be on screen when the run
- * ends? Footer status lines ("正在思考…") don't count: the terminal event drops
- * them, so a stream opened for a footer alone can still finish empty — which is
- * the placeholder-then-recall churn we're avoiding.
- *
- * Terminal states don't count either. By then the stream has nothing left to
- * stream, and whatever the run produced goes out as a normal reply
- * (`sendFinalReply`) instead of a card that would be created only to be
- * finished a moment later.
- *
- * `state` must already be `filterForPrefs`-projected, and emptiness is measured
- * with `renderText` in both reply modes so it matches the rule
- * `recallIfEmptyStreamedReply` applies: a stream we open is one that survives.
- */
-function shouldOpenProgressStream(state: RunState): boolean {
-  if (state.terminal !== 'running') return false;
-  return renderText({ ...state, footer: null }).trim() !== '';
-}
-
-/**
- * What Codex's dedicated final reply may carry, given what the progress stream
- * already put on screen.
- *
- * `finalAnswerOnlyState` falls back to the run's text blocks when Codex held
- * nothing back for the end — correct where nothing was streamed (CoT, text
- * mode, a stream we gave up on), but those blocks are already visible once a
- * stream rendered them, and repeating them posts the same words a second time.
- * Codex leaves the answer in `blocks` more often than it looks: any abnormal
- * turn end (`turn.failed`, or the process exiting before `turn.completed`)
- * flushes the pending message as text instead of `final_text`.
- *
- * Terminal notices are dropped for the same reason — the stream rendered them.
- */
-function finalReplyState(stream: StreamDelivery, state: RunState): RunState {
-  return finalReplyFor(state, {
-    replyMode: 'final-answer',
-    streamed: stream.kind === 'confirmed',
-  });
-}
-
-/**
- * Backstop for a progress stream that was opened on real content and still
- * ended up empty — e.g. `/config` hiding tool calls mid-run, which retroactively
- * empties a tool-only render. The SDK fills such a card with its "(no content)"
- * placeholder, so recall it instead of leaving noise in the chat.
- *
- * `finalState` must already be `filterForPrefs`-projected (what the user sees).
- */
-async function recallIfEmptyStreamedReply(
-  channel: LarkChannel,
-  progress: LazyProgressStream,
-  finalState: RunState,
-  scope: string,
-): Promise<void> {
-  if (!progress.opened()) return;
-  // An abandoned stream renders nothing, so whatever message it eventually
-  // posts is empty by construction. It is still in flight (that is why we gave
-  // up on it), so clean up in the background instead of blocking the run on it.
-  if (progress.abandoned()) {
-    void progress.settled.then(
-      (result) => recallStreamedMessage(channel, result, scope),
-      () => {},
-    );
-    return;
-  }
-  if (renderText(finalState).trim() !== '') return;
-  const result = await progress.settled.catch(() => undefined);
-  await recallStreamedMessage(channel, result, scope);
-}
-
-async function recallStreamedMessage(
-  channel: LarkChannel,
-  streamResult: unknown,
-  scope: string,
-): Promise<void> {
-  const messageId = (streamResult as { messageId?: string } | undefined)?.messageId;
-  if (!messageId) return;
-  try {
-    await channel.recallMessage(messageId);
-    log.info('outbound', 'recall-empty', { scope, messageId });
-  } catch (err) {
-    log.warn('outbound', 'recall-empty-failed', {
-      scope,
-      messageId,
-      err: err instanceof Error ? err.message : String(err),
+        onNotInChat: chatId => automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+        filterState: state => stripLegacyAutomationTagsFromState(getShowToolCalls(controls.cfg)
+          ? state : { ...state, blocks: state.blocks.filter(block => block.kind !== 'tool') }),
+        notice: journal && !isAutomationRunScope(scope) ? {
+          enabled: true, auth: noticeAuth, continuations, ownerId: controls.botOwnerId,
+          requireBotMention: lastMsg.chatType !== 'p2p'
+            && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
+        } : undefined,
+        ...(cotMessages !== 'off' ? { cot: { client: cotClient, detail: cotMessages, inputPreview: lastMsg.content } } : {}),
+      },
     });
-  }
-}
 
-function threadIdForReply(
-  journal: TurnJournal,
-  turnId: string,
-): { threadId: string } | Record<string, never> {
-  const threadId = journal.get(turnId)?.threadId?.trim();
-  return threadId ? { threadId } : {};
-}
-
-async function deliverFinalReply(input: {
-  channel: LarkChannel;
-  chatId: string;
-  scope: string;
-  state: RunState;
-  skipFrom?: RunState;
-  stream?: StreamDelivery;
-  dedicatedFinal?: boolean;
-  replyMode: ReturnType<typeof getMessageReplyMode>;
-  sendOpts: { replyTo: string; replyInThread?: boolean };
-  cardRenderOptions: { signCallback?: (action: string) => string };
-  journal?: TurnJournal;
-  turnId?: string;
-  handle: RunHandle;
-  notice?: {
-    enabled: true;
-    auth?: NoticeActionAuth;
-    continuations: Continuations;
-    ownerId?: string;
-    requireBotMention: boolean;
-  };
-  cliSelfSent?: CliSelfSendTracker;
-  link?: { isDown(): boolean };
-  onWait?: (delayMs?: number) => void;
-  onNotInChat?: (chatId: string) => void | Promise<unknown>;
-}): Promise<void> {
-  if (input.journal && input.turnId && input.handle.outcome) {
-    input.journal.markSettled(input.turnId, input.handle.outcome);
-  }
-  const state = stripLegacyAutomationTagsFromState(input.state);
-  const skipFrom = input.skipFrom ? stripLegacyAutomationTagsFromState(input.skipFrom) : undefined;
-  const stateText = renderText(state);
-  const replyState = stateText.trim() ? state : (skipFrom ?? state);
-  const visibleBody = renderText(replyState);
-  const cliSent = input.cliSelfSent?.has(input.scope) === true
-    && (input.skipFrom ?? input.state).terminal === 'done';
-  const skipCli = shouldSkipFinalReply(input.skipFrom ?? input.state, input.chatId) || cliSent;
-  const skip = skipCli || !visibleBody.trim();
-  if (input.journal && input.turnId && skipCli) {
-    input.journal.noteCliAlreadySent(input.turnId);
-  }
-  const outcome = input.handle.outcome;
-  const willNotice = Boolean(
-    input.notice && input.journal && input.turnId && outcome && planInterruptionNotice(outcome).kind !== 'none',
-  );
-  const deliveryId = input.turnId
-    ? input.journal?.get(input.turnId)?.reply?.deliveryId ?? replyDeliveryKey(input.turnId)
-    : undefined;
-  const stream = input.stream ?? { kind: 'none' as const };
-  const dedicatedFinal = input.dedicatedFinal === true && Boolean(stateText.trim());
-  const streamMessageId = stream.kind === 'none' ? undefined : stream.messageId;
-  if (dedicatedFinal && streamMessageId && input.journal && input.turnId) {
-    input.journal.noteNonAnswerId(input.turnId, streamMessageId);
-  }
-  const reply = {
-    markdown: visibleBody,
-    replyTo: input.sendOpts.replyTo,
-    replyMode: input.replyMode,
-    ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
-    ...(input.journal && input.turnId ? threadIdForReply(input.journal, input.turnId) : {}),
-    ...(deliveryId ? { deliveryId } : {}),
-    ...(!dedicatedFinal && streamMessageId ? { messageId: streamMessageId, interactive: true as const } : {}),
-  };
-  if (input.journal && input.turnId && !skip) {
-    input.journal.stageReply(input.turnId, reply);
-  }
-  if (willNotice && input.notice && input.journal && input.turnId && outcome) {
-    stageTurnNotice({
-      journal: input.journal,
-      turnId: input.turnId,
-      scope: input.scope,
-      outcome,
-      notice: input.notice,
-    });
-  }
-  // The stream card is already on screen. Persist the journal after the
-  // in-memory delivery mark so a slow fsync cannot leave readers on
-  // `completed-undelivered` for the whole write.
-  const deferJournalFlush = stream.kind === 'confirmed' && !dedicatedFinal;
-  if (input.journal && !deferJournalFlush) await input.journal.flush();
-  if (skipCli) {
-    log.info('outbound', 'skip-cli-already-sent', {
-      scope: input.scope,
-      chatId: input.chatId,
-      mode: input.replyMode,
-    });
-    reportMetric(OUTBOUND_SKIP_CLI_SENT_METRIC, 1);
-  } else if (skip && stream.kind === 'none') {
-    log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
-  } else if (input.link?.isDown()) {
-    if (deferJournalFlush && input.journal) await input.journal.flush();
-    return;
-  } else {
-    try {
-      const settled = await settleStreamDelivery({
-        stream,
-        channel: input.channel,
-        body: visibleBody,
-        send: () => sendFinalReply({
-          ...input,
-          deliveryId,
-          state: replyState,
-        }),
-        fallback: () => sendPlainTextReply({
-          channel: input.channel,
-          chatId: input.chatId,
-          body: visibleBody,
-          sendOpts: input.sendOpts,
-          deliveryId,
-        }),
-        journal: input.journal,
-        turnId: input.turnId,
-        replyMode: input.replyMode,
-        dedicatedFinal,
-      });
-      if (settled.kind === 'wait') {
-        if (deferJournalFlush && input.journal) await input.journal.flush();
-        input.onWait?.(rateLimitResetDelayMs(settled.error));
-        return;
-      }
-    } catch (error) {
-      if (deferJournalFlush && input.journal) await input.journal.flush();
-      if (!isNotInChat(error)) throw error;
-      return;
-    }
-  }
-  if (input.journal && input.turnId) input.journal.replyDelivered(input.turnId);
-  if (deferJournalFlush && input.journal) await input.journal.flush();
-  if (willNotice && input.notice && input.journal && input.turnId && outcome) {
-    await sendTurnNotice({
-      channel: input.channel,
-      journal: input.journal,
-      turnId: input.turnId,
-      scope: input.scope,
-      outcome,
-      notice: input.notice,
-      link: input.link,
-      onWait: input.onWait,
-    });
-  }
-}
-
-type OutboundSettle = { kind: 'done' } | { kind: 'wait'; error?: unknown };
-
-type SupersedeRecall = 'done' | 'retry';
-
-/**
- * Recall a promise the correction replaced.
- * Success, or an already recalled / deleted / not-found message, is done.
- * A link or local failure stays retryable and does not fail the turn or recovery:
- * the staged correction already holds the new receipt, so a later pass recalls
- * this id and does not send the correction again.
- * A permanent rejection settles that correction after one log.
- * Not-in-chat is rethrown so the caller can run the existing chat cleanup.
- */
-async function recallReplacedMessage(channel: LarkChannel, messageId: string): Promise<SupersedeRecall> {
-  try {
-    await channel.recallMessage(messageId);
-    return 'done';
   } catch (error) {
-    if (isSupersededMessageGone(error)) return 'done';
-    log.warn('auto', 'promise-recall-failed', {
-      err: error instanceof Error ? error.message : String(error),
-    });
-    if (isNotInChat(error)) throw error;
-    const kind = classify(error);
-    switch (kind) {
-      case 'link':
-      case 'local':
-        return 'retry';
-      case 'rejected':
-        return 'done';
-      default: {
-        const _exhaustive: never = kind;
-        throw _exhaustive;
-      }
-    }
+    if (error instanceof TurnStartFailed) throw error.cause;
+    log.fail('stream', error);
   }
-}
-
-async function settleStreamDelivery(input: {
-  stream: StreamDelivery;
-  channel: LarkChannel;
-  body: string;
-  send: () => Promise<{ messageId?: string } | undefined>;
-  fallback?: () => Promise<{ messageId?: string } | undefined>;
-  journal?: TurnJournal;
-  turnId?: string;
-  replyMode: ReturnType<typeof getMessageReplyMode>;
-  dedicatedFinal: boolean;
-}): Promise<OutboundSettle> {
-  switch (input.stream.kind) {
-    case 'confirmed':
-      if (input.stream.messageId && input.journal && input.turnId) {
-        if (input.dedicatedFinal) {
-          input.journal.noteNonAnswerId(input.turnId, input.stream.messageId);
-        } else {
-          input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
-        }
-        if (input.dedicatedFinal) await input.journal.flush();
-      }
-      return input.dedicatedFinal ? sendOrWait(input) : { kind: 'done' };
-    case 'none':
-      return sendOrWait(input);
-    case 'failed':
-      log.fail('stream', input.stream.err, { mode: input.replyMode, step: 'final-patch' });
-      if (input.stream.messageId && input.journal && input.turnId) {
-        if (input.dedicatedFinal) {
-          input.journal.noteNonAnswerId(input.turnId, input.stream.messageId);
-        } else {
-          input.journal.noteReplyReceipt(input.turnId, input.stream.messageId, true);
-        }
-        await input.journal.flush();
-      }
-      if (input.dedicatedFinal) return sendOrWait(input);
-      if (input.stream.messageId) return { kind: 'wait', error: input.stream.err };
-      {
-        const kind = classify(input.stream.err);
-        switch (kind) {
-          case 'link':
-            return { kind: 'wait', error: input.stream.err };
-          case 'rejected':
-          case 'local':
-            return sendOrWait(input);
-          default: {
-            const _exhaustive: never = kind;
-            throw _exhaustive;
-          }
-        }
-      }
-    default: {
-      const _exhaustive: never = input.stream;
-      throw _exhaustive;
-    }
-  }
-}
-
-async function sendOrWait(input: {
-  send: () => Promise<{ messageId?: string } | undefined>;
-  fallback?: () => Promise<{ messageId?: string } | undefined>;
-  journal?: TurnJournal;
-  turnId?: string;
-  replyMode: ReturnType<typeof getMessageReplyMode>;
-}): Promise<OutboundSettle> {
-  try {
-    return await recordSend(input);
-  } catch (err) {
-    log.fail('outbound', err, { mode: input.replyMode, step: 'final-send' });
-    const kind = classify(err);
-    switch (kind) {
-      case 'link':
-        return { kind: 'wait', error: err };
-      case 'rejected': {
-        if (isNotInChat(err)) {
-          if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
-          throw err;
-        }
-        if (!input.fallback) {
-          if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
-          return { kind: 'done' };
-        }
-        try {
-          return await recordSend({ ...input, send: input.fallback });
-        } catch (retryErr) {
-          log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
-          if (classify(retryErr) === 'link') return { kind: 'wait', error: retryErr };
-          if (input.journal && input.turnId) input.journal.replyRejected(input.turnId);
-          if (isNotInChat(retryErr)) throw retryErr;
-          return { kind: 'done' };
-        }
-      }
-      case 'local':
-        try {
-          return await recordSend(input);
-        } catch (retryErr) {
-          log.fail('outbound', retryErr, { mode: input.replyMode, step: 'final-send' });
-          return { kind: 'wait', error: retryErr };
-        }
-      default: {
-        const _exhaustive: never = kind;
-        throw _exhaustive;
-      }
-    }
-  }
-}
-
-async function recordSend(input: {
-  send: () => Promise<{ messageId?: string } | undefined>;
-  journal?: TurnJournal;
-  turnId?: string;
-  replyMode: ReturnType<typeof getMessageReplyMode>;
-}): Promise<{ kind: 'done' }> {
-  const sent = await input.send();
-  if (input.journal && input.turnId && sent?.messageId) {
-    input.journal.noteReplyReceipt(input.turnId, sent.messageId, input.replyMode === 'card');
-  }
-  return { kind: 'done' };
-}
-
-async function resendJournalReply(input: {
-  channel: LarkChannel;
-  journal: TurnJournal;
-  entry: TurnJournalEntry;
-  botAppId: string;
-  now?: () => number;
-  onNotInChat?: (chatId: string) => void | Promise<unknown>;
-}): Promise<boolean> {
-  const { entry } = input;
-  if (entry.cliAlreadySent) {
-    log.info('outbound', 'skip-cli-already-sent', {
-      scope: entry.scope,
-      chatId: entry.chatId,
-      mode: 'journal-resend',
-    });
-    return true;
-  }
-  const reply = entry.reply;
-  if (!reply?.markdown.trim()) return false;
-  let delivered = false;
-  let messageId: string | undefined;
-  const settled = await sendOrWait({
-    send: async () => {
-      const result = await redeliverStagedReply({
-        channel: input.channel,
-        entry,
-        botAppId: input.botAppId,
-        ...(input.now ? { now: input.now } : {}),
-      });
-      delivered = result.delivered;
-      messageId = result.messageId;
-      if (!result.delivered) return undefined;
-      return result.messageId ? { messageId: result.messageId } : {};
-    },
-    fallback: async () => {
-      const sent = await sendPlainTextReply({
-        channel: input.channel,
-        chatId: entry.chatId,
-        body: reply.markdown,
-        sendOpts: {
-          replyTo: reply.replyTo,
-          ...(reply.replyInThread ? { replyInThread: true } : {}),
-        },
-        deliveryId: reply.deliveryId,
-      });
-      delivered = Boolean(sent?.messageId);
-      messageId = sent?.messageId;
-      return sent;
-    },
-    journal: input.journal,
-    turnId: entry.turnId,
-    replyMode: journalReplyMode(reply.replyMode),
-  });
-  if (settled.kind === 'wait') {
-    if (settled.error !== undefined) throw settled.error;
-    return false;
-  }
-  if (!delivered) return false;
-  const superseded = reply.supersedes?.trim();
-  if (superseded && messageId !== superseded) {
-    if (input.journal) await input.journal.flush();
-    let recall: SupersedeRecall;
-    try {
-      recall = await recallReplacedMessage(input.channel, superseded);
-    } catch (error) {
-      if (!isNotInChat(error)) throw error;
-      input.journal.replyRejected(entry.turnId);
-      await input.journal.flush();
-      await input.onNotInChat?.(entry.chatId);
-      throw error;
-    }
-    switch (recall) {
-      case 'done':
-        break;
-      case 'retry':
-        return false;
-      default: {
-        const _exhaustive: never = recall;
-        throw _exhaustive;
-      }
-    }
-  }
-  log.info('outbound', 'journal-resend', {
-    scope: entry.scope,
-    turnId: entry.turnId,
-    chatId: entry.chatId,
-    messageId,
-  });
-  return true;
-}
-
-function journalReplyMode(mode: string | undefined): ReturnType<typeof getMessageReplyMode> {
-  switch (mode) {
-    case 'card':
-    case 'markdown':
-    case 'text':
-      return mode;
-    default:
-      return 'text';
-  }
-}
-
-function stagedOutboxCount(journal: TurnJournal): number {
-  let count = 0;
-  for (const entry of journal.list()) {
-    if (replyState(entry) === 'staged') count += 1;
-    if (noticeState(entry) === 'staged') count += 1;
-  }
-  return count;
-}
-
-async function sendFinalReply(input: {
-  channel: LarkChannel;
-  chatId: string;
-  scope: string;
-  state: RunState;
-  replyMode: ReturnType<typeof getMessageReplyMode>;
-  sendOpts: { replyTo: string; replyInThread?: boolean };
-  cardRenderOptions: { signCallback?: (action: string) => string };
-  turnId?: string;
-  deliveryId?: string;
-}): Promise<{ messageId?: string } | undefined> {
-  const body = renderText(input.state);
-
-  // Nothing deliverable to send (agent produced no text on a clean finish;
-  // error/interrupt/timeout keep `body` non-empty via their notices). Skip
-  // rather than post an empty card that renders as "(no content)".
-  if (!body.trim()) {
-    log.info('outbound', 'skip-empty', { scope: input.scope, mode: input.replyMode });
-    return undefined;
-  }
-
-  const sendOpts = withDeliveryUuid(
-    input.sendOpts,
-    input.deliveryId ?? (input.turnId ? replyDeliveryKey(input.turnId) : undefined),
-  );
-
-  if (input.replyMode === 'card') {
-    const result = await input.channel.send(
-      input.chatId,
-      { card: renderCard(input.state, input.cardRenderOptions) },
-      sendOpts,
-    );
-    requireMessageReceipt(result, 'card');
-    log.info('outbound', 'sent', outboundLogFields(input, 'card', body, result));
-    return result;
-  }
-  if (input.replyMode === 'markdown') {
-    const result = await input.channel.send(
-      input.chatId,
-      { markdown: body },
-      sendOpts,
-    );
-    requireMessageReceipt(result, 'markdown');
-    log.info('outbound', 'sent', outboundLogFields(input, 'markdown', body, result));
-    return result;
-  }
-  const result = await input.channel.send(
-    input.chatId,
-    { markdown: body },
-    sendOpts,
-  );
-  requireMessageReceipt(result, 'text');
-  log.info('outbound', 'sent', outboundLogFields(input, 'text', body, result));
-  return result;
-}
-
-function requireMessageReceipt(result: { messageId?: string }, type: string): void {
-  if (!result.messageId?.trim()) {
-    throw new Error(`final ${type} reply missing message receipt`);
-  }
-}
-
-async function sendPlainTextReply(input: {
-  channel: LarkChannel;
-  chatId: string;
-  body: string;
-  sendOpts: { replyTo: string; replyInThread?: boolean };
-  deliveryId?: string;
-}): Promise<{ messageId?: string } | undefined> {
-  if (!input.body.trim()) return undefined;
-  const replyTo = input.sendOpts.replyTo.trim();
-  const result = await input.channel.send(
-    input.chatId,
-    { text: input.body },
-    withDeliveryUuid({
-      ...(replyTo ? { replyTo } : {}),
-      ...(input.sendOpts.replyInThread ? { replyInThread: true } : {}),
-    }, input.deliveryId),
-  );
-  requireMessageReceipt(result, 'text');
-  return result;
-}
-
-async function sendCotDegradedNotice(input: {
-  channel: LarkChannel;
-  chatId: string;
-  scope: string;
-  sendOpts: { replyTo: string; replyInThread?: boolean };
-  reason: string;
-  journal?: TurnJournal;
-  turnId?: string;
-}): Promise<void> {
-  log.warn('cot', 'degraded', {
-    scope: input.scope,
-    reason: input.reason,
-    replyInThread: input.sendOpts.replyInThread === true,
-  });
-  try {
-    const result = await input.channel.send(
-      input.chatId,
-      { markdown: 'COT 过程消息更新失败，已停止展示过程；最终答案仍会继续发送。' },
-      input.sendOpts,
-    );
-    const messageId = outboundMessageId(result);
-    if (messageId && input.journal && input.turnId) {
-      input.journal.noteNonAnswerId(input.turnId, messageId);
-    }
-  } catch (err) {
-    log.warn('cot', 'degraded-notice-failed', {
-      scope: input.scope,
-      err: err instanceof Error ? err.message : String(err),
-    });
-  }
-}
-
-function outboundLogFields(
-  input: {
-    scope?: string;
-    replyMode: ReturnType<typeof getMessageReplyMode>;
-    sendOpts?: { replyTo?: string; replyInThread?: boolean };
-  },
-  type: string,
-  body: string,
-  result?: { messageId?: string },
-): Record<string, unknown> {
-  return {
-    type,
-    scope: input.scope,
-    mode: input.replyMode,
-    chars: body.length,
-    messageId: result?.messageId,
-    replyTo: input.sendOpts?.replyTo,
-    replyInThread: input.sendOpts?.replyInThread === true,
-  };
-}
-
-/**
- * Drive the agent's event stream into a stateful RunState, calling `flush`
- * on every state transition. Used by both card and markdown reply modes —
- * the only difference between the two is what `flush` does with the state.
- */
-async function processAgentStream(
-  handle: RunHandle,
-  events: AsyncIterable<AgentEvent>,
-  scope: string,
-  idleTimeoutMs: number | undefined,
-  recordSession: (event: AgentEvent) => void,
-  flush: (state: RunState) => Promise<void>,
-  runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
-  reliability: StreamReliability = {},
-): Promise<RunState> {
-  const signatures = reliability.signatures;
-  const runStart = Date.now();
-  let state: RunState = seedRunState(runContext ?? {});
-  let lastTerminal: AgentEvent | undefined;
-
-  // Idle watchdog: silence for `idleTimeoutMs` is treated as "presumed hung".
-  // An open tool call pauses that bound (a long `lark-cli` OAuth can be
-  // quiet for a while) but the pause itself is capped at 60 minutes.
-  // Shared with agent-task fires via createIdleWatchdog.
-  const watchdog = createIdleWatchdog({ handle, idleTimeoutMs, scope });
-
-  try {
-    for await (const evt of events) {
-      noteRunEvent(handle);
-      // A stopped run can still deliver its final resume handle before cleanup.
-      // Keep draining owned events while suppressing further UI updates.
-      if (evt.type === 'system') {
-        if (!handle.interrupted) watchdog.arm();
-        recordSession(evt);
-        continue;
-      }
-      if (!shouldDeliverAgentEvent(handle, evt)) continue;
-
-      // Track tool flight before re-arming the idle timer so the arm step
-      // sees the correct set size. tool_use opens a window; tool_result
-      // closes it. Other event types are bookkept after the if/else.
-      watchdog.noteDelivered(evt);
-
-      if (evt.type === 'usage') {
-        const { costUsd, inputTokens, outputTokens } = evt;
-        if (costUsd !== undefined || inputTokens !== undefined || outputTokens !== undefined) {
-          log.info('agent', 'usage', {
-            ...(costUsd !== undefined ? { costUsd: Number(costUsd.toFixed(4)) } : {}),
-            ...(inputTokens !== undefined ? { inputTokens } : {}),
-            ...(outputTokens !== undefined ? { outputTokens } : {}),
-          });
-          if (costUsd !== undefined) reportMetric('cost_usd', costUsd);
-          if (inputTokens !== undefined) reportMetric('tokens_in', inputTokens);
-          if (outputTokens !== undefined) reportMetric('tokens_out', outputTokens);
-        }
-        continue;
-      }
-
-      if (evt.type === 'done' || evt.type === 'error') {
-        lastTerminal = evt;
-        noteTerminalStop(handle, evt);
-      }
-
-      const prevTerminal = state.terminal;
-      const prevFooter = state.footer;
-      state = reduce(state, evt);
-      if (evt.type === 'error' && state.terminal === 'error') {
-        const failure = cliFailureInput(handle.run.stderrSnapshot, evt.message, signatures);
-        const matched = matchCliSignature(failure.stderrTail, failure.signatures);
-        const early = deriveRunOutcome({
-          stopRequest: handle.stopRequest,
-          terminalEvent: evt,
-          ...failure,
-          exit: handle.run.exit,
-          signal: handle.run.signal,
-          outageOverlapped: reliability.outageOverlapped?.(),
-        });
-        const msg = cardUserMessage(early, matched);
-        if (msg) state = { ...state, errorMsg: msg };
-      }
-      if (state.footer !== prevFooter || state.terminal !== prevTerminal) {
-        log.info('card', 'transition', { footer: state.footer, terminal: state.terminal });
-      }
-      await flush(state);
-      // Stop iterating as soon as we have a terminal state. Some claude
-      // versions don't close stdout immediately after the result event, which
-      // would leave the for-await waiting forever otherwise.
-      if (state.terminal !== 'running') break;
-    }
-  } finally {
-    watchdog.dispose();
-  }
-
-  // If state already reached a terminal event (done/error/etc.) before the
-  // watchdog or interrupt could land, don't clobber it — that real terminal
-  // wins. This avoids "claude finished but flush was slow → timer fired
-  // mid-flush → user sees 'idle_timeout' on a successful run".
-  const failure = cliFailureInput(handle.run.stderrSnapshot,
-    lastTerminal?.type === 'error' ? lastTerminal.message : undefined, signatures);
-  const matched = matchCliSignature(failure.stderrTail, failure.signatures);
-  const outcome = deriveRunOutcome({
-    stopRequest: handle.stopRequest,
-    terminalEvent: lastTerminal,
-    ...failure,
-    exit: handle.run.exit,
-    signal: handle.run.signal,
-    outageOverlapped: reliability.outageOverlapped?.(),
-  });
-  noteUnclassifiedStderr({
-    outcome,
-    stderrTail: failure.stderrTail,
-    signature: matched,
-    agent: reliability.agent,
-  });
-  const userMessage = cardUserMessage(outcome, matched);
-  if (
-    state.terminal === 'running'
-    || cardTerminalFromOutcome(outcome) !== state.terminal
-    || userMessage !== undefined
-  ) {
-    state = applyOutcomeToState(state, outcome, watchdog.armedDelayMs(), userMessage);
-  }
-  if (userMessage !== undefined && state.terminal === 'error') {
-    state = { ...state, errorMsg: userMessage };
-  }
-  handle.outcome = outcome;
-  log.info('card', 'final', {
-    scope,
-    terminal: state.terminal,
-    stopReason: handle.stopRequest ? formatStopRequest(handle.stopRequest) : undefined,
-    outcome: formatRunOutcome(outcome),
-    interrupted: handle.interrupted,
-  });
-  reportMetric('run_e2e_ms', Date.now() - runStart, { terminal: state.terminal });
-  await flush(state);
-  if (handle.interrupted) {
-    await handle.run.stop();
-  }
-  return state;
-}
-
-function applyOutcomeToState(
-  state: RunState,
-  outcome: ReturnType<typeof deriveRunOutcome>,
-  idleTimeoutMs: number | undefined,
-  userMessage?: string,
-): RunState {
-  const terminal = cardTerminalFromOutcome(outcome);
-  switch (terminal) {
-    case 'idle_timeout':
-      return markIdleTimeout(state, Math.round((idleTimeoutMs ?? 0) / 60_000));
-    case 'runner_timeout':
-      return markRunnerTimeout(state);
-    case 'interrupted':
-      return markInterrupted(state);
-    case 'error':
-      return {
-        ...state,
-        terminal: 'error',
-        footer: null,
-        ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
-      };
-    case 'done':
-      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
-    case 'running':
-      return state;
-    default: {
-      const _exhaustive: never = terminal;
-      return _exhaustive;
-    }
-  }
-}
-
-interface StreamReliability {
-  signatures?: readonly CliSignature[];
-  agent?: string;
-  outageOverlapped?: () => boolean;
-}
-
-function streamReliability(
-  profile: { agentKind: string },
-  getLink?: () => { outageEpoch(): number; isDown(): boolean } | undefined,
-): StreamReliability {
-  const kind = profile.agentKind;
-  const link = getLink?.();
-  const startedEpoch = link?.outageEpoch() ?? 0;
-  const startedDown = link?.isDown() ?? false;
-  return {
-    signatures: [
-      ...(isAgentKind(kind) ? descriptorFor(kind).stderrSignatures : []),
-      ...NETWORK_TRANSIENT_SIGNATURES,
-    ],
-    agent: kind,
-    outageOverlapped: () => runOverlappedOutage(getLink?.(), startedEpoch, startedDown),
-  };
-}
-
-async function awaitRenderAwareStream(input: {
-  mode: 'card' | 'markdown';
-  progress: LazyProgressStream;
-  renderDone: Promise<RunState>;
-  producerStarted: () => boolean;
-  producerRendered: () => boolean;
-  timeoutMs: number;
-}): Promise<StreamDelivery> {
-  const streamResult = input.progress.settled.then(
-    (result) => ({ kind: 'stream' as const, ok: true as const, result }),
-    (err) => ({ kind: 'stream' as const, ok: false as const, err }),
-  );
-  const renderResult = input.renderDone.then(
-    (state) => ({ kind: 'render' as const, ok: true as const, state }),
-    (err) => ({ kind: 'render' as const, ok: false as const, err }),
-  );
-  const first = await Promise.race([streamResult, renderResult]);
-  if (!first.ok) {
-    if (first.kind === 'stream') {
-      const rendered = await renderResult;
-      if (!rendered.ok) throw rendered.err;
-      if (!input.producerRendered()) input.progress.abandon();
-      return failedStream(first.err, input.progress);
-    }
-    throw first.err;
-  }
-
-  if (first.kind === 'stream') {
-    const rendered = await renderResult;
-    if (!rendered.ok) throw rendered.err;
-    return confirmedStream(first.result, input.progress);
-  }
-
-  // Nothing durable ever showed up, so no progress message was opened at all
-  // (the common Codex final-only round). Whatever the run ended with still has
-  // to reach the user as a standalone reply.
-  if (!input.progress.opened()) {
-    log.info('outbound', 'progress-stream-skipped', { mode: input.mode });
-    return { kind: 'none' };
-  }
-
-  // The run ended before the stream did. A producer that hasn't started yet is
-  // usually just a card still being created (two API round trips), so give the
-  // stream its grace window rather than replying immediately — an immediate
-  // send would post the same answer twice once the stream catches up.
-  const terminal = await Promise.race([
-    streamResult,
-    delay(STREAM_TERMINAL_GRACE_MS).then(() => undefined),
-  ]);
-
-  if (!terminal) {
-    if (input.producerStarted()) {
-      log.warn('stream', 'terminal-grace-expired', {
-        mode: input.mode,
-        graceMs: STREAM_TERMINAL_GRACE_MS,
-      });
-      try {
-        const waited = await withOutboundTimeout('stream.producer', streamResult, input.timeoutMs);
-        if (!waited.ok) return failedStream(waited.err, input.progress);
-        return confirmedStream(waited.result, input.progress);
-      } catch (err) {
-        return failedStream(err, input.progress);
-      }
-    }
-    // Still nothing on screen after the grace window: give up on the stream and
-    // reply without it. `abandon()` keeps a late producer from rendering the
-    // same answer again; the empty message it leaves is recalled in cleanup.
-    input.progress.abandon();
-    log.warn('stream', 'producer-not-started-before-agent-terminal', { mode: input.mode });
-    return { kind: 'none' };
-  }
-
-  if (!terminal.ok) {
-    if (!input.producerRendered()) input.progress.abandon();
-    return failedStream(terminal.err, input.progress);
-  }
-  return confirmedStream(terminal.result, input.progress);
-}
-
-function confirmedStream(result: unknown, progress: LazyProgressStream): StreamDelivery {
-  const messageId = outboundMessageId(result) ?? progress.messageId() ?? '';
-  if (messageId) progress.noteMessageId(messageId);
-  return { kind: 'confirmed', messageId };
-}
-
-function failedStream(err: unknown, progress: LazyProgressStream): StreamDelivery {
-  const messageId = progress.messageId();
-  return messageId ? { kind: 'failed', err, messageId } : { kind: 'failed', err };
-}
-
-function scheduleWorkingReactionCleanup(
-  channel: LarkChannel,
-  messageId: string,
-  reactionPromise: Promise<string | undefined> | undefined,
-): void {
-  if (!reactionPromise) return;
-
-  void (async () => {
-    const reactionResult = reactionPromise.then(
-      (reactionId) => ({ ok: true as const, reactionId }),
-      (err) => ({ ok: false as const, err }),
-    );
-    const settled = await Promise.race([
-      reactionResult,
-      delay(REACTION_CLEANUP_GRACE_MS).then(() => undefined),
-    ]);
-
-    if (!settled) {
-      log.warn('reaction', 'cleanup-deferred', {
-        messageId,
-        graceMs: REACTION_CLEANUP_GRACE_MS,
-      });
-      void reactionResult.then((result) => {
-        if (!result.ok || !result.reactionId) return;
-        void removeReaction(channel, messageId, result.reactionId);
-      });
-      return;
-    }
-
-    if (!settled.ok || !settled.reactionId) return;
-    await removeReaction(channel, messageId, settled.reactionId);
-  })();
 }
 
 function applyTakenInstruction(taken: ContinuationTaken, extraInstructions: string[]): void {
@@ -3442,93 +1788,12 @@ function journalResources(batch: NormalizedMessage[]): { resources: TurnJournalR
   return resources.length > 0 ? { resources } : {};
 }
 
-function journalResourcesToMessage(
-  resources: TurnJournalResource[] | undefined,
-): NormalizedMessage['resources'] {
-  if (!resources?.length) return [];
-  return resources.map((item) => ({
-    type: item.type,
-    fileKey: item.fileKey,
-    sourceMessageId: item.sourceMessageId,
-  })) as NormalizedMessage['resources'];
-}
-
 function journalResourceSourceId(resource: unknown): string | undefined {
   if (!resource || typeof resource !== 'object') return undefined;
   const sourceMessageId = (resource as { sourceMessageId?: unknown }).sourceMessageId;
   return typeof sourceMessageId === 'string' && sourceMessageId
     ? sourceMessageId
     : undefined;
-}
-
-function noticeArgs(input: {
-  journal: TurnJournal;
-  turnId: string;
-  scope: string;
-  outcome: RunOutcome;
-  notice: {
-    auth?: NoticeActionAuth;
-    continuations: Continuations;
-    ownerId?: string;
-    requireBotMention: boolean;
-  };
-}) {
-  const plan = planInterruptionNotice(input.outcome);
-  if (plan.kind === 'continue') input.notice.continuations.offer(input.turnId, input.outcome);
-  return {
-    journal: input.journal,
-    turnId: input.turnId,
-    outcome: input.outcome,
-    noticeAuth: input.notice.auth,
-    consecutive: input.notice.continuations.consecutive(input.scope),
-    requireBotMention: input.notice.requireBotMention,
-    ownerId: input.notice.ownerId,
-    authNotified: authNoticeAlreadyDelivered(input.journal),
-  };
-}
-
-function stageTurnNotice(input: {
-  journal: TurnJournal;
-  turnId: string;
-  scope: string;
-  outcome: RunOutcome;
-  notice: {
-    auth?: NoticeActionAuth;
-    continuations: Continuations;
-    ownerId?: string;
-    requireBotMention: boolean;
-  };
-}): void {
-  if (planInterruptionNotice(input.outcome).kind === 'none') return;
-  stageInterruptionNotice(noticeArgs(input));
-}
-
-async function sendTurnNotice(input: {
-  channel: LarkChannel;
-  journal: TurnJournal;
-  turnId: string;
-  scope: string;
-  outcome: RunOutcome;
-  notice: {
-    auth?: NoticeActionAuth;
-    continuations: Continuations;
-    ownerId?: string;
-    requireBotMention: boolean;
-  };
-  link?: { isDown(): boolean };
-  onWait?: (delayMs?: number) => void;
-}): Promise<void> {
-  if (planInterruptionNotice(input.outcome).kind === 'none') return;
-  if (input.link?.isDown()) return;
-  const result = await deliverInterruptionNotice({
-    send: (chatId, content, options) => input.channel.send(chatId, content, options),
-    ...noticeArgs(input),
-  });
-  if (!result.delivered) input.onWait?.();
-}
-
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function consumeBackfillMarks(

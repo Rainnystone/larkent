@@ -1,3 +1,4 @@
+import { mkdir, rename, rm } from 'node:fs/promises';
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
@@ -168,17 +169,6 @@ describe('FeishuLink recovery through the bridge', () => {
     expect(h.ledger.getLiveAt()).toBe(NOW);
     await h.bridge.recover();
 
-    const orig = h.journal!.redeliver.bind(h.journal);
-    // Stay failing across Recovery + the post-recover outbox sweep. Clearing
-    // the flag inside the first throw lets sweep send before the retry recover.
-    let boom = true;
-    h.journal!.redeliver = async (opts) => {
-      if (boom) {
-        throw new Error('ENOSPC journal persist');
-      }
-      return orig(opts);
-    };
-
     h.journal!.enqueue({
       turnId: 'turn-flush-throw',
       scope: CHAT,
@@ -194,6 +184,12 @@ describe('FeishuLink recovery through the bridge', () => {
       },
     });
     await h.journal!.flush();
+    const journalPath = h.journal!.getFilePath();
+    await rename(journalPath, `${journalPath}.backup`);
+    await mkdir(journalPath);
+    h.journal!.noteTurnMeta('turn-flush-throw', { resumeHandle: 'persist-failure' });
+    await expect(h.journal!.flush()).rejects.toBeDefined();
+
     const stagedSends = () => h.channel.sent.filter((item) =>
       JSON.stringify(item.content).includes('FLUSH_RETRY'),
     );
@@ -202,7 +198,9 @@ describe('FeishuLink recovery through the bridge', () => {
     expect(stagedSends()).toHaveLength(0);
     expect(fail.mock.calls.some((call) => call[0] === 'recovery')).toBe(true);
 
-    boom = false;
+    await rm(journalPath, { recursive: true });
+    await rename(`${journalPath}.backup`, journalPath);
+    await h.journal!.load();
     await h.bridge.recover({ since: NOW - 1_000, until: NOW, hostSuspended: false });
     expect(stagedSends()).toHaveLength(1);
   });
@@ -221,7 +219,7 @@ describe('FeishuLink recovery through the bridge', () => {
         lastLiveAt: NOW,
         history: { [CHAT]: [] },
         withJournal: true,
-        boomRedeliver: true,
+        failHistory: true,
       });
       await h.bridge.recover();
       expect(rejections, String(rejections[0])).toEqual([]);
@@ -259,7 +257,7 @@ describe('FeishuLink recovery through the bridge', () => {
     expect(h.agent.runOptions).toHaveLength(0);
   });
 
-  it('backfills an outage after shutdown between recover and backfill', async () => {
+  it('backfills an outage after shutdown during recovered history listing', async () => {
     let now = NOW;
     const history: Record<string, unknown[]> = { [CHAT]: [] };
     const h = await startHarness({
@@ -269,7 +267,7 @@ describe('FeishuLink recovery through the bridge', () => {
       history,
       withJournal: true,
     });
-    // Join the in-flight startup pass before wrapping redeliver. A pending
+    // Join the in-flight startup pass before delaying history. A pending
     // Recovery retry still waits RECOVERY_RETRY_MIN_MS.
     await h.bridge.recover();
 
@@ -281,11 +279,11 @@ describe('FeishuLink recovery through the bridge', () => {
     const redeliverEntered = new Promise<void>((resolve) => {
       sawRedeliver = resolve;
     });
-    const orig = h.journal!.redeliver.bind(h.journal);
-    h.journal!.redeliver = async (opts) => {
+    const orig = h.channel.rawClient.im.v1.message.list;
+    h.channel.rawClient.im.v1.message.list = async (params) => {
       sawRedeliver();
       await holdRedeliver;
-      return orig(opts);
+      return orig(params);
     };
 
     h.channel.connectionState = 'reconnecting';
@@ -363,6 +361,10 @@ describe('FeishuLink recovery through the bridge', () => {
     const holdOk = new Promise<void>((resolve) => {
       releaseOk = resolve;
     });
+    let sawOk!: () => void;
+    const okEntered = new Promise<void>((resolve) => {
+      sawOk = resolve;
+    });
     let holdingOk = true;
     await startHarness({
       now: () => NOW,
@@ -377,14 +379,19 @@ describe('FeishuLink recovery through the bridge', () => {
           const nested = isRecord(params) && isRecord(params.params) ? params.params : isRecord(params) ? params : {};
           const chatId = typeof nested.container_id === 'string' ? nested.container_id : undefined;
           if (chatId === BAD) throw axiosHttpError(429);
-          if (holdingOk && chatId === OK) await holdOk;
+          if (holdingOk && chatId === OK) {
+            sawOk();
+            await holdOk;
+          }
           return orig(params);
         };
       },
     });
 
     await vi.advanceTimersByTimeAsync(0);
-    for (let n = 0; lists < 2 && n < 20_000; n++) await yieldIO();
+    // Startup Recovery reaches history only after real ledger fsyncs. Join the
+    // OK list call instead of a yield budget that slow CI disks outlast.
+    await okEntered;
     expect(lists).toBeGreaterThanOrEqual(2);
     holdingOk = false;
     releaseOk();
@@ -402,7 +409,7 @@ async function startHarness(opts: {
   history: Record<string, unknown[]>;
   onRecovered?: (outage: { since: number; until: number }) => void;
   withJournal?: boolean;
-  boomRedeliver?: boolean;
+  failHistory?: boolean;
   chats?: Array<{ id: string; name: string }>;
   configureChannel?: (channel: ReturnType<typeof createRecordingLarkChannel>) => void;
 }) {
@@ -414,11 +421,7 @@ async function startHarness(opts: {
   if (opts.withJournal) {
     journal = new TurnJournal(`${tmp.profile}/turn-journal.json`, { now: opts.now });
     await journal.load();
-    if (opts.boomRedeliver) {
-      journal.redeliver = async () => {
-        throw new Error('ENOSPC journal persist');
-      };
-    }
+
   }
   const cfg = createDefaultProfileConfig({
     agentKind: 'claude',
@@ -445,6 +448,7 @@ async function startHarness(opts: {
     chats: opts.chats ?? [{ id: CHAT, name: 'Group' }],
     messagesByChat: opts.history,
   });
+  if (opts.failHistory) channel.listChats = async () => { throw new Error('history unavailable'); };
   opts.configureChannel?.(channel);
   sdk.channel = channel;
   const bridge = await startChannel({

@@ -1,13 +1,10 @@
 import type { AgentEvent } from '../types';
+import { FinalAnswerCore, type ProtocolDriftState } from '../final-answer/core';
+import { isRecord, recordValue, stringValue, truncate } from '../final-answer/values';
 import { isShellTool } from '../shell-tool';
 import { log } from '../../core/logger';
 
 export type CursorFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
-
-export interface ProtocolDriftState {
-  unknownEvents: number;
-  anomalies: number;
-}
 
 /**
  * Translates Cursor CLI `agent -p --output-format stream-json` NDJSON into
@@ -31,18 +28,13 @@ export class CursorJsonlTranslator {
   private sessionId: string | undefined;
   private cwd: string | undefined;
   private model: string | undefined;
-  private terminal = false;
-  private pendingAssistantText: string | undefined;
-  private readonly startedToolCalls = new Set<string>();
-  private drift: ProtocolDriftState = {
-    unknownEvents: 0,
-    anomalies: 0,
-  };
+  // D03a: transcripts/cursor/narration-tool-answer.jsonl: result concatenates narration and answer.
+  private readonly core = new FinalAnswerCore({ accumulation: 'message', preTool: 'discard', separator: 'paragraph' });
 
   translate(raw: unknown): AgentEvent[] {
-    if (this.terminal) return [];
+    if (this.core.terminalEmitted()) return [];
     if (!isRecord(raw) || typeof raw.type !== 'string') {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
     }
 
@@ -52,12 +44,11 @@ export class CursorJsonlTranslator {
       case 'user':
         return [];
       case 'thinking':
-        return [];
+        return [{ type: 'liveness' }];
       case 'assistant':
         return this.translateAssistant(raw);
       case 'tool_call':
-        this.pendingAssistantText = undefined;
-        return this.translateToolCall(raw);
+        return [...this.core.accept({ type: 'boundary', ...(raw.subtype === 'started' ? { toolId: stringValue(raw.call_id) } : {}) }), ...this.translateToolCall(raw)];
       case 'result':
         return this.translateResult(raw);
       case 'connection':
@@ -67,112 +58,82 @@ export class CursorJsonlTranslator {
           ...(typeof raw.attempt === 'number' ? { attempt: raw.attempt } : {}),
           ...(typeof raw.subtype === 'string' ? { subtype: raw.subtype } : {}),
         });
-        return [];
+        return [{ type: 'liveness' }];
       default:
-        this.drift.unknownEvents++;
-        log.warn('jsonl', 'unknown_event', { eventType: raw.type });
+        this.core.unknown(raw.type);
         return [];
     }
   }
 
   finish(reason: CursorFinishReason = 'failed'): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    if (reason === 'failed') {
-      return this.prependPendingText([
-        {
-          type: 'error',
-          message: 'cursor stream ended before a terminal event',
-          terminationReason: 'failed',
-        },
-      ]);
-    }
-    const events: AgentEvent[] = [];
-    if (this.pendingAssistantText) {
-      events.push({ type: 'final_text', content: this.pendingAssistantText });
-      this.pendingAssistantText = undefined;
-    }
-    events.push({
-      type: 'done',
-      ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
-      terminationReason: reason,
-    });
-    return events;
+    return reason === 'failed' ? this.fail('cursor stream ended before a terminal event')
+      : this.core.accept({ type: 'done', ...(this.sessionId ? { resumeHandle: this.sessionId } : {}), terminationReason: reason });
   }
 
   fail(message: string): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    return this.prependPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
-    ]);
+    return this.core.accept({ type: 'error', message: truncate(message, 4096), terminationReason: 'failed' });
   }
 
   protocolDrift(): ProtocolDriftState {
-    return { ...this.drift };
+    return this.core.protocolDrift();
   }
 
   terminalEmitted(): boolean {
-    return this.terminal;
+    return this.core.terminalEmitted();
   }
 
   private translateSystem(raw: Record<string, unknown>): AgentEvent[] {
     const subtype = stringValue(raw.subtype);
     if (subtype && subtype !== 'init') {
-      this.drift.unknownEvents++;
-      log.warn('jsonl', 'unknown_event', { eventType: `system:${subtype}` });
+      this.core.unknown(`system:${subtype}`);
       return [];
     }
     const sessionId = stringValue(raw.session_id);
     if (sessionId) this.sessionId = sessionId;
     this.cwd = stringValue(raw.cwd) ?? this.cwd;
     this.model = stringValue(raw.model) ?? this.model;
-    return [
+    return this.core.accept(
       {
         type: 'system',
         ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
         ...(this.cwd ? { cwd: this.cwd } : {}),
         ...(this.model ? { model: this.model } : {}),
       },
-    ];
+    );
   }
 
   private translateAssistant(raw: Record<string, unknown>): AgentEvent[] {
     const text = assistantText(raw);
-    return text ? this.queueAssistantText(text) : [];
+    return text ? this.core.accept({ type: 'answer', text }) : [];
   }
 
   private translateToolCall(raw: Record<string, unknown>): AgentEvent[] {
     const subtype = stringValue(raw.subtype);
     const id = stringValue(raw.call_id);
     if (!id) {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
     }
     if (subtype === 'started') {
       const parsed = parseToolCall(raw.tool_call);
       if (!parsed) {
-        this.drift.anomalies++;
+        this.core.anomaly();
         return [];
       }
-      this.startedToolCalls.add(id);
-      return [{ type: 'tool_use', id, name: parsed.name, input: parsed.input }];
+      return this.core.accept({ type: 'tool_use', id, name: parsed.name, input: parsed.input });
     }
     if (subtype === 'completed') {
-      if (!this.startedToolCalls.has(id)) this.drift.anomalies++;
-      this.startedToolCalls.delete(id);
       const parsed = parseToolCall(raw.tool_call);
-      return [
+      return this.core.accept(
         {
           type: 'tool_result',
           id,
           output: parsed?.output ?? '',
           isError: parsed?.isError === true,
         },
-      ];
+      );
     }
-    this.drift.unknownEvents++;
-    log.warn('jsonl', 'unknown_event', { eventType: `tool_call:${subtype ?? '?'}` });
+    this.core.unknown(`tool_call:${subtype ?? '?'}`);
     return [];
   }
 
@@ -187,18 +148,6 @@ export class CursorJsonlTranslator {
     return this.finish('normal');
   }
 
-  private queueAssistantText(message: string): AgentEvent[] {
-    if (message === this.pendingAssistantText) return [];
-    this.pendingAssistantText = message;
-    return [];
-  }
-
-  private prependPendingText(events: AgentEvent[]): AgentEvent[] {
-    if (events.length === 0 || !this.pendingAssistantText) return events;
-    const pending = this.pendingAssistantText;
-    this.pendingAssistantText = undefined;
-    return [{ type: 'text', delta: `${pending}\n\n` }, ...events];
-  }
 }
 
 function assistantText(raw: Record<string, unknown>): string | undefined {
@@ -298,20 +247,4 @@ function parseToolArguments(value: unknown): unknown {
   } catch {
     return { raw };
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return isRecord(value) ? value : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
 }

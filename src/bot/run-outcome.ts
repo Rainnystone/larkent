@@ -40,7 +40,7 @@ export interface DeriveRunOutcomeInput {
   terminalEvent?: AgentEvent;
   stderrTail?: string;
   signatures?: readonly CliSignature[];
-  /** True when the Feishu link's outage epoch changed during the run. */
+  /** True when the link's outage epoch changed, or the run started while down. */
   outageOverlapped?: boolean;
 }
 
@@ -84,7 +84,7 @@ export function noteTerminalStop(handle: StoppableHandle, event: AgentEvent): bo
 
 /**
  * System and terminal events still land after stop. Only an explicit user stop
- * admits a buffered final answer. Grok and Codex can hold that answer until
+ * admits held-back partial progress or a buffered final answer. Grok and Codex can hold that answer until
  * interruption; other stop reasons must not publish it. Later text deltas stay
  * suppressed for every stop reason.
  */
@@ -92,9 +92,9 @@ export function shouldDeliverAgentEvent(
   handle: StoppableHandle,
   event: AgentEvent,
 ): boolean {
-  if (event.type === 'system') return true;
+  if (event.type === 'system' || event.type === 'liveness') return true;
   if (!handle.interrupted) return true;
-  if (event.type === 'final_text') return handle.stopRequest?.type === 'user-stop';
+  if (event.type === 'final_text' || (event.type === 'text' && event.heldBack)) return handle.stopRequest?.type === 'user-stop';
   return event.type === 'done' || event.type === 'error';
 }
 
@@ -113,6 +113,9 @@ export function runOverlappedOutage(
 }
 
 function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
+  // A guarded tool ends consumption before any later buffered terminal. Keep
+  // that decision even when the source pump has already observed the terminal.
+  if (input.stopRequest?.type === 'policy-guard') return interrupted(input.stopRequest);
   const signed = matchCliSignature(input.stderrTail, input.signatures);
   if (signed && signatureApplies(signed.classify, input)) {
     return applySignatureOverlay(signed.classify);

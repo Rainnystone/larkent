@@ -1,11 +1,13 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
+import { seedDraftDelivery } from '../../helpers/draft-delivery-fixture';
 import { createHash } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { confirmAutomationDraft } from '../../../src/automations/command';
+import { confirmAutomationDraft } from '../../helpers/draft-confirmation';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
-import { reconcileDraftCard, sendAutomationDraftCard } from '../../../src/automations/draft-delivery';
+import { reconcileDraftCard, sendAutomationDraftCard } from '../../../src/automations/draft-confirmation/delivery';
 import { automationEndCard } from '../../../src/automations/end-card';
 import { automationOperationScope, newAutomationOperationId } from '../../../src/automations/operation-id';
 import { AutomationsStore } from '../../../src/automations/store';
@@ -14,41 +16,13 @@ import { createFakeChannel } from '../../helpers/fake-channel';
 
 const NOW = 1_760_000_000_000;
 const APP = 'cli_bot';
-const MARKER_RE = /^[A-Za-z][A-Za-z0-9_]{0,19}$/;
 const dirs: string[] = [];
 
 afterEach(async () => {
   await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true })));
 });
 
-describe('sendAutomationDraftCard readback marker', () => {
-  it('writes a deliveryId-derived 是 button element_id into the stored confirm card', async () => {
-    const { store, draft, channel } = await liveDraft({});
-    await sendAutomationDraftCard(channel as never, store, store.getDraft(draft.draftId)!, confirmCard(), {});
-    const stored = store.getDraft(draft.draftId)!;
-    const deliveryId = deliveryIdFor(draft.operationId!, 'confirm');
-    const marker = `lbd${deliveryId.slice(0, 17)}`;
-    expect(stored.delivery?.deliveryId).toBe(deliveryId);
-    expect(marker).toMatch(MARKER_RE);
-    expect(collectElementIds(stored.delivery?.card).filter((id) => id === marker)).toEqual([marker]);
-    expect(buttonByLabel(stored.delivery?.card, '是')?.element_id).toBe(marker);
-    expect(buttonByLabel(stored.delivery?.card, '否')?.element_id).toBeUndefined();
-  });
-
-  it('writes the same marker on the end-card primary button', async () => {
-    const { store, draft, channel } = await liveDraft({
-      pendingRecurring: { kind: 'daily', timezone: 'Asia/Shanghai', times: [{ hour: 9, minute: 0 }] },
-    });
-    await sendAutomationDraftCard(channel as never, store, store.getDraft(draft.draftId)!, endCard(), {});
-    const stored = store.getDraft(draft.draftId)!;
-    const deliveryId = deliveryIdFor(draft.operationId!, 'end');
-    const marker = `lbd${deliveryId.slice(0, 17)}`;
-    expect(stored.delivery?.deliveryId).toBe(deliveryId);
-    expect(marker).toMatch(MARKER_RE);
-    expect(collectElementIds(stored.delivery?.card).filter((id) => id === marker)).toEqual([marker]);
-    expect(buttonByLabel(stored.delivery?.card, '一周')?.element_id).toBe(marker);
-  });
-
+describe('Outbox draft send evidence', () => {
   it('keeps sending when Feishu reports the card entity is already bound', async () => {
     const { store, draft, channel } = await liveDraft({});
     channel.send = async () => {
@@ -66,8 +40,8 @@ describe('sendAutomationDraftCard readback marker', () => {
       confirmCard(),
       {},
     )).rejects.toMatchObject({ response: { data: { code: 230099 } } });
-    expect(store.getDraft(draft.draftId)?.delivery?.state).toBe('sending');
-    expect(store.getDraft(draft.draftId)?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).state).toBe('sending');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).messageId).toBeUndefined();
   });
 
   it('still marks a generic 4xx send as rejected', async () => {
@@ -84,7 +58,7 @@ describe('sendAutomationDraftCard readback marker', () => {
       confirmCard(),
       {},
     )).rejects.toMatchObject({ response: { data: { code: 200001 } } });
-    expect(store.getDraft(draft.draftId)?.delivery?.state).toBe('rejected');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).state).toBe('rejected');
   });
 });
 
@@ -127,8 +101,8 @@ describe('reconcileDraftCard', () => {
       return page([matchItem('om_test_1', marker)]);
     });
     expect(listed[0]?.card_msg_content_type).toBe('user_card_content');
-    expect(store.getDraft(draft.draftId)?.cardMessageId).toBe('om_test_1');
-    expect(store.getDraft(draft.draftId)?.delivery?.state).toBe('sent');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).messageId).toBe('om_test_1');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).state).toBe('sent');
     expect(store.findDraftByCardMessageId('om_test_1')?.draftId).toBe(draft.draftId);
   });
 
@@ -164,10 +138,10 @@ describe('reconcileDraftCard', () => {
   });
 
   it('does not bind an old unmarked draft even when the list has auto_token evidence', async () => {
-    const { store, draft } = await sendingDraft({});
-    await store.setDraftDelivery(draft.draftId, {
+    const { store, draft } = await liveDraft({});
+    await seedDraftDelivery(store, draft.draftId, {
       state: 'sending',
-      deliveryId: 'ab'.repeat(16),
+      deliveryId: 'cd'.repeat(16),
       card: { value: { auto_token: 'tok-confirm' } },
       cardId: 'card_1',
     });
@@ -192,32 +166,39 @@ describe('reconcileDraftCard', () => {
     });
     expect(listed).toHaveLength(2);
     expect(listed[0]?.card_msg_content_type).toBe('user_card_content');
-    expect(store.getDraft(draft.draftId)?.cardMessageId).toBe('om_test_1');
+    expect(draftConfirmationDelivery(store.getDraft(draft.draftId)).messageId).toBe('om_test_1');
   });
 });
 
-it('binds a landed confirm card after a lost receipt so the same card can confirm', async () => {
-  const { store, draft, channel } = await liveDraft({});
-  const sent = await sendAutomationDraftCard(
+it.each(['confirm', 'end'] as const)('binds a landed %s card after a lost receipt so the same card remains usable', async phase => {
+  const { store, draft, channel } = await liveDraft(phase === 'end' ? { pendingRecurring: { kind: 'daily', timezone: 'Asia/Shanghai', times: [{ hour: 9, minute: 0 }] } } : {});
+  const send = channel.send.bind(channel);
+  let messageId = '';
+  channel.send = async (...args) => { const sent = await send(...args); messageId = sent.messageId; throw new Error('lost receipt'); };
+  await expect(sendAutomationDraftCard(
     channel as never,
     store,
     store.getDraft(draft.draftId)!,
-    confirmCard(),
+    phase === 'end' ? endCard() : confirmCard(),
     {},
-  );
+  )).rejects.toThrow('lost receipt');
   const live = store.getDraft(draft.draftId)!;
-  expect(live.delivery?.state).toBe('sending');
-  expect(live.cardMessageId).toBeUndefined();
-  const marker = `lbd${deliveryIdFor(draft.operationId!, 'confirm').slice(0, 17)}`;
-  const listedCard = asUserCardContent(live.delivery!.card);
+  expect(draftConfirmationDelivery(live).state).toBe('sending');
+  expect(draftConfirmationDelivery(live).messageId).toBeUndefined();
+  const marker = `lbd${deliveryIdFor(draft.operationId!, phase).slice(0, 17)}`;
+  const listedCard = asUserCardContent(store.outboxJournal.getDraftCard(store.getDraftCardReceipt(live.draftId)!.deliveryId!)!.payload.card);
   expect(JSON.stringify(listedCard)).not.toContain('auto_token');
   expect(JSON.stringify(listedCard)).toContain(marker);
   channel.rawClient.im.v1.message.list = async (params: unknown) => {
     expect(asListParams(params).card_msg_content_type).toBe('user_card_content');
-    return page([matchItem(sent.messageId, marker, { body: listedCard })]);
+    return page([matchItem(messageId, marker, { body: listedCard })]);
   };
   await reconcileDraftCard(channel as never, store, store.getDraft(draft.draftId)!, APP);
-  expect(store.findDraftByCardMessageId(sent.messageId)?.draftId).toBe(draft.draftId);
+  expect(store.findDraftByCardMessageId(messageId)?.draftId).toBe(draft.draftId);
+  if (phase === 'end') {
+    expect(channel.sent.filter(item => JSON.stringify(item.content).includes('auto.end.'))).toHaveLength(1);
+    return;
+  }
   const confirmed = await confirmAutomationDraft({ automations: store, now: () => NOW }, store.getDraft(draft.draftId)!);
   expect(confirmed).toEqual({ ok: true, status: '已确认 #1', toast: '已确认 #1' });
   expect(store.getOperation(draft.operationId!)?.state).toBe('applied');
@@ -254,7 +235,7 @@ async function liveDraft(input: {
     taskText: 'Synthetic reminder body',
     operationId,
     ...(input.pendingRecurring ? { pendingRecurring: input.pendingRecurring } : {}),
-    cardReply: { replyTo: 'om_src', ...replyFields(input) },
+    cardReply: { replyTo: 'om_src', ...(input.replyInThread ? { replyInThread: true } : {}), ...(input.threadId ? { threadId: input.threadId } : {}) },
   }, { operationId, profile, chatId, fingerprint: 'ab'.repeat(32) });
   return { store, draft, channel: createFakeChannel({ botAppId: APP, now: () => NOW + 500 }) };
 }
@@ -263,7 +244,7 @@ async function sendingDraft(input: Parameters<typeof liveDraft>[0]) {
   const ctx = await liveDraft(input);
   const deliveryId = 'ab'.repeat(16);
   const marker = `lbd${deliveryId.slice(0, 17)}`;
-  await ctx.store.setDraftDelivery(ctx.draft.draftId, {
+  await seedDraftDelivery(ctx.store, ctx.draft.draftId, {
     state: 'sending',
     deliveryId,
     card: markedUserCard(marker),
@@ -283,8 +264,8 @@ async function reconcileWith(
 }
 
 function expectUnbound(store: AutomationsStore, draftId: string): void {
-  expect(store.getDraft(draftId)?.cardMessageId).toBeUndefined();
-  expect(store.getDraft(draftId)?.delivery?.state).toBe('sending');
+  expect(draftConfirmationDelivery(store.getDraft(draftId)).messageId).toBeUndefined();
+  expect(draftConfirmationDelivery(store.getDraft(draftId)).state).toBe('sending');
 }
 
 function confirmCard(): object {
@@ -376,42 +357,6 @@ function stripCallbacks(value: unknown): unknown {
     next[key] = stripCallbacks(child);
   }
   return next;
-}
-
-function collectElementIds(value: unknown): string[] {
-  if (Array.isArray(value)) return value.flatMap(collectElementIds);
-  if (!value || typeof value !== 'object') return [];
-  const rec = value as Record<string, unknown>;
-  const own = typeof rec.element_id === 'string' && rec.element_id ? [rec.element_id] : [];
-  return own.concat(Object.values(rec).flatMap(collectElementIds));
-}
-
-function buttonByLabel(value: unknown, label: string): Record<string, unknown> | undefined {
-  if (Array.isArray(value)) {
-    for (const entry of value) {
-      const found = buttonByLabel(entry, label);
-      if (found) return found;
-    }
-    return undefined;
-  }
-  if (!value || typeof value !== 'object') return undefined;
-  const rec = value as Record<string, unknown>;
-  if (rec.tag === 'button') {
-    const text = rec.text && typeof rec.text === 'object' ? rec.text as Record<string, unknown> : undefined;
-    if (text?.content === label) return rec;
-  }
-  for (const child of Object.values(rec)) {
-    const found = buttonByLabel(child, label);
-    if (found) return found;
-  }
-  return undefined;
-}
-
-function replyFields(input: { replyInThread?: boolean; threadId?: string }): { replyInThread?: boolean; threadId?: string } {
-  return {
-    ...(input.replyInThread ? { replyInThread: true } : {}),
-    ...(input.threadId ? { threadId: input.threadId } : {}),
-  };
 }
 
 function asListParams(params: unknown): Record<string, unknown> {

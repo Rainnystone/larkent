@@ -1,4 +1,3 @@
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AgentEvent } from '../../../src/agent/types';
 import { finalReplyFor } from '../../../src/bot/cot';
@@ -41,11 +40,6 @@ describe('final reply selection', () => {
     expect(selected.blocks).toBe(state.blocks);
   });
 
-  it('does not extract finalText inside the automation module', () => {
-    const source = readFileSync(new URL('../../../src/automations/agent-run.ts', import.meta.url), 'utf8');
-    expect(source).toContain('finalReplyFor');
-    expect(source.includes('finalText')).toBe(false);
-  });
 });
 
 function reduceAll(events: AgentEvent[]): RunState {

@@ -1,0 +1,11 @@
+{"transcript": 1, "kind": "antigravity", "cliVersion": "1.4.4", "capturedAt": "2026-10-27", "scenario": "answer-only", "command": "agy -p <PROMPT> --output-format stream-json --dangerously-skip-permissions --disable-slash-commands", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 3, "note": "spawned pid=21619"}
+{"t": 8745, "line": "{\"event\": \"init\", \"conversation_id\": \"<SESSION_1>\", \"init\": {\"cwd\": \"/private<CWD>\", \"tools\": [\"<REDACTED_LOCAL_ENV>\"], \"permission_mode\": \"always-proceed\"}}"}
+{"t": 8799, "line": "{\"event\": \"step_update\", \"step_update\": {\"conversation_id\": \"<SESSION_1>\", \"step_index\": 0, \"state\": \"DONE\", \"step_type\": \"user_input\"}}"}
+{"t": 15227, "line": "{\"event\": \"step_update\", \"step_update\": {\"conversation_id\": \"<SESSION_1>\", \"step_index\": 1, \"state\": \"ACTIVE\", \"step_type\": \"agent_response\", \"text_delta\": \"TRANSCRIPT-OK\"}}"}
+{"t": 15304, "line": "{\"event\": \"step_update\", \"step_update\": {\"conversation_id\": \"<SESSION_1>\", \"step_index\": 1, \"state\": \"DONE\", \"step_type\": \"agent_response\", \"text_delta\": \"\\n\", \"duration_seconds\": 6.491087, \"usage\": {\"input_tokens\": 13205, \"output_tokens\": 21, \"thinking_tokens\": 13, \"cache_read_tokens\": 0, \"total_tokens\": 13226}}}"}
+{"t": 15305, "line": "{\"event\": \"result\", \"result\": {\"conversation_id\": \"<SESSION_1>\", \"status\": \"SUCCESS\", \"response\": \"TRANSCRIPT-OK\\n\", \"duration_seconds\": 6.541948, \"num_turns\": 1, \"usage\": {\"input_tokens\": 13205, \"output_tokens\": 21, \"thinking_tokens\": 13, \"cache_read_tokens\": 0, \"total_tokens\": 13226}}}"}
+{"t": 16298, "exit": {"code": 0, "signal": null}}
+{"t": 16298, "note": "translator tail event: {\"type\":\"usage\",\"inputTokens\":13205,\"outputTokens\":21,\"cachedInputTokens\":0,\"reasoningOutputTokens\":13}"}
+{"t": 16298, "note": "translator tail event: {\"type\":\"final_text\",\"content\":\"TRANSCRIPT-OK\\n\"}"}
+{"t": 16298, "note": "translator tail event: {\"type\":\"done\",\"resumeHandle\":\"<SESSION_1>\",\"terminationReason\":\"normal\"}"}

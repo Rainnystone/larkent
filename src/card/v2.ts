@@ -1,3 +1,5 @@
+import { randomBytes } from 'node:crypto';
+
 export interface CallbackButtonSpec {
   text: string;
   value: Record<string, unknown>;
@@ -32,7 +34,7 @@ export function callbackButton(spec: CallbackButtonSpec): object {
     text: { tag: 'plain_text', content: spec.text },
     type: spec.style ?? 'default',
     ...(spec.formAction ? { form_action_type: spec.formAction } : {}),
-    behaviors: [{ type: 'callback', value: spec.value }],
+    behaviors: [{ type: 'callback', value: { a: randomBytes(6).toString('base64url'), ...spec.value } }],
   };
 }
 

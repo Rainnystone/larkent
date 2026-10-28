@@ -1,12 +1,8 @@
 import type { AgentEvent } from '../types';
-import { log } from '../../core/logger';
+import { FinalAnswerCore, type ProtocolDriftState } from '../final-answer/core';
+import { isRecord, recordValue, stringValue, truncate } from '../final-answer/values';
 
 export type KimiFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
-
-export interface ProtocolDriftState {
-  unknownEvents: number;
-  anomalies: number;
-}
 
 /**
  * Translates kimi's `kimi -p --output-format stream-json` JSONL into bridge
@@ -28,18 +24,14 @@ export interface ProtocolDriftState {
 export class KimiJsonlTranslator {
   private sessionId: string | undefined;
   private version: string | undefined;
-  private terminal = false;
-  private pendingAssistantText: string | undefined;
+  // D03a: transcripts/kimi/narration-tool-answer.jsonl; last assistant message is the answer.
+  private readonly core = new FinalAnswerCore({ accumulation: 'message', preTool: 'progress', separator: 'paragraph' });
   private readonly startedToolCalls = new Map<string, string>();
-  private drift: ProtocolDriftState = {
-    unknownEvents: 0,
-    anomalies: 0,
-  };
 
   translate(raw: unknown): AgentEvent[] {
-    if (this.terminal) return [];
+    if (this.core.terminalEmitted()) return [];
     if (!isRecord(raw) || typeof raw.role !== 'string') {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
     }
 
@@ -49,53 +41,28 @@ export class KimiJsonlTranslator {
       case 'assistant':
         return this.translateAssistant(raw);
       case 'tool':
-        return this.prependPendingText(this.translateToolResult(raw));
+        return this.translateToolResult(raw);
       default:
-        this.drift.unknownEvents++;
-        log.warn('jsonl', 'unknown_event', { eventType: raw.role });
+        this.core.unknown(raw.role);
         return [];
     }
   }
 
   finish(reason: KimiFinishReason = 'failed'): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    if (reason === 'failed') {
-      return this.prependPendingText([
-        {
-          type: 'error',
-          message: 'kimi stream ended before a terminal event',
-          terminationReason: 'failed',
-        },
-      ]);
-    }
-    const events: AgentEvent[] = [];
-    if (this.pendingAssistantText) {
-      events.push({ type: 'final_text', content: this.pendingAssistantText });
-      this.pendingAssistantText = undefined;
-    }
-    events.push({
-      type: 'done',
-      ...(this.sessionId ? { resumeHandle: this.sessionId } : {}),
-      terminationReason: reason,
-    });
-    return events;
+    return reason === 'failed' ? this.fail('kimi stream ended before a terminal event')
+      : this.core.accept({ type: 'done', ...(this.sessionId ? { resumeHandle: this.sessionId } : {}), terminationReason: reason });
   }
 
   fail(message: string): AgentEvent[] {
-    if (this.terminal) return [];
-    this.terminal = true;
-    return this.prependPendingText([
-      { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' },
-    ]);
+    return this.core.accept({ type: 'error', message: truncate(message, 4096), terminationReason: 'failed' });
   }
 
   protocolDrift(): ProtocolDriftState {
-    return { ...this.drift };
+    return this.core.protocolDrift();
   }
 
   terminalEmitted(): boolean {
-    return this.terminal;
+    return this.core.terminalEmitted();
   }
 
   private translateMeta(raw: Record<string, unknown>): AgentEvent[] {
@@ -103,52 +70,51 @@ export class KimiJsonlTranslator {
     switch (metaType) {
       case 'system.version':
         this.version = stringValue(raw.version) ?? this.version;
-        return [];
+        return [{ type: 'liveness' }];
       case 'session.resume_hint': {
         const sessionId = stringValue(raw.session_id);
         if (!sessionId) {
-          this.drift.anomalies++;
+          this.core.anomaly();
           return [];
         }
         this.sessionId = sessionId;
         return [{ type: 'system', resumeHandle: sessionId }];
       }
       default:
-        this.drift.unknownEvents++;
-        log.warn('jsonl', 'unknown_event', { eventType: `meta:${metaType ?? '?'}` });
+        this.core.unknown(`meta:${metaType ?? '?'}`);
         return [];
     }
   }
 
   private translateAssistant(raw: Record<string, unknown>): AgentEvent[] {
     if (Array.isArray(raw.tool_calls) && raw.tool_calls.length > 0) {
-      return this.prependPendingText(this.translateToolCalls(raw.tool_calls));
+      return this.translateToolCalls(raw.tool_calls);
     }
     const content = stringValue(raw.content);
-    return content ? this.queueAssistantText(content) : [];
+    return content ? this.core.accept({ type: 'answer', text: content }) : [];
   }
 
   private translateToolCalls(toolCalls: unknown[]): AgentEvent[] {
     const events: AgentEvent[] = [];
     for (const call of toolCalls) {
       if (!isRecord(call)) {
-        this.drift.anomalies++;
+        this.core.anomaly();
         continue;
       }
       const id = stringValue(call.id);
       const fn = recordValue(call.function);
       const name = fn ? stringValue(fn.name) : undefined;
       if (!id || !name) {
-        this.drift.anomalies++;
+        this.core.anomaly();
         continue;
       }
       this.startedToolCalls.set(id, name);
-      events.push({
+      events.push(...this.core.accept({ type: 'boundary', toolId: id }), ...this.core.accept({
         type: 'tool_use',
         id,
         name,
         input: parseToolArguments(fn?.arguments),
-      });
+      }));
     }
     return events;
   }
@@ -156,11 +122,8 @@ export class KimiJsonlTranslator {
   private translateToolResult(raw: Record<string, unknown>): AgentEvent[] {
     const id = stringValue(raw.tool_call_id);
     if (!id) {
-      this.drift.anomalies++;
+      this.core.anomaly();
       return [];
-    }
-    if (!this.startedToolCalls.has(id)) {
-      this.drift.anomalies++;
     }
     const name = this.startedToolCalls.get(id);
     this.startedToolCalls.delete(id);
@@ -168,33 +131,16 @@ export class KimiJsonlTranslator {
     // Kimi's shell status is the leading system part (0.38 and current
     // soul/message.py), separate from the command's arbitrary stdout data.
     const failedExit = /^<system>(?:ERROR: )?Command failed with exit code: (-?\d+)\.<\/system>/.exec(output);
-    return [
+    return [...this.core.accept({ type: 'boundary' }), ...this.core.accept(
       {
         type: 'tool_result',
         id,
         output,
         isError: /^(?:Bash|Shell)$/i.test(name ?? '') && failedExit !== null && Number(failedExit[1]) !== 0,
       },
-    ];
+    )];
   }
 
-  private queueAssistantText(message: string): AgentEvent[] {
-    // Same dedup rationale as the codex translator: an identical repeat is
-    // the same message announced twice, not a new one.
-    if (message === this.pendingAssistantText) return [];
-    const events = this.pendingAssistantText
-      ? [{ type: 'text' as const, delta: `${this.pendingAssistantText}\n\n` }]
-      : [];
-    this.pendingAssistantText = message;
-    return events;
-  }
-
-  private prependPendingText(events: AgentEvent[]): AgentEvent[] {
-    if (events.length === 0 || !this.pendingAssistantText) return events;
-    const pending = this.pendingAssistantText;
-    this.pendingAssistantText = undefined;
-    return [{ type: 'text', delta: `${pending}\n\n` }, ...events];
-  }
 }
 
 function toolOutputText(content: unknown): string {
@@ -211,20 +157,4 @@ function parseToolArguments(value: unknown): unknown {
   } catch {
     return { raw };
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null;
-}
-
-function recordValue(value: unknown): Record<string, unknown> | undefined {
-  return isRecord(value) ? value : undefined;
-}
-
-function stringValue(value: unknown): string | undefined {
-  return typeof value === 'string' ? value : undefined;
-}
-
-function truncate(value: string, max: number): string {
-  return value.length > max ? value.slice(0, max) : value;
 }

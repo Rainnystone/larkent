@@ -1,16 +1,20 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
+import { setImmediate as yieldIO } from 'node:timers/promises';
 import { join } from 'node:path';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AutoActionAuth } from '../../../src/automations/action-auth';
 import { createAutomationBoard } from '../../../src/automations/board';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
-import { flushPendingDraftCards, handleAutoCommand } from '../../../src/automations/command';
+import { handleAutoCommand } from '../../../src/automations/command';
+import { flushDraftConfirmations } from '../../../src/automations/draft-confirmation';
+import { completeDraftEnd } from '../../helpers/draft-confirmation';
 import { AutomationsStore } from '../../../src/automations/store';
 import { CallbackNonceStore } from '../../../src/card/callback-store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
-import type { CommandContext } from '../../../src/commands';
+import type { UserActionContext } from '../../../src/commands';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { CardSchemaError } from '../../helpers/card-schema2';
@@ -23,13 +27,42 @@ const NOW = Date.UTC(2026, 9, 17, 3, 0, 0);
 const LOG_AT = new Date('2026-05-25T12:00:00.000Z');
 
 const dirs: string[] = [];
+const stores: AutomationsStore[] = [];
 
 afterEach(async () => {
+  await Promise.all(stores.splice(0).map(store => store.flush().catch(() => {})));
   await closeLogger();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
 describe('automation draft card delivery', () => {
+  it('keeps the new confirmation binding when the end card is clicked before its initial command returns', async () => {
+    const h = await harness();
+    const posting = h.command('om_end', 'new 每个工作日 09:00 | 站会 | 提醒站会');
+    let endMessageId = '';
+    const clicking = (async () => {
+      for (;;) {
+        const draft = h.store.listDrafts()[0];
+        if (draft && draftConfirmationDelivery(draft).messageId) {
+          if (draft.op === 'delete') throw new Error('expected an end-date draft');
+          endMessageId = draftConfirmationDelivery(draft).messageId!;
+          return completeDraftEnd({ automations: h.store, autoAuth: h.autoAuth, channel: h.channel as never, now: () => NOW },
+            draft, NOW + 7 * 24 * 60 * 60_000, endMessageId);
+        }
+        await yieldIO();
+      }
+    })();
+    const settled = await Promise.allSettled([posting, clicking]);
+    expect(settled.map(result => result.status)).toEqual(['fulfilled', 'fulfilled']);
+    const current = h.store.listDrafts()[0]!;
+    expect(current).toBeDefined();
+    if (current.op === 'delete') throw new Error('expected a create draft');
+    expect(current.pendingRecurring).toBeUndefined();
+    expect(draftConfirmationDelivery(current).messageId).not.toBe(endMessageId);
+    expect(JSON.stringify(h.channel.sent.at(-1)?.content)).toContain('确认自动化');
+    expect(h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
+  });
+
   it('deletes the draft and replies in text when createCard returns 200610', async () => {
     const h = await harness();
     h.channel.cardErrors.create = new CardSchemaError();
@@ -58,11 +91,11 @@ describe('automation draft card delivery', () => {
     await h.command('om_bad', 'new in 15m | 交周报 | 提醒交周报');
 
     expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeUndefined();
     expect(markdowns(h.channel)).toEqual([]);
 
     h.channel.cardErrors.create = new CardSchemaError();
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -80,17 +113,17 @@ describe('automation draft card delivery', () => {
     await h.command('om_down', 'new in 15m | 交周报 | 提醒交周报');
 
     expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeUndefined();
     expect(markdowns(h.channel)).toEqual([]);
     expect(await logEvents(h.logsDir, 'draft.card-deferred')).toHaveLength(1);
 
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
       now: () => NOW,
     });
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeTruthy();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeTruthy();
     expect(JSON.stringify(h.channel.sent)).toContain('auto.confirm');
     expect(markdowns(h.channel)).toEqual([]);
   });
@@ -100,9 +133,9 @@ describe('automation draft card delivery', () => {
     h.down = true;
     await h.command('om_late', 'new every 10m 11:00-11:20 until 2026-10-17 11:20 | 短窗 | 提醒');
     expect(h.store.listDrafts()).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeUndefined();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeUndefined();
 
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -157,7 +190,7 @@ describe('automation draft card delivery', () => {
       return orig();
     };
 
-    await flushPendingDraftCards({
+    await flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -166,7 +199,7 @@ describe('automation draft card delivery', () => {
     await board.refresh();
 
     expect(h.store.listDrafts().map((draft) => draft.draftId)).toEqual([secondId]);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toBeTruthy();
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toBeTruthy();
     expect(firstId).not.toBe(secondId);
     expect(markdowns(h.channel)).toContain('确认卡片发送失败（飞书错误 200610），未创建任务。请稍后重试。');
     expect(JSON.stringify(h.channel.sent)).toContain('auto.confirm');
@@ -190,16 +223,18 @@ describe('automation draft card delivery', () => {
     });
     const orig = h.channel.createCard.bind(h.channel);
     let creates = 0;
+    let enteredFirst!: () => void;
+    const firstCreate = new Promise<void>(resolve => { enteredFirst = resolve; });
     let releaseFirst!: () => void;
     const held = new Promise<void>((resolve) => {
       releaseFirst = resolve;
     });
     h.channel.createCard = async (card) => {
       creates += 1;
-      if (creates === 1) await held;
+      if (creates === 1) { enteredFirst(); await held; }
       return orig(card);
     };
-    const flush = () => flushPendingDraftCards({
+    const flush = () => flushDraftConfirmations({
       channel: h.channel as never,
       automations: h.store,
       autoAuth: h.autoAuth,
@@ -207,7 +242,7 @@ describe('automation draft card delivery', () => {
     });
 
     const first = flush();
-    for (let n = 0; creates < 1 && n < 20; n++) await Promise.resolve();
+    await firstCreate;
     expect(creates).toBe(1);
     const second = flush();
     await Promise.resolve();
@@ -217,7 +252,7 @@ describe('automation draft card delivery', () => {
     await Promise.all([first, second]);
     expect(creates).toBe(1);
     expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('auto.confirm'))).toHaveLength(1);
-    expect(h.store.listDrafts()[0]?.cardMessageId).toEqual(expect.any(String));
+    expect(draftConfirmationDelivery(h.store.listDrafts()[0]).messageId).toEqual(expect.any(String));
   });
 });
 
@@ -232,6 +267,7 @@ async function harness() {
     statusPath: join(dir, 'automations-status.json'),
     now: () => NOW,
   });
+  stores.push(store);
   const autoAuth = new AutoActionAuth({
     secret: 'auto-secret',
     nonceStore: new CallbackNonceStore(join(dir, 'nonces.json')),
@@ -268,7 +304,7 @@ async function harness() {
     autoAuth,
     now: () => NOW,
     isLinkDown: () => down,
-  } as unknown as CommandContext);
+  } as unknown as UserActionContext);
   return {
     dir,
     logsDir,

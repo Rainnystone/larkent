@@ -7,6 +7,7 @@ export interface RunHandle {
   run: AgentRun;
   interrupted: boolean;
   stopRequest?: StopRequest;
+  /** Set once by RunExecutor after child exit, cleanup and source drainage. */
   outcome?: RunOutcome;
   /** Last agent-stream event (or register time if none yet). */
   lastEventAt: number;

@@ -33,8 +33,8 @@ describe('terminal text cleanup', () => {
     ];
     const result = events.find((event) => event.type === 'tool_result');
     expect(result).toMatchObject({ type: 'tool_result', output: 'DONE' });
-    const final = events.find((event) => event.type === 'final_text');
-    expect(final).toEqual({ type: 'final_text', content: 'RED' });
+    const final = events.find((event) => event.type === 'text' && event.heldBack);
+    expect(final).toEqual({ type: 'text', delta: 'RED', heldBack: true });
     expect(JSON.stringify(events)).not.toContain('\\u001b');
     expect(JSON.stringify(events)).not.toContain('\\u0007');
   });

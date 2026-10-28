@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { CardActionEvent, NormalizedMessage } from '@larksuite/channel';
@@ -10,6 +11,7 @@ import { FEISHU_LINK_SILENT_PROBE_MS, FEISHU_LINK_TICK_MS } from '../../../src/b
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
+import { cardButtonValue } from '../../helpers/card-button-value';
 import { CardSchemaError } from '../../helpers/card-schema2';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
 import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel';
@@ -46,7 +48,7 @@ describe('automation board card', () => {
     await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
     const confirm = confirmCard(h);
     await h.channel.handlers.cardAction?.(
-      cardClick(MATE, confirmToken(confirm), h.store.listDrafts()[0]!.cardMessageId!),
+      cardClick(MATE, confirmToken(confirm), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!),
     );
     await waitForBoard(h);
 
@@ -305,9 +307,8 @@ describe('automation board card', () => {
       boardClick(USER, pauseToken(board.text), board.messageId, 'auto.pause'),
     );
     expect(h.store.get(1)?.paused).toBe(true);
-    await waitFor(() => h.channel.callLog.some((call) => call.op === 'updateCard'));
-    expect(h.channel.callLog.some((call) => call.op === 'updateCard')).toBe(true);
-    expect(h.channel.callLog.some((call) => call.op === 'updateCardById')).toBe(false);
+    await waitFor(() => h.channel.callLog.some((call) => call.op === 'updateCard' && call.messageId === board.messageId));
+    expect(h.channel.updatedCards.some(update => update.messageId === board.messageId)).toBe(true);
   });
 
   it('pauses, resumes, and deletes through board callbacks', async () => {
@@ -338,6 +339,37 @@ describe('automation board card', () => {
     await waitFor(() => latestBoard(h).text.includes('暂无'));
   });
 
+  it('accepts the full rendered board button value including its click id', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    const board = latestBoard(h);
+    const value = cardButtonValue(JSON.parse(board.text), 'auto.pause');
+    expect(typeof value.a).toBe('string');
+    const tap = await h.channel.handlers.cardAction?.({
+      action: { value },
+      chatId: CHAT,
+      messageId: board.messageId,
+      operator: { openId: USER, name: 'Op' },
+    } as unknown as CardActionEvent);
+    expect(tap).toEqual({ toast: { type: 'success', content: '已暂停 #1' } });
+    expect(h.store.get(1)?.paused).toBe(true);
+  });
+
+  it('accepts the full rendered confirm button value including its click id', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
+    const value = cardButtonValue(JSON.parse(confirmCard(h)), 'auto.confirm');
+    expect(typeof value.a).toBe('string');
+    const tap = await h.channel.handlers.cardAction?.({
+      action: { value },
+      chatId: CHAT,
+      messageId: draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!,
+      operator: { openId: USER, name: 'Op' },
+    } as unknown as CardActionEvent);
+    expect(tap).toMatchObject({ toast: { type: 'success' } });
+    expect(h.store.list()).toHaveLength(1);
+  });
+
   it('still refreshes the board when the first cardless draft fails on link recovery', async () => {
     const h = await harness();
     await confirmOne(h);
@@ -345,7 +377,7 @@ describe('automation board card', () => {
     await h.bridge.tickLink();
     await h.channel.handlers.message?.(mention('om_a', '/auto new in 15m | 甲 | 提醒甲'));
     await h.channel.handlers.message?.(mention('om_b', '/auto new in 20m | 乙 | 提醒乙'));
-    expect(h.store.listDrafts().map((draft) => draft.cardMessageId)).toEqual([undefined, undefined]);
+    expect(h.store.listDrafts().map((draft) => draftConfirmationDelivery(draft).messageId)).toEqual([undefined, undefined]);
 
     const order: string[] = [];
     const origCreate = h.channel.createCard.bind(h.channel);
@@ -366,7 +398,7 @@ describe('automation board card', () => {
       const first = drafts[0];
       return drafts.length === 1
         && Boolean(first && 'name' in first && first.name === '乙')
-        && Boolean(first?.cardMessageId)
+        && Boolean(draftConfirmationDelivery(first).messageId)
         && order.at(-1) === 'update';
     });
 
@@ -520,7 +552,7 @@ async function harness(opts: {
   if (opts.rawCardFallback) {
     const origSend = channel.send.bind(channel);
     channel.send = (async (recipientId, content, sendOpts) => {
-      if (content && typeof content === 'object' && 'cardId' in content && !('card' in content)) {
+      if (content && typeof content === 'object' && 'cardId' in content && !('card' in content) && !(sendOpts as { replyTo?: string } | undefined)?.replyTo) {
         throw new Error('cardid is invalid');
       }
       return origSend(recipientId, content, sendOpts);
@@ -590,7 +622,7 @@ async function confirmOne(h: Awaited<ReturnType<typeof harness>>): Promise<void>
   await h.channel.handlers.message?.(mention('om_new', '/auto new in 15m | 交周报 | 提醒交周报'));
   const card = confirmCard(h);
   await h.channel.handlers.cardAction?.(
-    cardClick(USER, confirmToken(card), h.store.listDrafts()[0]!.cardMessageId!),
+    cardClick(USER, confirmToken(card), draftConfirmationDelivery(h.store.listDrafts()[0]!).messageId!),
   );
   await waitForBoard(h);
 }
@@ -631,7 +663,7 @@ function confirmCard(h: { channel: ReturnType<typeof createRecordingLarkChannel>
 }
 
 function confirmToken(cardJson: string): string {
-  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v1\.[^"]+)"/);
+  const match = cardJson.match(/"cmd":"auto.confirm","auto_token":"(auto_cb\.v[0-9]+\.[^"]+)"/);
   expect(match?.[1], 'expected auto.confirm token').toBeDefined();
   return match![1]!;
 }
@@ -641,7 +673,7 @@ function pauseToken(cardJson: string): string {
 }
 
 function boardToken(cardJson: string, cmd: 'auto.pause' | 'auto.resume' | 'auto.delete'): string {
-  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_board\\.v1\\.[^"]+)"`));
+  const match = cardJson.match(new RegExp(`"cmd":"${cmd}","auto_token":"(auto_board\\.v[0-9]+\\.[^"]+)"`));
   expect(match?.[1], `expected ${cmd} token`).toBeDefined();
   return match![1]!;
 }

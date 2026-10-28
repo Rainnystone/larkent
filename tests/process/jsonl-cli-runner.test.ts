@@ -390,7 +390,8 @@ describe('runner settlement boundaries', () => {
 
 async function collect(events: AsyncIterable<AgentEvent>): Promise<AgentEvent[]> {
   const out: AgentEvent[] = [];
-  for await (const event of events) out.push(event);
+  // Adapter process assertions retain renderable output; replay/watchdog tests cover activity.
+  for await (const event of events) if (event.type !== 'liveness') out.push(event);
   return out;
 }
 
@@ -1974,7 +1975,6 @@ describe('GrokAdapter process contract', () => {
 
     expect(run.runId).toBe('run-fresh');
     expect(await collect(run.events)).toEqual([
-      { type: 'system' },
       { type: 'system', resumeHandle: GROK_SESSION },
       { type: 'final_text', content: 'OK' },
       { type: 'done', resumeHandle: GROK_SESSION, terminationReason: 'normal' },
@@ -2096,7 +2096,6 @@ describe('GrokAdapter process contract', () => {
         input: { command: 'echo hi' },
       },
       { type: 'tool_result', id: 'call_1', output: '{"stdout":"hi\\n"}', isError: false },
-      { type: 'system' },
       { type: 'system', resumeHandle: GROK_SESSION },
       { type: 'final_text', content: 'done' },
       { type: 'done', resumeHandle: GROK_SESSION, terminationReason: 'normal' },
@@ -2116,7 +2115,6 @@ describe('GrokAdapter process contract', () => {
     });
 
     expect(await collect(run.events)).toEqual([
-      { type: 'system' },
       { type: 'text', delta: 'orphan\n\n' },
       {
         type: 'error',
@@ -2141,7 +2139,6 @@ describe('GrokAdapter process contract', () => {
     });
 
     expect(await collect(run.events)).toEqual([
-      { type: 'system' },
       { type: 'text', delta: 'before failure\n\n' },
       {
         type: 'error',

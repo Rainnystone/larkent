@@ -1,0 +1,48 @@
+{"transcript": 1, "kind": "grok", "cliVersion": "grok 1.0.71 (441b85a007ff)", "capturedAt": "2026-10-27", "scenario": "long-tool", "command": "grok --prompt-file <TMP> --output-format streaming-json --rules <RULES> --always-approve --no-auto-update", "notes": "t = ms since spawn; run in fresh mkdtemp cwd"}
+{"t": 4, "note": "spawned pid=31044"}
+{"t": 426, "line": "{\"type\": \"available_commands\", \"tools\": [\"run_terminal_command\", \"read_file\", \"search_replace\", \"list_dir\", \"grep\", \"kill_command_or_subagent\", \"todo_write\", \"get_command_or_subagent_output\", \"spawn_subagent\", \"scheduler_create\", \"scheduler_delete\", \"scheduler_list\", \"monitor\", \"search_tool\", \"use_tool\", \"workflow\", \"enter_plan_mode\", \"exit_plan_mode\", \"ask_user_question\", \"send_feedback\", \"web_search\", \"web_fetch\", \"image_gen\", \"image_edit\", \"image_to_video\", \"reference_to_video\", \"write\"], \"commands\": [\"<REDACTED_LOCAL_ENV>\"]}"}
+{"t": 426, "line": "{\"type\": \"available_commands\", \"tools\": [\"run_terminal_command\", \"read_file\", \"search_replace\", \"list_dir\", \"grep\", \"kill_command_or_subagent\", \"todo_write\", \"get_command_or_subagent_output\", \"spawn_subagent\", \"scheduler_create\", \"scheduler_delete\", \"scheduler_list\", \"monitor\", \"search_tool\", \"use_tool\", \"workflow\", \"enter_plan_mode\", \"exit_plan_mode\", \"ask_user_question\", \"send_feedback\", \"web_search\", \"web_fetch\", \"image_gen\", \"image_edit\", \"image_to_video\", \"reference_to_video\", \"write\"], \"commands\": [\"<REDACTED_LOCAL_ENV>\"]}"}
+{"t": 5311, "line": "{\"type\": \"thought\", \"data\": \"Running `sleep 45 &&\"}"}
+{"t": 5311, "line": "{\"type\": \"thought\", \"data\": \" echo done` via the \"}"}
+{"t": 5313, "line": "{\"type\": \"thought\", \"data\": \"shell tool. Will say\"}"}
+{"t": 5451, "line": "{\"type\": \"thought\", \"data\": \" DONE after completion.\"}"}
+{"t": 6686, "line": "{\"type\": \"thought\", \"data\": \"\\n\\nSetting `block_until_ms`\"}"}
+{"t": 6819, "line": "{\"type\": \"thought\", \"data\": \" to 60 seconds so the\"}"}
+{"t": 6946, "line": "{\"type\": \"thought\", \"data\": \" shell tool waits for\"}"}
+{"t": 7055, "line": "{\"type\": \"thought\", \"data\": \" the 45-second sleep\"}"}
+{"t": 7166, "line": "{\"type\": \"thought\", \"data\": \" to finish.\"}"}
+{"t": 7419, "line": "{\"type\": \"text\", \"data\": \"I'll\"}"}
+{"t": 7436, "line": "{\"type\": \"text\", \"data\": \" run\"}"}
+{"t": 7443, "line": "{\"type\": \"text\", \"data\": \" `\"}"}
+{"t": 7448, "line": "{\"type\": \"text\", \"data\": \"sleep\"}"}
+{"t": 7458, "line": "{\"type\": \"text\", \"data\": \" \"}"}
+{"t": 7467, "line": "{\"type\": \"text\", \"data\": \"45\"}"}
+{"t": 7483, "line": "{\"type\": \"text\", \"data\": \" &&\"}"}
+{"t": 7518, "line": "{\"type\": \"text\", \"data\": \" echo\"}"}
+{"t": 7518, "line": "{\"type\": \"text\", \"data\": \" done\"}"}
+{"t": 7518, "line": "{\"type\": \"text\", \"data\": \"`\"}"}
+{"t": 7518, "line": "{\"type\": \"text\", \"data\": \" and\"}"}
+{"t": 7545, "line": "{\"type\": \"text\", \"data\": \" wait\"}"}
+{"t": 7572, "line": "{\"type\": \"text\", \"data\": \" for\"}"}
+{"t": 7598, "line": "{\"type\": \"text\", \"data\": \" it\"}"}
+{"t": 7609, "line": "{\"type\": \"text\", \"data\": \" to\"}"}
+{"t": 7609, "line": "{\"type\": \"text\", \"data\": \" finish\"}"}
+{"t": 7609, "line": "{\"type\": \"text\", \"data\": \" before\"}"}
+{"t": 7609, "line": "{\"type\": \"text\", \"data\": \" rep\"}"}
+{"t": 7609, "line": "{\"type\": \"text\", \"data\": \"lying\"}"}
+{"t": 7609, "line": "{\"type\": \"text\", \"data\": \".\"}"}
+{"t": 7704, "line": "{\"type\": \"available_commands\", \"tools\": [\"run_terminal_command\", \"read_file\", \"search_replace\", \"list_dir\", \"grep\", \"kill_command_or_subagent\", \"todo_write\", \"get_command_or_subagent_output\", \"spawn_subagent\", \"scheduler_create\", \"scheduler_delete\", \"scheduler_list\", \"monitor\", \"search_tool\", \"use_tool\", \"workflow\", \"enter_plan_mode\", \"exit_plan_mode\", \"ask_user_question\", \"send_feedback\", \"web_search\", \"web_fetch\", \"image_gen\", \"image_edit\", \"image_to_video\", \"reference_to_video\", \"write\", \"<TOK_1>\", \"<TOK_2>\"], \"commands\": [\"<REDACTED_LOCAL_ENV>\"]}"}
+{"t": 7705, "line": "{\"type\": \"usage\", \"usage\": {\"input_tokens\": 25630, \"output_tokens\": 369, \"cache_read_input_tokens\": 2304, \"cache_creation_input_tokens\": 0, \"reasoning_tokens\": 312}, \"signature\": \"<SIG_1>\"}"}
+{"t": 7705, "line": "{\"type\": \"tool_call\", \"toolCallId\": \"<TOOL_1>\", \"title\": \"run_terminal_command\", \"kind\": \"execute\", \"status\": \"pending\", \"toolName\": \"run_terminal_command\", \"rawInput\": {\"command\": \"sleep 45 && echo done\", \"description\": \"Sleep 45 seconds then echo done\", \"block_until_ms\": 60000}, \"content\": [], \"locations\": []}"}
+{"t": 7705, "line": "{\"type\": \"tool_call_update\", \"toolCallId\": \"<TOOL_1>\", \"status\": null, \"content\": [{\"type\": \"content\", \"content\": {\"type\": \"text\", \"text\": \"Sleep 45 seconds then echo done\"}}], \"rawOutput\": null, \"locations\": []}"}
+{"t": 7709, "line": "{\"type\": \"tool_call_update\", \"toolCallId\": \"<TOOL_1>\", \"status\": \"in_progress\", \"content\": [{\"type\": \"content\", \"content\": {\"type\": \"text\", \"text\": \"\"}}], \"rawOutput\": {\"type\": \"Bash\", \"output\": [], \"output_for_prompt\": \"\", \"exit_code\": 0, \"command\": \"sleep 45 && echo done\", \"truncated\": false, \"signal\": null, \"timed_out\": false, \"description\": null, \"current_dir\": \"/private<CWD>\", \"output_file\": \"\", \"total_bytes\": 0}, \"locations\": []}"}
+{"t": 52791, "line": "{\"type\": \"tool_call_update\", \"toolCallId\": \"<TOOL_1>\", \"status\": \"in_progress\", \"content\": [{\"type\": \"content\", \"content\": {\"type\": \"text\", \"text\": \"done\\n\"}}], \"rawOutput\": {\"type\": \"Bash\", \"output\": [100, 111, 110, 101, 10], \"output_for_prompt\": \"done\\n\", \"exit_code\": 0, \"command\": \"sleep 45 && echo done\", \"truncated\": false, \"signal\": null, \"timed_out\": false, \"description\": null, \"current_dir\": \"/private<CWD>\", \"output_file\": \"\", \"total_bytes\": 5}, \"locations\": []}"}
+{"t": 52791, "line": "{\"type\": \"tool_call_update\", \"toolCallId\": \"<TOOL_1>\", \"status\": \"completed\", \"content\": [{\"type\": \"content\", \"content\": {\"type\": \"text\", \"text\": \"done\\n\"}}], \"rawOutput\": {\"type\": \"Bash\", \"output\": [100, 111, 110, 101, 10], \"output_for_prompt\": \"exit: 0\\ndone\\n\", \"exit_code\": 0, \"command\": \"sleep 45 && echo done\", \"truncated\": false, \"signal\": null, \"timed_out\": false, \"description\": \"Sleep 45 seconds then echo done\", \"current_dir\": \"/private<CWD>\", \"output_file\": \"<HOME>/.grok/sessions/%2Fprivate%2Fvar%2Ffolders%2Fg6%2Fcb5_3v290ml5ycqbwq63y4n40000gn%2FT%2Fcapture-grok-TxEALs/<UUID_1>/terminal/call-<UUID_2>-0.log\", \"total_bytes\": 5}, \"locations\": []}"}
+{"t": 54678, "line": "{\"type\": \"text\", \"data\": \"DONE\"}"}
+{"t": 54728, "line": "{\"type\": \"available_commands\", \"tools\": [\"run_terminal_command\", \"read_file\", \"search_replace\", \"list_dir\", \"grep\", \"kill_command_or_subagent\", \"todo_write\", \"get_command_or_subagent_output\", \"spawn_subagent\", \"scheduler_create\", \"scheduler_delete\", \"scheduler_list\", \"monitor\", \"search_tool\", \"use_tool\", \"workflow\", \"enter_plan_mode\", \"exit_plan_mode\", \"ask_user_question\", \"send_feedback\", \"web_search\", \"web_fetch\", \"image_gen\", \"image_edit\", \"image_to_video\", \"reference_to_video\", \"write\", \"<TOK_1>\", \"<TOK_2>\"], \"commands\": [\"<REDACTED_LOCAL_ENV>\"]}"}
+{"t": 54729, "line": "{\"type\": \"usage\", \"usage\": {\"input_tokens\": 417, \"output_tokens\": 17, \"cache_read_input_tokens\": 27904, \"cache_creation_input_tokens\": 0, \"reasoning_tokens\": 16}, \"signature\": \"<SIG_2>\"}"}
+{"t": 54842, "line": "{\"type\": \"end\", \"stopReason\": \"end_turn\", \"sessionId\": \"<UUID_1>\", \"requestId\": \"<ID_3>\", \"cwd\": \"/private<CWD>\", \"usage\": {\"input_tokens\": 26047, \"cache_read_input_tokens\": 30208, \"cache_creation_input_tokens\": 0, \"output_tokens\": 386, \"reasoning_tokens\": 328, \"total_tokens\": 56641}, \"num_turns\": 2, \"total_cost_usd\": 0.069514, \"total_cost_usd_ticks\": 695140000, \"modelUsage\": {\"grok-4.7-build\": {\"inputTokens\": 26047, \"outputTokens\": 386, \"cacheReadInputTokens\": 30208, \"cacheCreationInputTokens\": 0, \"modelCalls\": 2, \"costUSD\": 0.069514}}}"}
+{"t": 57263, "exit": {"code": 0, "signal": null}}
+{"t": 57263, "note": "translator tail event: {\"type\":\"usage\",\"inputTokens\":26047,\"outputTokens\":386,\"cachedInputTokens\":30208,\"reasoningOutputTokens\":328,\"costUsd\":0.069514}"}
+{"t": 57263, "note": "translator tail event: {\"type\":\"final_text\",\"content\":\"DONE\"}"}
+{"t": 57263, "note": "translator tail event: {\"type\":\"done\",\"resumeHandle\":\"<UUID_1>\",\"terminationReason\":\"normal\"}"}

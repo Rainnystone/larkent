@@ -1,3 +1,4 @@
+import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { mkdir, rename, rm } from 'node:fs/promises';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { automationButton, automationClick, createAutomationToolHarness } from '../../helpers/automation-tool-harness';
@@ -20,7 +21,7 @@ function harness() {
 }
 function lastConfirmation(h: Awaited<ReturnType<typeof harness>>) {
   const sent = h.channel.sent.filter(item => JSON.stringify(item.content).includes('auto.confirm')).at(-1)!;
-  return { messageId: h.store.listDrafts().at(-1)!.cardMessageId!, value: automationButton(sent.content, 'auto.confirm') };
+  return { messageId: draftConfirmationDelivery(h.store.listDrafts().at(-1)!).messageId!, value: automationButton(sent.content, 'auto.confirm') };
 }
 
 it('auto-supersedes a same-name revision that omits supersedesOperationId and rejects the old card', async () => {

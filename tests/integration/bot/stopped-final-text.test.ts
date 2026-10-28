@@ -136,7 +136,7 @@ setInterval(() => {}, 1000);
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const journal = new TurnJournal(join(tmp.profile, 'turn-journal.json'));
   await journal.load();
-  const store = new AutomationsStore({ path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'),
+  const store = new AutomationsStore({ journal, path: join(tmp.profile, 'automations.json'), logPath: join(tmp.profile, 'automations.log'),
     statusPath: join(tmp.profile, 'automations-status.json'), now: () => NOW });
   await store.load();
   if (options.automatic) await store.create({
