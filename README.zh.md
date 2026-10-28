@@ -2,7 +2,9 @@
 
 把你的 coding agent 接入飞书 / Lark。通过私聊或群聊，使用运行在自己电脑或服务器上的 Claude Code、Codex CLI、Kimi Code、Grok Build、Cursor CLI、Antigravity CLI 和 Devin CLI。
 
-Larkent 受到 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge) 启发，并在此基础上进行了架构重构：统一 agent 注册与进程执行机制，让多个 CLI 共用运行底座，同时保持各 bot 的配置、会话和运行状态独立。
+Larkent 源自 [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge)——一个把飞书 / Lark 连接到 Claude Code 和 Codex 的桥接工具。上游项目提供了最初的想法和可用的基础：在聊天里和 bot 对话、每个会话独立延续、回复在 agent 工作时持续更新，以及在本机用自己的账号运行。
+
+Larkent 保留这些体验，并扩展到更多 agent。主要区别在于，七种 CLI 现在共用同一套基础，所以无论选择哪个 agent，会话、命令以及重启或断线后的恢复都表现一致。每个 bot 仍拥有独立的 profile，单独保存凭据、会话和定时任务。Larkent 还内置定时提醒与 agent 任务、各 CLI 都能使用的 skill，以及用于管理 profile 的本地 Web 控制台。
 
 [English](README.md) | **简体中文**
 

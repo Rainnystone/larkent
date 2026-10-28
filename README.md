@@ -2,7 +2,9 @@
 
 Bring your coding agents into Feishu / Lark. Larkent connects conversations to Claude Code, Codex CLI, Kimi Code, Grok Build, Cursor CLI, Antigravity CLI, and Devin CLI running on your own machine or server.
 
-Inspired by [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge), Larkent has since undergone an architectural refactor: a shared agent registry and process runner, independent bot profiles, and consistent session and lifecycle handling across multiple CLIs.
+Larkent grew out of [zarazhangrui/lark-coding-agent-bridge](https://github.com/zarazhangrui/lark-coding-agent-bridge), which connects Feishu / Lark to Claude Code and Codex. The original project supplied the idea and a working foundation: a bot in your chat, a separate session for each conversation, replies that update while the agent works, and everything running on your own machine with your own logins.
+
+Larkent keeps that experience and extends it to more agents. The main difference is that all seven CLIs now share one foundation, so sessions, commands, and recovery after a restart or a dropped connection work the same way whichever agent you choose. Each bot still has its own profile, credentials, sessions, and schedule. Larkent also adds scheduled reminders and agent tasks, skills that every CLI can use, and a local web console for managing profiles.
 
 **English** | [简体中文](README.zh.md)
 
