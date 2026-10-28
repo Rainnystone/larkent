@@ -236,6 +236,15 @@ export class TurnJournal {
     this.schedulePersist();
   }
 
+  retainDraftCards(referenced: ReadonlySet<string>): boolean {
+    if (this.persistenceDisabled) return false;
+    const kept = this.draftCards.filter(item => item.state === 'staged' || referenced.has(item.deliveryId));
+    if (kept.length === this.draftCards.length) return false;
+    this.draftCards = kept;
+    this.schedulePersist();
+    return true;
+  }
+
   enqueue(input: Omit<TurnJournalEntry, 'createdAt' | 'updatedAt'>): TurnJournalEntry {
     const now = this.now();
     const entry: TurnJournalEntry = {
