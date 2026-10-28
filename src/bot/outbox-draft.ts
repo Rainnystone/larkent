@@ -63,20 +63,31 @@ async function deliverOwned(input: Parameters<typeof deliverDraftCard>[0], deliv
     return result(item);
   }
   if (input.isDown?.()) return;
-  if (item.cardId) {
+  if (item.cardId && item.sendAttempted !== false) {
     const found = await readBackDraftCard(channel, item, input.botAppId);
     if (found) { await recordReceipt(found, item.cardId); return result(journal.getDraftCard(deliveryId)!); }
     return;
   }
   try {
-    const { cardId } = await channel.createCard(item.payload.card);
-    if (!cardId?.trim()) throw new Error('draft card missing card entity receipt');
-    journal.updateDraftCard(deliveryId, { cardId });
-    // Commit the entity before attempting a send. Restart must only read back.
-    await journal.flush();
-    item = journal.getDraftCard(deliveryId)!;
+    let cardId = item.cardId;
+    if (!cardId) {
+      ({ cardId } = await channel.createCard(item.payload.card));
+      if (!cardId?.trim()) throw new Error('draft card missing card entity receipt');
+      // Commit the entity before attempting a send. Until the attempt below is
+      // committed too, recovery sends this same entity instead of reading back.
+      journal.updateDraftCard(deliveryId, { cardId, sendAttempted: false });
+      await journal.flush();
+      item = journal.getDraftCard(deliveryId)!;
+    }
     if (item.state !== 'staged' || input.isDown?.() || !draftCards.getDraftCardReceipt(item.payload.draftId)) return;
-    const { threadId: _thread, chatId, ...options } = item.target;
+    // From here a send may land, so restart must only read back.
+    journal.updateDraftCard(deliveryId, { sendAttempted: true });
+    await journal.flush();
+    // A void or draft removal during that flush still wins; a link drop no
+    // longer may, or the committed attempt would strand the card unsent.
+    const latest = journal.getDraftCard(deliveryId);
+    if (latest?.state !== 'staged' || !draftCards.getDraftCardReceipt(latest.payload.draftId)) return;
+    const { threadId: _thread, chatId, ...options } = latest.target;
     const sent = await channel.send(chatId, { cardId }, withDeliveryUuid(options, deliveryId));
     if (!sent.messageId?.trim()) throw new Error('draft card missing message receipt');
     await recordReceipt(sent.messageId, cardId);

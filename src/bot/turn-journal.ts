@@ -225,7 +225,7 @@ export class TurnJournal {
     this.schedulePersist();
   }
 
-  updateDraftCard(deliveryId: string, change: Pick<Partial<DraftCardItem>, 'state' | 'cardId' | 'receipt' | 'rejection'>): void {
+  updateDraftCard(deliveryId: string, change: Pick<Partial<DraftCardItem>, 'state' | 'cardId' | 'sendAttempted' | 'receipt' | 'rejection'>): void {
     if (this.persistenceDisabled) throw new Error('Turn journal is not writable');
     this.queue.assertHealthy();
     const item = this.draftCards.find(entry => entry.deliveryId === deliveryId);
