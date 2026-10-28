@@ -38,8 +38,10 @@ const TZ = 'Asia/Shanghai';
 const LOG_AT = new Date('2026-05-25T12:00:00.000Z');
 
 const dirs: string[] = [];
+const stores: AutomationsStore[] = [];
 
 afterEach(async () => {
+  await Promise.all(stores.splice(0).map(store => store.flush().catch(() => {})));
   await closeLogger();
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -481,6 +483,7 @@ async function harness() {
     statusPath: join(dir, 'automations-status.json'),
     now: () => nowMs,
   });
+  stores.push(store);
   await store.load();
   const autoAuth = new AutoActionAuth({
     secret: 'auto-secret',

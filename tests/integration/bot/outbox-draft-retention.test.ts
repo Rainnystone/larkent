@@ -1,7 +1,9 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, expect, it } from 'vitest';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { afterEach, expect, it, vi } from 'vitest';
+import { TurnJournal } from '../../../src/bot/turn-journal';
 import { draftConfirmationDelivery } from '../../../src/automations/draft-confirmation';
 import { automationConfirmCard } from '../../../src/automations/confirm-card';
 import { sendAutomationDraftCard } from '../../../src/automations/draft-confirmation/delivery';
@@ -9,9 +11,54 @@ import { automationOperationScope, newAutomationOperationId } from '../../../src
 import { AutomationsStore } from '../../../src/automations/store';
 import { createFakeChannel } from '../../helpers/fake-channel';
 
+const fsGate = vi.hoisted(() => ({ beforeRename: undefined as undefined | ((destination: string) => Promise<void>) }));
+vi.mock('node:fs/promises', async original => {
+  const actual = await original<typeof import('node:fs/promises')>();
+  return { ...actual, rename: async (from: string, to: string) => { await fsGate.beforeRename?.(String(to)); return actual.rename(from, to); } };
+});
+
 const NOW = 1_760_000_000_000;
 const dirs: string[] = [];
-afterEach(async () => { await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+afterEach(async () => { fsGate.beforeRename = undefined; await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+
+it('commits a draft write without waiting for the shared journal, then drops the closed card on flush', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'draft-retention-'));
+  dirs.push(dir);
+  const journalPath = join(dir, 'journal.json');
+  const journal = new TurnJournal(journalPath, { now: () => NOW });
+  await journal.load();
+  const store = new AutomationsStore({ journal, path: join(dir, 'automations.json'), logPath: join(dir, 'automations.log'), statusPath: join(dir, 'status.json'), now: () => NOW });
+  await store.load();
+  const operationId = newAutomationOperationId(automationOperationScope('profile', 'oc_chat'), NOW + 1);
+  const draft = await store.saveDraft({ taskType: 'reminder', schedule: { kind: 'one-shot', fireAt: NOW + 600_000 }, timezone: 'UTC',
+    startAt: NOW + 600_000, endAt: NOW + 600_000, nextFireAt: NOW + 600_000, chatId: 'oc_chat', createdBy: 'ou_user',
+    name: 'closed sent', taskText: 'body', operationId }, { operationId, profile: 'profile', chatId: 'oc_chat', fingerprint: '1'.padStart(64, '0') });
+  await sendAutomationDraftCard(createFakeChannel({ botAppId: 'cli_bot', now: () => NOW + 500 }) as never, store, store.getDraft(draft.draftId)!, automationConfirmCard({
+    taskType: 'reminder', name: 'n', taskText: 'body', timezone: 'UTC', schedule: { kind: 'one-shot', fireAt: NOW + 600_000 },
+    now: NOW, confirmToken: 'auto_cb.v1.confirm', rejectToken: 'auto_cb.v1.reject' }), {});
+  const deliveryId = store.getDraftCardReceipt(draft.draftId)!.deliveryId!;
+  await store.flush();
+  expect(journal.getDraftCard(deliveryId)?.state).toBe('sent');
+
+  let release!: () => void;
+  const held = new Promise<void>(resolve => { release = resolve; });
+  let reached!: (draftsOnDisk: unknown[]) => void;
+  const journalWriteStarted = new Promise<unknown[]>(resolve => { reached = resolve; });
+  fsGate.beforeRename = async destination => {
+    if (destination !== journalPath) return;
+    fsGate.beforeRename = undefined;
+    reached(JSON.parse(await readFile(join(dir, 'automations.json'), 'utf8')).drafts);
+    await held;
+  };
+  try {
+    const taking = store.takeDraft(draft.draftId);
+    expect(await journalWriteStarted).toEqual([]);
+    expect(await Promise.race([taking.then(() => 'committed'), sleep(1000).then(() => 'waiting on journal')])).toBe('committed');
+  } finally { release(); }
+  await store.flush();
+  expect(journal.listDraftCards()).toEqual([]);
+  expect(JSON.parse(await readFile(journalPath, 'utf8')).items ?? {}).toEqual({});
+});
 
 it('drops terminal draft cards once no draft references them, keeping unresolved sends and live references across reload', async () => {
   const dir = await mkdtemp(join(tmpdir(), 'draft-retention-'));

@@ -16,7 +16,8 @@ import { createRecordingLarkChannel } from '../../helpers/recording-lark-channel
 const NOW = Date.UTC(2026, 9, 18, 3);
 const dirs: string[] = [];
 const nonces: CallbackNonceStore[] = [];
-afterEach(async () => { vi.useRealTimers(); await Promise.all(nonces.splice(0).map(store => store.flush())); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
+const stores: AutomationsStore[] = [];
+afterEach(async () => { vi.useRealTimers(); await Promise.all([...nonces.splice(0).map(store => store.flush()), ...stores.splice(0).map(store => store.flush().catch(() => {}))]); await Promise.all(dirs.splice(0).map(dir => rm(dir, { recursive: true, force: true }))); });
 
 it('submits one confirmation through the real Outbox and concurrent flushes leave one visible card', async () => {
   const h = await harness();
@@ -219,7 +220,7 @@ async function harness() {
   const dir = await mkdtemp(join(tmpdir(), 'draft-confirmation-')); dirs.push(dir);
   let now = NOW;
   const options = { path: join(dir, 'automations.json'), logPath: join(dir, 'automations.log'), statusPath: join(dir, 'status.json'), now: () => now };
-  const store = new AutomationsStore(options);
+  const store = new AutomationsStore(options); stores.push(store);
   const channel = createRecordingLarkChannel();
   const nonceStore = new CallbackNonceStore(join(dir, 'nonces.json')); nonces.push(nonceStore);
   const autoAuth = new AutoActionAuth({ secret: 'test-secret', nonceStore, now: () => now });

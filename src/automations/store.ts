@@ -1010,8 +1010,8 @@ export class AutomationsStore {
     return this.drafts.length !== before;
   }
 
-  private pruneDraftCards(): boolean {
-    return this.outboxJournal.retainDraftCards(new Set([...this.drafts, ...this.durableDrafts].flatMap(draft => draftReceipt(draft).deliveryId ?? [])));
+  private pruneDraftCards(): void {
+    this.outboxJournal.retainDraftCards(new Set([...this.drafts, ...this.durableDrafts].flatMap(draft => draftReceipt(draft).deliveryId ?? [])));
   }
 
   private viewItem(item: AutomationItem): AutomationItem {
@@ -1033,7 +1033,7 @@ export class AutomationsStore {
     this.hasDocument = true;
     this.schedulePersist();
     await this.queue.flush();
-    if (this.pruneDraftCards()) await this.outboxJournal.flush().catch(() => {});
+    this.pruneDraftCards();
     await this.logQueue.flush();
   }
 
