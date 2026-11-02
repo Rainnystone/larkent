@@ -80,7 +80,7 @@ describe('README runtime contract', () => {
     expect(docs).not.toContain('/doc ws bind');
   });
 
-  it('presents Larkent, credits its inspiration, and names all five CLI agents', async () => {
+  it('presents Larkent, credits its inspiration, and names all seven CLI agents', async () => {
     const [en, zh, pkgRaw, context] = await Promise.all([
       readFile(new URL('../../../README.md', import.meta.url), 'utf8'),
       readFile(new URL('../../../README.zh.md', import.meta.url), 'utf8'),
@@ -100,7 +100,15 @@ describe('README runtime contract', () => {
       expect(doc).toContain('(docs/agent-setup.md)');
       expect(doc).toContain('(docs/operations.md)');
       expect(doc).toContain('--domain all');
-      for (const agent of ['Claude Code', 'Codex CLI', 'Kimi Code', 'Grok Build', 'Cursor CLI']) {
+      for (const agent of [
+        'Claude Code',
+        'Codex CLI',
+        'Kimi Code',
+        'Grok Build',
+        'Cursor CLI',
+        'Antigravity CLI',
+        'Devin CLI',
+      ]) {
         expect(doc).toContain(agent);
       }
       expect(doc).not.toContain('SpaceXAI');
@@ -108,8 +116,8 @@ describe('README runtime contract', () => {
       expect(doc).not.toContain('larkent-for-grokbot');
       expect(doc).not.toMatch(/\]\((?:file:\/\/|\/(?!\/)|[A-Za-z]:\\)/);
     }
-    expect(en).toContain('architectural refactor');
-    expect(zh).toContain('架构重构');
+    expect(en).toContain('all seven CLIs now share one foundation');
+    expect(zh).toContain('七种 CLI 现在共用同一套基础');
     expect(context).toContain('Larkent connects CLI coding agents');
     expect(context).toContain('"default agent". There is none.');
     expect(pkg.description).toBe('Bridge Feishu/Lark bots to CLI coding agents');
@@ -137,7 +145,7 @@ describe('README runtime contract', () => {
     const listed = operations.split('\n').find(line => line.includes('identify distinct problems'));
     expect(listed).toBeDefined();
     for (const code of ['missing-root', 'invalid-root', 'invalid-package']) {
-      expect(listed).toContain(`\`${code}\``);
+      expect(listed).toContain(`\`${code}\`);
     }
   });
 
