@@ -145,7 +145,7 @@ describe('README runtime contract', () => {
     const listed = operations.split('\n').find(line => line.includes('identify distinct problems'));
     expect(listed).toBeDefined();
     for (const code of ['missing-root', 'invalid-root', 'invalid-package']) {
-      expect(listed).toContain(`\`${code}\`);
+      expect(listed).toContain('`' + code + '`');
     }
   });
 
