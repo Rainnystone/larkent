@@ -21,8 +21,10 @@ import {
 
 export const AUTO_PIN_FAILED_HINT = '看板置顶失败，任务不受影响。';
 
+export type BoardRefreshCause = 'changed' | 'recovered' | 'fire-settled';
+
 export interface AutomationBoard {
-  refresh(): Promise<void>;
+  refresh(cause?: BoardRefreshCause): Promise<void>;
   idle(): Promise<void>;
 }
 
@@ -65,7 +67,7 @@ class Board implements AutomationBoard {
     this.now = deps.now ?? Date.now;
   }
 
-  refresh(): Promise<void> {
+  refresh(_cause?: BoardRefreshCause): Promise<void> {
     return this.enqueue(() => this.renderAll());
   }
 

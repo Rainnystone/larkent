@@ -19,6 +19,89 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+describe('board empty list and expiry re-post', () => {
+  it('clears a leftover binding when the chat has no tasks, without posting or patching', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.messageId).toBeTruthy();
+    const writes = tapBoardWrites(h);
+    const sent = h.channel.sent.length;
+
+    await h.store.delete(h.itemId);
+    await h.board.refresh();
+
+    expect(writes.creates).toBe(0);
+    expect(writes.updates).toBe(0);
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(h.channel.pins).toEqual([]);
+  });
+
+  it('does not post a board on a recovered refresh when the chat has no tasks and no binding', async () => {
+    const h = await harness({ seed: false });
+    const writes = tapBoardWrites(h);
+    await h.board.refresh('recovered');
+    expect(writes.creates).toBe(0);
+    expect(writes.updates).toBe(0);
+    expect(h.channel.sent).toEqual([]);
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(h.channel.pins).toEqual([]);
+  });
+
+  it('does not post a replacement when patch returns 200750 on a recovered refresh', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    const pins = h.channel.pins.map((pin) => pin.messageId);
+    const sequences = scriptCardUpdates(h, [{ code: 200750, msg: 'card entity has expired' }]);
+
+    await h.board.refresh('recovered');
+
+    expect(sequences.length).toBeGreaterThan(0);
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual(pins);
+    expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([]);
+  });
+
+  it('posts exactly one fresh pinned card on the next task-change refresh after a 200750 recovery', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    scriptCardUpdates(h, [{ code: 200750, msg: 'card entity has expired' }]);
+    await h.board.refresh('recovered');
+    expect(h.channel.sent.length).toBe(sent);
+
+    await h.store.pause(h.itemId);
+    await h.board.refresh('changed');
+
+    expect(h.channel.sent.length).toBe(sent + 1);
+    const next = h.store.getBoard(CHAT)!;
+    expect(next.messageId).not.toBe(first.messageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next.messageId]);
+  });
+
+  it('resends when a task-change refresh learns the message was deleted', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    scriptCardUpdates(h, [{ code: 230110, msg: 'message has been deleted' }]);
+    await h.store.pause(h.itemId);
+    await h.board.refresh('changed');
+
+    const next = h.store.getBoard(CHAT)!;
+    expect(next.messageId).not.toBe(first.messageId);
+    expect(h.channel.sent.length).toBe(sent + 1);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next.messageId]);
+    expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([
+      expect.objectContaining({ reason: 'message-deleted' }),
+    ]);
+  });
+});
+
 describe('board card.update 300307 rejection', () => {
   it('captures a non-empty live-task schema 2.0 update and stops retrying 300307 across next-run drift', async () => {
     const h = await harness();
@@ -865,7 +948,26 @@ function scriptCardUpdates(
   return sequences;
 }
 
-async function harness(opts?: { now?: () => number }) {
+function tapBoardWrites(
+  h: Awaited<ReturnType<typeof harness>>,
+): { creates: number; updates: number } {
+  const writes = { creates: 0, updates: 0 };
+  const origCreate = h.channel.createCard.bind(h.channel);
+  h.channel.createCard = async (card) => {
+    writes.creates += 1;
+    return origCreate(card);
+  };
+  const origUpdate = h.channel.rawClient.cardkit.v1.card.update.bind(
+    h.channel.rawClient.cardkit.v1.card,
+  );
+  h.channel.rawClient.cardkit.v1.card.update = async (params) => {
+    writes.updates += 1;
+    return origUpdate(params);
+  };
+  return writes;
+}
+
+async function harness(opts?: { now?: () => number; seed?: boolean }) {
   const now = opts?.now ?? (() => NOW);
   const dir = await mkdtemp(join(tmpdir(), 'auto-board-update-'));
   dirs.push(dir);
@@ -877,18 +979,22 @@ async function harness(opts?: { now?: () => number }) {
     statusPath: join(dir, 'automations-status.json'),
     now: () => NOW,
   });
-  const item = await store.create({
-    taskType: 'reminder',
-    schedule: { kind: 'one-shot', fireAt: NOW + 60 * 60_000 },
-    timezone: 'Asia/Shanghai',
-    startAt: NOW,
-    endAt: NOW + 60 * 60_000,
-    nextFireAt: NOW + 60 * 60_000,
-    chatId: CHAT,
-    createdBy: 'ou_user',
-    name: '交周报',
-    taskText: '提醒交周报',
-  });
+  let itemId = 0;
+  if (opts?.seed !== false) {
+    const item = await store.create({
+      taskType: 'reminder',
+      schedule: { kind: 'one-shot', fireAt: NOW + 60 * 60_000 },
+      timezone: 'Asia/Shanghai',
+      startAt: NOW,
+      endAt: NOW + 60 * 60_000,
+      nextFireAt: NOW + 60 * 60_000,
+      chatId: CHAT,
+      createdBy: 'ou_user',
+      name: '交周报',
+      taskText: '提醒交周报',
+    });
+    itemId = item.id;
+  }
   await store.writeStatus('Pin Bot');
   const channel = createFakeChannel();
   const board = createAutomationBoard({
@@ -898,7 +1004,7 @@ async function harness(opts?: { now?: () => number }) {
     lockPath: join(dir, 'board.lock'),
     now,
   });
-  return { logsDir, store, channel, board, itemId: item.id, dir };
+  return { logsDir, store, channel, board, itemId, dir };
 }
 
 async function reloadBoard(h: Awaited<ReturnType<typeof harness>>) {
