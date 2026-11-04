@@ -256,8 +256,10 @@ export interface AutomationBoardBinding {
   pendingUnpinMessageIds?: PendingUnpinMessageRef[];
   /** Feishu-coded update rejection. Skip further updates until itemsRevision changes. */
   rejectedUpdate?: BoardRejectedUpdate;
-  /** CardKit entity expired or missing. Replace only on an onChanged refresh. */
+  /** CardKit entity expired or missing. Replace only when this chat's items revision differs. */
   stale?: '200740' | '200750';
+  /** Items revision captured when `stale` was set. Absent on older bindings. */
+  staleItemsRevision?: string;
 }
 
 export interface AutomationsStatusItem {
@@ -810,6 +812,7 @@ export class AutomationsStore {
       ...(pendingUnpinMessageIds.length > 0 ? { pendingUnpinMessageIds } : {}),
       ...(binding.rejectedUpdate ? { rejectedUpdate: { code: binding.rejectedUpdate.code, itemsRevision: binding.rejectedUpdate.itemsRevision } } : {}),
       ...(binding.stale ? { stale: binding.stale } : {}),
+      ...(binding.stale && isBoardItemsRevision(binding.staleItemsRevision) ? { staleItemsRevision: binding.staleItemsRevision } : {}),
     };
     if (index >= 0) this.boards[index] = next;
     else this.boards.push(next);
@@ -1273,7 +1276,19 @@ function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
     ...pendingUnpinField(readPendingUnpinMessageIds(raw)),
     ...(rejectedUpdate ? { rejectedUpdate } : {}),
     ...(raw.stale === '200740' || raw.stale === '200750' ? { stale: raw.stale } : {}),
+    ...(raw.stale === '200740' || raw.stale === '200750'
+      ? staleItemsRevisionField(raw.staleItemsRevision)
+      : {}),
   };
+}
+
+function staleItemsRevisionField(raw: unknown): { staleItemsRevision: string } | Record<string, never> {
+  if (typeof raw === 'string' && isBoardItemsRevision(raw)) return { staleItemsRevision: raw };
+  return {};
+}
+
+function isBoardItemsRevision(raw: unknown): raw is string {
+  return typeof raw === 'string' && /^[a-f0-9]{64}$/.test(raw);
 }
 
 function parseRejectedUpdate(raw: unknown): BoardRejectedUpdate | undefined {

@@ -156,6 +156,48 @@ describe('board empty list and expiry re-post', () => {
     expect(restarted.store.getBoard(CHAT)?.stale).toBe('200750');
   });
 
+  it('does not replace a stale board when another chat changes, and does when this chat changes', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sentHere = () => h.channel.sent.filter((message) => message.chatId === CHAT).length;
+    const before = sentHere();
+    scriptCardUpdates(h, [{ code: 200750, msg: 'card entity has expired' }]);
+    await h.board.refresh('recovered');
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.stale).toBe('200750');
+
+    const other = await h.store.create({
+      taskType: 'reminder',
+      schedule: { kind: 'one-shot', fireAt: NOW + 60 * 60_000 },
+      timezone: 'Asia/Shanghai',
+      startAt: NOW,
+      endAt: NOW + 60 * 60_000,
+      nextFireAt: NOW + 60 * 60_000,
+      chatId: 'oc_other',
+      createdBy: 'ou_user',
+      name: '写日报',
+      taskText: '提醒写日报',
+    });
+    await h.board.refresh('changed');
+
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.stale).toBe('200750');
+    expect(sentHere()).toBe(before);
+
+    const restarted = await reloadBoard(h);
+    await restarted.store.pause(other.id);
+    await restarted.board.refresh('changed');
+    expect(restarted.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(sentHere()).toBe(before);
+
+    await restarted.store.pause(h.itemId);
+    await restarted.board.refresh('changed');
+    expect(restarted.store.getBoard(CHAT)?.messageId).not.toBe(first.messageId);
+    expect(restarted.store.getBoard(CHAT)?.stale).toBeUndefined();
+    expect(sentHere()).toBe(before + 1);
+  });
+
   it('posts exactly one fresh pinned card on the next task-change refresh after a 200750 recovery', async () => {
     const h = await harness();
     await h.board.refresh();

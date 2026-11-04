@@ -125,11 +125,11 @@ class Board implements AutomationBoard {
         }
         const itemsRevision = automationBoardItemsRevision(items);
         if (binding?.rejectedUpdate?.itemsRevision === itemsRevision) return;
-        if (binding?.stale && !isTaskChange(cause)) return;
+        if (binding?.stale && !shouldReplaceStale(binding, itemsRevision, cause)) return;
         const card = automationBoardCard({ items, auth: this.auth });
         attemptKey = boardAttemptKey(card);
         if (this.failedAttempt.get(chatId) === attemptKey) return;
-        const outcome = binding?.stale && isTaskChange(cause)
+        const outcome = binding?.stale && shouldReplaceStale(binding, itemsRevision, cause)
           ? await this.resendStale(chatId, { ...binding, stale: binding.stale }, card)
           : await this.patchOrResend(chatId, binding, card, itemsRevision, cause);
         this.failedAttempt.delete(chatId);
@@ -195,9 +195,9 @@ class Board implements AutomationBoard {
       if (!binding.cardId) logPatchFailed(error, undefined);
       const reason = boardResendReason(error);
       if (isExpiryResend(reason)) {
-        await this.persistStale(binding, reason);
         if (!isTaskChange(cause)) {
-          return { binding: { ...binding, stale: reason }, applied: false };
+          await this.persistStale(binding, reason, itemsRevision);
+          return { binding: { ...binding, stale: reason, staleItemsRevision: itemsRevision }, applied: false };
         }
         log.warn('auto', 'board.resend', { chatId, reason });
         return this.sendReplacement(chatId, binding, card);
@@ -285,10 +285,11 @@ class Board implements AutomationBoard {
   private async persistStale(
     binding: AutomationBoardBinding,
     reason: BoardExpiryReason,
+    itemsRevision: string,
   ): Promise<void> {
     const live = this.store.getBoard(binding.chatId) ?? binding;
     if (live.cardId !== binding.cardId || live.messageId !== binding.messageId) return;
-    await this.store.setBoard({ ...live, stale: reason });
+    await this.store.setBoard({ ...live, stale: reason, staleItemsRevision: itemsRevision });
   }
 
   private async resendStale(
@@ -534,6 +535,16 @@ function isExpiryResend(reason: BoardResendReason | undefined): reason is BoardE
       return _exhaustive;
     }
   }
+}
+
+function shouldReplaceStale(
+  binding: AutomationBoardBinding,
+  itemsRevision: string,
+  cause: BoardRefreshCause,
+): boolean {
+  if (!binding.stale || !isTaskChange(cause)) return false;
+  if (binding.staleItemsRevision === undefined) return true;
+  return binding.staleItemsRevision !== itemsRevision;
 }
 
 function isTaskChange(cause: BoardRefreshCause): boolean {
