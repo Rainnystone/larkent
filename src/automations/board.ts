@@ -251,7 +251,13 @@ class Board implements AutomationBoard {
     } catch (error) {
       if (isNotInChat(error) || classify(error) === 'link') throw error;
       logPatchFailed(error, sequence);
-      // The one retry already failed. Keep the binding; the next refresh uses a higher sequence.
+      const code = readCardApiError(error).code;
+      // A repeated 300317, or a resend reason, stays on this binding for the next refresh.
+      // Any other Feishu code is a rejection patchOrResend must persist.
+      if (code === 300317 || boardResendReason(error) !== undefined) {
+        return { binding, applied: false };
+      }
+      if (typeof code === 'number' && code > 0) throw error;
       return { binding, applied: false };
     }
     await this.persistSequence(binding, sequence);

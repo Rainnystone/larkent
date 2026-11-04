@@ -568,6 +568,28 @@ describe('board card.update', () => {
     expect(h.channel.pins).toEqual([]);
   });
 
+  it('persists 300307 when the 300317 retry is rejected and does not update again', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sequences = scriptCardUpdates(h, [
+      { code: 300317, msg: 'sequence number compare failed' },
+      { code: 300307, msg: 'The card DSL is empty' },
+    ]);
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    expect(sequences).toHaveLength(2);
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.rejectedUpdate?.code).toBe(300307);
+
+    const sent = h.channel.sent.length;
+    await h.board.refresh();
+    expect(sequences).toHaveLength(2);
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)?.rejectedUpdate?.code).toBe(300307);
+  });
+
   it('retries 300317 once with a larger sequence and does not send a new card', async () => {
     const h = await harness();
     await h.board.refresh();
