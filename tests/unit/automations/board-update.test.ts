@@ -223,6 +223,59 @@ describe('board empty list and expiry re-post', () => {
     expect(sentHere()).toBe(before + 1);
   });
 
+  it('replaces a stale board on a fire-settled pause, not on next-run drift', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    scriptCardUpdates(h, [{ code: 200750, msg: 'card entity has expired' }]);
+    await h.board.refresh('recovered');
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)?.stale).toBe('200750');
+
+    await h.store.setNextFireAt(h.itemId, NOW + 2 * 60 * 60_000);
+    await h.board.refresh('fire-settled');
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.stale).toBe('200750');
+
+    await h.store.pause(h.itemId);
+    await h.board.refresh('fire-settled');
+    expect(h.channel.sent.length).toBe(sent + 1);
+    expect(h.store.getBoard(CHAT)?.messageId).not.toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.stale).toBeUndefined();
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([h.store.getBoard(CHAT)?.messageId]);
+  });
+
+  it('replaces a stale board when fire-settled deletes one remaining task', async () => {
+    const h = await harness();
+    const extra = await h.store.create({
+      taskType: 'reminder',
+      schedule: { kind: 'one-shot', fireAt: NOW + 2 * 60 * 60_000 },
+      timezone: 'Asia/Shanghai',
+      startAt: NOW,
+      endAt: NOW + 2 * 60 * 60_000,
+      nextFireAt: NOW + 2 * 60 * 60_000,
+      chatId: CHAT,
+      createdBy: 'ou_user',
+      name: '写日报',
+      taskText: '提醒写日报',
+    });
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    scriptCardUpdates(h, [{ code: 200750, msg: 'card entity has expired' }]);
+    await h.board.refresh('recovered');
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+
+    await h.store.delete(extra.id);
+    await h.board.refresh('fire-settled');
+    expect(h.channel.sent.length).toBe(sent + 1);
+    expect(h.store.getBoard(CHAT)?.messageId).not.toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.stale).toBeUndefined();
+    expect(h.store.list().map((item) => item.id)).toEqual([h.itemId]);
+  });
+
   it('posts exactly one fresh pinned card on the next task-change refresh after a 200750 recovery', async () => {
     const h = await harness();
     await h.board.refresh();

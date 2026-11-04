@@ -570,9 +570,21 @@ function shouldReplaceStale(
   itemsRevision: string,
   cause: BoardRefreshCause,
 ): boolean {
-  if (!binding.stale || !isTaskChange(cause)) return false;
-  if (binding.staleItemsRevision === undefined) return true;
-  return binding.staleItemsRevision !== itemsRevision;
+  if (!binding.stale) return false;
+  const recorded = binding.staleItemsRevision;
+  const moved = recorded !== undefined && recorded !== itemsRevision;
+  switch (cause) {
+    case 'changed':
+      return recorded === undefined || moved;
+    case 'fire-settled':
+      return moved;
+    case 'recovered':
+      return false;
+    default: {
+      const _exhaustive: never = cause;
+      return _exhaustive;
+    }
+  }
 }
 
 function isTaskChange(cause: BoardRefreshCause): boolean {
