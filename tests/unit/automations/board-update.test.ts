@@ -37,6 +37,74 @@ describe('board empty list and expiry re-post', () => {
     expect(h.channel.pins).toEqual([]);
   });
 
+  it('keeps the current board when unpin fails as the last task disappears, and retries it', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const messageId = h.store.getBoard(CHAT)!.messageId;
+    failPinDeletes(h, 1);
+
+    await h.store.delete(h.itemId);
+    await h.board.refresh();
+
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(messageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([messageId]);
+
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(h.channel.pins).toEqual([]);
+  });
+
+  it('keeps a pending unpin id when that unpin fails as the last task disappears', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const currentId = h.store.getBoard(CHAT)!.messageId;
+    const pendingId = 'om_pending_old';
+    await h.store.setBoard({
+      ...h.store.getBoard(CHAT)!,
+      pendingUnpinMessageIds: [pendingId],
+    });
+    h.channel.pins.push({ messageId: pendingId, chatId: CHAT });
+    const pin = h.channel.rawClient.im.v1.pin;
+    const origDelete = pin.delete.bind(pin);
+    pin.delete = async (params) => {
+      const path = (params as { path?: { message_id?: string } } | undefined)?.path;
+      if (path?.message_id === pendingId) throw new Error('unpin rate limited');
+      return origDelete(params);
+    };
+    const sent = h.channel.sent.length;
+
+    await h.store.delete(h.itemId);
+    await h.board.refresh();
+
+    const held = h.store.getBoard(CHAT);
+    expect([held?.messageId, ...pendingMessageIds(held)]).toContain(pendingId);
+    expect(h.channel.pins.map((entry) => entry.messageId)).toContain(pendingId);
+    expect(h.channel.pins.map((entry) => entry.messageId)).not.toContain(currentId);
+    expect(h.channel.sent.length).toBe(sent);
+
+    pin.delete = origDelete;
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(h.channel.pins).toEqual([]);
+  });
+
+  it('clears the binding when the last unpin reports the message gone, without an unpin failure', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    h.channel.rawClient.im.v1.pin.delete = async () => {
+      const error = new Error('message has been deleted') as Error & { code: number; msg: string };
+      error.code = 230110;
+      error.msg = 'message has been deleted';
+      throw error;
+    };
+
+    await h.store.delete(h.itemId);
+    await h.board.refresh();
+
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(await boardEvents(h.logsDir, 'board.unpin-failed')).toEqual([]);
+  });
+
   it('does not post a board on a recovered refresh when the chat has no tasks and no binding', async () => {
     const h = await harness({ seed: false });
     const writes = tapBoardWrites(h);
@@ -1097,10 +1165,20 @@ function failPinOp(
   };
 }
 
+function isMissingLog(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+}
+
 async function boardEvents(logsDir: string, event: string): Promise<Array<Record<string, unknown>>> {
   await flushLogger();
   const key = `${LOG_AT.getFullYear()}${String(LOG_AT.getMonth() + 1).padStart(2, '0')}${String(LOG_AT.getDate()).padStart(2, '0')}`;
-  const text = await readFile(join(logsDir, `bridge-${key}.jsonl`), 'utf8');
+  let text: string;
+  try {
+    text = await readFile(join(logsDir, `bridge-${key}.jsonl`), 'utf8');
+  } catch (error) {
+    if (isMissingLog(error)) return [];
+    throw error;
+  }
   return text.trim().split('\n').map((line) => JSON.parse(line) as Record<string, unknown>)
     .filter((entry) => entry.phase === 'auto' && entry.event === event);
 }

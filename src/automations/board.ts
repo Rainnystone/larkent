@@ -301,11 +301,15 @@ class Board implements AutomationBoard {
   }
 
   private async dropEmptyBoard(binding: AutomationBoardBinding): Promise<void> {
-    await this.unpinQuietly(binding.messageId);
-    for (const ref of binding.pendingUnpinMessageIds ?? []) {
-      await this.unpinQuietly(pendingUnpinRefMessageId(ref));
+    const failed: PendingUnpinMessageRef[] = [];
+    for (const ref of emptyBoardUnpinRefs(binding)) {
+      if (!(await this.unpinResult(pendingUnpinRefMessageId(ref)))) failed.push(ref);
     }
-    await this.store.clearBoard(binding.chatId);
+    if (failed.length === 0) {
+      await this.store.clearBoard(binding.chatId);
+      return;
+    }
+    await this.store.setBoard(bindingWithFailedUnpins(binding, failed));
   }
 
   private async sendReplacement(
@@ -360,14 +364,18 @@ class Board implements AutomationBoard {
     }
   }
 
-  private async unpinQuietly(messageId: string): Promise<void> {
+  /** True when the message is unpinned or already gone. False leaves the id for a later refresh. */
+  private async unpinResult(messageId: string): Promise<boolean> {
     try {
       await unpinMessage(this.channel, messageId);
+      return true;
     } catch (error) {
       if (isNotInChat(error)) throw error;
+      if (isMessageGone(error)) return true;
       log.warn('auto', 'board.unpin-failed', {
         err: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
   }
 
@@ -583,6 +591,38 @@ function logPatchFailed(error: unknown, sequence: number | undefined): void {
     ...(msg !== undefined ? { msg } : {}),
     ...(sequence !== undefined ? { sequence } : {}),
   });
+}
+
+function emptyBoardUnpinRefs(binding: AutomationBoardBinding): PendingUnpinMessageRef[] {
+  const refs = [pendingEntryFromBinding(binding), ...(binding.pendingUnpinMessageIds ?? [])];
+  const seen = new Set<string>();
+  const unique: PendingUnpinMessageRef[] = [];
+  for (const ref of refs) {
+    const messageId = pendingUnpinRefMessageId(ref);
+    if (!messageId || seen.has(messageId)) continue;
+    seen.add(messageId);
+    unique.push(ref);
+  }
+  return unique;
+}
+
+function bindingWithFailedUnpins(
+  binding: AutomationBoardBinding,
+  failed: readonly PendingUnpinMessageRef[],
+): AutomationBoardBinding {
+  const first = failed[0];
+  if (!first) return binding;
+  const messageId = pendingUnpinRefMessageId(first);
+  const head = asPendingUnpinBoard(first);
+  const rest = failed.slice(1);
+  return {
+    chatId: binding.chatId,
+    messageId,
+    ...(head.cardId ? { cardId: head.cardId } : {}),
+    ...(typeof head.sequence === 'number' ? { sequence: head.sequence } : {}),
+    ...(binding.pinFailedHinted && messageId === binding.messageId ? { pinFailedHinted: true } : {}),
+    ...(rest.length > 0 ? { pendingUnpinMessageIds: [...rest] } : {}),
+  };
 }
 
 /** A gone previous message is not pinned and cannot be unpinned, so it is not tracked. */
