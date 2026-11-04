@@ -99,7 +99,7 @@ import {
 } from './turn-journal';
 import { AutoActionAuth } from '../automations/action-auth';
 import { BoardActionAuth } from '../automations/board-auth';
-import { createAutomationBoard, type AutomationBoard } from '../automations/board';
+import { createAutomationBoard, type AutomationBoard, type BoardRefreshCause } from '../automations/board';
 import {
   CATCH_UP_PROMPT_MARKER,
   formatAgentFailureNotice,
@@ -819,7 +819,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           automations,
           pauseItem: (id) => automationsCtl.scheduler?.pause(id) ?? automations.pause(id),
           botDisplayName: () => channel.botIdentity?.name ?? 'bot',
-          onFireSettled: () => automationsCtl.board?.refresh() ?? Promise.resolve(),
+          onFireSettled: () => automationsCtl.board?.refresh('fire-settled') ?? Promise.resolve(),
         }), 'auto'),
       }),
       botDisplayName: () => channel.botIdentity?.name ?? 'bot',
@@ -827,11 +827,11 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
       isLinkUp: () => !closing && !started.isDown(),
       enabled: () => controls.profileConfig.automations.enabled,
       agentTasks: () => controls.profileConfig.automations.agentTasks,
-      onChanged: () => {
+      onChanged: (cause: BoardRefreshCause = 'changed') => {
         const board = automationsCtl.board;
         if (!board) return Promise.resolve();
         setImmediate(() => {
-          void board.refresh();
+          void board.refresh(cause);
         });
         return Promise.resolve();
       },
@@ -868,7 +868,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
             isLinkDown: () => closing || started.isDown(),
           });
         }
-        await automationsCtl.board?.refresh();
+        await automationsCtl.board?.refresh('recovered');
       })(), 'auto');
     }
   });

@@ -226,6 +226,44 @@ describe('automation board card', () => {
     expect(latestBoard(h).messageId).toBe(board.messageId);
   });
 
+  it('does not post a replacement board on link recovery when card update returns 200750', async () => {
+    const h = await harness();
+    await confirmOne(h);
+    const first = latestBoard(h);
+    const boardSends = () => h.channel.sent.filter((item) => isBoardContent(item.content)).length;
+    expect(boardSends()).toBe(1);
+    let updates = 0;
+    h.channel.rawClient.cardkit.v1.card.update = async () => {
+      updates += 1;
+      return { code: 200750, msg: 'card entity has expired' };
+    };
+
+    h.probeOk = false;
+    const downUntil = h.now() + FEISHU_LINK_SILENT_PROBE_MS + 3 * FEISHU_LINK_TICK_MS;
+    while (h.now() < downUntil) {
+      h.setNow(h.now() + FEISHU_LINK_TICK_MS);
+      await h.bridge.tickLink();
+    }
+    h.probeOk = true;
+    h.setNow(h.now() + FEISHU_LINK_TICK_MS);
+    await h.bridge.tickLink();
+    await waitFor(() => updates > 0);
+    expect(boardSends()).toBe(1);
+    expect(latestBoard(h).messageId).toBe(first.messageId);
+    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([first.messageId]);
+
+    await h.channel.handlers.cardAction?.(
+      boardClick(USER, pauseToken(first.text), first.messageId, 'auto.pause'),
+    );
+    await waitFor(() => {
+      const binding = h.store.getBoard(CHAT);
+      return Boolean(binding && binding.messageId !== first.messageId)
+        && h.channel.pins.some((pin) => pin.messageId === binding!.messageId);
+    });
+    expect(boardSends()).toBe(2);
+    expect(h.store.get(1)?.paused).toBe(true);
+  });
+
   it('does not post a second board on restart and re-renders on link recovery', async () => {
     const h = await harness();
     await confirmOne(h);
@@ -272,7 +310,7 @@ describe('automation board card', () => {
 
     await h.channel.handlers.message?.(mention('om_delete', '/auto delete 1'));
     expect(h.store.list()).toEqual([]);
-    await waitFor(() => latestBoard(h).text.includes('暂无'));
+    await waitFor(() => h.store.getBoard(CHAT) === undefined && h.channel.pins.length === 0);
     expect(h.channel.pins).toEqual([]);
   });
 
@@ -336,7 +374,7 @@ describe('automation board card', () => {
     );
     expect(deletedTap).toEqual({ toast: { type: 'success', content: '已删除 #1' } });
     expect(h.store.list()).toEqual([]);
-    await waitFor(() => latestBoard(h).text.includes('暂无'));
+    await waitFor(() => h.store.getBoard(CHAT) === undefined && h.channel.pins.length === 0);
   });
 
   it('accepts the full rendered board button value including its click id', async () => {
