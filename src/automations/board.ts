@@ -11,11 +11,12 @@ import { automationBoardCard, automationBoardSettledCard } from './board-card';
 import { listPinnedMessageIds, pinMessage, unpinMessage } from './board-pins';
 import type { BoardActionAuth } from './board-auth';
 import { monotonicCardSequence } from './card-sequence';
-import type {
-  AutomationBoardBinding,
-  AutomationsStore,
-  PendingUnpinBoard,
-  PendingUnpinMessageRef,
+import {
+  automationBoardItemsRevision,
+  type AutomationBoardBinding,
+  type AutomationsStore,
+  type PendingUnpinBoard,
+  type PendingUnpinMessageRef,
 } from './store';
 
 export const AUTO_PIN_FAILED_HINT = '看板置顶失败，任务不受影响。';
@@ -116,10 +117,12 @@ class Board implements AutomationBoard {
         const items = this.store.list().filter((item) => item.chatId === chatId);
         const binding = this.store.getBoard(chatId);
         if (items.length === 0 && !binding) return;
+        const itemsRevision = automationBoardItemsRevision(items);
+        if (binding?.rejectedUpdate?.itemsRevision === itemsRevision) return;
         const card = automationBoardCard({ items, auth: this.auth });
         attemptKey = boardAttemptKey(card);
         if (this.failedAttempt.get(chatId) === attemptKey) return;
-        const outcome = await this.patchOrResend(chatId, binding, card);
+        const outcome = await this.patchOrResend(chatId, binding, card, itemsRevision);
         this.failedAttempt.delete(chatId);
         let next = outcome.binding;
         if (!this.store.getBoard(chatId) && this.store.list().every((item) => item.chatId !== chatId)) {
@@ -176,6 +179,7 @@ class Board implements AutomationBoard {
     chatId: string,
     binding: AutomationBoardBinding | undefined,
     card: object,
+    itemsRevision: string,
   ): Promise<BoardPatchOutcome> {
     if (!binding) return this.sendReplacement(chatId, undefined, card);
     try {
@@ -185,7 +189,14 @@ class Board implements AutomationBoard {
       if (classify(error) === 'link') throw error;
       if (!binding.cardId) logPatchFailed(error, undefined);
       const reason = boardResendReason(error);
-      if (!reason) return { binding, applied: false };
+      if (!reason) {
+        const code = readCardApiError(error).code;
+        if (typeof code === 'number' && code > 0) {
+          await this.persistRejectedUpdate(binding, code, itemsRevision);
+          throw error;
+        }
+        return { binding, applied: false };
+      }
       log.warn('auto', 'board.resend', { chatId, reason });
       return this.sendReplacement(chatId, binding, card);
     }
@@ -242,7 +253,20 @@ class Board implements AutomationBoard {
   private async persistSequence(binding: AutomationBoardBinding, sequence: number): Promise<void> {
     const live = this.store.getBoard(binding.chatId) ?? binding;
     if (live.cardId !== binding.cardId || live.messageId !== binding.messageId) return;
-    await this.store.setBoard({ ...live, sequence });
+    await this.store.setBoard({ ...live, sequence, rejectedUpdate: undefined });
+  }
+
+  private async persistRejectedUpdate(
+    binding: AutomationBoardBinding,
+    code: number,
+    itemsRevision: string,
+  ): Promise<void> {
+    const live = this.store.getBoard(binding.chatId) ?? binding;
+    if (live.cardId !== binding.cardId || live.messageId !== binding.messageId) return;
+    await this.store.setBoard({
+      ...live,
+      rejectedUpdate: { code, itemsRevision },
+    });
   }
 
   private async sendReplacement(

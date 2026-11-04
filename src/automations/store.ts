@@ -109,6 +109,14 @@ export function automationTargetRevision(item: AutomationItem): string {
     taskText: item.taskText, schedule: item.schedule, timezone: item.timezone, startAt: item.startAt, endAt: item.endAt, paused: item.paused, cwd: item.cwd })).digest('hex');
 }
 
+/** Chat-level hash of management revisions. `nextFireAt` / `lastStatus` drift does not change it. */
+export function automationBoardItemsRevision(items: readonly AutomationItem[]): string {
+  const rows = items
+    .map((item) => ({ id: item.id, revision: automationTargetRevision(item) }))
+    .sort((a, b) => a.id - b.id);
+  return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+}
+
 export interface DraftDelivery {
   state: 'prepared' | 'sending' | 'sent' | 'rejected';
   deliveryId: string;
@@ -229,6 +237,11 @@ export interface PendingUnpinBoard {
 
 export type PendingUnpinMessageRef = string | PendingUnpinBoard;
 
+export interface BoardRejectedUpdate {
+  code: number;
+  itemsRevision: string;
+}
+
 export interface AutomationBoardBinding {
   chatId: string;
   messageId: string;
@@ -241,6 +254,8 @@ export interface AutomationBoardBinding {
    * A legacy `pendingUnpinMessageId` string loads as a one-element list.
    */
   pendingUnpinMessageIds?: PendingUnpinMessageRef[];
+  /** Feishu-coded update rejection. Skip further updates until itemsRevision changes. */
+  rejectedUpdate?: BoardRejectedUpdate;
 }
 
 export interface AutomationsStatusItem {
@@ -791,6 +806,7 @@ export class AutomationsStore {
       ...(typeof binding.sequence === 'number' ? { sequence: binding.sequence } : {}),
       ...(binding.pinFailedHinted ? { pinFailedHinted: true } : {}),
       ...(pendingUnpinMessageIds.length > 0 ? { pendingUnpinMessageIds } : {}),
+      ...(binding.rejectedUpdate ? { rejectedUpdate: { code: binding.rejectedUpdate.code, itemsRevision: binding.rejectedUpdate.itemsRevision } } : {}),
     };
     if (index >= 0) this.boards[index] = next;
     else this.boards.push(next);
@@ -1235,6 +1251,7 @@ function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
   if (!isObject(raw)) return undefined;
   if (typeof raw.chatId !== 'string' || !raw.chatId) return undefined;
   if (typeof raw.messageId !== 'string' || !raw.messageId) return undefined;
+  const rejectedUpdate = parseRejectedUpdate(raw.rejectedUpdate);
   return {
     chatId: raw.chatId,
     messageId: raw.messageId,
@@ -1242,7 +1259,15 @@ function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
     ...(isFiniteNumber(raw.sequence) ? { sequence: raw.sequence } : {}),
     ...(raw.pinFailedHinted === true ? { pinFailedHinted: true } : {}),
     ...pendingUnpinField(readPendingUnpinMessageIds(raw)),
+    ...(rejectedUpdate ? { rejectedUpdate } : {}),
   };
+}
+
+function parseRejectedUpdate(raw: unknown): BoardRejectedUpdate | undefined {
+  if (!isObject(raw)) return undefined;
+  if (typeof raw.code !== 'number' || !Number.isInteger(raw.code)) return undefined;
+  if (typeof raw.itemsRevision !== 'string' || !/^[a-f0-9]{64}$/.test(raw.itemsRevision)) return undefined;
+  return { code: raw.code, itemsRevision: raw.itemsRevision };
 }
 
 function readPendingUnpinMessageIds(raw: Record<string, unknown>): PendingUnpinMessageRef[] {

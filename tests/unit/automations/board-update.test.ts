@@ -40,8 +40,7 @@ describe('board card.update 300307 rejection', () => {
     expect(payload.type).toBe('card_json');
     expect(payload.data.length).toBeGreaterThan(1);
     expect(payload.card.schema).toBe('2.0');
-    expect(Array.isArray(payload.card.body?.elements)).toBe(true);
-    expect(payload.card.body!.elements.length).toBeGreaterThan(0);
+    expect(payload.card.body?.elements?.length ?? 0).toBeGreaterThan(0);
     const dsl = JSON.stringify(payload.card);
     expect(dsl).toContain('交周报');
     expect(dsl).not.toContain('暂无');
