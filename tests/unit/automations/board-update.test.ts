@@ -19,6 +19,58 @@ afterEach(async () => {
   await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
+describe('board card.update 300307 rejection', () => {
+  it('captures a non-empty live-task schema 2.0 update and stops retrying 300307 across next-run drift', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    expect(h.store.getBoard(CHAT)?.cardId).toBeTruthy();
+    const sent = h.channel.sent.length;
+    const updates = rejectEveryUpdateWith300307(h);
+
+    for (let i = 1; i <= 3; i += 1) {
+      await h.store.setNextFireAt(h.itemId, NOW + i * 60 * 60_000);
+      await h.board.refresh();
+    }
+
+    expect(updates).toHaveLength(1);
+    expect(h.channel.sent.length).toBe(sent);
+    expect(await boardFailCodes(h.logsDir)).toEqual([300307]);
+
+    const payload = cardUpdatePayload(updates[0]);
+    expect(payload.type).toBe('card_json');
+    expect(payload.data.length).toBeGreaterThan(1);
+    expect(payload.card.schema).toBe('2.0');
+    expect(Array.isArray(payload.card.body?.elements)).toBe(true);
+    expect(payload.card.body!.elements.length).toBeGreaterThan(0);
+    const dsl = JSON.stringify(payload.card);
+    expect(dsl).toContain('交周报');
+    expect(dsl).not.toContain('暂无');
+    expect(payload.sequence).toBe(timeSequence(NOW));
+    expect(payload.uuid).toBe(`u_${h.store.getBoard(CHAT)!.cardId}_${payload.sequence}`);
+  });
+
+  it('does not retry 300307 after restart until an onChanged-driven pause', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const updates = rejectEveryUpdateWith300307(h);
+    await h.store.setNextFireAt(h.itemId, NOW + 60 * 60_000);
+    await h.board.refresh();
+    expect(updates).toHaveLength(1);
+    expect(await boardFailCodes(h.logsDir)).toEqual([300307]);
+
+    const restarted = await reloadBoard(h);
+    await restarted.store.setNextFireAt(h.itemId, NOW + 2 * 60 * 60_000);
+    await restarted.board.refresh();
+    expect(updates).toHaveLength(1);
+    expect(await boardFailCodes(h.logsDir)).toEqual([300307]);
+
+    await restarted.store.pause(h.itemId);
+    await restarted.board.refresh();
+    expect(updates).toHaveLength(2);
+    expect(await boardFailCodes(h.logsDir)).toEqual([300307, 300307]);
+  });
+});
+
 describe('board card.update', () => {
   it('does not persist sequence when cardkit update returns an unlisted code, and does not resend', async () => {
     const h = await harness();
@@ -749,6 +801,53 @@ function expectPinnedBoardsTracked(h: Awaited<ReturnType<typeof harness>>): void
   for (const pin of h.channel.pins) {
     expect(known.has(pin.messageId)).toBe(true);
   }
+}
+
+function rejectEveryUpdateWith300307(
+  h: Awaited<ReturnType<typeof harness>>,
+): unknown[] {
+  const updates: unknown[] = [];
+  h.channel.rawClient.cardkit.v1.card.update = async (params) => {
+    updates.push(params);
+    return { code: 300307, msg: 'The card DSL is empty' };
+  };
+  return updates;
+}
+
+function cardUpdatePayload(params: unknown): {
+  type: unknown;
+  data: string;
+  sequence: unknown;
+  uuid: unknown;
+  card: {
+    schema?: unknown;
+    body?: { elements?: unknown[] };
+  };
+} {
+  const data = (params as { data?: {
+    card?: { type?: unknown; data?: unknown };
+    sequence?: unknown;
+    uuid?: unknown;
+  } } | undefined)?.data;
+  const raw = data?.card?.data;
+  expect(typeof raw).toBe('string');
+  const card = JSON.parse(raw as string) as {
+    schema?: unknown;
+    body?: { elements?: unknown[] };
+  };
+  return {
+    type: data?.card?.type,
+    data: raw as string,
+    sequence: data?.sequence,
+    uuid: data?.uuid,
+    card,
+  };
+}
+
+async function boardFailCodes(logsDir: string): Promise<unknown[]> {
+  return (await boardEvents(logsDir, 'fail'))
+    .filter((entry) => entry._event === 'board')
+    .map((entry) => entry.code);
 }
 
 function scriptCardUpdates(
