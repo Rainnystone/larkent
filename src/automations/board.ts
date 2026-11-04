@@ -226,7 +226,7 @@ class Board implements AutomationBoard {
   private async patch(binding: AutomationBoardBinding, card: object): Promise<BoardPatchOutcome> {
     if (!binding.cardId) {
       await this.channel.updateCard(binding.messageId, card);
-      return { binding, applied: true };
+      return { binding: await this.persistRawCardUpdate(binding), applied: true };
     }
     const sequence = this.nextSequence(binding);
     try {
@@ -269,6 +269,14 @@ class Board implements AutomationBoard {
     const sequence = monotonicCardSequence(binding.sequence, this.now(), attempted);
     this.attemptedSequence.set(key, sequence);
     return sequence;
+  }
+
+  private async persistRawCardUpdate(binding: AutomationBoardBinding): Promise<AutomationBoardBinding> {
+    const live = this.store.getBoard(binding.chatId) ?? binding;
+    if (live.cardId !== binding.cardId || live.messageId !== binding.messageId) return binding;
+    if (!live.rejectedUpdate) return live;
+    await this.store.setBoard({ ...live, rejectedUpdate: undefined });
+    return { ...live, rejectedUpdate: undefined };
   }
 
   private async persistSequence(binding: AutomationBoardBinding, sequence: number): Promise<void> {

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { AUTO_PIN_FAILED_HINT, createAutomationBoard } from '../../../src/automations/board';
 import { BoardActionAuth } from '../../../src/automations/board-auth';
-import { AutomationsStore } from '../../../src/automations/store';
+import { automationBoardItemsRevision, AutomationsStore } from '../../../src/automations/store';
 import { closeLogger, configureLogger, flushLogger } from '../../../src/core/logger';
 import { createFakeChannel } from '../../helpers/fake-channel';
 import { axiosErrno, axiosHttpError, axiosLike } from '../../helpers/sdk-feishu-errors';
@@ -332,6 +332,36 @@ describe('board card.update 300307 rejection', () => {
     expect(restarted.channel.pins.map((pin) => pin.messageId)).toEqual([messageId]);
     expect(pendingMessageIds(restarted.store.getBoard(CHAT))).toEqual([]);
     expect(restarted.store.getBoard(CHAT)?.messageId).toBe(messageId);
+  });
+
+  it('clears a persisted rejection after a successful raw-card update', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const messageId = h.store.getBoard(CHAT)!.messageId;
+    const activeRevision = automationBoardItemsRevision(h.store.list().filter((item) => item.chatId === CHAT));
+    await h.store.setBoard({
+      chatId: CHAT,
+      messageId,
+      rejectedUpdate: { code: 300307, itemsRevision: activeRevision },
+    });
+    const orig = h.channel.updateCard.bind(h.channel);
+    let updates = 0;
+    h.channel.updateCard = async (id, card) => {
+      updates += 1;
+      await orig(id, card);
+    };
+    await h.store.pause(h.itemId);
+    await h.board.refresh();
+
+    expect(updates).toBe(1);
+    expect(h.store.getBoard(CHAT)?.cardId).toBeUndefined();
+    expect(h.store.getBoard(CHAT)?.rejectedUpdate).toBeUndefined();
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(messageId);
+
+    await h.store.resume(h.itemId, NOW + 2 * 60 * 60_000);
+    await h.board.refresh();
+    expect(updates).toBe(2);
+    expect(h.store.getBoard(CHAT)?.rejectedUpdate).toBeUndefined();
   });
 });
 
