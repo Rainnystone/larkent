@@ -11,6 +11,7 @@ import {
   readSchedule,
   type Schedule,
 } from './schedule';
+import type { BoardRefreshCause } from './board';
 import {
   AUTOMATIONS_MISSED_TTL_MS,
   type AutomationItem,
@@ -69,7 +70,7 @@ export interface AutomationSchedulerDeps {
   clearTimeout?: (id: unknown) => void;
   isLinkUp?: () => boolean;
   enabled?: () => boolean;
-  onChanged?: () => void | Promise<void>;
+  onChanged?: (cause: BoardRefreshCause) => void | Promise<void>;
   onExpireDrafts?: () => void | Promise<void>;
   /** Profile `automations-wake/` directory. A5 local wake transport. */
   wakeDir?: string;
@@ -111,7 +112,7 @@ class Scheduler implements AutomationScheduler {
   private readonly clearTimeout: (id: unknown) => void;
   private readonly isLinkUp: () => boolean;
   private readonly enabled: () => boolean;
-  private readonly onChanged?: () => void | Promise<void>;
+  private readonly onChanged?: (cause: BoardRefreshCause) => void | Promise<void>;
   private readonly onExpireDrafts?: () => void | Promise<void>;
   private readonly wakeDir?: string;
   private readonly agentTasks: () => boolean;
@@ -158,7 +159,7 @@ class Scheduler implements AutomationScheduler {
       await this.abandonOrphansOnce();
       await this.catchUp('startup');
       await this.handleDue('startup');
-      await this.writeStatus();
+      await this.writeStatus('recovered');
       this.armWakeWatch();
       await this.drainWake();
       this.opened = true;
@@ -185,7 +186,7 @@ class Scheduler implements AutomationScheduler {
       await this.abandonOrphansOnce();
       await this.catchUp(source);
       await this.handleDue(source);
-      await this.writeStatus();
+      await this.writeStatus('recovered');
     });
   }
 
@@ -260,7 +261,7 @@ class Scheduler implements AutomationScheduler {
       if (item.lastStatus !== 'running') continue;
       if (await this.store.settleFire(item.id, 'failed')) changed = true;
     }
-    if (changed) await this.writeStatus();
+    if (changed) await this.writeStatus('fire-settled');
   }
 
   private async catchUp(source: AutomationTriggerSource): Promise<void> {
@@ -287,7 +288,7 @@ class Scheduler implements AutomationScheduler {
     const ended = schedule.kind === 'one-shot' || next === 0;
     if (item.lastStatus === 'running') {
       await this.store.setNextFireAt(item.id, ended ? 0 : next);
-      await this.writeStatus();
+      await this.writeStatus('fire-settled');
       return;
     }
     if (ended) {
@@ -296,7 +297,7 @@ class Scheduler implements AutomationScheduler {
     } else {
       await this.store.setNextFireAt(item.id, next, item.lastStatus);
     }
-    await this.writeStatus();
+    await this.writeStatus('fire-settled');
   }
 
   private async applyCatchUp(item: AutomationItem, source: AutomationTriggerSource): Promise<void> {
@@ -370,7 +371,7 @@ class Scheduler implements AutomationScheduler {
     if (plan.run !== undefined) {
       if (!this.isLinkUp()) {
         await this.store.setNextFireAt(live.id, plan.run);
-        await this.writeStatus();
+        await this.writeStatus('fire-settled');
         return;
       }
       const onTime = plan.missedFires.length === 0 && now - plan.run <= ON_TIME_GRACE_MS;
@@ -379,7 +380,7 @@ class Scheduler implements AutomationScheduler {
     }
 
     await this.advanceAfterAbandon(live.id, schedule, now);
-    await this.writeStatus();
+    await this.writeStatus('fire-settled');
   }
 
   private async advanceAfterAbandon(id: number, schedule: Schedule, now: number): Promise<void> {
@@ -402,7 +403,7 @@ class Scheduler implements AutomationScheduler {
     if (item.taskType === 'agent' && !this.agentTasks()) {
       await this.store.pause(item.id);
       log.info('auto', 'paused', { id: item.id });
-      await this.writeStatus();
+      await this.writeStatus('fire-settled');
       return;
     }
     const fireKey = formatFireKey(item.id, fireAt);
@@ -446,7 +447,7 @@ class Scheduler implements AutomationScheduler {
     } else {
       log.info('auto', 'fire', { id: item.id, fireAt });
     }
-    await this.writeStatus();
+    await this.writeStatus('fire-settled');
     const payload: FireSend = {
       id: item.id,
       fireAt,
@@ -471,7 +472,7 @@ class Scheduler implements AutomationScheduler {
         if (item.taskType !== 'agent') return;
         void this.store.settleFire(item.id, 'failed', fireKey).then(
           (changed) => {
-            if (changed) return this.writeStatus();
+            if (changed) return this.writeStatus('fire-settled');
           },
           (settleError) => {
             log.fail('auto', settleError, { event: 'settle' });
@@ -536,7 +537,7 @@ class Scheduler implements AutomationScheduler {
       skipReason: reason,
     });
     log.info('auto', 'skipped', { id: item.id, fireAt, reason });
-    await this.writeStatus();
+    await this.writeStatus('fire-settled');
     return true;
   }
 
@@ -621,7 +622,7 @@ class Scheduler implements AutomationScheduler {
         changed = true;
       }
     }
-    if (changed || dropped) await this.writeStatus();
+    if (changed || dropped) await this.writeStatus('fire-settled');
   }
 
   private expiryAt(item: AutomationItem): number {
@@ -708,11 +709,11 @@ class Scheduler implements AutomationScheduler {
     for (const fireKey of keys) void this.wake(fireKey);
   }
 
-  private async writeStatus(): Promise<void> {
+  private async writeStatus(cause: BoardRefreshCause = 'changed'): Promise<void> {
     await this.store.writeStatus(this.botDisplayName());
     this.statusPusher?.notify();
     try {
-      await this.onChanged?.();
+      await this.onChanged?.(cause);
     } catch (error) {
       log.fail('auto', error, { event: 'board' });
     }

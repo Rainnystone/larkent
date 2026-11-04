@@ -256,6 +256,8 @@ export interface AutomationBoardBinding {
   pendingUnpinMessageIds?: PendingUnpinMessageRef[];
   /** Feishu-coded update rejection. Skip further updates until itemsRevision changes. */
   rejectedUpdate?: BoardRejectedUpdate;
+  /** CardKit entity expired or missing. Replace only on an onChanged refresh. */
+  stale?: '200740' | '200750';
 }
 
 export interface AutomationsStatusItem {
@@ -807,10 +809,20 @@ export class AutomationsStore {
       ...(binding.pinFailedHinted ? { pinFailedHinted: true } : {}),
       ...(pendingUnpinMessageIds.length > 0 ? { pendingUnpinMessageIds } : {}),
       ...(binding.rejectedUpdate ? { rejectedUpdate: { code: binding.rejectedUpdate.code, itemsRevision: binding.rejectedUpdate.itemsRevision } } : {}),
+      ...(binding.stale ? { stale: binding.stale } : {}),
     };
     if (index >= 0) this.boards[index] = next;
     else this.boards.push(next);
     await this.persistNow();
+  }
+
+  async clearBoard(chatId: string): Promise<boolean> {
+    this.assertMutable();
+    const index = this.boards.findIndex((entry) => entry.chatId === chatId);
+    if (index < 0) return false;
+    this.boards.splice(index, 1);
+    await this.persistNow();
+    return true;
   }
 
   async markStarted(fireKey: string): Promise<MarkStartedResult> {
@@ -1260,6 +1272,7 @@ function parseBoard(raw: unknown): AutomationBoardBinding | undefined {
     ...(raw.pinFailedHinted === true ? { pinFailedHinted: true } : {}),
     ...pendingUnpinField(readPendingUnpinMessageIds(raw)),
     ...(rejectedUpdate ? { rejectedUpdate } : {}),
+    ...(raw.stale === '200740' || raw.stale === '200750' ? { stale: raw.stale } : {}),
   };
 }
 

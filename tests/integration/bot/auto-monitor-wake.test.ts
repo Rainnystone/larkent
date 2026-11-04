@@ -138,7 +138,7 @@ describe('automation monitor wake hook', () => {
       try {
         const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as { items: unknown[] };
         if (status.items.length !== 0) return false;
-        return latestBoard(h).text.includes('暂无');
+        return h.store.getBoard(CHAT) === undefined && h.channel.pins.length === 0;
       } catch {
         return false;
       }
@@ -156,7 +156,8 @@ describe('automation monitor wake hook', () => {
     const status = JSON.parse(await readFile(h.statusPath, 'utf8')) as { v: number; items: unknown[] };
     expect(status.v).toBe(1);
     expect(h.store.get(1)).toBeUndefined();
-    expect(latestBoard(h).text).toContain('暂无');
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(h.channel.pins).toEqual([]);
     expect(h.channel.sent.length).toBeGreaterThanOrEqual(sentBefore);
 
     const sentAfter = h.channel.sent.length;

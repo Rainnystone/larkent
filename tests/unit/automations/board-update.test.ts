@@ -61,8 +61,14 @@ describe('board empty list and expiry re-post', () => {
     expect(sequences.length).toBeGreaterThan(0);
     expect(h.channel.sent.length).toBe(sent);
     expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.stale).toBe('200750');
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual(pins);
     expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([]);
+
+    const restarted = await reloadBoard(h);
+    await restarted.board.refresh('recovered');
+    expect(h.channel.sent.length).toBe(sent);
+    expect(restarted.store.getBoard(CHAT)?.stale).toBe('200750');
   });
 
   it('posts exactly one fresh pinned card on the next task-change refresh after a 200750 recovery', async () => {
@@ -225,21 +231,25 @@ describe('board card.update', () => {
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([next?.messageId]);
   });
 
-  it('unpins the old board after a last-item resend, not only the replacement', async () => {
+  it('unpins and drops the binding when the last item is deleted, even if the card has expired', async () => {
     const h = await harness();
     await h.board.refresh();
     const firstMessageId = h.store.getBoard(CHAT)!.messageId;
     expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+    const sent = h.channel.sent.length;
+    let updates = 0;
+    h.channel.rawClient.cardkit.v1.card.update = async () => {
+      updates += 1;
+      return { code: 200750, msg: 'card entity has expired' };
+    };
 
     await h.store.delete(h.itemId);
-    h.channel.rawClient.cardkit.v1.card.update = async () => ({
-      code: 200750,
-      msg: 'card entity has expired',
-    });
     await h.board.refresh();
 
-    expect(h.store.getBoard(CHAT)?.messageId).not.toBe(firstMessageId);
-    expect(h.channel.pins.map((pin) => pin.messageId)).not.toContain(firstMessageId);
+    expect(updates).toBe(0);
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(h.channel.pins).toEqual([]);
   });
 
   it('keeps the old pin after a transient pin failure and unpins it after a restart', async () => {
@@ -339,15 +349,17 @@ describe('board card.update', () => {
     expect(h.store.getBoard(CHAT)?.sequence).toBe(timeSequence(NOW) + 1);
   });
 
-  it('keeps the current pin when a last-item update is not resend-worthy', async () => {
+  it('clears the last-item board without patching when the update would not be resend-worthy', async () => {
     const h = await harness();
     await h.board.refresh();
-    const firstMessageId = h.store.getBoard(CHAT)!.messageId;
-    scriptCardUpdates(h, [{ code: 10004, msg: 'sequence invalid' }]);
+    const sent = h.channel.sent.length;
+    const sequences = scriptCardUpdates(h, [{ code: 10004, msg: 'sequence invalid' }]);
     await h.store.delete(h.itemId);
     await h.board.refresh();
-    expect(h.store.getBoard(CHAT)?.messageId).toBe(firstMessageId);
-    expect(h.channel.pins.map((pin) => pin.messageId)).toEqual([firstMessageId]);
+    expect(sequences).toEqual([]);
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)).toBeUndefined();
+    expect(h.channel.pins).toEqual([]);
   });
 
   it('retries 300317 once with a larger sequence and does not send a new card', async () => {

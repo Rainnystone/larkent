@@ -310,7 +310,7 @@ describe('automation board card', () => {
 
     await h.channel.handlers.message?.(mention('om_delete', '/auto delete 1'));
     expect(h.store.list()).toEqual([]);
-    await waitFor(() => latestBoard(h).text.includes('暂无'));
+    await waitFor(() => h.store.getBoard(CHAT) === undefined && h.channel.pins.length === 0);
     expect(h.channel.pins).toEqual([]);
   });
 
@@ -374,7 +374,7 @@ describe('automation board card', () => {
     );
     expect(deletedTap).toEqual({ toast: { type: 'success', content: '已删除 #1' } });
     expect(h.store.list()).toEqual([]);
-    await waitFor(() => latestBoard(h).text.includes('暂无'));
+    await waitFor(() => h.store.getBoard(CHAT) === undefined && h.channel.pins.length === 0);
   });
 
   it('accepts the full rendered board button value including its click id', async () => {
