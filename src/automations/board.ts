@@ -124,8 +124,16 @@ class Board implements AutomationBoard {
           return;
         }
         const itemsRevision = automationBoardItemsRevision(items);
-        if (binding?.rejectedUpdate?.itemsRevision === itemsRevision) return;
-        if (binding?.stale && !shouldReplaceStale(binding, itemsRevision, cause)) return;
+        if (
+          binding
+          && (
+            binding.rejectedUpdate?.itemsRevision === itemsRevision
+            || (binding.stale !== undefined && !shouldReplaceStale(binding, itemsRevision, cause))
+          )
+        ) {
+          await this.maintainBoardPins(chatId, binding);
+          return;
+        }
         const card = automationBoardCard({ items, auth: this.auth });
         attemptKey = boardAttemptKey(card);
         if (this.failedAttempt.get(chatId) === attemptKey) return;
@@ -330,6 +338,12 @@ class Board implements AutomationBoard {
     await this.store.setBoard(next);
     if (pendingUnpinMessageIds) this.notePendingOverflow(chatId, pendingUnpinMessageIds.length);
     return { binding: next, applied: true };
+  }
+
+  /** Pin and pending-unpin work still run when the card body itself is left alone. */
+  private async maintainBoardPins(chatId: string, binding: AutomationBoardBinding): Promise<void> {
+    await this.ensurePinned(chatId, binding, { repin: true, resendIfGone: false });
+    await this.releasePendingUnpin(binding, { settle: true });
   }
 
   private async ensurePinned(

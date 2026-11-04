@@ -156,6 +156,31 @@ describe('board empty list and expiry re-post', () => {
     expect(restarted.store.getBoard(CHAT)?.stale).toBe('200750');
   });
 
+  it('re-pins a stale board on recovery without posting a replacement', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    scriptCardUpdates(h, [{ code: 200750, msg: 'card entity has expired' }]);
+    await h.board.refresh('recovered');
+    expect(h.channel.sent.length).toBe(sent);
+    const pendingId = 'om_pending_old';
+    await h.store.setBoard({
+      ...h.store.getBoard(CHAT)!,
+      pendingUnpinMessageIds: [pendingId],
+    });
+
+    const restarted = await reloadBoard(h);
+    restarted.channel.pins.splice(0, restarted.channel.pins.length, { messageId: pendingId, chatId: CHAT });
+    await restarted.board.refresh('recovered');
+
+    expect(h.channel.sent.length).toBe(sent);
+    expect(restarted.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(restarted.store.getBoard(CHAT)?.stale).toBe('200750');
+    expect(restarted.channel.pins.map((pin) => pin.messageId)).toEqual([first.messageId]);
+    expect(pendingMessageIds(restarted.store.getBoard(CHAT))).toEqual([]);
+  });
+
   it('does not replace a stale board when another chat changes, and does when this chat changes', async () => {
     const h = await harness();
     await h.board.refresh();
@@ -283,6 +308,30 @@ describe('board card.update 300307 rejection', () => {
     await restarted.board.refresh();
     expect(updates).toHaveLength(2);
     expect(await boardFailCodes(h.logsDir)).toEqual([300307, 300307]);
+  });
+
+  it('re-pins a rejected board and drains pending unpins without another card update', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const updates = rejectEveryUpdateWith300307(h);
+    await h.store.setNextFireAt(h.itemId, NOW + 60 * 60_000);
+    await h.board.refresh();
+    expect(updates).toHaveLength(1);
+    const messageId = h.store.getBoard(CHAT)!.messageId;
+    const pendingId = 'om_pending_old';
+    await h.store.setBoard({
+      ...h.store.getBoard(CHAT)!,
+      pendingUnpinMessageIds: [pendingId],
+    });
+
+    const restarted = await reloadBoard(h);
+    restarted.channel.pins.splice(0, restarted.channel.pins.length, { messageId: pendingId, chatId: CHAT });
+    await restarted.board.refresh();
+
+    expect(updates).toHaveLength(1);
+    expect(restarted.channel.pins.map((pin) => pin.messageId)).toEqual([messageId]);
+    expect(pendingMessageIds(restarted.store.getBoard(CHAT))).toEqual([]);
+    expect(restarted.store.getBoard(CHAT)?.messageId).toBe(messageId);
   });
 });
 
