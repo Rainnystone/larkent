@@ -354,9 +354,14 @@ class Board implements AutomationBoard {
     return { binding: next, applied: true };
   }
 
-  /** Pin and pending-unpin work still run when the card body itself is left alone. */
+  /**
+   * Pin and pending-unpin work still run when the card body itself is left alone.
+   * Pending boards stay pinned until the current message is pinned, so a pin
+   * failure cannot leave the chat with nothing pinned.
+   */
   private async maintainBoardPins(chatId: string, binding: AutomationBoardBinding): Promise<void> {
-    await this.ensurePinned(chatId, binding, { repin: true, resendIfGone: false });
+    const pinned = await this.ensurePinned(chatId, binding, { repin: true, resendIfGone: false });
+    if (pinned !== 'pinned') return;
     await this.releasePendingUnpin(binding, { settle: true });
   }
 

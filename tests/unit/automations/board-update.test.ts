@@ -387,6 +387,31 @@ describe('board card.update 300307 rejection', () => {
     expect(restarted.store.getBoard(CHAT)?.messageId).toBe(messageId);
   });
 
+  it('keeps the previous pin when restoring the current pin fails', async () => {
+    const h = await harness();
+    await h.board.refresh();
+    const updates = rejectEveryUpdateWith300307(h);
+    await h.store.setNextFireAt(h.itemId, NOW + 60 * 60_000);
+    await h.board.refresh();
+    expect(updates).toHaveLength(1);
+    const messageId = h.store.getBoard(CHAT)!.messageId;
+    const pendingId = 'om_pending_old';
+    await h.store.setBoard({
+      ...h.store.getBoard(CHAT)!,
+      pendingUnpinMessageIds: [pendingId],
+    });
+
+    const restarted = await reloadBoard(h);
+    restarted.channel.pins.splice(0, restarted.channel.pins.length, { messageId: pendingId, chatId: CHAT });
+    failPinCreates(restarted as Awaited<ReturnType<typeof harness>>, 'always');
+    await restarted.board.refresh();
+
+    expect(updates).toHaveLength(1);
+    expect(restarted.channel.pins.map((pin) => pin.messageId)).toEqual([pendingId]);
+    expect(pendingMessageIds(restarted.store.getBoard(CHAT))).toEqual([pendingId]);
+    expect(restarted.store.getBoard(CHAT)?.messageId).toBe(messageId);
+  });
+
   it('clears a persisted rejection after a successful raw-card update', async () => {
     const h = await harness();
     await h.board.refresh();
