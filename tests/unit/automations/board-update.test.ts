@@ -48,6 +48,23 @@ describe('board empty list and expiry re-post', () => {
     expect(h.channel.pins).toEqual([]);
   });
 
+  it.each([
+    { cause: 'recovered' as const, code: 200740 as const, msg: 'card entity does not exist' },
+    { cause: 'fire-settled' as const, code: 200750 as const, msg: 'card entity has expired' },
+    { cause: 'fire-settled' as const, code: 200740 as const, msg: 'card entity does not exist' },
+  ])('does not post a replacement when patch returns $code on a $cause refresh', async ({ cause, code, msg }) => {
+    const h = await harness();
+    await h.board.refresh();
+    const first = h.store.getBoard(CHAT)!;
+    const sent = h.channel.sent.length;
+    scriptCardUpdates(h, [{ code, msg }]);
+    await h.board.refresh(cause);
+    expect(h.channel.sent.length).toBe(sent);
+    expect(h.store.getBoard(CHAT)?.messageId).toBe(first.messageId);
+    expect(h.store.getBoard(CHAT)?.stale).toBe(String(code));
+    expect(await boardEvents(h.logsDir, 'board.resend')).toEqual([]);
+  });
+
   it('does not post a replacement when patch returns 200750 on a recovered refresh', async () => {
     const h = await harness();
     await h.board.refresh();
