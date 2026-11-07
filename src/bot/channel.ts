@@ -71,6 +71,7 @@ import { attachMeetingAgent, summarizeEndedMeeting } from '../meeting/orchestrat
 import type { ScopeContext } from '../policy/run-policy';
 import { createOwnerRefreshController } from '../policy/owner';
 import { RunExecutor } from '../runtime/run-executor';
+import { computeRunTaskKey } from '../runtime/task-key';
 import type { SessionCatalog } from '../session/catalog';
 import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
@@ -1726,6 +1727,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           agent: capability.agentId,
           source: 'im',
           stage: 'submit',
+          taskKey: computeRunTaskKey(controls.profile, chatId, firstMsg.messageId),
         },
       },
       idleTimeoutMs,

@@ -126,6 +126,38 @@ Bridge 插件与 CLI 自己的原生插件分开。bridge 不下载或安装任�
 
 CLI 入口沿用 `bin/lark-channel-bridge.mjs`。默认数据目录为 `$HOME/.lark-channel`，可以通过 `LARK_CHANNEL_HOME` 指定其它位置。每个 profile 单独保存凭据与会话；多个 agent 共用工作目录时，运行状态隔离不等于目录内文件隔离。
 
+## 可选遥测（Optional telemetry）
+
+默认不发送遥测。若要在 run 开始时通知外部 keeper：
+
+```sh
+export LARK_CHANNEL_TELEMETRY_MODULE=/absolute/path/to/plugins/webhook-on-run-started/index.mjs
+export LARK_RUN_STARTED_WEBHOOK_URL=https://example.invalid/hook
+```
+
+可选：`LARK_RUN_STARTED_WEBHOOK_KEY`、`LARK_RUN_STARTED_WEBHOOK_TIMEOUT_MS`（默认 4000）、`LARK_RUN_STARTED_BOT_NAME`。仓库里不要提交真实 webhook URL 或 key。
+
+POST 是带版本的 JSON，不含消息正文：
+
+```json
+{
+  "v": 1,
+  "type": "run.started",
+  "key": "<task_key>",
+  "task_key": "<task_key>",
+  "bot": "my-bot",
+  "scope": "...zzzzzz",
+  "chat_id": "...123456",
+  "thread_id": null,
+  "message_id": "...789012",
+  "run_id": "<execution uuid>",
+  "agent": "claude",
+  "ts": "2026-05-25T00:00:00.000+00:00"
+}
+```
+
+`task_key` 表示任务（重试和重启后仍相同）；`run_id` 表示一次执行。插件按 `task_key` 去重约 10 分钟。重启后同一任务可能再次唤醒，仍是相同的 `task_key`、新的 `run_id` —— 接收方必须按 `task_key` 去重，不得创建重复值守。详见 [插件 README](plugins/webhook-on-run-started/README.md)。
+
 ## 开发
 
 ```sh

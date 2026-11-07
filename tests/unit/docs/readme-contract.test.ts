@@ -172,6 +172,30 @@ describe('README runtime contract', () => {
     expect(docs).toContain('legacy `sandbox` config is read and migrated');
     expect(docs).not.toContain('"sandbox"');
   });
+
+  it('documents optional run-started webhook telemetry with a placeholder URL', async () => {
+    const [en, zh, plugin] = await Promise.all([
+      readFile(new URL('../../../README.md', import.meta.url), 'utf8'),
+      readFile(new URL('../../../README.zh.md', import.meta.url), 'utf8'),
+      readFile(new URL('../../../plugins/webhook-on-run-started/README.md', import.meta.url), 'utf8'),
+    ]);
+
+    for (const doc of [en, zh, plugin]) {
+      expect(doc).toContain('Optional telemetry');
+      expect(doc).toContain('LARK_CHANNEL_TELEMETRY_MODULE');
+      expect(doc).toContain('LARK_RUN_STARTED_WEBHOOK_URL');
+      expect(doc).toContain('https://example.invalid/hook');
+      expect(doc).toContain('task_key');
+      expect(doc).toContain('run_id');
+    }
+
+    expect(plugin).toContain('LARK_RUN_STARTED_WEBHOOK_KEY');
+    expect(plugin).toContain('LARK_RUN_STARTED_WEBHOOK_TIMEOUT_MS');
+    expect(plugin).toContain('LARK_RUN_STARTED_BOT_NAME');
+    expect(plugin).toMatch(/dedupe|去重/i);
+    expect(plugin).toMatch(/patrol|值守|巡视/i);
+    expect(plugin).not.toMatch(/https:\/\/(?!example\.invalid)/);
+  });
 });
 
 async function readDocs(): Promise<string> {
