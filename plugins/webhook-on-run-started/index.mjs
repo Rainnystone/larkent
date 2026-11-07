@@ -12,6 +12,8 @@
 const DEFAULT_TIMEOUT_MS = 4000;
 const MIN_TIMEOUT_MS = 3000;
 const MAX_TIMEOUT_MS = 5000;
+const DEDUPE_TTL_MS = 10 * 60 * 1000;
+const DEDUPE_MAX_KEYS = 1000;
 
 function clampTimeoutMs(raw) {
   const n = Number(raw);
@@ -30,6 +32,28 @@ function warnFailure(fields) {
 
 function warnCaught(err) {
   warnFailure({ err: err instanceof Error ? err.name : 'Error' });
+}
+
+/** In-memory LRU: key = task_key ?? run_id. Lost on restart. */
+function createDedupe() {
+  const seen = new Map();
+  return function shouldSend(key) {
+    if (typeof key !== 'string' || key.length === 0) return true;
+    const now = Date.now();
+    const prev = seen.get(key);
+    if (prev !== undefined && now - prev < DEDUPE_TTL_MS) {
+      seen.delete(key);
+      seen.set(key, prev);
+      return false;
+    }
+    seen.delete(key);
+    if (seen.size >= DEDUPE_MAX_KEYS) {
+      const oldest = seen.keys().next().value;
+      if (oldest !== undefined) seen.delete(oldest);
+    }
+    seen.set(key, now);
+    return true;
+  };
 }
 
 function buildPayload(event, bot) {
@@ -65,10 +89,6 @@ export function createAdapter(meta = {}) {
     : '';
   const bot = stringOrNull(process.env.LARK_RUN_STARTED_BOT_NAME) ?? stringOrNull(meta.appId);
   const timeoutMs = clampTimeoutMs(process.env.LARK_RUN_STARTED_WEBHOOK_TIMEOUT_MS);
-  const inFlight = new Set();
-  const closeController = new AbortController();
-  let closed = false;
-
   const noop = {
     emit() {},
     recordError() {},
@@ -76,13 +96,22 @@ export function createAdapter(meta = {}) {
     async flush() {},
     close() {},
   };
-  if (!url) return noop;
+  if (!url) {
+    console.warn('⚠ [run-started-webhook] inactive: LARK_RUN_STARTED_WEBHOOK_URL is unset');
+    return noop;
+  }
+
+  const inFlight = new Set();
+  const closeController = new AbortController();
+  const shouldSend = createDedupe();
+  let closed = false;
 
   function emit(event) {
     if (closed) return;
     try {
       if (event?.phase !== 'run' || event?.event !== 'started') return;
       const payload = buildPayload(event, bot);
+      if (!shouldSend(payload.key)) return;
       const headers = { 'content-type': 'application/json' };
       if (configuredKey) {
         headers.authorization = `Bearer ${configuredKey}`;

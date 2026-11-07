@@ -362,7 +362,7 @@ describe('webhook-on-run-started plugin', () => {
     expect(second.run_id).toBe(RUN_B);
   });
 
-  it('evicts the oldest key when the LRU is full', async () => {
+  it('evicts the least-recently-used key when the LRU is full', async () => {
     process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
     const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
     for (let i = 0; i < DEDUPE_MAX_KEYS; i++) {
@@ -373,14 +373,17 @@ describe('webhook-on-run-started plugin', () => {
     }
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS));
 
+    adapter.emit(startedEvent({ taskKey: 'k0000', runId: 'run-0-touch' }));
+    expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS);
+
     adapter.emit(startedEvent({ taskKey: 'k1000', runId: 'run-1000' }));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 1));
 
     adapter.emit(startedEvent({ taskKey: 'k0000', runId: 'run-0-again' }));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 2));
+    expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 1);
 
     adapter.emit(startedEvent({ taskKey: 'k0001', runId: 'run-1-again' }));
-    expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 2);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 2));
   });
 
   it('flush waits for in-flight POSTs and bounds the wait', async () => {
@@ -397,7 +400,7 @@ describe('webhook-on-run-started plugin', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     let flushed = false;
-    const waiting = adapter.flush?.().then(() => {
+    const waiting = Promise.resolve(adapter.flush?.()).then(() => {
       flushed = true;
     });
     await Promise.resolve();
