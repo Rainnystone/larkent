@@ -10,9 +10,13 @@ const PROFILE = 'claude';
 const CHAT_ID = 'oc_abcdefghijklmnopqrstuvwxyz123456';
 const MESSAGE_ID = 'om_source_message_abcdef789012';
 const TASK_KEY = specTaskKey(PROFILE, CHAT_ID, MESSAGE_ID);
+const TASK_KEY_HTTP = specTaskKey(PROFILE, CHAT_ID, `${MESSAGE_ID}-http`);
+const TASK_KEY_NET = specTaskKey(PROFILE, CHAT_ID, `${MESSAGE_ID}-net`);
 const RUN_A = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const RUN_B = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
 const TS = '2026-05-25T00:00:00.000+00:00';
+const DEDUPE_TTL_MS = 10 * 60 * 1000;
+const DEDUPE_MAX_KEYS = 1000;
 
 const ENV_KEYS = [
   'LARK_RUN_STARTED_WEBHOOK_URL',
@@ -78,6 +82,7 @@ describe('webhook-on-run-started plugin', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
     vi.resetModules();
@@ -141,25 +146,22 @@ describe('webhook-on-run-started plugin', () => {
     expect(JSON.stringify(payload)).not.toContain(MESSAGE_ID);
   });
 
-  it('uses the same payload key when the same task retries with a new runId', async () => {
+  it('does not resend the same task_key with a different run_id within TTL', async () => {
     process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
     const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
 
     adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
     adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_B }));
-    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
 
-    const payloads = fetchMock.mock.calls.map((call) => JSON.parse(String((call[1] as RequestInit).body)) as {
+    const payload = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as {
       key: string;
       task_key: string;
       run_id: string;
-    });
-    expect(payloads[0]?.key).toBe(TASK_KEY);
-    expect(payloads[1]?.key).toBe(TASK_KEY);
-    expect(payloads[0]?.task_key).toBe(TASK_KEY);
-    expect(payloads[1]?.task_key).toBe(TASK_KEY);
-    expect(payloads[0]?.run_id).toBe(RUN_A);
-    expect(payloads[1]?.run_id).toBe(RUN_B);
+    };
+    expect(payload.key).toBe(TASK_KEY);
+    expect(payload.task_key).toBe(TASK_KEY);
+    expect(payload.run_id).toBe(RUN_A);
   });
 
   it('keeps the same task_key after a simulated restart with a fresh adapter', async () => {
@@ -260,7 +262,7 @@ describe('webhook-on-run-started plugin', () => {
     timeoutSpy.mockRestore();
     warn.mockClear();
     fetchMock.mockResolvedValue(new Response('nope', { status: 500 }));
-    expect(() => adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }))).not.toThrow();
+    expect(() => adapter.emit(startedEvent({ taskKey: TASK_KEY_HTTP, runId: RUN_B }))).not.toThrow();
     await vi.waitFor(() => expect(warn).toHaveBeenCalled());
     expect(JSON.stringify(warn.mock.calls)).toContain('500');
     expect(JSON.stringify(warn.mock.calls)).not.toContain(HOOK_URL);
@@ -268,7 +270,7 @@ describe('webhook-on-run-started plugin', () => {
 
     warn.mockClear();
     fetchMock.mockRejectedValue(Object.assign(new TypeError('fetch failed'), { code: 'ECONNREFUSED' }));
-    expect(() => adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }))).not.toThrow();
+    expect(() => adapter.emit(startedEvent({ taskKey: TASK_KEY_NET, runId: RUN_B }))).not.toThrow();
     await vi.waitFor(() => expect(warn).toHaveBeenCalled());
     expect(JSON.stringify(warn.mock.calls)).toMatch(/TypeError|fetch failed/);
     expect(JSON.stringify(warn.mock.calls)).not.toContain(HOOK_URL);
@@ -285,6 +287,27 @@ describe('webhook-on-run-started plugin', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('warns once at startup when the webhook URL is unset, across many events', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_KEY = HOOK_KEY;
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    expect(warn).toHaveBeenCalledTimes(1);
+    const notice = JSON.stringify(warn.mock.calls);
+    expect(notice).toMatch(/inactive|unset/i);
+    expect(notice).not.toContain(HOOK_URL);
+    expect(notice).not.toContain(HOOK_KEY);
+    expect(notice).not.toMatch(/https?:\/\//i);
+
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_B }));
+    adapter.emit(startedEvent({ runId: RUN_A }));
+    adapter.recordError(new Error('ignored'));
+    adapter.recordMetric('n', 1);
+    await adapter.flush?.(50);
+    await adapter.close?.();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
   it('falls back to meta.appId for bot when the bot name env is unset', async () => {
     process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
     const adapter = (await loadFactory())({ version: 'test', appId: 'cli_fallback_app' });
@@ -292,5 +315,125 @@ describe('webhook-on-run-started plugin', () => {
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const payload = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { bot: string };
     expect(payload.bot).toBe('cli_fallback_app');
+  });
+
+  it('does not merge distinct runs that have no task_key', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    adapter.emit(startedEvent({ runId: RUN_A }));
+    adapter.emit(startedEvent({ runId: RUN_B }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const payloads = fetchMock.mock.calls.map((call) => JSON.parse(String((call[1] as RequestInit).body)) as {
+      key: string;
+      task_key: string | null;
+      run_id: string;
+    });
+    expect(payloads[0]?.key).toBe(RUN_A);
+    expect(payloads[1]?.key).toBe(RUN_B);
+    expect(payloads[0]?.task_key).toBeNull();
+    expect(payloads[1]?.task_key).toBeNull();
+
+    adapter.emit(startedEvent({ runId: RUN_A }));
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('suppresses a repeat within TTL and resends after TTL', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z').getTime() + DEDUPE_TTL_MS - 1);
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_B }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z').getTime() + DEDUPE_TTL_MS);
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_B }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const second = JSON.parse(String((fetchMock.mock.calls[1]?.[1] as RequestInit).body)) as {
+      key: string;
+      run_id: string;
+    };
+    expect(second.key).toBe(TASK_KEY);
+    expect(second.run_id).toBe(RUN_B);
+  });
+
+  it('evicts the oldest key when the LRU is full', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    for (let i = 0; i < DEDUPE_MAX_KEYS; i++) {
+      adapter.emit(startedEvent({
+        taskKey: `k${String(i).padStart(4, '0')}`,
+        runId: `run-${i}`,
+      }));
+    }
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS));
+
+    adapter.emit(startedEvent({ taskKey: 'k1000', runId: 'run-1000' }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 1));
+
+    adapter.emit(startedEvent({ taskKey: 'k0000', runId: 'run-0-again' }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 2));
+
+    adapter.emit(startedEvent({ taskKey: 'k0001', runId: 'run-1-again' }));
+    expect(fetchMock).toHaveBeenCalledTimes(DEDUPE_MAX_KEYS + 2);
+  });
+
+  it('flush waits for in-flight POSTs and bounds the wait', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    let release: ((value: Response) => void) | undefined;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    let flushed = false;
+    const waiting = adapter.flush?.().then(() => {
+      flushed = true;
+    });
+    await Promise.resolve();
+    expect(flushed).toBe(false);
+
+    release?.(new Response(null, { status: 204 }));
+    await waiting;
+    expect(flushed).toBe(true);
+
+    fetchMock.mockImplementation(() => new Promise<Response>(() => {}));
+    adapter.emit(startedEvent({ taskKey: TASK_KEY_HTTP, runId: RUN_B }));
+    const started = Date.now();
+    await adapter.flush?.(50);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('close aborts in-flight POSTs and ignores later emits', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    fetchMock.mockImplementation((_url: unknown, init?: RequestInit) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(init.signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+        });
+      }),
+    );
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    adapter.close?.();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(HOOK_URL);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(HOOK_KEY);
+
+    fetchMock.mockClear();
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_B }));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
