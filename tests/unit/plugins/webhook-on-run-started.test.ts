@@ -1,3 +1,5 @@
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AdapterFactory, TelemetryEvent } from '../../../src/core/telemetry.js';
 import { specTaskKey } from '../../helpers/spec-task-key.js';
@@ -20,8 +22,11 @@ const ENV_KEYS = [
 ] as const;
 
 async function loadFactory(): Promise<AdapterFactory> {
-  const mod = await import('../../../plugins/webhook-on-run-started/index.mjs');
-  const factory = (mod.default ?? mod.createAdapter) as AdapterFactory | undefined;
+  const specifier = pathToFileURL(
+    join(process.cwd(), 'plugins/webhook-on-run-started/index.mjs'),
+  ).href;
+  const mod = await import(specifier) as { default?: AdapterFactory; createAdapter?: AdapterFactory };
+  const factory = mod.default ?? mod.createAdapter;
   expect(factory).toBeTypeOf('function');
   return factory as AdapterFactory;
 }
@@ -211,6 +216,7 @@ describe('webhook-on-run-started plugin', () => {
 
   it('returns from emit before fetch settles', async () => {
     process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
     let release: ((value: Response) => void) | undefined;
     fetchMock.mockImplementation(
       () =>
@@ -221,6 +227,7 @@ describe('webhook-on-run-started plugin', () => {
     const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
     adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledWith(4000);
     expect(release).toBeTypeOf('function');
     release?.(new Response(null, { status: 204 }));
   });
