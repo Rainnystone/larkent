@@ -1,12 +1,10 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import type { AgentEvent, AgentRun } from '../../../src/agent/types';
 import type { RunHandle } from '../../../src/bot/active-runs';
 import {
   AWAKE_TICK_MS,
   createIdleWatchdog,
+  creditAwakeDelta,
   noteWatchdogActivity,
   TOOL_IDLE_PAUSE_CAP_MS,
 } from '../../../src/bot/idle-watchdog';
@@ -14,9 +12,15 @@ import { reviewActiveRuns, STALL_AFTER_RECOVERY_MS } from '../../../src/bot/reco
 
 const IDLE_MS = 15 * 60_000;
 const TICK_MS = AWAKE_TICK_MS;
-const HERE = dirname(fileURLToPath(import.meta.url));
+const THIRTY_MIN = 30 * 60_000;
 
 describe('awake-time watchdog', () => {
+  it('credits at most one tick for a 30-minute delta and nothing for a backward jump', () => {
+    expect(creditAwakeDelta(THIRTY_MIN, TICK_MS)).toBe(TICK_MS);
+    expect(creditAwakeDelta(-THIRTY_MIN, TICK_MS)).toBe(0);
+    expect(creditAwakeDelta(0, TICK_MS)).toBe(0);
+  });
+
   it('leaves 10 minutes of idle after 5 minutes awake and a 30-minute suspend (late tick)', () => {
     // Continuous timer: one overdue fire with a 30-minute delta (macOS-like).
     // src/platform/host-sleep.ts:182 — Node 20 hrtime is mach_continuous_time
@@ -277,12 +281,6 @@ describe('awake-time watchdog', () => {
     watchdog.dispose();
   });
 
-  it('records that macOS timers may count sleep and does not assume Windows', () => {
-    const src = readFileSync(join(HERE, '../../../src/platform/host-sleep.ts'), 'utf8');
-    expect(src).toContain('Node 20 hrtime is mach_continuous_time and advances during sleep');
-    // Windows Kernel-Power detection exists; timer-during-sleep behavior is unverified.
-    expect(src).toContain('Microsoft-Windows-Kernel-Power');
-  });
 });
 
 type Scheduled = { at: number; fn: () => void; paused?: boolean };

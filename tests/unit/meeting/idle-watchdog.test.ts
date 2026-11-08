@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRun } from '../../../src/agent/types';
 import type { RunHandle } from '../../../src/bot/active-runs';
+import * as watchdogApi from '../../../src/bot/idle-watchdog';
 
 const mocks = vi.hoisted(() => ({ startRunFlow: vi.fn() }));
 vi.mock('../../../src/bot/run-flow', () => ({ startRunFlow: mocks.startRunFlow }));
@@ -113,16 +114,24 @@ describe('meeting idle watchdog', () => {
     expect(answer).toContain('分钟无响应,已自动终止');
   });
 
-  it('updates lastEventAt when meeting text arrives so recovery shares the activity seam', async () => {
+  it('updates lastEventAt once through noteWatchdogActivity so recovery shares the seam', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000);
+    const activity = vi.spyOn(watchdogApi, 'noteWatchdogActivity');
     const stopped = vi.fn();
     const hung = hang(stopped, { type: 'text', delta: '先说一半' });
     mocks.startRunFlow.mockResolvedValue(hung);
     const pending = answerInMeeting(deps(5), '还在吗', { deliver: 'caller', admitted: true });
-    await vi.advanceTimersByTimeAsync(0);
-    expect(hung.execution.handle.lastEventAt).toBeGreaterThan(0);
-    await hung.execution.handle.run.stop();
-    await pending;
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(hung.execution.handle.lastEventAt).toBe(10_000);
+      expect(activity).toHaveBeenCalledTimes(1);
+      expect(activity.mock.calls[0]?.[2]).toEqual({ type: 'text', delta: '先说一半' });
+      expect(hung.execution.handle.remainingWatchdogMs?.()).toBeGreaterThan(4 * 60_000);
+    } finally {
+      activity.mockRestore();
+      await hung.execution.handle.run.stop();
+      await pending;
+    }
   });
 });
