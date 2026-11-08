@@ -455,6 +455,35 @@ describe('webhook-on-run-started plugin', () => {
     expect(Date.now() - started).toBeLessThan(1000);
   });
 
+  it('does not schedule a flush timer when nothing is in flight', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    await adapter.flush?.(2000);
+    expect(timeoutSpy).not.toHaveBeenCalled();
+  });
+
+  it('clears the flush timeout when in-flight POSTs settle', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    let release: ((value: Response) => void) | undefined;
+    fetchMock.mockImplementation(
+      () =>
+        new Promise<Response>((resolve) => {
+          release = resolve;
+        }),
+    );
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
+    const timeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+    const clearSpy = vi.spyOn(globalThis, 'clearTimeout');
+    const flushing = adapter.flush?.(5000);
+    expect(timeoutSpy).toHaveBeenCalled();
+    const handle = timeoutSpy.mock.results.at(-1)?.value as ReturnType<typeof setTimeout>;
+    release?.(new Response(null, { status: 204 }));
+    await flushing;
+    expect(clearSpy).toHaveBeenCalledWith(handle);
+  });
+
   it('close aborts in-flight POSTs and ignores later emits', async () => {
     process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
     fetchMock.mockImplementation((_url: unknown, init?: RequestInit) =>
