@@ -31,7 +31,7 @@ const SYSTEM_MESSAGE_ENVELOPE_INCIDENT_FIXTURE = join(
   process.cwd(),
   'tests/fixtures/antigravity/system-message-envelope-incident.jsonl',
 );
-const PRINT_TIMEOUT_HINT = 'Antigravity print-timeout reached before a reply was produced.';
+const PRINT_TIMEOUT_HINT = '输出不完整（打印超时），可稍后继续';
 const IDLE_WATCHDOG_COPY = '等待预算已用尽';
 const INCIDENT_PROSE = INCIDENT_A_PROSE;
 const INCIDENT_ENVELOPE = INCIDENT_A_ENVELOPE;
@@ -332,7 +332,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     const body = projectedRenderText(events);
     expect(body.trim()).not.toBe('');
-    expect(body).toContain('print-timeout');
+    expect(body).toContain('打印超时');
     expect(body).not.toContain(IDLE_WATCHDOG_COPY);
     expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
     expect(t.terminalEmitted()).toBe(true);

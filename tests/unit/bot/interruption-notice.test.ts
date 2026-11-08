@@ -165,6 +165,23 @@ describe('interruption notice decision', () => {
     expect(planInterruptionNotice(interrupted('runner-timeout'))).toEqual({ kind: 'continue' });
     expect(planInterruptionNotice(interrupted('bridge-idle-watchdog'))).toEqual({ kind: 'continue' });
   });
+
+  it('keeps a retriable partial continue notice as recovery, not a second print-timeout diagnostic', () => {
+    const outcome: RunOutcome = { kind: 'partial', retriable: true, needsHuman: false };
+    expect(planInterruptionNotice(outcome)).toEqual({ kind: 'continue' });
+    const body = buildNoticeMarkdown({
+      initiatorId: 'ou_init',
+      requireBotMention: false,
+      outcome,
+    });
+    expect(body).toContain('上一轮未完成（输出不完整）');
+    expect(body).toContain(CONTINUE_HINT);
+    expect(body).not.toContain('打印超时');
+    expect(body).not.toContain('agent 失败');
+    expect(continueExtraInstruction(outcome)).toContain('输出不完整');
+    expect(continueExtraInstruction(outcome)).not.toContain('打印超时');
+    expect(continueExtraInstruction(outcome)).not.toContain('agent 失败');
+  });
 });
 
 describe('interruption notice actions', () => {

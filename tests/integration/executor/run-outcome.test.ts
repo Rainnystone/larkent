@@ -208,6 +208,81 @@ describe('executor-owned run outcome', () => {
     );
   });
 
+  it('classifies CLI error + exit 3 print-timeout as partial without logging run failed', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const h = harness(
+      { stderrSignatures: () => descriptorFor('antigravity').stderrSignatures },
+      {
+        terminal: { type: 'error', message: 'agy exited with code 3', terminationReason: 'failed' },
+        stderr: '[agy] print timeout after 10m0s with turn in progress; returning partial output',
+        exit: 3,
+      },
+    );
+    const execution = await h.executor.submit({ scopeId: 'synthetic', policy });
+    h.settle();
+    await execution.finished;
+    expect(execution.handle.outcome).toEqual({
+      kind: 'partial', retriable: true, needsHuman: false,
+    });
+    expect(warn.mock.calls.filter((call) => call[0] === 'run' && call[1] === 'failed')).toEqual([]);
+    expect(info).toHaveBeenCalledWith(
+      'run',
+      'completed',
+      expect.objectContaining({ result: 'partial', outcome: 'partial' }),
+    );
+  });
+
+  it('keeps print-timeout partial after post-terminal SIGTERM cleanup', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    let stopped = false;
+    let exit: number | null | undefined = 3;
+    let signal: NodeJS.Signals | string | null | undefined;
+    const pool = new ProcessPool(() => 1);
+    const activeRuns = new ActiveRuns();
+    const agent: AgentAdapter = {
+      id: 'antigravity', displayName: 'Antigravity', isAvailable: async () => true,
+      run: options => ({
+        runId: options.runId,
+        events: (async function* (): AsyncGenerator<AgentEvent> {
+          yield { type: 'error', message: 'agy exited with code 3', terminationReason: 'failed' };
+        })(),
+        get stderrSnapshot() {
+          return '[agy] print timeout after 10m0s with turn in progress; returning partial output';
+        },
+        get exit() { return exit; },
+        get signal() { return signal; },
+        waitForExit: async () => stopped,
+        stop: async () => {
+          stopped = true;
+          exit = 0;
+          signal = 'SIGTERM';
+        },
+      }),
+    };
+    const executor = new RunExecutor({
+      agent,
+      activeRuns,
+      pool,
+      postDoneExitGraceMs: 25,
+      stderrSignatures: () => descriptorFor('antigravity').stderrSignatures,
+    });
+    const execution = await executor.submit({ scopeId: 'synthetic', policy });
+    await collect(execution.subscribe());
+    await execution.finished;
+    expect(execution.handle.outcome).toEqual({
+      kind: 'partial', retriable: true, needsHuman: false,
+    });
+    expect(stopped).toBe(true);
+    expect(signal).toBe('SIGTERM');
+    expect(warn).toHaveBeenCalledWith(
+      'run',
+      'post-terminal-exit-timeout',
+      expect.objectContaining({ graceMs: 25 }),
+    );
+    expect(warn.mock.calls.filter((call) => call[0] === 'run' && call[1] === 'failed')).toEqual([]);
+  });
+
   it('still reports cleanup failure after the post-terminal grace stop', async () => {
     const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
     const pool = new ProcessPool(() => 1);

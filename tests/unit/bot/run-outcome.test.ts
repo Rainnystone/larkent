@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { antigravityStderrSignatures } from '../../../src/agent/antigravity/stderr-signatures';
 import {
   cardTerminalFromOutcome,
   deriveRunOutcome,
@@ -14,6 +15,9 @@ import {
   type StoppableHandle,
   type StopRequest,
 } from '../../../src/bot/run-outcome';
+
+const PRINT_TIMEOUT_STDERR =
+  '[agy] print timeout after 10m0s with turn in progress; returning partial output';
 
 const STOP_REQUESTS = [
   { type: 'user-stop' },
@@ -453,6 +457,58 @@ describe('deriveRunOutcome', () => {
       expect(text).not.toMatch(/interrupted:|failed:/);
       expect(text.length).toBeGreaterThan(0);
     }
+  });
+
+  it('classifies CLI error + exit 3 + print-timeout stderr as partial, not failed', () => {
+    const outcome = deriveRunOutcome({
+      exit: 3,
+      terminalEvent: {
+        type: 'error',
+        message: 'agy exited with code 3',
+        terminationReason: 'failed',
+      },
+      stderrTail: PRINT_TIMEOUT_STDERR,
+      signatures: antigravityStderrSignatures,
+    });
+    expect(outcome).toEqual({ kind: 'partial', retriable: true, needsHuman: false });
+    expect(cardTerminalFromOutcome(outcome)).toBe('done');
+    expect(formatRunOutcome(outcome)).toBe('partial');
+  });
+
+  it('keeps a matching partial signature on an error terminal even with a stop request', () => {
+    const outcome = deriveRunOutcome({
+      stopRequest: { type: 'user-stop' },
+      exit: 3,
+      terminalEvent: {
+        type: 'error',
+        message: 'agy exited with code 3',
+        terminationReason: 'failed',
+      },
+      stderrTail: PRINT_TIMEOUT_STDERR,
+      signatures: antigravityStderrSignatures,
+    });
+    expect(outcome).toEqual({ kind: 'partial', retriable: true, needsHuman: false });
+    expect(cardTerminalFromOutcome(outcome)).toBe('done');
+  });
+
+  it('keeps a genuine error terminal without a print-timeout signature as failed', () => {
+    const outcome = deriveRunOutcome({
+      exit: 3,
+      terminalEvent: {
+        type: 'error',
+        message: 'agy exited with code 3',
+        terminationReason: 'failed',
+      },
+      stderrTail: 'agy exploded',
+      signatures: antigravityStderrSignatures,
+    });
+    expect(outcome).toEqual({
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: true,
+      needsHuman: false,
+    });
+    expect(cardTerminalFromOutcome(outcome)).toBe('error');
   });
 });
 
