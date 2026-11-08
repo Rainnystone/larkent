@@ -126,6 +126,38 @@ Use the [operations guide](docs/operations.md) for background services, the web 
 
 The executable retains its existing filename, `bin/lark-channel-bridge.mjs`. The default data directory is `$HOME/.lark-channel`; set `LARK_CHANNEL_HOME` to use another location. Each profile keeps its own credentials and session state. Runtime isolation does not isolate files in a workspace shared by multiple agents.
 
+## Optional telemetry
+
+The bridge sends no telemetry by default. To notify an external keeper when a run starts:
+
+```sh
+export LARK_CHANNEL_TELEMETRY_MODULE=/absolute/path/to/plugins/webhook-on-run-started/index.mjs
+export LARK_RUN_STARTED_WEBHOOK_URL=https://example.invalid/hook
+```
+
+Optional: `LARK_RUN_STARTED_WEBHOOK_KEY`, `LARK_RUN_STARTED_WEBHOOK_TIMEOUT_MS` (default 4000), `LARK_RUN_STARTED_BOT_NAME`. Never commit a real webhook URL or key.
+
+The POST is versioned JSON with no message body:
+
+```json
+{
+  "v": 1,
+  "type": "run.started",
+  "key": "<task_key>",
+  "task_key": "<task_key>",
+  "bot": "my-bot",
+  "scope": "...zzzzzz",
+  "chat_id": "...123456",
+  "thread_id": null,
+  "message_id": "...789012",
+  "run_id": "<execution uuid>",
+  "agent": "claude",
+  "ts": "2026-05-25T00:00:00.000+00:00"
+}
+```
+
+`task_key` is the task (stable across retries and restarts); `run_id` is one execution. The plugin dedupes on `task_key` for about 10 minutes. After a restart the same task may wake again with the same `task_key` and a new `run_id` — the receiver must dedupe on `task_key` and must not create duplicate patrols. See [the plugin README](plugins/webhook-on-run-started/README.md).
+
 ## Development
 
 ```sh
