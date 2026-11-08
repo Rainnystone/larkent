@@ -193,6 +193,21 @@ describe('awake-time watchdog', () => {
     watchdog.dispose();
   });
 
+  it('does not renew per-tool start when the same tool_use id repeats', () => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    noteProgress(watchdog, { type: 'tool_use', id: 't1', name: 'Bash', input: {} }, clock, handle);
+    clock.elapse(20 * 60_000);
+    expectRemaining(handle, TOOL_IDLE_PAUSE_CAP_MS - 20 * 60_000);
+    noteProgress(watchdog, { type: 'tool_use', id: 't1', name: 'Bash', input: {} }, clock, handle);
+    expectRemaining(handle, TOOL_IDLE_PAUSE_CAP_MS - 20 * 60_000);
+    clock.elapse(TOOL_IDLE_PAUSE_CAP_MS - 20 * 60_000 - 1);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(1);
+    expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    watchdog.dispose();
+  });
+
   it('does not treat heartbeat-only liveness as idle progress', () => {
     const clock = createFakeClock();
     const { handle, watchdog } = startWatch(clock);
