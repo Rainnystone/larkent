@@ -1728,6 +1728,8 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           source: 'im',
           stage: 'submit',
           taskKey: computeRunTaskKey(controls.profile, chatId, firstMsg.messageId),
+          messageId: firstMsg.messageId,
+          ...(firstMsg.threadId ? { threadId: firstMsg.threadId } : {}),
         },
       },
       idleTimeoutMs,
