@@ -198,12 +198,14 @@ export function createIdleWatchdog(input: {
       const progressed = isWatchdogProgress(event);
       if (progressed) resetIdle();
       if (event.type === 'tool_use') {
-        tools.set(event.id, 0);
+        if (!tools.has(event.id)) {
+          tools.set(event.id, 0);
+          log.info('agent', 'tool-in-flight', {
+            tool: event.name,
+            inFlight: tools.size,
+          });
+        }
         handle.hasOpenToolCall = true;
-        log.info('agent', 'tool-in-flight', {
-          tool: event.name,
-          inFlight: tools.size,
-        });
       }
       if (progressed) startLoop();
     },
