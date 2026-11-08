@@ -1,12 +1,18 @@
 import { setImmediate as yieldIO } from 'node:timers/promises';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { descriptorFor } from '../../../src/agent/registry';
 import type { AgentAdapter, AgentEvent } from '../../../src/agent/types';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { ProcessPool } from '../../../src/bot/process-pool';
 import { shouldDeliverAgentEvent } from '../../../src/bot/run-outcome';
+import { log } from '../../../src/core/logger';
 import type { RunPolicyAllow } from '../../../src/policy/run-policy';
+import { RunCleanupFailed } from '../../../src/runtime/errors';
 import { RunExecutor, type RunExecutorDeps } from '../../../src/runtime/run-executor';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('executor-owned run outcome', () => {
   it('publishes one stable outcome only after child exit and cleanup', async () => {
@@ -151,7 +157,92 @@ describe('executor-owned run outcome', () => {
     expect(execution.handle.stopRequest).toEqual({ type: 'user-stop' });
     expect(execution.handle.outcome).toEqual(expected);
   });
+
+  it('keeps completed and releases the slot when a hung child is SIGTERM reaped after done', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    let stopped = false;
+    let exit: number | null | undefined;
+    let signal: NodeJS.Signals | string | null | undefined;
+    const pool = new ProcessPool(() => 1);
+    const activeRuns = new ActiveRuns();
+    const agent: AgentAdapter = {
+      id: 'synthetic', displayName: 'Synthetic', isAvailable: async () => true,
+      run: options => ({
+        runId: options.runId,
+        events: (async function* (): AsyncGenerator<AgentEvent> {
+          yield { type: 'done', terminationReason: 'normal' };
+        })(),
+        get stderrSnapshot() { return 'RetriableError: Connection stalled repeatedly'; },
+        get exit() { return exit; },
+        get signal() { return signal; },
+        waitForExit: async () => stopped,
+        stop: async () => {
+          stopped = true;
+          exit = 0;
+          signal = 'SIGTERM';
+        },
+      }),
+    };
+    const executor = new RunExecutor({
+      agent,
+      activeRuns,
+      pool,
+      postDoneExitGraceMs: 25,
+      stderrSignatures: () => descriptorFor('cursor').stderrSignatures,
+    });
+    const execution = await executor.submit({ scopeId: 'synthetic', policy });
+    await collect(execution.subscribe());
+    await execution.finished;
+    expect(execution.handle.outcome).toEqual({
+      kind: 'completed', retriable: false, needsHuman: false,
+    });
+    expect(stopped).toBe(true);
+    expect(exit).toBe(0);
+    expect(signal).toBe('SIGTERM');
+    expect(pool.snapshot().active).toBe(0);
+    expect(activeRuns.get('synthetic')).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+      'run',
+      'post-terminal-exit-timeout',
+      expect.objectContaining({ graceMs: 25 }),
+    );
+  });
+
+  it('still reports cleanup failure after the post-terminal grace stop', async () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const pool = new ProcessPool(() => 1);
+    const activeRuns = new ActiveRuns();
+    const agent: AgentAdapter = {
+      id: 'synthetic', displayName: 'Synthetic', isAvailable: async () => true,
+      run: options => ({
+        runId: options.runId,
+        events: (async function* (): AsyncGenerator<AgentEvent> {
+          yield { type: 'done', terminationReason: 'normal' };
+        })(),
+        waitForExit: async () => false,
+        stop: async () => {},
+      }),
+    };
+    const executor = new RunExecutor({
+      agent, activeRuns, pool, postDoneExitGraceMs: 25,
+    });
+    const execution = await executor.submit({ scopeId: 'synthetic', policy });
+    await expect(execution.finished).rejects.toBeInstanceOf(RunCleanupFailed);
+    expect(warn).toHaveBeenCalledWith(
+      'run',
+      'post-terminal-exit-timeout',
+      expect.objectContaining({ graceMs: 25 }),
+    );
+    expect(pool.snapshot().active).toBe(1);
+    expect(activeRuns.get('synthetic')?.run).toBe(execution.run);
+  });
 });
+
+async function collect(events: AsyncIterable<unknown>): Promise<unknown[]> {
+  const out: unknown[] = [];
+  for await (const event of events) out.push(event);
+  return out;
+}
 
 function harness(overrides: Partial<RunExecutorDeps> = {}, evidence: {
   terminal?: AgentEvent | null; events?: readonly AgentEvent[];

@@ -46,6 +46,60 @@ describe('deriveRunOutcome', () => {
       formatted: 'completed',
     },
     {
+      name: 'done(normal) is not downgraded by a matching stderr failure signature',
+      input: {
+        exit: 0,
+        terminalEvent: { type: 'done' as const, terminationReason: 'normal' as const },
+        stderrTail: 'RetriableError: Connection stalled repeatedly',
+        signatures: [
+          {
+            pattern: /Connection stalled repeatedly/,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+            userMessage: 'stall',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'completed', retriable: false, needsHuman: false },
+      terminal: 'done',
+      formatted: 'completed',
+    },
+    {
+      name: 'done(normal) after post-terminal SIGTERM is not interrupted by stderr',
+      input: {
+        exit: 0,
+        signal: 'SIGTERM',
+        terminalEvent: { type: 'done' as const, terminationReason: 'normal' as const },
+        stderrTail: 'error: interrupted',
+        signatures: [
+          {
+            pattern: /error:\s*interrupted/,
+            cliVersion: 'test',
+            classify: {
+              kind: 'interrupted',
+              reason: { type: 'external-signal' },
+              retriable: true,
+              needsHuman: false,
+            },
+            userMessage: 'interrupted',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'completed', retriable: false, needsHuman: false },
+      terminal: 'done',
+      formatted: 'completed',
+    },
+    {
+      name: 'error terminal on exit 0 is still failed',
+      input: {
+        exit: 0,
+        terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
+      },
+      expected: { kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false },
+      terminal: 'error',
+      formatted: 'failed:unclassified',
+    },
+    {
       name: 'partial from a signature match even on exit 0',
       input: {
         exit: 0,

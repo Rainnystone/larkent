@@ -167,6 +167,29 @@ describe('run outcome stream', () => {
     expect(info.mock.calls.some((call) => call[0] === 'run' && call[1] === 'stderr-unclassified')).toBe(true);
   });
 
+  it('does not append a failure notice when done matches a stale stderr signature', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'cursor' });
+    await h.channel.handlers.message?.(message('first', 'please finish'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'final_text', content: 'FULL_REPLY' });
+    run.stderrSnapshot = 'RetriableError: Connection stalled repeatedly';
+    run.push({ type: 'done', terminationReason: 'normal' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'completed'));
+    const text = rendered(h.channel);
+    expect(cardFinal(info).at(-1)).toMatchObject({ terminal: 'done', outcome: 'completed' });
+    expect(text).toContain('FULL_REPLY');
+    expect(text).not.toContain('继续');
+    expect(text).not.toContain('agent 运行失败');
+    expect(text).not.toContain('上游连接反复中断');
+    expect(h.channel.sent.filter((item) => JSON.stringify(item.content).includes('FULL_REPLY'))).toHaveLength(1);
+  });
+
   it('classifies agy print-timeout on exit 0 as partial', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
     const h = await harness({ agentKind: 'antigravity' });

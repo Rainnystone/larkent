@@ -193,15 +193,15 @@ describe('shared real adapter lifecycle', () => {
       expect(pool.snapshot().active).toBe(0);
       expect(activeRuns.get('scope')).toBeUndefined();
       if (kind === 'devin') {
-        // The interrupted finish still emits exactly one done; no post-done
+        // The interrupted finish still emits exactly one done; no post-terminal
         // grace warning since done only appears after the child exits.
         expect(events.filter(e => e.type === 'done')).toHaveLength(1);
-        expect(warnings).not.toHaveBeenCalledWith('run', 'post-done-exit-timeout', expect.anything());
+        expect(warnings).not.toHaveBeenCalledWith('run', 'post-terminal-exit-timeout', expect.anything());
       } else if (kind !== 'kimi') {
         expect(events.filter(e => e.type === 'done')).toHaveLength(1);
-        expect(warnings).toHaveBeenCalledWith('run', 'post-done-exit-timeout', expect.objectContaining({ agent: kind, graceMs: 150 }));
+        expect(warnings).toHaveBeenCalledWith('run', 'post-terminal-exit-timeout', expect.objectContaining({ agent: kind, graceMs: 150 }));
       } else {
-        expect(warnings).not.toHaveBeenCalledWith('run', 'post-done-exit-timeout', expect.anything());
+        expect(warnings).not.toHaveBeenCalledWith('run', 'post-terminal-exit-timeout', expect.anything());
       }
     } finally { await execution.stop(); }
   });
