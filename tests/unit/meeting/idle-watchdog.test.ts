@@ -112,4 +112,16 @@ describe('meeting idle watchdog', () => {
     expect(answer).toContain('先说一半');
     expect(answer).toContain('分钟无响应,已自动终止');
   });
+
+  it('updates lastEventAt when meeting text arrives so recovery shares the activity seam', async () => {
+    vi.useFakeTimers();
+    const stopped = vi.fn();
+    const hung = hang(stopped, { type: 'text', delta: '先说一半' });
+    mocks.startRunFlow.mockResolvedValue(hung);
+    const pending = answerInMeeting(deps(5), '还在吗', { deliver: 'caller', admitted: true });
+    await vi.advanceTimersByTimeAsync(0);
+    expect(hung.execution.handle.lastEventAt).toBeGreaterThan(0);
+    await hung.execution.handle.run.stop();
+    await pending;
+  });
 });

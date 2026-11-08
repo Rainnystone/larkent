@@ -21,6 +21,10 @@ export interface RunHandle {
   stallArmedAt?: number;
   /** Installed by the stream processor so recovery can replace the idle timer. */
   armStallDeadline?: (delayMs: number) => void;
+  /** Watchdog-owned remaining awake budget; recovery must not reconstruct this from wall clocks. */
+  remainingWatchdogMs?: () => number | undefined;
+  /** Recovery may only raise this floor; it must not shorten an existing deadline. */
+  extendWatchdogMs?: (minRemainingMs: number) => void;
 }
 
 export function noteRunEvent(handle: RunHandle, at = Date.now()): void {

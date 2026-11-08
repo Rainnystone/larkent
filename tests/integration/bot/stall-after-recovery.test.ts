@@ -72,11 +72,12 @@ describe('stall check after recovery', () => {
     const run = h.agent.manual[0]!;
     run.push({ type: 'text', delta: 'WORKING' });
     await waitFor(() => rendered(h.channel).includes('WORKING'));
-    const lastEventAt = Date.now();
 
     await vi.advanceTimersByTimeAsync(4 * 60_000);
     const suspendStartedAt = Date.now();
-    await vi.advanceTimersByTimeAsync(10 * 60_000 + 38_000);
+    // Sleep is a wall jump, not 10m38s of fired timers (those would be awake ticks).
+    vi.setSystemTime(Date.now() + 10 * 60_000 + 38_000);
+    await vi.advanceTimersByTimeAsync(1_000);
     await h.bridge.recover({
       since: suspendStartedAt,
       until: Date.now(),
@@ -95,6 +96,26 @@ describe('stall check after recovery', () => {
     await vi.advanceTimersByTimeAsync(1);
     await waitFor(() => rendered(h.channel).includes('空闲超时'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
+  });
+
+  it('excludes a 30-minute wall jump from idle even when the sleep probe reports not-suspended', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(message('first', 'first request'));
+    await vi.advanceTimersByTimeAsync(600);
+    await h.agent.started;
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    const since = Date.now();
+    vi.setSystemTime(Date.now() + 30 * 60_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.bridge.recover({ since, until: Date.now(), hostSuspended: false });
+
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
   });
 
   it('reviews a tool-call run that started after last Feishu evidence when the host slept', async () => {

@@ -60,6 +60,24 @@ describe('idle watchdog', () => {
     afterWatch.dispose();
   });
 
+  it('never shortens tool grace below configured idle of 120 minutes', async () => {
+    vi.useFakeTimers();
+    const longIdle = handle();
+    const watch = createIdleWatchdog({
+      handle: longIdle,
+      idleTimeoutMs: 120 * 60_000,
+      scope: 'long-idle-tool',
+    });
+    watch.noteDelivered({ type: 'tool_use', id: 'tool-1', name: 'Bash', input: {} });
+    await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS);
+    expect(longIdle.interrupted).toBe(false);
+    await vi.advanceTimersByTimeAsync(60 * 60_000 - 1);
+    expect(longIdle.interrupted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(longIdle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    watch.dispose();
+  });
+
   it('does not cut remaining idle to the 2-minute recovery stall', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(10_000_000);

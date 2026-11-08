@@ -7,6 +7,15 @@ import { requestStop } from './run-outcome';
 /** While a tool is in flight, idle silence may last this long before the run is presumed hung. */
 export const TOOL_IDLE_PAUSE_CAP_MS = 60 * 60_000;
 
+/** Short tick used to credit awake silence. Gaps larger than one tick are not awake time. */
+export const AWAKE_TICK_MS = 1_000;
+
+export interface IdleWatchdogClock {
+  now?: () => number;
+  schedule?: (fn: () => void, delayMs: number) => { cancel: () => void };
+  tickMs?: number;
+}
+
 export interface IdleWatchdog {
   arm(): void;
   noteDelivered(event: AgentEvent): void;
@@ -26,8 +35,10 @@ export function createIdleWatchdog(input: {
   handle: RunHandle;
   idleTimeoutMs: number | undefined;
   scope?: string;
+  clock?: IdleWatchdogClock;
 }): IdleWatchdog {
-  const { handle, idleTimeoutMs } = input;
+  const { handle, idleTimeoutMs, clock: _clock } = input;
+  void _clock;
   handle.idleTimeoutMs = idleTimeoutMs;
   let timer: NodeJS.Timeout | undefined;
   let armedDelayMs = idleTimeoutMs;

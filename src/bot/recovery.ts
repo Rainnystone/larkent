@@ -21,6 +21,8 @@ export interface ReviewableRun {
   /** Set once a stall deadline is armed; later reviews must not extend it. */
   stallArmedAt?: number;
   armStallDeadline?(delayMs: number): void;
+  remainingWatchdogMs?(): number | undefined;
+  extendWatchdogMs?(minRemainingMs: number): void;
 }
 
 /**

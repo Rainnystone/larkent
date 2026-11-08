@@ -119,19 +119,22 @@ describe('Recovery', () => {
   });
 
   it('does not re-arm a stall deadline on a second review of the same silent run', () => {
-    let armed = 0;
+    let remaining = 30_000;
     const silent: ReviewableRun = {
       lastEventAt: 900,
       interrupted: false,
-      armStallDeadline: () => {
-        armed += 1;
-        delete silent.stallDeadlineMs;
+      idleTimeoutMs: 15 * 60_000,
+      remainingWatchdogMs: () => remaining,
+      extendWatchdogMs: (minRemainingMs) => {
+        remaining = Math.max(remaining, minRemainingMs);
       },
+      armStallDeadline: vi.fn(),
     };
     const outage = { since: 1_000, until: 5_000, hostSuspended: false };
     reviewActiveRuns([silent], outage);
     reviewActiveRuns([silent], outage);
-    expect(armed).toBe(1);
+    expect(remaining).toBe(2 * 60_000);
+    expect(silent.armStallDeadline).not.toHaveBeenCalled();
   });
 
   it('reviews silent runs once across recovery retries of the same outage', async () => {
@@ -173,7 +176,15 @@ describe('Recovery', () => {
   });
 
   it('arms a 2-minute stall only for runs silent since before the outage', () => {
-    const silent: ReviewableRun = { lastEventAt: 900, interrupted: false, armStallDeadline: vi.fn() };
+    const extendSilent = vi.fn();
+    const silent: ReviewableRun = {
+      lastEventAt: 900,
+      interrupted: false,
+      idleTimeoutMs: 15 * 60_000,
+      remainingWatchdogMs: () => 30_000,
+      extendWatchdogMs: extendSilent,
+      armStallDeadline: vi.fn(),
+    };
     const live: ReviewableRun = { lastEventAt: 1_000, interrupted: false, armStallDeadline: vi.fn() };
     const alreadyStopped: ReviewableRun = { lastEventAt: 100, interrupted: true, armStallDeadline: vi.fn() };
     const notYetStreaming: ReviewableRun = { lastEventAt: 800, interrupted: false };
@@ -182,45 +193,54 @@ describe('Recovery', () => {
       until: 5_000,
       hostSuspended: false,
     });
-    expect(silent.armStallDeadline).toHaveBeenCalledWith(2 * 60_000);
-    expect(silent.stallDeadlineMs).toBe(2 * 60_000);
+    expect(extendSilent).toHaveBeenCalledWith(2 * 60_000);
+    expect(silent.armStallDeadline).not.toHaveBeenCalled();
     expect(live.armStallDeadline).not.toHaveBeenCalled();
     expect(live.stallDeadlineMs).toBeUndefined();
     expect(alreadyStopped.armStallDeadline).not.toHaveBeenCalled();
-    expect(notYetStreaming.stallDeadlineMs).toBe(2 * 60_000);
+    expect(notYetStreaming.stallDeadlineMs).toBeUndefined();
   });
 
-  it('arms remaining normal idle when it exceeds the 2-minute stall floor', () => {
+  it('does not reconstruct remaining idle from lastEventAt', () => {
     vi.useFakeTimers();
     const now = 1_000_000;
     vi.setSystemTime(now);
+    const extend = vi.fn();
     const silent: ReviewableRun = {
       lastEventAt: now - 3 * 60_000,
       interrupted: false,
       idleTimeoutMs: 15 * 60_000,
+      remainingWatchdogMs: () => 12 * 60_000,
+      extendWatchdogMs: extend,
       armStallDeadline: vi.fn(),
     };
     reviewActiveRuns([silent], { since: now - 1_000, until: now, hostSuspended: false });
-    expect(silent.armStallDeadline).toHaveBeenCalledWith(12 * 60_000);
-    expect(silent.stallDeadlineMs).toBe(12 * 60_000);
+    expect(extend).toHaveBeenCalledWith(2 * 60_000);
+    expect(silent.armStallDeadline).not.toHaveBeenCalled();
+    expect(silent.stallDeadlineMs).toBeUndefined();
   });
 
-  it('keeps the 2-minute stall floor when remaining idle is shorter', () => {
+  it('extends a short watchdog remaining up to the 2-minute stall floor', () => {
     vi.useFakeTimers();
     const now = 1_000_000;
     vi.setSystemTime(now);
+    let remaining = 30_000;
     const silent: ReviewableRun = {
       lastEventAt: now - 14 * 60_000,
       interrupted: false,
       idleTimeoutMs: 15 * 60_000,
+      remainingWatchdogMs: () => remaining,
+      extendWatchdogMs: (minRemainingMs) => {
+        remaining = Math.max(remaining, minRemainingMs);
+      },
       armStallDeadline: vi.fn(),
     };
     reviewActiveRuns([silent], { since: now - 1_000, until: now, hostSuspended: false });
-    expect(silent.armStallDeadline).toHaveBeenCalledWith(2 * 60_000);
-    expect(silent.stallDeadlineMs).toBe(2 * 60_000);
+    expect(remaining).toBe(2 * 60_000);
+    expect(silent.armStallDeadline).not.toHaveBeenCalled();
   });
 
-  it('does not count host-sleep wall time toward remaining idle', () => {
+  it('does not reconstruct remaining idle from host-sleep wall time', () => {
     vi.useFakeTimers();
     const lastEventAt = 1_000_000;
     const awakeMs = 4 * 60_000;
@@ -228,10 +248,13 @@ describe('Recovery', () => {
     const suspendStartedAt = lastEventAt + awakeMs;
     const now = suspendStartedAt + suspendMs;
     vi.setSystemTime(now);
+    const extend = vi.fn();
     const silent: ReviewableRun = {
       lastEventAt,
       interrupted: false,
       idleTimeoutMs: 15 * 60_000,
+      remainingWatchdogMs: () => 11 * 60_000,
+      extendWatchdogMs: extend,
       armStallDeadline: vi.fn(),
     };
     reviewActiveRuns([silent], {
@@ -240,8 +263,20 @@ describe('Recovery', () => {
       hostSuspended: true,
       suspendStartedAt,
     });
-    expect(silent.armStallDeadline).toHaveBeenCalledWith(11 * 60_000);
-    expect(silent.stallDeadlineMs).toBe(11 * 60_000);
+    expect(extend).toHaveBeenCalledWith(2 * 60_000);
+    expect(silent.armStallDeadline).not.toHaveBeenCalled();
+    expect(silent.stallDeadlineMs).toBeUndefined();
+  });
+
+  it('does not fall back to 120000 when idle is disabled', () => {
+    const silent: ReviewableRun = {
+      lastEventAt: 900,
+      interrupted: false,
+      armStallDeadline: vi.fn(),
+    };
+    reviewActiveRuns([silent], { since: 1_000, until: 5_000, hostSuspended: false });
+    expect(silent.armStallDeadline).not.toHaveBeenCalled();
+    expect(silent.stallDeadlineMs).toBeUndefined();
   });
 
   it('logs window-truncated once per recovery when the outage exceeds lookback', async () => {
