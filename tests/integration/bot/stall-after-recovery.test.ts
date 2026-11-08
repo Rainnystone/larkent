@@ -18,6 +18,7 @@ vi.mock('@larksuite/channel', async importOriginal => ({
   createLarkChannel: () => sdk.channel,
 }));
 import { startChannel } from '../../../src/bot/channel';
+import { TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
 
 const NOW = 1_760_000_000_000;
 const STALL_AFTER_RECOVERY_MS = 2 * 60_000;
@@ -63,6 +64,39 @@ describe('stall check after recovery', () => {
     expect(rendered(h.channel)).toContain('notice.continue');
   });
 
+  it('does not count a 10m38s host sleep toward remaining idle', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(message('first', 'first request'));
+    await vi.advanceTimersByTimeAsync(600);
+    await h.agent.started;
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+    const lastEventAt = Date.now();
+
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    const suspendStartedAt = Date.now();
+    await vi.advanceTimersByTimeAsync(10 * 60_000 + 38_000);
+    await h.bridge.recover({
+      since: suspendStartedAt,
+      until: Date.now(),
+      hostSuspended: true,
+      suspendStartedAt,
+    });
+
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+
+    const remainingAwake = IDLE_MS - 4 * 60_000;
+    await vi.advanceTimersByTimeAsync(remainingAwake - STALL_AFTER_RECOVERY_MS - 1);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(1);
+    await waitFor(() => rendered(h.channel).includes('空闲超时'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+  });
+
   it('reviews a tool-call run that started after last Feishu evidence when the host slept', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
@@ -87,11 +121,13 @@ describe('stall check after recovery', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
     await vi.advanceTimersByTimeAsync(IDLE_MS - (Date.now() - toolAt));
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS);
     await waitFor(() => h.agent.runs[0]!.stopped);
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
-  it('after a host suspend, a silent open-tool run is stopped at remaining idle with one retriable notice', async () => {
+  it('after a host suspend, a silent open-tool run keeps the 60-minute tool grace', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
@@ -111,6 +147,10 @@ describe('stall check after recovery', () => {
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
 
     await vi.advanceTimersByTimeAsync(IDLE_MS - (Date.now() - lastEventAt));
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('空闲超时');
+
+    await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS);
     await waitFor(() => rendered(h.channel).includes('空闲超时'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
     expect(rendered(h.channel)).toContain('notice.continue');
