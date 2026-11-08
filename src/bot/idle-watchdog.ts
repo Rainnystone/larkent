@@ -1,6 +1,7 @@
 import type { AgentEvent } from '../agent/types';
 import { log } from '../core/logger';
 import type { RunHandle } from './active-runs';
+import { stallDelayAfterRecovery } from './recovery';
 import { requestStop } from './run-outcome';
 
 /** While a tool is in flight, idle silence may last this long before the run is presumed hung. */
@@ -19,7 +20,7 @@ export interface IdleWatchdog {
  * Silence for `idleTimeoutMs` is presumed hung. An open tool call pauses that
  * bound (a long `lark-cli` OAuth or download can be quiet) but the pause
  * itself is capped at 60 minutes. Recovery can replace the delay with a
- * stall deadline (`handle.armStallDeadline`).
+ * stall deadline of at least remaining normal idle (`handle.armStallDeadline`).
  */
 export function createIdleWatchdog(input: {
   handle: RunHandle;
@@ -27,6 +28,7 @@ export function createIdleWatchdog(input: {
   scope?: string;
 }): IdleWatchdog {
   const { handle, idleTimeoutMs } = input;
+  handle.idleTimeoutMs = idleTimeoutMs;
   let timer: NodeJS.Timeout | undefined;
   let armedDelayMs = idleTimeoutMs;
   let stallTimerArmed = false;
@@ -69,7 +71,7 @@ export function createIdleWatchdog(input: {
     if (stallTimerArmed) return;
     stallTimerArmed = true;
     handle.stallArmedAt = Date.now();
-    armIdleTimer(delayMs);
+    armIdleTimer(Math.max(delayMs, stallDelayAfterRecovery(idleTimeoutMs, handle.lastEventAt)));
   };
 
   if (handle.stallDeadlineMs !== undefined) {

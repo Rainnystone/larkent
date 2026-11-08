@@ -6,7 +6,7 @@ export { RECOVERY_RETRY_MIN_MS, RECOVERY_RETRY_MAX_MS } from './recovery-timing'
 
 export type { Outage };
 
-/** After recovery, a run silent since before `outage.since` may keep running this long. */
+/** Floor for how long a silent pre-outage run may keep running after recovery. */
 export const STALL_AFTER_RECOVERY_MS = 2 * 60_000;
 
 export interface ReviewableRun {
@@ -14,6 +14,8 @@ export interface ReviewableRun {
   interrupted: boolean;
   /** True while the stream processor has a tool call in flight. */
   hasOpenToolCall?: boolean;
+  /** Configured normal idle bound; recovery uses remaining time, not a fresh 2 minutes. */
+  idleTimeoutMs?: number;
   /** Pending stall delay when the stream processor has not installed a hook yet. */
   stallDeadlineMs?: number;
   /** Set once a stall deadline is armed; later reviews must not extend it. */
@@ -21,8 +23,19 @@ export interface ReviewableRun {
   armStallDeadline?(delayMs: number): void;
 }
 
+/** After recovery, wait at least 2 minutes and at least the remaining normal idle. */
+export function stallDelayAfterRecovery(
+  idleTimeoutMs: number | undefined,
+  lastEventAt: number,
+  now = Date.now(),
+): number {
+  if (idleTimeoutMs === undefined) return STALL_AFTER_RECOVERY_MS;
+  return Math.max(STALL_AFTER_RECOVERY_MS, idleTimeoutMs - (now - lastEventAt));
+}
+
 export function reviewActiveRuns(runs: Iterable<ReviewableRun>, outage: Outage): void {
   const since = reviewSince(outage);
+  const now = Date.now();
   for (const handle of runs) {
     if (handle.interrupted) continue;
     if (handle.lastEventAt >= since) continue;
@@ -31,9 +44,10 @@ export function reviewActiveRuns(runs: Iterable<ReviewableRun>, outage: Outage):
     // Keep the earliest absolute deadline. A later recovery retry must not
     // reset the idle timer back to a fresh 2 minutes.
     if (handle.stallArmedAt !== undefined) continue;
-    handle.stallDeadlineMs = STALL_AFTER_RECOVERY_MS;
-    handle.stallArmedAt = Date.now();
-    handle.armStallDeadline?.(STALL_AFTER_RECOVERY_MS);
+    const delayMs = stallDelayAfterRecovery(handle.idleTimeoutMs, handle.lastEventAt, now);
+    handle.stallDeadlineMs = delayMs;
+    handle.stallArmedAt = now;
+    handle.armStallDeadline?.(delayMs);
   }
 }
 

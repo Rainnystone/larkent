@@ -13,11 +13,13 @@ export interface RunHandle {
   lastEventAt: number;
   /** True while the stream processor has a tool call in flight. */
   hasOpenToolCall?: boolean;
+  /** Configured normal idle bound; recovery uses remaining time after an outage. */
+  idleTimeoutMs?: number;
   /** Set by recovery when the run was silent before the outage. */
   stallDeadlineMs?: number;
   /** Set once a stall deadline is armed; later reviews must not extend it. */
   stallArmedAt?: number;
-  /** Installed by the stream processor so recovery can shorten the idle bound. */
+  /** Installed by the stream processor so recovery can replace the idle timer. */
   armStallDeadline?: (delayMs: number) => void;
 }
 
