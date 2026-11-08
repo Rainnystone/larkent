@@ -190,6 +190,36 @@ describe('Recovery', () => {
     expect(notYetStreaming.stallDeadlineMs).toBe(2 * 60_000);
   });
 
+  it('arms remaining normal idle when it exceeds the 2-minute stall floor', () => {
+    vi.useFakeTimers();
+    const now = 1_000_000;
+    vi.setSystemTime(now);
+    const silent = {
+      lastEventAt: now - 3 * 60_000,
+      interrupted: false,
+      idleTimeoutMs: 15 * 60_000,
+      armStallDeadline: vi.fn(),
+    };
+    reviewActiveRuns([silent], { since: now - 1_000, until: now, hostSuspended: false });
+    expect(silent.armStallDeadline).toHaveBeenCalledWith(12 * 60_000);
+    expect(silent.stallDeadlineMs).toBe(12 * 60_000);
+  });
+
+  it('keeps the 2-minute stall floor when remaining idle is shorter', () => {
+    vi.useFakeTimers();
+    const now = 1_000_000;
+    vi.setSystemTime(now);
+    const silent = {
+      lastEventAt: now - 14 * 60_000,
+      interrupted: false,
+      idleTimeoutMs: 15 * 60_000,
+      armStallDeadline: vi.fn(),
+    };
+    reviewActiveRuns([silent], { since: now - 1_000, until: now, hostSuspended: false });
+    expect(silent.armStallDeadline).toHaveBeenCalledWith(2 * 60_000);
+    expect(silent.stallDeadlineMs).toBe(2 * 60_000);
+  });
+
   it('logs window-truncated once per recovery when the outage exceeds lookback', async () => {
     const info = vi.spyOn(log, 'info').mockImplementation(() => {});
     const lookbackMs = 6 * 60 * 60 * 1000;
@@ -323,6 +353,22 @@ describe('Recovery', () => {
     reviewActiveRuns([openTool], { since: 1_000, until: 5_000, hostSuspended: true });
     expect(openTool.armStallDeadline).toHaveBeenCalledWith(2 * 60_000);
     expect(openTool.stallDeadlineMs).toBe(2 * 60_000);
+  });
+
+  it('uses remaining normal idle for a host-suspend open tool when idle is known', () => {
+    vi.useFakeTimers();
+    const now = 1_000_000;
+    vi.setSystemTime(now);
+    const openTool = {
+      lastEventAt: now - 3 * 60_000,
+      interrupted: false,
+      hasOpenToolCall: true,
+      idleTimeoutMs: 15 * 60_000,
+      armStallDeadline: vi.fn(),
+    };
+    reviewActiveRuns([openTool], { since: now - 1_000, until: now, hostSuspended: true });
+    expect(openTool.armStallDeadline).toHaveBeenCalledWith(12 * 60_000);
+    expect(openTool.stallDeadlineMs).toBe(12 * 60_000);
   });
 
   it('reviews a tool-call run that started after last Feishu evidence when the host slept', () => {

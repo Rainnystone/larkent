@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRun } from '../../../src/agent/types';
 import type { RunHandle } from '../../../src/bot/active-runs';
 import { createIdleWatchdog, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
+import { STALL_AFTER_RECOVERY_MS } from '../../../src/bot/recovery';
 
 const IDLE_MS = 15 * 60_000;
 
@@ -57,6 +58,38 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(afterTool.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
     afterWatch.dispose();
+  });
+
+  it('does not cut remaining idle to the 2-minute recovery stall', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000_000);
+    const remain = handle();
+    remain.lastEventAt = 10_000_000;
+    createIdleWatchdog({ handle: remain, idleTimeoutMs: IDLE_MS, scope: 'remain' });
+    await vi.advanceTimersByTimeAsync(3 * 60_000);
+    remain.armStallDeadline?.(STALL_AFTER_RECOVERY_MS);
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
+    expect(remain.interrupted).toBe(false);
+    await vi.advanceTimersByTimeAsync(IDLE_MS - 3 * 60_000 - STALL_AFTER_RECOVERY_MS - 1);
+    expect(remain.interrupted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(remain.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+  });
+
+  it('restores the normal idle bound after a recovery stall when an agent event arrives', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000_000);
+    const live = handle();
+    live.lastEventAt = 10_000_000;
+    const watch = createIdleWatchdog({ handle: live, idleTimeoutMs: IDLE_MS, scope: 'event' });
+    await vi.advanceTimersByTimeAsync(13 * 60_000);
+    live.armStallDeadline?.(STALL_AFTER_RECOVERY_MS);
+    watch.noteDelivered({ type: 'text', delta: 'still working' });
+    await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
+    expect(live.interrupted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(live.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    watch.dispose();
   });
 });
 

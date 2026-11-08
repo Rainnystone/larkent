@@ -30,8 +30,10 @@ afterEach(async () => {
   sdk.channel = undefined;
 });
 
+const IDLE_MS = 15 * 60_000;
+
 describe('stall check after recovery', () => {
-  it('stops a run silent since before the outage within 2 min with a retriable notice', async () => {
+  it('keeps a silent run alive past 2 min after recovery while remaining idle remains', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
@@ -39,20 +41,25 @@ describe('stall check after recovery', () => {
     const run = h.agent.manual[0]!;
     run.push({ type: 'text', delta: 'WORKING' });
     await waitFor(() => rendered(h.channel).includes('WORKING'));
+    const lastEventAt = Date.now();
 
     await vi.advanceTimersByTimeAsync(5_000);
     const since = Date.now();
     await vi.advanceTimersByTimeAsync(1_000);
     await h.bridge.recover({ since, until: Date.now(), hostSuspended: false });
 
-    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+
+    const remaining = IDLE_MS - (Date.now() - lastEventAt);
+    await vi.advanceTimersByTimeAsync(remaining - 1);
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
-    expect(h.agent.runs[0]!.stopped).toBe(true);
-    await drainIO();
     await waitFor(() => rendered(h.channel).includes('空闲超时'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+    expect(rendered(h.channel)).toContain('15 分钟无响应');
     expect(rendered(h.channel)).toContain('notice.continue');
   });
 
@@ -76,14 +83,15 @@ describe('stall check after recovery', () => {
       suspendStartedAt,
     });
 
-    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+    await vi.advanceTimersByTimeAsync(IDLE_MS - (Date.now() - toolAt));
+    await waitFor(() => h.agent.runs[0]!.stopped);
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
-  it('after a host suspend, a silent open-tool run is stopped and posts one retriable notice within 2 min', async () => {
+  it('after a host suspend, a silent open-tool run is stopped at remaining idle with one retriable notice', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
@@ -91,20 +99,20 @@ describe('stall check after recovery', () => {
     const run = h.agent.manual[0]!;
     run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
     await waitFor(() => rendered(h.channel).includes('long_tool'));
+    const lastEventAt = Date.now();
 
     await vi.advanceTimersByTimeAsync(5_000);
     const since = Date.now();
     await vi.advanceTimersByTimeAsync(1_000);
     await h.bridge.recover({ since, until: Date.now(), hostSuspended: true });
 
-    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
 
-    await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
-    expect(h.agent.runs[0]!.stopped).toBe(true);
-    await drainIO();
+    await vi.advanceTimersByTimeAsync(IDLE_MS - (Date.now() - lastEventAt));
     await waitFor(() => rendered(h.channel).includes('空闲超时'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
     expect(rendered(h.channel)).toContain('notice.continue');
     expect((rendered(h.channel).match(/notice\.continue/g) ?? []).length).toBe(1);
   });
