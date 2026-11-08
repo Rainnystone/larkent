@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import type { AgentEvent, AgentRun } from '../../../src/agent/types';
 import type { RunHandle } from '../../../src/bot/active-runs';
-import { createIdleWatchdog, type IdleWatchdog } from '../../../src/bot/idle-watchdog';
+import { createIdleWatchdog, noteWatchdogActivity, type IdleWatchdog } from '../../../src/bot/idle-watchdog';
 import { shouldDeliverAgentEvent } from '../../../src/bot/run-outcome';
 
 const SESSION = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
@@ -60,7 +60,7 @@ function consume(
   delivered: AgentEvent[],
 ): void {
   for (const event of events) {
-    if (!handle.interrupted) watchdog.noteDelivered(event);
+    noteWatchdogActivity(handle, watchdog, event);
     if (event.type === 'system' || event.type === 'liveness') continue;
     if (!shouldDeliverAgentEvent(handle, event)) continue;
     delivered.push(event);

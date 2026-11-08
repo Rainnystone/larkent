@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { AgentEvent, AgentRun } from '../../../src/agent/types';
-import { noteRunEvent, type RunHandle } from '../../../src/bot/active-runs';
+import type { RunHandle } from '../../../src/bot/active-runs';
 import {
   AWAKE_TICK_MS,
   createIdleWatchdog,
+  noteWatchdogActivity,
   TOOL_IDLE_PAUSE_CAP_MS,
 } from '../../../src/bot/idle-watchdog';
 import { reviewActiveRuns, STALL_AFTER_RECOVERY_MS } from '../../../src/bot/recovery';
@@ -14,10 +15,6 @@ import { reviewActiveRuns, STALL_AFTER_RECOVERY_MS } from '../../../src/bot/reco
 const IDLE_MS = 15 * 60_000;
 const TICK_MS = AWAKE_TICK_MS;
 const HERE = dirname(fileURLToPath(import.meta.url));
-
-afterEach(() => {
-  // Fake clocks cancel via dispose; nothing to restore.
-});
 
 describe('awake-time watchdog', () => {
   it('leaves 10 minutes of idle after 5 minutes awake and a 30-minute suspend (late tick)', () => {
@@ -375,11 +372,11 @@ function expectRemaining(handle: RunHandle, expected: number): void {
 }
 
 function noteProgress(
-  watchdog: { noteDelivered: (event: AgentEvent) => void },
+  watchdog: Parameters<typeof noteWatchdogActivity>[1],
   event: AgentEvent,
   clock: ReturnType<typeof createFakeClock>,
   handle?: RunHandle,
 ): void {
-  if (handle) noteRunEvent(handle, clock.now());
-  watchdog.noteDelivered(event);
+  if (!handle) return;
+  noteWatchdogActivity(handle, watchdog, event, clock.now());
 }

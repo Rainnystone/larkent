@@ -9,7 +9,7 @@ export interface RunHandle {
   stopRequest?: StopRequest;
   /** Set once by RunExecutor after child exit, cleanup and source drainage. */
   outcome?: RunOutcome;
-  /** Last agent-stream event (or register time if none yet). */
+  /** Last watchdog progress (or register time if none yet). Liveness does not advance this. */
   lastEventAt: number;
   /** True while the stream processor has a tool call in flight. */
   hasOpenToolCall?: boolean;
