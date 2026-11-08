@@ -317,6 +317,26 @@ describe('webhook-on-run-started plugin', () => {
     expect(payload.bot).toBe('cli_fallback_app');
   });
 
+  it('labels bot with the emitting run profile, not the adapter meta appId', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_alpha' });
+    adapter.emit(startedEvent({
+      taskKey: TASK_KEY,
+      runId: RUN_A,
+      fields: { profile: 'beta-profile' },
+    }));
+    adapter.emit(startedEvent({
+      taskKey: TASK_KEY_HTTP,
+      runId: RUN_B,
+      fields: { profile: 'gamma-profile' },
+    }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const bots = fetchMock.mock.calls.map(
+      (call) => (JSON.parse(String((call[1] as RequestInit).body)) as { bot: string }).bot,
+    );
+    expect(bots).toEqual(['beta-profile', 'gamma-profile']);
+  });
+
   it('does not merge distinct runs that have no task_key', async () => {
     process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
     const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
