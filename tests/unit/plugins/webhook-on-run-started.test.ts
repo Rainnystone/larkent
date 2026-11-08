@@ -277,6 +277,24 @@ describe('webhook-on-run-started plugin', () => {
     expect(JSON.stringify(warn.mock.calls)).not.toContain(HOOK_KEY);
   });
 
+  it('does not follow redirects and warns once on 3xx without leaking secrets', async () => {
+    process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
+    process.env.LARK_RUN_STARTED_WEBHOOK_KEY = HOOK_KEY;
+    fetchMock.mockResolvedValue(new Response(null, {
+      status: 302,
+      headers: { location: 'https://example.invalid/elsewhere' },
+    }));
+    const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit).redirect).toBe('manual');
+    await vi.waitFor(() => expect(warn).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(warn.mock.calls)).toContain('302');
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(HOOK_URL);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain(HOOK_KEY);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('elsewhere');
+  });
+
   it('is a noop when the webhook URL is unset', async () => {
     const adapter = (await loadFactory())({ version: 'test', appId: 'cli_test_app' });
     adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
