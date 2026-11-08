@@ -5,6 +5,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index';
 import { createDefaultProfileConfig, MEETING_DEFAULTS } from '../../../src/config/profile-schema';
+import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store';
 import { attachMeetingAgent, meetingScopeId } from '../../../src/meeting/orchestrator';
 import { MeetingSession } from '../../../src/meeting/session';
 import { ResumeCandidates } from '../../../src/session/resume-candidates';
@@ -116,6 +117,8 @@ async function harness(): Promise<{
     access: { admins: ['ou-user'] },
   });
   profileConfig.workspaces.default = tmp.workspace;
+  const configPath = join(tmp.profile, 'config.json');
+  await saveRootConfig(createRootConfig('claude', profileConfig), configPath);
   const controls = {
     profile: 'claude',
     profileConfig,
@@ -124,7 +127,7 @@ async function harness(): Promise<{
     async refreshOwner() {},
     restart: vi.fn(async () => {}),
     exit: vi.fn(async () => {}),
-    configPath: join(tmp.profile, 'config.json'),
+    configPath,
     cfg: profileConfig,
     processId: 'proc-1',
   } satisfies Controls;

@@ -314,7 +314,9 @@ export const DEFAULT_RUN_IDLE_TIMEOUT_MINUTES = 15;
  * value to [1, 120] minutes so a typo can't lock the bot into a 1-second
  * kill loop.
  */
-export function getRunIdleTimeoutMs(cfg: AppConfig): number | undefined {
+export function getRunIdleTimeoutMs(
+  cfg: AppConfig | Pick<AppConfig, 'preferences'>,
+): number | undefined {
   const raw = cfg.preferences?.runIdleTimeoutMinutes;
   if (raw === 0) return undefined;
   if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0) {

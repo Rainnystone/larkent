@@ -24,7 +24,7 @@ export type AntigravitySandboxOption = (typeof ANTIGRAVITY_SANDBOXES)[number];
 
 export type AntigravityAgentOptions = {
   sandbox?: AntigravitySandboxOption;
-  /** agy `--print-timeout` duration. Unset omits the flag (agy default). */
+  /** agy `--print-timeout` duration. Unset omits the flag. `0` / `0s` mean no CLI cap. */
   printTimeout?: string;
 };
 
@@ -59,8 +59,20 @@ function isPositiveRepresentableGoDuration(value: string): boolean {
   return total > 0n;
 }
 
+const AGY_NO_PRINT_TIMEOUT = new Set(['0', '0s']);
+
 function isAgyPrintTimeout(value: unknown): value is string {
-  return typeof value === 'string' && isPositiveRepresentableGoDuration(value);
+  return typeof value === 'string' && (
+    AGY_NO_PRINT_TIMEOUT.has(value) || isPositiveRepresentableGoDuration(value)
+  );
+}
+
+export function printTimeoutMode(
+  value: string | undefined,
+): 'omitted' | 'none' | 'configured' {
+  if (value === undefined) return 'omitted';
+  if (AGY_NO_PRINT_TIMEOUT.has(value)) return 'none';
+  return 'configured';
 }
 
 export function parseAntigravityAgentOptions(

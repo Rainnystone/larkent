@@ -1,9 +1,13 @@
+import { parseAntigravityAgentOptions } from '../agent/antigravity/options';
 import { AgentPreflightError, type AgentAvailability } from '../agent/preflight';
 import { descriptorFor, isAgentKind, type AgentKind } from '../agent/registry';
 import type { AgentAdapter } from '../agent/types';
 import type { AppPaths } from '../config/app-paths';
 import type { ProfileConfig } from '../config/profile-schema';
+import { getRunIdleTimeoutMs, isComplete } from '../config/schema';
+import { logEffectiveAdapterTiming } from './effective-adapter-timing';
 import type { AcquiredRuntimeLock } from './locks';
+import { resolveProfileRuntime } from './profile-runtime';
 
 /**
  * Build the agent adapter for a profile, wiring its per-profile lark-channel env
@@ -34,7 +38,19 @@ export function createRuntimeAgent(
       : undefined;
   const descriptor = descriptorFor(profileConfig.agentKind);
   descriptor.agentOptionsSchema.parse(profileConfig.agent.options);
-  return descriptor.create({ profile: profileConfig, profileDir: appPaths.profileDir, larkChannel });
+  const agent = descriptor.create({ profile: profileConfig, profileDir: appPaths.profileDir, larkChannel });
+  const printTimeout = profileConfig.agentKind === 'antigravity'
+    ? parseAntigravityAgentOptions(profileConfig.agent.options, true).printTimeout
+    : undefined;
+  logEffectiveAdapterTiming('created', {
+    ...(appPaths.profile ? { profile: appPaths.profile } : {}),
+    agentKind: profileConfig.agentKind,
+    ...(larkChannelConfigPath ? { configPath: larkChannelConfigPath } : {}),
+    printTimeout,
+    printTimeoutSupported: profileConfig.agentKind === 'antigravity',
+    idleTimeoutMs: getRunIdleTimeoutMs({ preferences: profileConfig.preferences }),
+  });
+  return agent;
 }
 
 export function resolveProfileBinary(profile: ProfileConfig): string | undefined {
@@ -64,6 +80,23 @@ export function assertReconnectAgentKindUnchanged(
   throw new Error(
     `agent kind cannot change during reconnect (${current ?? 'none'} -> ${next ?? 'none'}); stop/start is required`,
   );
+}
+
+/** Load and parse on-disk config without swapping the live adapter or stopping runs. */
+export async function assertReconnectConfig(input: {
+  configPath: string;
+  profile: string;
+  currentAgentKind: AgentKind;
+}): Promise<void> {
+  const nextRuntime = await resolveProfileRuntime({
+    config: input.configPath,
+    profile: input.profile,
+    allowBootstrap: false,
+  });
+  if (!isComplete(nextRuntime.cfg)) throw new Error('config incomplete after change');
+  assertReconnectAgentKindUnchanged(input.currentAgentKind, nextRuntime.profileConfig.agentKind);
+  descriptorFor(nextRuntime.profileConfig.agentKind)
+    .agentOptionsSchema.parse(nextRuntime.profileConfig.agent.options);
 }
 
 /** Release a set of runtime locks, swallowing individual failures. */

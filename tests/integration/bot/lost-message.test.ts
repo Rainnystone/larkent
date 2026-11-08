@@ -5,6 +5,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import * as logger from '../../../src/core/logger';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
@@ -252,6 +253,8 @@ async function harness(opts: {
     messagesByChat: history,
   });
   sdk.channel = channel;
+  const configPath = join(tmp.root, 'config.json');
+  await saveRootConfig(createRootConfig('test', cfg), configPath);
   const makeControls = () => ({
     profile: 'test',
     profileConfig: cfg,
@@ -277,7 +280,7 @@ async function harness(opts: {
       await state.bridge.recoverMissed();
     },
     async exit() {},
-    configPath: join(tmp.root, 'config.json'),
+    configPath,
     processId: 'test-lost',
   });
   const state = {

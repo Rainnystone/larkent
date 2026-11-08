@@ -1,10 +1,12 @@
 import { agentSpawnEnv } from '../spawn-env';
+import { logEffectiveAdapterTiming } from '../../runtime/effective-adapter-timing';
 import { SpawnFailed } from '../../runtime/errors';
 import { prefixBridgeSystemPrompt } from '../bridge-system-prompt';
 import { buildLarkChannelEnv, type LarkChannelEnvContext } from '../lark-channel-env';
 import { checkAgentAvailability, type AgentAvailability } from '../preflight';
 import { runJsonlCli, wrapParsedTranslator } from '../runner/jsonl-cli-runner';
 import {
+  asAgentOptionsObject,
   mergeAgentOptions,
   runAgentOptions,
   type AgentAdapter,
@@ -21,6 +23,7 @@ export interface AntigravityAdapterOptions {
   agentOptions?: unknown;
   stopGraceMs?: number;
   larkChannel?: LarkChannelEnvContext;
+  idleTimeoutMs?: number;
 }
 
 export class AntigravityAdapter implements AgentAdapter {
@@ -31,13 +34,17 @@ export class AntigravityAdapter implements AgentAdapter {
   private readonly defaultStopGraceMs: number;
   private readonly larkChannel: LarkChannelEnvContext | undefined;
   private readonly profileOptions: unknown;
+  private readonly idleTimeoutMs: number | undefined;
   private botIdentity: AgentBotIdentity | undefined;
 
   constructor(opts: AntigravityAdapterOptions = {}) {
     this.binary = opts.binary ?? 'agy';
     this.defaultStopGraceMs = opts.stopGraceMs ?? 5000;
     this.larkChannel = opts.larkChannel;
-    this.profileOptions = opts.agentOptions;
+    this.idleTimeoutMs = opts.idleTimeoutMs;
+    this.profileOptions = opts.agentOptions === undefined
+      ? undefined
+      : asAgentOptionsObject(opts.agentOptions, 'antigravity');
   }
 
   setBotIdentity(identity: AgentBotIdentity): void {
@@ -83,6 +90,14 @@ export class AntigravityAdapter implements AgentAdapter {
       false,
     );
     assertAntigravitySandbox(parsed.sandbox);
+    logEffectiveAdapterTiming('run', {
+      ...(this.larkChannel?.profile ? { profile: this.larkChannel.profile } : {}),
+      agentKind: 'antigravity',
+      ...(this.larkChannel?.configPath ? { configPath: this.larkChannel.configPath } : {}),
+      printTimeout: parsed.printTimeout,
+      printTimeoutSupported: true,
+      idleTimeoutMs: this.idleTimeoutMs,
+    });
 
     return runJsonlCli({
       runId: opts.runId,

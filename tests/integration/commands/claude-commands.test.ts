@@ -6,6 +6,7 @@ import type { NormalizedMessage } from '@larksuite/channel';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store.js';
 import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store.js';
 import { WorkspaceStore } from '../../../src/workspace/store.js';
@@ -327,6 +328,8 @@ async function createHarness(): Promise<Harness> {
   const activeRuns = new ActiveRuns();
   const agent = createFakeAgent();
   const profileConfig = appConfig(tmp.workspace);
+  const configPath = `${tmp.profile}/config.json`;
+  await saveRootConfig(createRootConfig('claude', profileConfig), configPath);
   const controls = {
     profile: 'claude',
     profileConfig,
@@ -335,7 +338,7 @@ async function createHarness(): Promise<Harness> {
     async refreshOwner() {},
     restart: vi.fn(async () => {}),
     exit: vi.fn(async () => {}),
-    configPath: `${tmp.profile}/config.json`,
+    configPath,
     cfg: profileConfig,
     processId: 'proc-1',
   } satisfies Controls;
