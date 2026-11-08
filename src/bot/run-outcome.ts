@@ -195,10 +195,8 @@ function signatureApplies(
       );
     case 'partial':
       return (
-        (input.terminalEvent?.type === 'done'
-          && input.terminalEvent.terminationReason === 'normal')
-        || (input.terminalEvent?.type === 'error'
-          && input.terminalEvent.terminationReason === 'failed')
+        input.terminalEvent?.type === 'done'
+        && input.terminalEvent.terminationReason === 'normal'
       );
     case 'completed':
     case 'interrupted':

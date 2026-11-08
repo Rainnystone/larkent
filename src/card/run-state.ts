@@ -275,7 +275,7 @@ export function terminalSummary(state: RunState): string {
   }
 }
 
-/** Settle the card as done, clearing a stale error terminal from a CLI error event. */
+/** Mark the card terminal done and drop a stale CLI errorMsg. */
 export function markDone(state: RunState): RunState {
   return {
     ...state,

@@ -14,7 +14,6 @@ import { ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE } from './stderr-signatures';
 
 export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
-const PRINT_TIMEOUT_HINT = ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE;
 const TERMINAL_RESULT_ERROR_CHARS = 200;
 
 function logTerminalResult(raw: Record<string, unknown>, result: Record<string, unknown>): void {
@@ -161,8 +160,8 @@ export class AntigravityJsonlTranslator {
   }
 
   private emptySuccessHint(result: Record<string, unknown>): string | undefined {
-    if (officialPrintTimeoutSignal(result)) return PRINT_TIMEOUT_HINT;
-    if (this.sawRecognizedToolOrCheckpoint) return PRINT_TIMEOUT_HINT;
+    if (officialPrintTimeoutSignal(result)) return ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE;
+    if (this.sawRecognizedToolOrCheckpoint) return ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE;
     return undefined;
   }
 
