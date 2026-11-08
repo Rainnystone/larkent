@@ -6,7 +6,7 @@
  *   LARK_RUN_STARTED_WEBHOOK_URL          required to activate
  *   LARK_RUN_STARTED_WEBHOOK_KEY          optional; sent as Bearer + X-Automation-Key
  *   LARK_RUN_STARTED_WEBHOOK_TIMEOUT_MS   optional, default 4000, clamped 3000–5000
- *   LARK_RUN_STARTED_BOT_NAME             optional; falls back to adapter meta.appId
+ *   LARK_RUN_STARTED_BOT_NAME             optional; else the emitting run's profile, then meta.appId
  */
 
 const DEFAULT_TIMEOUT_MS = 4000;
@@ -56,6 +56,12 @@ function createDedupe() {
   };
 }
 
+function resolveBot(event, fallbackAppId) {
+  return stringOrNull(process.env.LARK_RUN_STARTED_BOT_NAME)
+    ?? stringOrNull(event?.fields?.profile)
+    ?? stringOrNull(fallbackAppId);
+}
+
 function buildPayload(event, bot) {
   const fields = event?.fields ?? {};
   const ctx = event?.ctx ?? {};
@@ -87,7 +93,7 @@ export function createAdapter(meta = {}) {
   const configuredKey = typeof process.env.LARK_RUN_STARTED_WEBHOOK_KEY === 'string'
     ? process.env.LARK_RUN_STARTED_WEBHOOK_KEY
     : '';
-  const bot = stringOrNull(process.env.LARK_RUN_STARTED_BOT_NAME) ?? stringOrNull(meta.appId);
+  const fallbackAppId = stringOrNull(meta.appId);
   const timeoutMs = clampTimeoutMs(process.env.LARK_RUN_STARTED_WEBHOOK_TIMEOUT_MS);
   const noop = {
     emit() {},
@@ -110,7 +116,7 @@ export function createAdapter(meta = {}) {
     if (closed) return;
     try {
       if (event?.phase !== 'run' || event?.event !== 'started') return;
-      const payload = buildPayload(event, bot);
+      const payload = buildPayload(event, resolveBot(event, fallbackAppId));
       if (!shouldSend(payload.key)) return;
       const headers = { 'content-type': 'application/json' };
       if (configuredKey) {

@@ -17,7 +17,7 @@ Optional:
 | --- | --- |
 | `LARK_RUN_STARTED_WEBHOOK_KEY` | Sent as both `Authorization: Bearer <key>` and `X-Automation-Key` |
 | `LARK_RUN_STARTED_WEBHOOK_TIMEOUT_MS` | POST timeout, default 4000, clamped 3000–5000 |
-| `LARK_RUN_STARTED_BOT_NAME` | Payload `bot`; defaults to the Feishu app id |
+| `LARK_RUN_STARTED_BOT_NAME` | Payload `bot`; defaults to the emitting run's profile, then the adapter app id |
 
 If the URL is unset, every method is a noop and the adapter prints **one** startup warning. Never put a real webhook URL or key in the repo, tests, fixtures, or logs.
 

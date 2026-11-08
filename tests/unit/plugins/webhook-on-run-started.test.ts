@@ -308,10 +308,10 @@ describe('webhook-on-run-started plugin', () => {
     expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to meta.appId for bot when the bot name env is unset', async () => {
+  it('falls back to meta.appId for bot when the bot name env and profile are unset', async () => {
     process.env.LARK_RUN_STARTED_WEBHOOK_URL = HOOK_URL;
     const adapter = (await loadFactory())({ version: 'test', appId: 'cli_fallback_app' });
-    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A }));
+    adapter.emit(startedEvent({ taskKey: TASK_KEY, runId: RUN_A, fields: { profile: undefined } }));
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
     const payload = JSON.parse(String((fetchMock.mock.calls[0]?.[1] as RequestInit).body)) as { bot: string };
     expect(payload.bot).toBe('cli_fallback_app');
