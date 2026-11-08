@@ -4,7 +4,7 @@ import { descriptorFor, isAgentKind } from '../agent/registry';
 import { cardUserMessage, cliFailureInput, matchCliSignature, NETWORK_TRANSIENT_SIGNATURES, noteUnclassifiedStderr, type CliSignature } from '../agent/cli-signatures';
 import { renderCard } from '../card/run-renderer';
 import { renderText } from '../card/text-renderer';
-import { finalizeIfRunning, initialState, markIdleTimeout, markInterrupted, markRunnerTimeout, reduce, seedRunState, shouldSkipFinalReply, type RunState } from '../card/run-state';
+import { initialState, markDone, markIdleTimeout, markInterrupted, markRunnerTimeout, reduce, seedRunState, shouldSkipFinalReply, type RunState } from '../card/run-state';
 import { log, reportMetric } from '../core/logger';
 import type { MessageReplyMode, CotMessagesMode } from '../config/schema';
 import type { CallbackAuth } from '../card/callback-auth';
@@ -776,7 +776,7 @@ function applyOutcomeToState(
         ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
       };
     case 'done':
-      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
+      return appendOutcomeNotice(markDone(state), userMessage);
     case 'running':
       return state;
     default: {

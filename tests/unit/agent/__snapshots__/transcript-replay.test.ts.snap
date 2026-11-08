@@ -46,7 +46,7 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
     "type": "usage",
   },
   {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {
@@ -1293,7 +1293,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "liveness",
   },
   {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {
@@ -1779,7 +1779,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "usage",
   },
   {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {
@@ -2223,7 +2223,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {

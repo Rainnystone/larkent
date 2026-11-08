@@ -10,11 +10,11 @@ import {
 } from '../final-answer/values';
 import { log, redactDiagnosticText } from '../../core/logger';
 import { scrubSystemMessageEnvelopes } from './envelopes';
+import { ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE } from './stderr-signatures';
 
 export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
-const PRINT_TIMEOUT_HINT =
-  'Antigravity print-timeout reached before a reply was produced.';
+const PRINT_TIMEOUT_HINT = ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE;
 const TERMINAL_RESULT_ERROR_CHARS = 200;
 
 function logTerminalResult(raw: Record<string, unknown>, result: Record<string, unknown>): void {

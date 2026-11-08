@@ -275,13 +275,19 @@ export function terminalSummary(state: RunState): string {
   }
 }
 
-export function finalizeIfRunning(state: RunState): RunState {
-  if (state.terminal !== 'running') return state;
+/** Settle the card as done, clearing a stale error terminal from a CLI error event. */
+export function markDone(state: RunState): RunState {
   return {
     ...state,
     blocks: closeStreamingText(state.blocks),
     reasoning: { ...state.reasoning, active: false },
     terminal: 'done',
     footer: null,
+    errorMsg: undefined,
   };
+}
+
+export function finalizeIfRunning(state: RunState): RunState {
+  if (state.terminal !== 'running') return state;
+  return markDone(state);
 }
