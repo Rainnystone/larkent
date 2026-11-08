@@ -143,18 +143,18 @@ export function createIdleWatchdog(input: {
     if (remaining !== undefined && remaining <= 0) fireTimeout();
   };
 
-  const loop = (): void => {
+  function idleWatchdogTick(): void {
     if (disposed || timedOut) return;
     check();
     if (disposed || timedOut || idleTimeoutMs === undefined) return;
-    timer = schedule(loop, tickMs);
-  };
+    timer = schedule(idleWatchdogTick, tickMs);
+  }
 
   const startLoop = (): void => {
     if (disposed || timedOut || idleTimeoutMs === undefined) return;
     stopLoop();
     lastSampleAt = now();
-    timer = schedule(loop, tickMs);
+    timer = schedule(idleWatchdogTick, tickMs);
   };
 
   const extend = (minRemainingMs: number): void => {

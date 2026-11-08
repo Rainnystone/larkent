@@ -25,6 +25,7 @@ vi.mock('@larksuite/channel', async (importOriginal) => ({
   },
 }));
 import { startChannel, type StartChannelDeps } from '../../../src/bot/channel.js';
+import { AWAKE_TICK_MS } from '../../../src/bot/idle-watchdog.js';
 
 const pairs = [['kimi', 'grok'], ['cursor', 'kimi'], ['kimi', 'kimi']] as const;
 const scope = 'oc_same:th_same';
@@ -352,15 +353,30 @@ function captureIdleTimer() {
   const captured: Array<{ timer: ReturnType<typeof setTimeout>; fire: () => void }> = [];
   vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
     const timer = native(callback, ms, ...args);
-    if (ms === 60_000) captured.push({ timer, fire: () => callback(...args) });
+    if (callback.name === 'idleWatchdogTick') captured.push({ timer, fire: () => callback(...args) });
     return timer;
   }) as typeof setTimeout);
   return { fire() {
-    // Only A has the one-minute production preference; no virtual clock or
-    // runner timeout is substituted, and B's original timers keep scheduling.
-    expect(captured).toHaveLength(1);
-    clearTimeout(captured[0]!.timer);
-    captured[0]!.fire();
+    // Only A has the one-minute production preference. The watchdog credits
+    // awake silence on named 1s ticks, so there is no single 60s timer to
+    // capture. No virtual clock or runner timeout is substituted: B's
+    // original timers keep scheduling. Date.now is offset only while the
+    // captured ticks run, then restored before A settles.
+    expect(captured.length).toBeGreaterThanOrEqual(1);
+    const realNow = Date.now.bind(Date);
+    let offset = 0;
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + offset);
+    try {
+      for (let i = 0; i < 60_000 / AWAKE_TICK_MS; i++) {
+        const entry = captured.at(-1);
+        expect(entry).toBeDefined();
+        clearTimeout(entry!.timer);
+        offset += AWAKE_TICK_MS;
+        entry!.fire();
+      }
+    } finally {
+      spy.mockRestore();
+    }
   } };
 }
 function captureExpectedWarnings() {
