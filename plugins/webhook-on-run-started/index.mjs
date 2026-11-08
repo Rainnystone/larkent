@@ -131,8 +131,9 @@ export function createAdapter(meta = {}) {
             headers,
             body: JSON.stringify(payload),
             signal,
+            redirect: 'manual',
           });
-          if (!res.ok) warnFailure({ status: res.status });
+          if (!res.ok || res.type === 'opaqueredirect') warnFailure({ status: res.status });
         } catch (err) {
           warnCaught(err);
         }
