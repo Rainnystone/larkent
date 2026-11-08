@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { createServer } from 'node:http';
+import { createServer, Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import { openToolRun, type ToolRunContext } from '../../src/bridge-tools/server';
@@ -254,3 +254,37 @@ it('reports missing built-in content and absent or forged connections without gr
   const top = await client.call({ version: 1, operation: 'automation.list', profile: 'forged-profile' }, h.run.env);
   expect(JSON.parse(top.stdout)).toMatchObject({ category: 'validation-failed', code: 'unknown-field' });
 }, MULTI_CLIENT_TIMEOUT_MS);
+
+it('binds a new loopback port when the first listen hits EADDRINUSE', async () => {
+  const tmp = await createTmpProfile('tools-process-'); cleanup.push(tmp.cleanup);
+  const store = new AutomationsStore({
+    path: join(tmp.profile, 'automations.json'),
+    logPath: join(tmp.profile, 'automations.log'),
+    statusPath: join(tmp.profile, 'status.json'),
+    now: () => NOW,
+  });
+  await store.load();
+  const context: ToolRunContext = {
+    profile: 'synthetic-profile', chatId: 'oc_synthetic', actorId: 'ou_synthetic', runType: 'im',
+    availability: () => undefined, store, timezone: 'Asia/Shanghai', agentTasks: true, now: () => NOW,
+    catalog: await builtinPluginCatalog(),
+  };
+  const original = Server.prototype.listen;
+  let remainingFails = 1;
+  const spy = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server) {
+    if (remainingFails > 0) {
+      remainingFails -= 1;
+      process.nextTick(() => this.emit('error', Object.assign(new Error('listen EADDRINUSE'), { code: 'EADDRINUSE' })));
+      return this;
+    }
+    return original.apply(this, arguments as never);
+  });
+  try {
+    const run = await openToolRun(context);
+    cleanup.push(run.close);
+    expect(remainingFails).toBe(0);
+    expect(run.env.LARK_BRIDGE_TOOL_ENDPOINT).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/tool$/);
+  } finally {
+    spy.mockRestore();
+  }
+});
