@@ -475,7 +475,7 @@ describe('deriveRunOutcome', () => {
     expect(formatRunOutcome(outcome)).toBe('partial');
   });
 
-  it('keeps a matching partial signature on an error terminal even with a stop request', () => {
+  it('does not overlay a partial signature on stop plus a real error terminal', () => {
     const outcome = deriveRunOutcome({
       stopRequest: { type: 'user-stop' },
       exit: 3,
@@ -487,8 +487,13 @@ describe('deriveRunOutcome', () => {
       stderrTail: PRINT_TIMEOUT_STDERR,
       signatures: antigravityStderrSignatures,
     });
-    expect(outcome).toEqual({ kind: 'partial', retriable: true, needsHuman: false });
-    expect(cardTerminalFromOutcome(outcome)).toBe('done');
+    expect(outcome).toEqual({
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: true,
+      needsHuman: false,
+    });
+    expect(cardTerminalFromOutcome(outcome)).toBe('error');
   });
 
   it('keeps a genuine error terminal without a print-timeout signature as failed', () => {
