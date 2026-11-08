@@ -16,9 +16,12 @@ Normalize presentation from the settled RunOutcome before rendering. A partial o
 
 The separate continue notice (`src/bot/interruption-notice.ts:66–80`) remains a recovery action, not another failed-outcome report. Keep it usable without repeating the same failure explanation. Do not remove continuation or add a new generic dedupe layer.
 
+Also cover three more duplicate-text spots: the automation result post, `run-executor`'s "run failed" text, and the antigravity `emptySuccessHint` print-timeout text. Watchdog stop wording follows Spec Q8.
+
 ## Acceptance
 - [ ] Add a regression with CLI error terminal + exit 3 + the real print-timeout stderr signature. It fails before the fix, then settles as partial and renders exactly one timeout explanation, without an `agent 失败` tail for that partial.
 - [ ] Cover markdown and card/final-reply paths, with and without partial text and an already-streamed warning; useful text is not lost or resent.
 - [ ] A genuine current-turn error remains failed; normal success and existing done+partial tests remain correct. Post-terminal cleanup does not change the outcome.
 - [ ] The separate continue action remains available for retriable partial and resumes the existing handle; it does not turn partial into failed or repeat the same diagnostic.
+- [ ] Automation result post, `run-executor` "run failed" and antigravity `emptySuccessHint` each emit the explanation at most once for the same outcome.
 - [ ] `pnpm ci:local` green; delivery notes map the observed incident to the regression and fix.
