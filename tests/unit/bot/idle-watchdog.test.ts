@@ -19,7 +19,7 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
     expect(quiet.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(quiet.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(quiet.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 });
     expect(quiet.interrupted).toBe(true);
 
     const openTool = handle();
@@ -35,7 +35,7 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS - 1);
     expect(openTool.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(openTool.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(openTool.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'tool-grace', tool: 'Bash', awakeMinutes: 60 });
     expect(openTool.interrupted).toBe(true);
     openWatch.dispose();
 
@@ -56,7 +56,7 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
     expect(afterTool.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(afterTool.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(afterTool.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 });
     afterWatch.dispose();
   });
 
@@ -74,7 +74,7 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(60 * 60_000 - 1);
     expect(longIdle.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(longIdle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(longIdle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'tool-grace', tool: 'Bash', awakeMinutes: 120 });
     watch.dispose();
   });
 
@@ -91,7 +91,7 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(IDLE_MS - 3 * 60_000 - STALL_AFTER_RECOVERY_MS - 1);
     expect(remain.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(remain.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(remain.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle' });
   });
 
   it('restores the normal idle bound after a recovery stall when an agent event arrives', async () => {
@@ -106,7 +106,7 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(IDLE_MS - 1);
     expect(live.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(1);
-    expect(live.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(live.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle' });
     watch.dispose();
   });
 
@@ -122,7 +122,7 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(IDLE_MS - 4 * 60_000 - 2 * AWAKE_TICK_MS);
     expect(quiet.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
-    expect(quiet.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(quiet.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 });
   });
 });
 

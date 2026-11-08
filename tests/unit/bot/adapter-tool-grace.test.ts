@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { CursorJsonlTranslator } from '../../../src/agent/cursor/jsonl';
+import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import type { AgentEvent, AgentRun } from '../../../src/agent/types';
 import type { RunHandle } from '../../../src/bot/active-runs';
-import { AWAKE_TICK_MS, createIdleWatchdog, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
+import { AWAKE_TICK_MS, createIdleWatchdog, noteWatchdogActivity, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
 import { replay, replayKinds, transcriptCase, type ReplayKind } from '../../helpers/transcript-replay';
 
 const IDLE_MS = 15 * 60_000;
@@ -30,7 +32,7 @@ describe('parametrized adapter tool grace from real captures', () => {
       clock.elapse(TOOL_IDLE_PAUSE_CAP_MS - 16 * 60_000 - TICK_MS);
       expect(handle.interrupted, `${kind} died before 61m`).toBe(false);
       clock.elapse(TICK_MS + 1);
-      expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+      expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
       watchdog.dispose();
     },
   );
@@ -48,11 +50,70 @@ describe('parametrized adapter tool grace from real captures', () => {
       clock.elapse(IDLE_MS - TICK_MS);
       expect(handle.interrupted, `${kind} died before ordinary idle`).toBe(false);
       clock.elapse(TICK_MS + 1);
-      expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+      expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
       watchdog.dispose();
     },
   );
 });
+
+describe('heartbeat-only adapter liveness never extends tool grace', () => {
+  it('stops at the original Bash cap while cursor retry/connection pings continue', () => {
+    const cursor = new CursorJsonlTranslator();
+    const heartbeats = [
+      ...cursor.translate({ type: 'retry', attempt: 1 }),
+      ...cursor.translate({ type: 'connection' }),
+    ];
+    expect(heartbeats.length).toBeGreaterThan(0);
+    expect(heartbeats.every((event) => event.type === 'liveness')).toBe(true);
+    expectOpenToolIgnoresHeartbeats(heartbeats);
+  });
+
+  it('stops at the original Bash cap while grok in_progress/pending pings continue', () => {
+    const grok = new GrokJsonlTranslator();
+    grok.translate({
+      type: 'tool_call',
+      toolCallId: 'call-1',
+      toolName: 'bash',
+      status: 'started',
+    });
+    const heartbeats = [
+      ...grok.translate({
+        type: 'tool_call_update',
+        toolCallId: 'call-1',
+        status: 'in_progress',
+      }),
+      ...grok.translate({
+        type: 'tool_call_update',
+        toolCallId: 'call-1',
+        status: 'pending',
+      }),
+    ];
+    expect(heartbeats.length).toBeGreaterThan(0);
+    expect(heartbeats.every((event) => event.type === 'liveness')).toBe(true);
+    expectOpenToolIgnoresHeartbeats(heartbeats);
+  });
+});
+
+function expectOpenToolIgnoresHeartbeats(heartbeats: AgentEvent[]): void {
+  const clock = createFakeClock();
+  const { handle, watchdog } = startWatch(clock);
+  const startedAt = clock.now();
+  noteWatchdogActivity(handle, watchdog, { type: 'tool_use', id: 't1', name: 'Bash', input: {} });
+  for (let i = 0; i < 240 && !handle.interrupted; i++) {
+    noteWatchdogActivity(handle, watchdog, heartbeats[i % heartbeats.length]!);
+    clock.elapse(30_000);
+  }
+  expect(handle.interrupted).toBe(true);
+  expect(clock.now() - startedAt).toBeGreaterThan(59 * 60_000);
+  expect(clock.now() - startedAt).toBeLessThan(61 * 60_000);
+  expect(handle.stopRequest).toMatchObject({
+    type: 'bridge-idle-watchdog',
+    timer: 'tool-grace',
+    tool: 'Bash',
+    awakeMinutes: 60,
+  });
+  watchdog.dispose();
+}
 
 function firstToolUse(events: AgentEvent[], kind: ReplayKind): Extract<AgentEvent, { type: 'tool_use' }> {
   const started = events.find((event) => event.type === 'tool_use');

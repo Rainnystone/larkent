@@ -58,10 +58,9 @@ describe('stall check after recovery', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
-    await waitFor(() => rendered(h.channel).includes('空闲超时'));
+    await waitFor(() => rendered(h.channel).includes('notice.continue'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
-    expect(rendered(h.channel)).toContain('15 分钟无响应');
-    expect(rendered(h.channel)).toContain('notice.continue');
+    expect(rendered(h.channel)).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
   });
 
   it('does not count a 10m38s host sleep toward remaining idle', async () => {
@@ -94,7 +93,7 @@ describe('stall check after recovery', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
-    await waitFor(() => rendered(h.channel).includes('15 分钟无响应'));
+    await waitFor(() => rendered(h.channel).includes('等待预算已用尽（普通空闲，15 分钟觉醒）'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
@@ -169,12 +168,12 @@ describe('stall check after recovery', () => {
 
     await vi.advanceTimersByTimeAsync(IDLE_MS - (Date.now() - lastEventAt));
     expect(h.agent.runs[0]!.stopped).toBe(false);
-    expect(rendered(h.channel)).not.toContain('空闲超时');
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
 
     await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS);
-    await waitFor(() => rendered(h.channel).includes('空闲超时'));
+    await waitFor(() => rendered(h.channel).includes('notice.continue'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
-    expect(rendered(h.channel)).toContain('notice.continue');
+    expect(rendered(h.channel)).toContain('等待预算已用尽（工具宽限 long_tool，60 分钟觉醒）');
     expect((rendered(h.channel).match(/notice\.continue/g) ?? []).length).toBe(1);
   });
 
@@ -204,7 +203,7 @@ describe('stall check after recovery', () => {
     await drainIO();
     await waitFor(() => rendered(h.channel).includes('DONE_AFTER_TOOL'));
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
-    expect(rendered(h.channel)).not.toContain('空闲超时');
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
     const deliveries = h.channel.snapshotCalls().filter((call) => call.op === 'send' || call.op === 'stream');
     expect(deliveries).toHaveLength(1);
     expect(JSON.stringify(deliveries[0])).toContain('DONE_AFTER_TOOL');
@@ -230,7 +229,7 @@ describe('stall check after recovery', () => {
     await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
-    expect(rendered(h.channel)).not.toContain('空闲超时');
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
   });
 });
 

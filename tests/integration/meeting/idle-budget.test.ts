@@ -31,8 +31,8 @@ describe('meeting idle budget through a silent CLI subprocess', () => {
     expect(() => process.kill(h.pid, 0)).not.toThrow();
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(h.handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
-    expect(await h.answer()).toBe('_15 分钟无响应,已自动终止_');
+    expect(h.handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 });
+    expect(await h.answer()).toBe('_等待预算已用尽（普通空闲，15 分钟觉醒）_');
     expect(await h.handle.run.waitForExit(0)).toBe(true);
     expect(h.activeRuns.get(h.scope)).toBeUndefined();
     expect(h.pool.snapshot().active).toBe(0);
@@ -46,7 +46,7 @@ describe('meeting idle budget through a silent CLI subprocess', () => {
     expect(() => process.kill(h.pid, 0)).not.toThrow();
 
     await vi.advanceTimersByTimeAsync(1);
-    expect(await h.answer()).toBe('_2 分钟无响应,已自动终止_');
+    expect(await h.answer()).toBe('_等待预算已用尽（普通空闲，2 分钟觉醒）_');
     expect(await h.handle.run.waitForExit(0)).toBe(true);
     expect(h.activeRuns.get(h.scope)).toBeUndefined();
     expect(h.pool.snapshot().active).toBe(0);

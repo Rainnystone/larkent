@@ -32,7 +32,9 @@ describe('stop request call sites', () => {
     expect(read('src/bot/run-outcome.ts')).not.toContain('保活重启');
     expect(read('src/runtime/supervisor.ts')).not.toContain('keepalive-restart');
     expect(channel).toContain("stopAll(opts?.stopReason ?? { type: 'shutdown-signal' })");
-    expect(read('src/bot/idle-watchdog.ts')).toContain("requestStop(handle, { type: 'bridge-idle-watchdog' })");
+    expect(read('src/bot/idle-watchdog.ts')).toMatch(
+      /requestStop\(handle,\s*\{[\s\S]*type:\s*'bridge-idle-watchdog'/,
+    );
     expect(channel).not.toMatch(/onConnectedTick:[\s\S]*recoverJournal\(\)/);
     expect(executor).toContain("requestStop(handle, { type: 'subscriber-abandoned' })");
     expect(executor).toContain('stopRequestFromTerminal(terminalEvent)');

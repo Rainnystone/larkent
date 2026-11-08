@@ -73,7 +73,7 @@ describe.each(pairs)('overlapping Supervisor profiles: %s / %s', (kindA, kindB) 
     await held(b, h.fakeB);
     expect(rendered(b)).not.toMatch(/超时|FAILURE_A_ONLY|已中断/);
     const expectedWarnings = fault === 'idle'
-      ? [['agent', 'idle-timeout', { scope, idleTimeoutMs: 60_000 }]]
+      ? [['agent', 'idle-timeout', expect.objectContaining({ scope, idleTimeoutMs: 60_000, timer: 'idle' })]]
       : fault === 'exit1' ? [
         ['agent', 'stderr', { line: 'FAILURE_A_ONLY' }],
         ['run', 'failed', expect.objectContaining({ profile: 'profile-a', scope, agent: kindA, result: 'failed', error: expect.stringContaining('FAILURE_A_ONLY') })],

@@ -219,7 +219,7 @@ describe('run outcome stream', () => {
     run.releaseCleanup();
     await drainIO();
     await waitFor(() => rendered(h.channel).includes('运行超时'));
-    expect(rendered(h.channel)).not.toContain('分钟无响应');
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
     const final = cardFinal(info).at(-1)!;
     expect(final).toMatchObject({
       terminal: 'runner_timeout',

@@ -10,7 +10,7 @@ import type { MessageReplyMode, CotMessagesMode } from '../config/schema';
 import type { CallbackAuth } from '../card/callback-auth';
 import type { RunHandle } from './active-runs';
 import { createIdleWatchdog, noteWatchdogActivity } from './idle-watchdog';
-import { cardTerminalFromOutcome, formatRunOutcome, formatStopRequest, noteTerminalStop, requestStop, shouldDeliverAgentEvent, type RunOutcome, type StopRequest } from './run-outcome';
+import { cardTerminalFromOutcome, formatRunOutcome, formatStopRequest, idleWatchdogStopNote, noteTerminalStop, requestStop, shouldDeliverAgentEvent, type RunOutcome, type StopRequest } from './run-outcome';
 import { recordRunSessionEvent, startRunFlow, type StartRunFlowInput, type StartRunFlowResult } from './run-flow';
 import { Outbox, type StreamDelivery } from './outbox';
 import type { TurnJournal } from './turn-journal';
@@ -645,7 +645,9 @@ async function processAgentStream(
   // Idle watchdog: awake silence for `idleTimeoutMs` is presumed hung.
   // An open tool call pauses that bound (a long `lark-cli` OAuth can be
   // quiet for a while) but the pause itself is capped at max(60 minutes,
-  // configured idle). Shared with agent-task fires via createIdleWatchdog.
+  // configured idle) from that tool's start. Main-conversation output
+  // resets idle and does not move the cap. Shared with agent-task, meeting,
+  // and comment consumers via createIdleWatchdog.
   const watchdog = createIdleWatchdog({ handle, idleTimeoutMs, scope });
 
   try {
@@ -749,8 +751,19 @@ function applyOutcomeToState(
 ): RunState {
   const terminal = cardTerminalFromOutcome(outcome);
   switch (terminal) {
-    case 'idle_timeout':
+    case 'idle_timeout': {
+      if (outcome.kind === 'interrupted' && outcome.reason.type === 'bridge-idle-watchdog') {
+        const minutes = Math.max(
+          1,
+          outcome.reason.awakeMinutes ?? Math.round((idleTimeoutMs ?? 0) / 60_000),
+        );
+        return markIdleTimeout(state, minutes, idleWatchdogStopNote({
+          ...outcome.reason,
+          awakeMinutes: minutes,
+        }));
+      }
       return markIdleTimeout(state, Math.round((idleTimeoutMs ?? 0) / 60_000));
+    }
     case 'runner_timeout':
       return markRunnerTimeout(state);
     case 'interrupted':

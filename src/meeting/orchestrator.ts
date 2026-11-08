@@ -10,7 +10,7 @@ import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { startRunFlow } from '../bot/run-flow';
 import { createIdleWatchdog, noteWatchdogActivity } from '../bot/idle-watchdog';
-import { shouldDeliverAgentEvent } from '../bot/run-outcome';
+import { idleWatchdogStopNote, shouldDeliverAgentEvent } from '../bot/run-outcome';
 import { getRunIdleTimeoutMs } from '../config/schema';
 import { evaluateAccess, isAccessFenceEnabled } from '../policy/access';
 import { describeMeetingError } from './manager';
@@ -416,8 +416,7 @@ async function runMeetingAgent(
   }
   answer = answer.trim();
   if (handle?.stopRequest?.type === 'bridge-idle-watchdog') {
-    const minutes = Math.max(1, Math.round((idleTimeoutMs ?? 60_000) / 60_000));
-    const notice = `_${minutes} 分钟无响应,已自动终止_`;
+    const notice = `_${idleWatchdogStopNote(handle.stopRequest)}_`;
     return answer ? `${answer}\n\n${notice}` : notice;
   }
   return answer;

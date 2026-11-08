@@ -32,7 +32,7 @@ const SYSTEM_MESSAGE_ENVELOPE_INCIDENT_FIXTURE = join(
   'tests/fixtures/antigravity/system-message-envelope-incident.jsonl',
 );
 const PRINT_TIMEOUT_HINT = 'Antigravity print-timeout reached before a reply was produced.';
-const IDLE_WATCHDOG_COPY = '分钟无响应';
+const IDLE_WATCHDOG_COPY = '等待预算已用尽';
 const INCIDENT_PROSE = INCIDENT_A_PROSE;
 const INCIDENT_ENVELOPE = INCIDENT_A_ENVELOPE;
 

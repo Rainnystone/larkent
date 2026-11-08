@@ -145,7 +145,7 @@ describe('interruption notice decision', () => {
       requireBotMention: true,
       outcome: interrupted('bridge-idle-watchdog'),
     });
-    expect(idle).toContain('空闲超时');
+    expect(idle).toContain('等待预算已用尽');
     expect(idle).not.toMatch(/interrupted:|failed:/);
     const transient = buildNoticeMarkdown({
       initiatorId: 'ou_init',

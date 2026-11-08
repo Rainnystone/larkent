@@ -82,7 +82,7 @@ describe.each(['codex', 'devin'] as const)('%s held-back answer by stop reason',
 
     await vi.advanceTimersByTimeAsync(60_000);
     await drainIO();
-    expect(h.handles[0]!.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(h.handles[0]!.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
     expect(h.channel.sent.map(row => JSON.stringify(row.content)).join('\n')).not.toContain(ANSWER);
   });
 

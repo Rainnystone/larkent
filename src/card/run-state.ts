@@ -32,9 +32,10 @@ export interface RunState {
   footer: FooterStatus;
   terminal: Terminal;
   errorMsg?: string;
-  /** Set when terminal === 'idle_timeout' — how long claude was idle before
-   * the watchdog gave up (so the message can say "N 分钟无响应"). */
+  /** Set when terminal === 'idle_timeout' — awake minutes the watchdog consumed. */
   idleTimeoutMinutes?: number;
+  /** User-facing idle/tool-grace stop note (Q8). */
+  idleTimeoutNote?: string;
   /**
    * Chat ids the agent successfully IM-sent to during this in-memory run.
    * Never persisted. Detection is in the shared reducer (not a post-run
@@ -188,14 +189,16 @@ export function markInterrupted(state: RunState): RunState {
   };
 }
 
-export function markIdleTimeout(state: RunState, minutes: number): RunState {
+export function markIdleTimeout(state: RunState, minutes: number, note?: string): RunState {
+  const awakeMinutes = Math.max(1, minutes);
   return {
     ...state,
     blocks: closeStreamingText(state.blocks),
     reasoning: { ...state.reasoning, active: false },
     terminal: 'idle_timeout',
     footer: null,
-    idleTimeoutMinutes: minutes,
+    idleTimeoutMinutes: awakeMinutes,
+    idleTimeoutNote: note ?? `等待预算已用尽（普通空闲，${awakeMinutes} 分钟觉醒）`,
   };
 }
 
@@ -234,7 +237,7 @@ export function terminalNote(state: RunState): string | undefined {
     case 'interrupted':
       return '_⏹ 已被中断_';
     case 'idle_timeout':
-      return `_⏱ ${state.idleTimeoutMinutes ?? 0} 分钟无响应,已自动终止_`;
+      return `_⏱ ${state.idleTimeoutNote ?? `等待预算已用尽（普通空闲，${state.idleTimeoutMinutes ?? 0} 分钟觉醒）`}_`;
     case 'runner_timeout':
       return '_⏱ 运行超时,已自动终止_';
     case 'error':

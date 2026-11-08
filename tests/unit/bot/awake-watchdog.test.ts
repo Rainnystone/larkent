@@ -77,7 +77,7 @@ describe('awake-time watchdog', () => {
     clock.elapse(10 * 60_000 - TICK_MS - 1);
     expect(handle.interrupted).toBe(false);
     clock.elapse(TICK_MS + 1);
-    expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
     watchdog.dispose();
   });
 
@@ -112,7 +112,7 @@ describe('awake-time watchdog', () => {
     clock.elapse(STALL_AFTER_RECOVERY_MS - 1);
     expect(handle.interrupted).toBe(false);
     clock.elapse(1);
-    expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
     watchdog.dispose();
   });
 
@@ -193,7 +193,7 @@ describe('awake-time watchdog', () => {
     clock.elapse(60 * 60_000 - 1);
     expect(handle.interrupted).toBe(false);
     clock.elapse(1);
-    expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
     watchdog.dispose();
   });
 
@@ -208,7 +208,7 @@ describe('awake-time watchdog', () => {
     clock.elapse(TOOL_IDLE_PAUSE_CAP_MS - 20 * 60_000 - 1);
     expect(handle.interrupted).toBe(false);
     clock.elapse(1);
-    expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
     watchdog.dispose();
   });
 
@@ -224,7 +224,7 @@ describe('awake-time watchdog', () => {
     clock.elapse(IDLE_MS - 1);
     watchdog.noteDelivered({ type: 'liveness' });
     clock.elapse(1);
-    expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
     watchdog.dispose();
   });
 
@@ -261,6 +261,109 @@ describe('awake-time watchdog', () => {
     });
     expect(remaining(handle)).toBeGreaterThan(STALL_AFTER_RECOVERY_MS - 10_000 - 3 * TICK_MS);
     expect(handle.interrupted).toBe(false);
+    watchdog.dispose();
+  });
+
+  it('does not cancel or slide an open tool cap when main-conversation text arrives (Q5)', () => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    noteProgress(watchdog, { type: 'tool_use', id: 't1', name: 'Bash', input: {} }, clock, handle);
+    clock.elapse(60_000);
+    noteProgress(watchdog, { type: 'text', delta: 'still working' }, clock, handle);
+    expectRemaining(handle, TOOL_IDLE_PAUSE_CAP_MS - 60_000);
+    clock.elapse(15 * 60_000);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TOOL_IDLE_PAUSE_CAP_MS - 16 * 60_000 - TICK_MS);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TICK_MS + 1);
+    expect(handle.stopRequest).toEqual(toolGraceStop('Bash', 60));
+    watchdog.dispose();
+  });
+
+  it('does not extend an open tool cap with heartbeat-only liveness for two hours (Q2)', () => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    const started = clock.now();
+    noteProgress(watchdog, { type: 'tool_use', id: 't1', name: 'Bash', input: {} }, clock, handle);
+    for (let i = 0; i < 240 && !handle.interrupted; i++) {
+      noteProgress(watchdog, { type: 'liveness' }, clock, handle);
+      clock.elapse(30_000);
+    }
+    expect(handle.interrupted).toBe(true);
+    expect(clock.now() - started).toBeGreaterThan(59 * 60_000);
+    expect(clock.now() - started).toBeLessThan(61 * 60_000);
+    expect(handle.stopRequest).toEqual(toolGraceStop('Bash', 60));
+    watchdog.dispose();
+  });
+
+  it('keeps a later tool alive after an older unpaired tool is retired at its own cap', () => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    noteProgress(watchdog, { type: 'tool_use', id: 'a', name: 'Read', input: {} }, clock, handle);
+    clock.elapse(30 * 60_000);
+    noteProgress(watchdog, { type: 'tool_use', id: 'b', name: 'Bash', input: {} }, clock, handle);
+    clock.elapse(31 * 60_000);
+    expect(handle.interrupted).toBe(false);
+    noteProgress(watchdog, { type: 'tool_use', id: 'a', name: 'Read', input: {} }, clock, handle);
+    clock.elapse(29 * 60_000 - TICK_MS);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TICK_MS + 1);
+    expect(handle.stopRequest).toEqual(toolGraceStop('Bash', 60));
+    watchdog.dispose();
+  });
+
+  it.each(['Task', 'Agent'] as const)(
+    'does not grant 60-minute grace to a parent %s while the child waits on the model (Q3)',
+    (name) => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    noteProgress(watchdog, { type: 'tool_use', id: 'task-1', name, input: {} }, clock, handle);
+    clock.elapse(60_000);
+    noteProgress(watchdog, { type: 'thinking', delta: 'planning' }, clock, handle);
+    clock.elapse(IDLE_MS - TICK_MS);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TICK_MS + 1);
+    expect(handle.stopRequest).toEqual(idleStop(15));
+    watchdog.dispose();
+    },
+  );
+
+  it('treats held-back text as progress that refreshes normal idle (Q2)', () => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    clock.elapse(IDLE_MS - 60_000);
+    noteProgress(watchdog, { type: 'text', delta: 'hidden', heldBack: true }, clock, handle);
+    clock.elapse(IDLE_MS - TICK_MS);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TICK_MS + 1);
+    expect(handle.stopRequest).toEqual(idleStop(15));
+    watchdog.dispose();
+  });
+
+  it('still grants a real nested Bash its own cap while a parent Task is open (Q3)', () => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    noteProgress(watchdog, { type: 'tool_use', id: 'task-1', name: 'Task', input: {} }, clock, handle);
+    clock.elapse(60_000);
+    noteProgress(watchdog, { type: 'tool_use', id: 'bash-1', name: 'Bash', input: {} }, clock, handle);
+    clock.elapse(IDLE_MS);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS - TICK_MS);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TICK_MS + 1);
+    expect(handle.stopRequest).toEqual(toolGraceStop('Bash', 60));
+    watchdog.dispose();
+  });
+
+  it('does not open tool grace from a live child pid or unstructured stderr (Q6)', () => {
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    Object.assign(handle.run, { pid: 4242, stderrSnapshot: 'running background task' });
+    noteProgress(watchdog, { type: 'liveness' }, clock, handle);
+    clock.elapse(IDLE_MS - TICK_MS);
+    expect(handle.interrupted).toBe(false);
+    clock.elapse(TICK_MS + 1);
+    expect(handle.stopRequest).toEqual(idleStop(15));
     watchdog.dispose();
   });
 
@@ -392,4 +495,12 @@ function noteProgress(
 ): void {
   if (!handle) return;
   noteWatchdogActivity(handle, watchdog, event, clock.now());
+}
+
+function idleStop(awakeMinutes: number) {
+  return { type: 'bridge-idle-watchdog' as const, timer: 'idle' as const, awakeMinutes };
+}
+
+function toolGraceStop(tool: string, awakeMinutes: number) {
+  return { type: 'bridge-idle-watchdog' as const, timer: 'tool-grace' as const, tool, awakeMinutes };
 }

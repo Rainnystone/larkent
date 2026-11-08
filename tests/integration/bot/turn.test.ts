@@ -171,7 +171,7 @@ it('stops a silent chat on its idle bound and delivers its continuation notice',
   const result = await pending;
   expect(result.ok && result.state.terminal).toBe('idle_timeout');
   expect(result.ok && result.handle.outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'bridge-idle-watchdog' } });
-  expect(JSON.stringify(h.channel.sent.map(row => row.content))).toContain('空闲超时');
+  expect(JSON.stringify(h.channel.sent.map(row => row.content))).toContain('等待预算已用尽');
   expect(h.journal.get('turn')?.continuation?.status).toBe('offered');
 });
 

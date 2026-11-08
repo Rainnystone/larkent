@@ -43,7 +43,7 @@ describe('bot idle and settlement lifecycle', () => {
 
     await vi.advanceTimersByTimeAsync(1);
     await h.unblocked.waitFor(1);
-    expect(rendered(h.channel)).toContain('15 分钟无响应');
+    expect(rendered(h.channel)).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
     expect(h.agent.runs[0]!.stopped).toBe(true);
 
     await vi.advanceTimersByTimeAsync(600);
@@ -65,7 +65,7 @@ describe('bot idle and settlement lifecycle', () => {
 
     await vi.advanceTimersByTimeAsync(1);
     await h.unblocked.waitFor(1);
-    expect(rendered(h.channel)).toContain('60 分钟无响应');
+    expect(rendered(h.channel)).toContain('等待预算已用尽（工具宽限 long_tool，60 分钟觉醒）');
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
@@ -83,7 +83,7 @@ describe('bot idle and settlement lifecycle', () => {
 
     await vi.advanceTimersByTimeAsync(15 * 60_000);
     expect(h.agent.runs[0]!.stopped).toBe(false);
-    expect(rendered(h.channel)).not.toContain('15 分钟无响应');
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
   });
 
   it('ends a blackholed model host run within 15 minutes and drains the queue', async () => {
@@ -95,7 +95,7 @@ describe('bot idle and settlement lifecycle', () => {
 
     await vi.advanceTimersByTimeAsync(15 * 60_000);
     await h.unblocked.waitFor(1);
-    expect(rendered(h.channel)).toContain('15 分钟无响应');
+    expect(rendered(h.channel)).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
     expect(h.agent.runs[0]!.stopped).toBe(true);
 
     await vi.advanceTimersByTimeAsync(600);
@@ -155,7 +155,7 @@ describe('bot idle and settlement lifecycle', () => {
     const send = h.channel.send.bind(h.channel);
     vi.spyOn(h.channel, 'send').mockImplementation(async (...args) => {
       const receipt = await send(...args);
-      if (JSON.stringify(args[1]).includes('15 分钟无响应')) {
+      if (JSON.stringify(args[1]).includes('等待预算已用尽（普通空闲，15 分钟觉醒）')) {
         publishing.resolve();
         await release.promise;
       }
@@ -168,7 +168,7 @@ describe('bot idle and settlement lifecycle', () => {
       await h.channel.handlers.message?.(message('second', 'queued after publication'));
       await vi.advanceTimersByTimeAsync(15 * 60_000);
       await publishing.promise;
-      expect(rendered(h.channel)).toContain('15 分钟无响应');
+      expect(rendered(h.channel)).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
       expect(h.agent.runs[0]!.stopped).toBe(true);
 
       let unblocked = false;

@@ -409,10 +409,22 @@ describe('deriveRunOutcome', () => {
   it('maps user-facing notices to Chinese without internal codes', () => {
     expect(describeRunOutcome({
       kind: 'interrupted',
-      reason: { type: 'bridge-idle-watchdog' },
+      reason: { type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 },
       retriable: true,
       needsHuman: false,
-    })).toBe('空闲超时');
+    })).toBe('等待预算已用尽（普通空闲，15 分钟觉醒）');
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'bridge-idle-watchdog', timer: 'tool-grace', tool: 'Bash', awakeMinutes: 60 },
+      retriable: true,
+      needsHuman: false,
+    })).toBe('等待预算已用尽（工具宽限 Bash，60 分钟觉醒）');
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 },
+      retriable: true,
+      needsHuman: false,
+    })).not.toMatch(/卡住|无响应/);
     expect(describeRunOutcome({
       kind: 'failed',
       cause: 'transient-upstream',

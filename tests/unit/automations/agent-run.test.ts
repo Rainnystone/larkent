@@ -79,7 +79,7 @@ describe('agent-task result copy and follow-up mapping', () => {
       reason: { type: 'bridge-idle-watchdog' },
       retriable: true,
       needsHuman: false,
-    }, { now: fireAt })).toBe('自动化任务中断：空闲超时');
+    }, { now: fireAt })).toBe('自动化任务中断：等待预算已用尽（普通空闲，1 分钟觉醒）');
     expect(formatAgentFailureNotice({
       kind: 'failed',
       cause: 'unclassified',
