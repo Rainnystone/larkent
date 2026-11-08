@@ -12,6 +12,8 @@ describe('run started taskKey call site', () => {
       /taskKey:\s*computeRunTaskKey\(\s*controls\.profile\s*,\s*chatId\s*,\s*firstMsg\.messageId\s*\)/,
     );
     expect(source).toMatch(/from ['"]\.\.\/runtime\/task-key['"]/);
+    expect(source).toMatch(/messageId:\s*firstMsg\.messageId/);
+    expect(source).toMatch(/threadId:\s*firstMsg\.threadId/);
   });
 
   it('keeps taskKey and task_key out of logger ID_KEYS so they survive sanitization', () => {

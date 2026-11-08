@@ -20,6 +20,7 @@ import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile.js'
 const PROFILE = 'claude';
 const CHAT_ID = 'oc_abcdefghijklmnopqrstuvwxyz123456';
 const MESSAGE_ID = 'om_source_message_abcdef789012';
+const THREAD_ID = 'omt_topic_thread_abcdef123456';
 const SCOPE_ID = 'oc_abcdefghijklmnopqrstuvwxyz123456:omt_topic_zzzzzz';
 const RUN_A = '6ba7b810-9dad-11d1-80b4-00c04fd430c8';
 const RUN_B = '7c9e6679-7425-40de-944b-e07fc1f90ae7';
@@ -85,6 +86,8 @@ async function submitStarted(opts: {
   tmp: TmpProfile;
   runId: string;
   taskKey?: string;
+  messageId?: string;
+  threadId?: string;
 }): Promise<void> {
   const executor = new RunExecutor({
     agent: new FakeAgentAdapter({
@@ -96,7 +99,7 @@ async function submitStarted(opts: {
     now: () => 1_700_000_000_000,
     postDoneExitGraceMs: 1,
   });
-  const execution = await withTrace({ chatId: CHAT_ID, msgId: MESSAGE_ID }, async () =>
+  const execution = await withTrace({ chatId: CHAT_ID }, async () =>
     executor.submit({
       scopeId: SCOPE_ID,
       policy: policy(opts.tmp.workspace),
@@ -106,6 +109,8 @@ async function submitStarted(opts: {
         source: 'im',
         stage: 'submit',
         ...(opts.taskKey ? { taskKey: opts.taskKey } : {}),
+        ...(opts.messageId ? { messageId: opts.messageId } : {}),
+        ...(opts.threadId ? { threadId: opts.threadId } : {}),
       },
     }),
   );
@@ -137,7 +142,13 @@ describe('run/started telemetry contract', () => {
     });
     await installCapturingAdapter(tmp);
 
-    await submitStarted({ tmp, runId: RUN_A, taskKey: TASK_KEY });
+    await submitStarted({
+      tmp,
+      runId: RUN_A,
+      taskKey: TASK_KEY,
+      messageId: MESSAGE_ID,
+      threadId: THREAD_ID,
+    });
     await flushLogger();
 
     const started = capturedEvents().find((event) => event.phase === 'run' && event.event === 'started');
@@ -147,14 +158,17 @@ describe('run/started telemetry contract', () => {
     expect(started?.fields.runId).toBe(RUN_A);
     expect(started?.fields.agent).toBe('claude');
     expect(started?.fields.scope).toBe(last6(SCOPE_ID));
+    expect(started?.fields.messageId).toBe(last6(MESSAGE_ID));
+    expect(started?.fields.threadId).toBe(last6(THREAD_ID));
     expect(typeof started?.ts).toBe('string');
     expect(started?.ts.length).toBeGreaterThan(0);
     expect(started?.ctx.chatId).toBe(last6(CHAT_ID));
-    expect(started?.ctx.msgId).toBe(last6(MESSAGE_ID));
+    expect(started?.ctx.msgId).toBeUndefined();
 
     const serialized = JSON.stringify(started);
     expect(serialized).not.toContain(CHAT_ID);
     expect(serialized).not.toContain(MESSAGE_ID);
+    expect(serialized).not.toContain(THREAD_ID);
     expect(serialized).not.toContain('do not put this prompt in telemetry');
     expect(String(started?.fields.taskKey)).not.toMatch(/^\.{3}/);
     expect(String(started?.fields.runId)).not.toMatch(/^\.{3}/);
