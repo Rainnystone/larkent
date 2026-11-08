@@ -59,6 +59,10 @@ function collect(translator: AntigravityJsonlTranslator, lines: unknown[]): Agen
   return lines.flatMap((line) => translator.translate(line)).filter(event => event.type !== 'liveness');
 }
 
+function terminalResultCalls(info: { mock: { calls: unknown[][] } }): unknown[][] {
+  return info.mock.calls.filter((call) => call[0] === 'agent' && call[1] === 'terminal-result');
+}
+
 function projectedRenderText(events: AgentEvent[]): string {
   const state = events.reduce((next, event) => reduce(next, event), initialState);
   return renderText(finalAnswerOnlyState(state));
@@ -1112,6 +1116,79 @@ describe('AntigravityJsonlTranslator', () => {
       expect(JSON.stringify(info.mock.calls)).not.toContain(row.input);
     },
   );
+  it('logs a SUCCESS terminal-result without the reply body or secrets in it', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: 'visible-reply-body Bearer sk-secret-token',
+          num_turns: 1,
+        },
+      },
+    ]);
+    expect(terminalResultCalls(info)).toEqual([
+      [
+        'agent',
+        'terminal-result',
+        {
+          status: 'SUCCESS',
+          conversationId: CONVERSATION,
+          numTurns: 1,
+        },
+      ],
+    ]);
+    const serialized = JSON.stringify(info.mock.calls);
+    expect(serialized).not.toContain('visible-reply-body');
+    expect(serialized).not.toContain('sk-secret-token');
+  });
+
+  it('logs an ERROR terminal-result with redacted truncated error text and no reply body', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const secret = 'sk-live-secret-value';
+    const errorMessage = `FAILED_PRECONDITION (code 400): token=${secret} ${'x'.repeat(250)}`;
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'ERROR',
+          response: 'error-reply-body-must-not-log',
+          error: errorMessage,
+          num_turns: 2,
+        },
+      },
+    ]);
+    const calls = terminalResultCalls(info);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual([
+      'agent',
+      'terminal-result',
+      expect.objectContaining({
+        status: 'ERROR',
+        conversationId: CONVERSATION,
+        numTurns: 2,
+      }),
+    ]);
+    const logged = (calls[0]?.[2] ?? {}) as { errorMessage?: string };
+    expect(logged.errorMessage).toEqual(expect.any(String));
+    expect(logged.errorMessage!.length).toBeLessThanOrEqual(200);
+    expect(logged.errorMessage).toContain('FAILED_PRECONDITION');
+    expect(logged.errorMessage).toContain('(code 400)');
+    expect(logged.errorMessage).not.toContain(secret);
+    expect(logged.errorMessage).toContain('[REDACTED]');
+    const serialized = JSON.stringify(info.mock.calls);
+    expect(serialized).not.toContain('error-reply-body-must-not-log');
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(errorMessage);
+  });
+
   it('flushes held text as scrubbed progress before a native ERROR result', () => {
     const translator = new AntigravityJsonlTranslator();
     translator.translate({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: '<SYSTEM_MESSAGE>[Message] internal</SYSTEM_MESSAGE>Partial' } });
