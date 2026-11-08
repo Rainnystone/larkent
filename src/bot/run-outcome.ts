@@ -117,6 +117,15 @@ function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
   // that decision even when the source pump has already observed the terminal.
   if (input.stopRequest?.type === 'policy-guard') return interrupted(input.stopRequest);
   const signed = matchCliSignature(input.stderrTail, input.signatures);
+  const terminal = input.terminalEvent;
+  // Print-timeout (and other partial signatures) may overlay an explicit done.
+  // Failure and interrupted signatures must not downgrade that done.
+  if (signed?.classify.kind === 'partial' && signatureApplies(signed.classify, input)) {
+    return applySignatureOverlay(signed.classify);
+  }
+  if (terminal?.type === 'done' && terminal.terminationReason === 'normal') {
+    return completed();
+  }
   if (signed && signatureApplies(signed.classify, input)) {
     return applySignatureOverlay(signed.classify);
   }
@@ -125,11 +134,6 @@ function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
   // instead of letting that failed exit become unclassified.
   if (signed?.classify.kind === 'interrupted' && input.stopRequest) {
     return interrupted(input.stopRequest);
-  }
-
-  const terminal = input.terminalEvent;
-  if (terminal?.type === 'done' && terminal.terminationReason === 'normal') {
-    return completed();
   }
   if (
     (terminal?.type === 'done' || terminal?.type === 'error')

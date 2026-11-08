@@ -245,7 +245,7 @@ export class RunExecutor {
       finishing ??= (async () => {
         await toolsClosed;
         if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
-          log.warn('run', 'post-done-exit-timeout', {
+          log.warn('run', 'post-terminal-exit-timeout', {
             ...dimensions, graceMs: this.postDoneExitGraceMs,
           });
           stopChild();
