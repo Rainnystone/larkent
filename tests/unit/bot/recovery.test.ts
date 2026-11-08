@@ -194,7 +194,7 @@ describe('Recovery', () => {
     vi.useFakeTimers();
     const now = 1_000_000;
     vi.setSystemTime(now);
-    const silent = {
+    const silent: ReviewableRun = {
       lastEventAt: now - 3 * 60_000,
       interrupted: false,
       idleTimeoutMs: 15 * 60_000,
@@ -209,7 +209,7 @@ describe('Recovery', () => {
     vi.useFakeTimers();
     const now = 1_000_000;
     vi.setSystemTime(now);
-    const silent = {
+    const silent: ReviewableRun = {
       lastEventAt: now - 14 * 60_000,
       interrupted: false,
       idleTimeoutMs: 15 * 60_000,
@@ -359,7 +359,7 @@ describe('Recovery', () => {
     vi.useFakeTimers();
     const now = 1_000_000;
     vi.setSystemTime(now);
-    const openTool = {
+    const openTool: ReviewableRun = {
       lastEventAt: now - 3 * 60_000,
       interrupted: false,
       hasOpenToolCall: true,
