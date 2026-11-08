@@ -853,6 +853,14 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     expect(info.mock.calls).toEqual([
       [
+        'agent',
+        'terminal-result',
+        {
+          status: 'SUCCESS',
+          conversationId: CONVERSATION,
+        },
+      ],
+      [
         'jsonl',
         'system_message_scrubbed',
         {
@@ -1043,6 +1051,14 @@ describe('AntigravityJsonlTranslator', () => {
       },
     ]);
     expect(info.mock.calls).toEqual([
+      [
+        'agent',
+        'terminal-result',
+        {
+          status: 'SUCCESS',
+          conversationId: CONVERSATION,
+        },
+      ],
       [
         'jsonl',
         'task_notification_scrubbed',

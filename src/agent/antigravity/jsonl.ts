@@ -8,13 +8,33 @@ import {
   recordValue,
   truncate,
 } from '../final-answer/values';
-import { log } from '../../core/logger';
+import { log, redactDiagnosticText } from '../../core/logger';
 import { scrubSystemMessageEnvelopes } from './envelopes';
 
 export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
 const PRINT_TIMEOUT_HINT =
   'Antigravity print-timeout reached before a reply was produced.';
+const TERMINAL_RESULT_ERROR_CHARS = 200;
+
+function logTerminalResult(raw: Record<string, unknown>, result: Record<string, unknown>): void {
+  const status = stringValue(result.status);
+  const conversationId = stringValue(result.conversation_id) ?? stringValue(raw.conversation_id);
+  const numTurns = numberValue(result.num_turns);
+  const errorMessage = stringValue(result.error);
+  const errorCode = stringValue(result.error_code);
+  const errorType = stringValue(result.error_type);
+  log.info('agent', 'terminal-result', {
+    ...(status ? { status } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(errorType ? { errorType } : {}),
+    ...(errorMessage
+      ? { errorMessage: truncate(redactDiagnosticText(errorMessage), TERMINAL_RESULT_ERROR_CHARS) }
+      : {}),
+    ...(conversationId ? { conversationId } : {}),
+    ...(numTurns !== undefined ? { numTurns } : {}),
+  });
+}
 
 /**
  * Translates `agy -p --output-format stream-json` NDJSON into bridge
@@ -124,6 +144,7 @@ export class AntigravityJsonlTranslator {
   private translateResult(raw: Record<string, unknown>): AgentEvent[] {
     if (this.core.terminalEmitted()) return [];
     const result = isRecord(raw.result) ? raw.result : raw;
+    logTerminalResult(raw, result);
     this.rememberConversation(result.conversation_id ?? raw.conversation_id);
     const events: AgentEvent[] = [...this.systemEvents()];
     const usage = this.usageEvent(result);
