@@ -24,11 +24,12 @@ describe('agy tool pairing from real 1.4.8 captures', () => {
   it('pairs long-tool ACTIVE/DONE by conversation_id and step_index', () => {
     const events = toolEvents(replay(transcriptCase('antigravity', 'long-tool')));
     expect(events.map((event) => event.type)).toEqual(['tool_use', 'tool_result']);
-    expect(events[0]).toEqual(expect.objectContaining({
+    expect(events[0]).toEqual({
       type: 'tool_use',
       id: `${CONVERSATION}:2`,
       name: 'run_command',
-    }));
+      input: { CommandLine: 'sleep 45 && echo done', command: 'sleep 45 && echo done' },
+    });
     expect(events[1]).toEqual(expect.objectContaining({
       type: 'tool_result',
       id: `${CONVERSATION}:2`,
@@ -98,52 +99,5 @@ describe('agy tool pairing from real 1.4.8 captures', () => {
     const use = events[0];
     if (use?.type !== 'tool_use') throw new Error('expected tool_use');
     expect(inspectAutomationToolUse(use)).toEqual({ reason: 'auth-config' });
-  });
-
-  it('does not close a sibling sub-agent tool that reused step_index', () => {
-    const t = new AntigravityJsonlTranslator();
-    const events = toolEvents(collect(t, [
-      {
-        event: 'step_update',
-        step_update: {
-          conversation_id: 'conv',
-          step_index: 2,
-          state: 'ACTIVE',
-          step_type: 'tool',
-          tool_name: 'grep_search',
-          subagent_info: { name: 'explore' },
-          tool_info: { name: 'grep_search', parameters: { query: 'a' } },
-        },
-      },
-      {
-        event: 'step_update',
-        step_update: {
-          conversation_id: 'conv',
-          step_index: 2,
-          state: 'ACTIVE',
-          step_type: 'tool',
-          tool_name: 'grep_search',
-          subagent_info: { name: 'review' },
-          tool_info: { name: 'grep_search', parameters: { query: 'b' } },
-        },
-      },
-      {
-        event: 'step_update',
-        step_update: {
-          conversation_id: 'conv',
-          step_index: 2,
-          state: 'DONE',
-          step_type: 'tool',
-          tool_name: 'grep_search',
-          subagent_info: { name: 'explore' },
-          tool_info: { name: 'grep_search', output: 'a' },
-        },
-      },
-    ]));
-    expect(events.map((event) => ({ type: event.type, id: event.id }))).toEqual([
-      { type: 'tool_use', id: 'conv:2:explore' },
-      { type: 'tool_use', id: 'conv:2:review' },
-      { type: 'tool_result', id: 'conv:2:explore' },
-    ]);
   });
 });

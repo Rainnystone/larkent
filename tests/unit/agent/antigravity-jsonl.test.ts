@@ -239,13 +239,13 @@ describe('AntigravityJsonlTranslator', () => {
       },
       {
         type: 'tool_use',
-        id: `${CONVERSATION}:2:explore`,
+        id: `${CONVERSATION}:2`,
         name: 'grep_search',
         input: { query: 'timeout' },
       },
       {
         type: 'tool_result',
-        id: `${CONVERSATION}:2:explore`,
+        id: `${CONVERSATION}:2`,
         output: 'no matches',
         isError: false,
       },

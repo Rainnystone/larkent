@@ -8,8 +8,11 @@ const IDLE_MS = 15 * 60_000;
 const TICK_MS = AWAKE_TICK_MS;
 
 /**
- * D03a long-tool captures (owner machine, 2026-10-27). agy is 1.4.8, not 1.5.3.
- * Codex fixtures contain command_execution only — no MCP/search/file-change items.
+ * D03a long-tool captures (owner machine, 2026-10-27). Headers: agy 1.4.8 (not
+ * 1.5.3), claude 2.1.283, codex-cli 0.163.0, kimi 2.1.1, grok 1.0.71,
+ * cursor-agent 2026.10.22-27dcf5f, devin 3000.11.228. Codex items are
+ * command_execution only. Devin first tool_call already carries rawInput.
+ * Recapture was not possible in the 06 rework VM (every CLI missing from PATH).
  */
 const LONG_TOOL_KINDS: readonly ReplayKind[] = replayKinds;
 

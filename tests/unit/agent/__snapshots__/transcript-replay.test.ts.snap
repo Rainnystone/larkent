@@ -22,7 +22,7 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
     "type": "tool_result",
   },
   {
-    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
     "input": {
       "query": "timeout",
     },
@@ -30,7 +30,7 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
     "type": "tool_use",
   },
   {
-    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
@@ -107,7 +107,7 @@ exports[`D03b existing fixture baseline > antigravity/tool-checkpoint-steps.json
     "type": "tool_result",
   },
   {
-    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
     "input": {
       "query": "timeout",
     },
@@ -115,7 +115,7 @@ exports[`D03b existing fixture baseline > antigravity/tool-checkpoint-steps.json
     "type": "tool_use",
   },
   {
-    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
@@ -1276,7 +1276,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_result",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "input": {
       "query": "timeout",
     },
@@ -1284,7 +1284,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_use",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
@@ -1704,7 +1704,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_result",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "input": {
       "query": "timeout",
     },
@@ -1712,7 +1712,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_use",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
@@ -1755,7 +1755,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_result",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "input": {
       "query": "timeout",
     },
@@ -1763,7 +1763,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_use",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
@@ -1865,7 +1865,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_result",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "input": {
       "query": "timeout",
     },
@@ -1873,7 +1873,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_use",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
@@ -1921,7 +1921,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_result",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "input": {
       "query": "timeout",
     },
@@ -1929,7 +1929,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_use",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
@@ -2148,7 +2148,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_result",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "input": {
       "query": "timeout",
     },
@@ -2156,7 +2156,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "tool_use",
   },
   {
-    "id": "<ID_1>:2:explore",
+    "id": "<ID_1>:2",
     "isError": false,
     "output": "no matches",
     "type": "tool_result",
