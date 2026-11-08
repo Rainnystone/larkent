@@ -89,6 +89,20 @@ describe('processed ledger claim at intake', () => {
     });
   });
 
+  it('starts a run when the 600ms debounce arms after the first fake-timer advance', async () => {
+    const h = await harness();
+    const live = mention('om_late_arm', 'armed late');
+    // Intake is async (chat-mode lookup, command probe, then PendingQueue). A
+    // single advanceTimersByTimeAsync(600) can run before setTimeout(600) is
+    // armed. waitFor must pump that quiet window; setImmediate-only polling
+    // cannot fire a fake timer.
+    void yieldIO().then(() => h.channel.handlers.message?.(live));
+    await vi.advanceTimersByTimeAsync(600);
+    expect(h.agent.runOptions).toHaveLength(0);
+    await waitFor(() => h.agent.runOptions.length === 1);
+    expect(h.agent.runOptions[0]!.prompt).toContain('armed late');
+  });
+
   it('keeps exactly one run when the same id is delivered again after a bridge rebuild on the same ledger', async () => {
     const tmp = await createTmpProfile('ledger-restart-');
     const file = join(tmp.profile, 'backfill-state.json');
