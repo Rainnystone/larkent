@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO } from 'node:timers/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -130,7 +130,6 @@ describe('processed ledger claim at intake', () => {
 
     const live = mention('om_restart', 'across restart');
     await firstChannel.handlers.message?.(live);
-    await vi.advanceTimersByTimeAsync(600);
     await waitFor(() => agent.runOptions.length === 1);
 
     await first.disconnect();
@@ -254,6 +253,8 @@ async function waitFor(predicate: () => boolean) {
   for (let n = 0; n < 10_000; n++) {
     if (predicate()) return;
     await yieldIO();
+    await vi.advanceTimersByTimeAsync(600);
+    await stat('.'); // real poll; fake timers never enter it
   }
   throw new Error('expected intake transition was not observed');
 }
