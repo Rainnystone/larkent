@@ -23,14 +23,19 @@ export interface ReviewableRun {
   armStallDeadline?(delayMs: number): void;
 }
 
-/** After recovery, wait at least 2 minutes and at least the remaining normal idle. */
+/**
+ * After recovery, wait at least 2 minutes and at least the remaining normal idle.
+ * Host-sleep wall time is not model silence: it does not count toward idle elapsed.
+ */
 export function stallDelayAfterRecovery(
   idleTimeoutMs: number | undefined,
   lastEventAt: number,
   now = Date.now(),
+  outage?: Outage,
 ): number {
   if (idleTimeoutMs === undefined) return STALL_AFTER_RECOVERY_MS;
-  return Math.max(STALL_AFTER_RECOVERY_MS, idleTimeoutMs - (now - lastEventAt));
+  const elapsed = Math.max(0, now - lastEventAt - hostSuspendOverlapMs(lastEventAt, now, outage));
+  return Math.max(STALL_AFTER_RECOVERY_MS, idleTimeoutMs - elapsed);
 }
 
 export function reviewActiveRuns(runs: Iterable<ReviewableRun>, outage: Outage): void {
@@ -39,16 +44,26 @@ export function reviewActiveRuns(runs: Iterable<ReviewableRun>, outage: Outage):
   for (const handle of runs) {
     if (handle.interrupted) continue;
     if (handle.lastEventAt >= since) continue;
-    // Open tool calls keep the 60-minute cap unless the host actually slept.
-    if (handle.hasOpenToolCall && !outage.hostSuspended) continue;
+    // Open tool calls keep the 60-minute tool grace across recovery, including host sleep.
+    if (handle.hasOpenToolCall) continue;
     // Keep the earliest absolute deadline. A later recovery retry must not
     // reset the idle timer back to a fresh 2 minutes.
     if (handle.stallArmedAt !== undefined) continue;
-    const delayMs = stallDelayAfterRecovery(handle.idleTimeoutMs, handle.lastEventAt, now);
+    const delayMs = stallDelayAfterRecovery(handle.idleTimeoutMs, handle.lastEventAt, now, outage);
     handle.stallDeadlineMs = delayMs;
     handle.stallArmedAt = now;
     handle.armStallDeadline?.(delayMs);
   }
+}
+
+/** Overlap of [lastEventAt, now] with a host-sleep window. Network-only outages are 0. */
+function hostSuspendOverlapMs(lastEventAt: number, now: number, outage: Outage | undefined): number {
+  if (!outage?.hostSuspended) return 0;
+  const start = outage.suspendStartedAt ?? outage.since;
+  const end = Math.max(start, outage.until);
+  const overlapStart = Math.max(lastEventAt, start);
+  const overlapEnd = Math.min(now, end);
+  return Math.max(0, overlapEnd - overlapStart);
 }
 
 function reviewSince(outage: Outage): number {
