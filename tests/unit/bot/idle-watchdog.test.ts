@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRun } from '../../../src/agent/types';
 import type { RunHandle } from '../../../src/bot/active-runs';
-import { createIdleWatchdog, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
+import { AWAKE_TICK_MS, createIdleWatchdog, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
 import { STALL_AFTER_RECOVERY_MS } from '../../../src/bot/recovery';
 
 const IDLE_MS = 15 * 60_000;
@@ -108,6 +108,21 @@ describe('idle watchdog', () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(live.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
     watch.dispose();
+  });
+
+  it('excludes a Date.now wall jump from fake-timer awake silence', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(10_000_000);
+    const quiet = handle();
+    createIdleWatchdog({ handle: quiet, idleTimeoutMs: IDLE_MS, scope: 'jump' });
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    vi.setSystemTime(Date.now() + 10 * 60_000 + 38_000);
+    await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
+    expect(quiet.remainingWatchdogMs?.()).toBeGreaterThan(IDLE_MS - 4 * 60_000 - 2 * AWAKE_TICK_MS);
+    await vi.advanceTimersByTimeAsync(IDLE_MS - 4 * 60_000 - 2 * AWAKE_TICK_MS);
+    expect(quiet.interrupted).toBe(false);
+    await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
+    expect(quiet.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
   });
 });
 

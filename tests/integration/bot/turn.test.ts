@@ -196,7 +196,7 @@ it.each([
   expect(h.journal.get('turn')?.outcome).toEqual(result.ok && result.handle.outcome);
 });
 
-it('updates the returned handle activity time when a liveness event arrives', async () => {
+it('does not treat a liveness event as watchdog progress for lastEventAt', async () => {
   const h = await fixture();
   const originalRun = h.agent.run.bind(h.agent);
   h.agent.run = options => {
@@ -211,7 +211,7 @@ it('updates the returned handle activity time when a liveness event arrives', as
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-10-27T13:00:00Z'));
   const result = await executeTurn({ run: h.run, delivery: h.delivery });
-  expect(result.ok && result.handle.lastEventAt).toBe(Date.parse('2026-10-27T13:00:01Z'));
+  expect(result.ok && result.handle.lastEventAt).toBe(Date.parse('2026-10-27T13:00:00Z'));
 });
 
 function automationDelivery(h: Awaited<ReturnType<typeof fixture>>) {

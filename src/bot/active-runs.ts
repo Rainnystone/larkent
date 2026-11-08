@@ -17,9 +17,9 @@ export interface RunHandle {
   idleTimeoutMs?: number;
   /** Set by recovery when the run was silent before the outage. */
   stallDeadlineMs?: number;
-  /** Set once a stall deadline is armed; later reviews must not extend it. */
+  /** Leftover: recovery no longer skips later reviews based on this. */
   stallArmedAt?: number;
-  /** Installed by the stream processor so recovery can replace the idle timer. */
+  /** Installed by the stream processor; treated as extend-only. */
   armStallDeadline?: (delayMs: number) => void;
   /** Watchdog-owned remaining awake budget; recovery must not reconstruct this from wall clocks. */
   remainingWatchdogMs?: () => number | undefined;

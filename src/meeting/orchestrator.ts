@@ -9,7 +9,7 @@ import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
 import { startRunFlow } from '../bot/run-flow';
-import { createIdleWatchdog } from '../bot/idle-watchdog';
+import { createIdleWatchdog, noteWatchdogActivity } from '../bot/idle-watchdog';
 import { shouldDeliverAgentEvent } from '../bot/run-outcome';
 import { getRunIdleTimeoutMs } from '../config/schema';
 import { evaluateAccess, isAccessFenceEnabled } from '../policy/access';
@@ -403,8 +403,8 @@ async function runMeetingAgent(
   let answer = '';
   try {
     for await (const event of result.execution.subscribe()) {
+      if (handle && watchdog) noteWatchdogActivity(handle, watchdog, event);
       if (handle && !shouldDeliverAgentEvent(handle, event)) continue;
-      watchdog?.noteDelivered(event);
       const chunk = textOf(event);
       if (chunk) answer += chunk;
       if (event.type === 'error') {

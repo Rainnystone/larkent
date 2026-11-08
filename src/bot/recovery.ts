@@ -18,7 +18,7 @@ export interface ReviewableRun {
   idleTimeoutMs?: number;
   /** Pending stall delay when the stream processor has not installed a hook yet. */
   stallDeadlineMs?: number;
-  /** Set once a stall deadline is armed; later reviews must not extend it. */
+  /** Leftover: recovery no longer skips later reviews based on this. */
   stallArmedAt?: number;
   armStallDeadline?(delayMs: number): void;
   remainingWatchdogMs?(): number | undefined;
@@ -26,46 +26,25 @@ export interface ReviewableRun {
 }
 
 /**
- * After recovery, wait at least 2 minutes and at least the remaining normal idle.
- * Host-sleep wall time is not model silence: it does not count toward idle elapsed.
+ * After recovery, raise a silent run's remaining idle to at least 2 minutes.
+ * Remaining budgets live on the watchdog; this path must not reconstruct
+ * silence from `Date.now() - lastEventAt` and must not shorten a deadline.
  */
-export function stallDelayAfterRecovery(
-  idleTimeoutMs: number | undefined,
-  lastEventAt: number,
-  now = Date.now(),
-  outage?: Outage,
-): number {
-  if (idleTimeoutMs === undefined) return STALL_AFTER_RECOVERY_MS;
-  const elapsed = Math.max(0, now - lastEventAt - hostSuspendOverlapMs(lastEventAt, now, outage));
-  return Math.max(STALL_AFTER_RECOVERY_MS, idleTimeoutMs - elapsed);
-}
-
 export function reviewActiveRuns(runs: Iterable<ReviewableRun>, outage: Outage): void {
   const since = reviewSince(outage);
-  const now = Date.now();
   for (const handle of runs) {
     if (handle.interrupted) continue;
     if (handle.lastEventAt >= since) continue;
-    // Open tool calls keep the 60-minute tool grace across recovery, including host sleep.
+    if (handle.idleTimeoutMs === undefined) continue;
+    // Open tool calls keep their per-tool awake grace; recovery never
+    // replaces that budget with normal idle or the 2-minute floor.
     if (handle.hasOpenToolCall) continue;
-    // Keep the earliest absolute deadline. A later recovery retry must not
-    // reset the idle timer back to a fresh 2 minutes.
-    if (handle.stallArmedAt !== undefined) continue;
-    const delayMs = stallDelayAfterRecovery(handle.idleTimeoutMs, handle.lastEventAt, now, outage);
-    handle.stallDeadlineMs = delayMs;
-    handle.stallArmedAt = now;
-    handle.armStallDeadline?.(delayMs);
+    if (handle.extendWatchdogMs) {
+      handle.extendWatchdogMs(STALL_AFTER_RECOVERY_MS);
+      continue;
+    }
+    handle.stallDeadlineMs = Math.max(handle.stallDeadlineMs ?? 0, STALL_AFTER_RECOVERY_MS);
   }
-}
-
-/** Overlap of [lastEventAt, now] with a host-sleep window. Network-only outages are 0. */
-function hostSuspendOverlapMs(lastEventAt: number, now: number, outage: Outage | undefined): number {
-  if (!outage?.hostSuspended) return 0;
-  const start = outage.suspendStartedAt ?? outage.since;
-  const end = Math.max(start, outage.until);
-  const overlapStart = Math.max(lastEventAt, start);
-  const overlapEnd = Math.min(now, end);
-  return Math.max(0, overlapEnd - overlapStart);
 }
 
 function reviewSince(outage: Outage): number {

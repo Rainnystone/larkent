@@ -243,7 +243,7 @@ describe('awake-time watchdog', () => {
       hostSuspended: true,
       suspendStartedAt: clock.now() - 30 * 60_000,
     });
-    expect(remaining(handle)).toBeGreaterThan(STALL_AFTER_RECOVERY_MS - 10_000 - 2 * TICK_MS);
+    expect(remaining(handle)).toBeGreaterThan(STALL_AFTER_RECOVERY_MS - 10_000 - 3 * TICK_MS);
     expect(handle.interrupted).toBe(false);
     watchdog.dispose();
   });

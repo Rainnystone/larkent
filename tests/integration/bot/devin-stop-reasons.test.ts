@@ -100,7 +100,10 @@ describe.each(['codex', 'devin'] as const)('%s held-back answer by stop reason',
 
 describe('devin buffered chunks and the idle watchdog', () => {
   it('keeps a long quietly streamed answer alive past the idle bound', async () => {
-    const h = await harness('devin');
+    // Held-back Devin chunks currently arrive as liveness (ticket 07 splits
+    // that from heartbeat). Idle must outlast the gaps so delivery is not
+    // a 04 heartbeat-extension test.
+    const h = await harness('devin', 5);
     await h.channel.handlers.message?.(message('msg-ask', 'please answer'));
     await vi.advanceTimersByTimeAsync(600);
     await h.waitForRun(1);
@@ -123,7 +126,7 @@ describe('devin buffered chunks and the idle watchdog', () => {
   });
 });
 
-async function harness(cli: Cli) {
+async function harness(cli: Cli, idleMinutes = 1) {
   const tmp = await createTmpProfile(`devin-stop-reasons-${cli}-`);
   const cfg = createDefaultProfileConfig({
     agentKind: cli,
@@ -135,7 +138,7 @@ async function harness(cli: Cli) {
       messageReplyMigrated: true,
       cotMessages: 'off',
       showToolCalls: false,
-      runIdleTimeoutMinutes: 1,
+      runIdleTimeoutMinutes: idleMinutes,
     },
   });
   cfg.workspaces.default = tmp.workspace;

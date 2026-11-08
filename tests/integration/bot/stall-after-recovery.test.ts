@@ -18,7 +18,7 @@ vi.mock('@larksuite/channel', async importOriginal => ({
   createLarkChannel: () => sdk.channel,
 }));
 import { startChannel } from '../../../src/bot/channel';
-import { TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
+import { AWAKE_TICK_MS, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
 
 const NOW = 1_760_000_000_000;
 const STALL_AFTER_RECOVERY_MS = 2 * 60_000;
@@ -54,10 +54,10 @@ describe('stall check after recovery', () => {
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
 
     const remaining = IDLE_MS - (Date.now() - lastEventAt);
-    await vi.advanceTimersByTimeAsync(remaining - 1);
+    await vi.advanceTimersByTimeAsync(Math.max(0, remaining - AWAKE_TICK_MS));
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(1);
+    await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
     await waitFor(() => rendered(h.channel).includes('空闲超时'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
     expect(rendered(h.channel)).toContain('15 分钟无响应');
@@ -89,12 +89,12 @@ describe('stall check after recovery', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
 
-    const remainingAwake = IDLE_MS - 4 * 60_000;
-    await vi.advanceTimersByTimeAsync(remainingAwake - STALL_AFTER_RECOVERY_MS - 1);
+    const remainingAwake = IDLE_MS - 4 * 60_000 - AWAKE_TICK_MS;
+    await vi.advanceTimersByTimeAsync(remainingAwake - STALL_AFTER_RECOVERY_MS - AWAKE_TICK_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('空闲超时'));
+    await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
+    await waitFor(() => rendered(h.channel).includes('15 分钟无响应'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 

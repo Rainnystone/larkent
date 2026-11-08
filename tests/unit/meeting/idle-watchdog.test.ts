@@ -115,6 +115,7 @@ describe('meeting idle watchdog', () => {
 
   it('updates lastEventAt when meeting text arrives so recovery shares the activity seam', async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(10_000);
     const stopped = vi.fn();
     const hung = hang(stopped, { type: 'text', delta: '先说一半' });
     mocks.startRunFlow.mockResolvedValue(hung);
