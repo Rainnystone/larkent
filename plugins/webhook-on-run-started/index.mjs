@@ -146,15 +146,23 @@ export function createAdapter(meta = {}) {
   }
 
   async function flush(timeoutMsBound) {
+    if (inFlight.size === 0) return;
     const pending = Promise.allSettled([...inFlight]);
     if (timeoutMsBound === undefined) {
       await pending;
       return;
     }
-    await Promise.race([
-      pending,
-      new Promise((resolve) => setTimeout(resolve, timeoutMsBound)),
-    ]);
+    let timer;
+    try {
+      await Promise.race([
+        pending,
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, timeoutMsBound);
+        }),
+      ]);
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+    }
   }
 
   function close() {
