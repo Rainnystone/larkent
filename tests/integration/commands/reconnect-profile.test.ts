@@ -2,15 +2,18 @@ import { join } from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { NormalizedMessage } from '@larksuite/channel';
+import type { AgentKind } from '../../../src/agent/registry';
 import type { AgentRun } from '../../../src/agent/types';
 import { ActiveRuns } from '../../../src/bot/active-runs';
 import { tryHandleCommand, type UserActionContext, type Controls } from '../../../src/commands/index';
+import { resolveAppPaths } from '../../../src/config/app-paths';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
+import { createRootConfig, saveRootConfig } from '../../../src/config/profile-store';
 import { ResumeCandidates } from '../../../src/session/resume-candidates.js';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
 import { FakeAgentAdapter } from '../../helpers/fake-agent';
-import { createFakeChannel } from '../../helpers/fake-channel';
+import { createFakeChannel, type FakeChannel } from '../../helpers/fake-channel';
 import { createTmpProfile, type TmpProfile } from '../../helpers/tmp-profile';
 
 const cleanups: Array<() => Promise<void>> = [];
@@ -54,6 +57,43 @@ describe('/reconnect profile lifecycle', () => {
     expect(source).toContain('this.controls = nextControls');
   });
 
+  it('does not stop running tasks when on-disk config is invalid', async () => {
+    const h = await createHarness({
+      agentKind: 'antigravity',
+      options: { printTimeout: '10m' },
+    });
+    const run = new ManualRun('run-1');
+    h.activeRuns.register('chat-1', run);
+    h.config.profiles[h.profile]!.agent.options = { printTimeout: 'nope' };
+    await saveRootConfig(h.config, h.configPath);
+
+    await expect(h.command('/reconnect')).resolves.toBe(true);
+
+    expect(run.stopCalls).toBe(0);
+    expect(run.waitForExitCalls).toBe(0);
+    expect(h.restart).not.toHaveBeenCalled();
+    const replies = JSON.stringify(h.channel.sent);
+    expect(replies).toMatch(/重连失败/);
+    expect(replies).toMatch(/printTimeout/);
+  });
+
+  it('does not wait for running tasks when on-disk config is invalid', async () => {
+    const h = await createHarness({
+      agentKind: 'antigravity',
+      options: { printTimeout: '10m' },
+    });
+    const run = new ManualRun('run-1');
+    h.activeRuns.register('chat-1', run);
+    h.config.profiles[h.profile]!.agent.options = { printTimeout: 'nope' };
+    await saveRootConfig(h.config, h.configPath);
+
+    await expect(h.command('/reconnect --wait')).resolves.toBe(true);
+
+    expect(run.stopCalls).toBe(0);
+    expect(run.waitForExitCalls).toBe(0);
+    expect(h.restart).not.toHaveBeenCalled();
+  });
+
   it('guards direct bridge disconnects and IM commands with the current profile runtime context', async () => {
     const source = await readFile(new URL('../../../src/bot/channel.ts', import.meta.url), 'utf8');
     const disconnectBlock = source.slice(
@@ -70,14 +110,23 @@ describe('/reconnect profile lifecycle', () => {
   });
 });
 
-async function createHarness(): Promise<{
+async function createHarness(opts: {
+  agentKind?: AgentKind;
+  options?: unknown;
+} = {}): Promise<{
   tmp: TmpProfile;
   activeRuns: ActiveRuns;
   restart: ReturnType<typeof vi.fn>;
+  channel: FakeChannel;
+  config: ReturnType<typeof createRootConfig>;
+  configPath: string;
+  profile: string;
   command(content: string): Promise<boolean>;
 }> {
   const tmp = await createTmpProfile('reconnect-profile-');
   cleanups.push(tmp.cleanup);
+  const profile = opts.agentKind ?? 'claude';
+  const paths = resolveAppPaths({ rootDir: tmp.root, profile });
   const channel = createFakeChannel();
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const resumeCandidates = new ResumeCandidates();
@@ -85,19 +134,22 @@ async function createHarness(): Promise<{
   const activeRuns = new ActiveRuns();
   const agent = new FakeAgentAdapter();
   const profileConfig = createDefaultProfileConfig({
-    agentKind: 'claude',
+    agentKind: profile,
     accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
     access: { admins: ['ou-admin'] },
+    ...(opts.options !== undefined ? { options: opts.options } : {}),
   });
+  const config = createRootConfig(profile, profileConfig);
+  await saveRootConfig(config, paths.configFile);
   const restart = vi.fn(async () => {});
   const controls = {
-    profile: 'claude',
+    profile,
     profileConfig,
     ownerRefreshState: 'ok',
     async refreshOwner() {},
     restart,
     exit: vi.fn(async () => {}),
-    configPath: join(tmp.profile, 'config.json'),
+    configPath: paths.configFile,
     cfg: profileConfig,
     processId: 'proc-1',
   } satisfies Controls;
@@ -106,6 +158,10 @@ async function createHarness(): Promise<{
     tmp,
     activeRuns,
     restart,
+    channel,
+    config,
+    configPath: paths.configFile,
+    profile,
     command: (content: string) =>
       tryHandleCommand({
         origin: 'slash',

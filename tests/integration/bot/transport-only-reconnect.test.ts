@@ -69,6 +69,21 @@ describe('transport-only WebSocket reconnect', () => {
     expect(h.channel.forceReconnectCount).toBe(before + 1);
   });
 
+  it('does not call controls.restart on keepalive wake, so disk config is not reloaded', async () => {
+    const restart = vi.fn(async () => {});
+    const h = await startHarness({
+      now: () => NOW,
+      restart,
+      agent: new InFlightAgent(),
+    });
+    const before = h.channel.forceReconnectCount;
+    sdk.options?.keepalive?.onWake?.();
+    expect(h.channel.forceReconnectCount).toBe(before + 1);
+    expect(restart).not.toHaveBeenCalled();
+    sdk.options?.keepalive?.onUnrecoverable?.(new Error('force-reconnect failed'));
+    expect(restart).not.toHaveBeenCalled();
+  });
+
   it('does not restart the bridge when the socket is stuck 60s with a healthy probe, and the active run replies once', async () => {
     let now = NOW;
     const restart = vi.fn(async () => {});

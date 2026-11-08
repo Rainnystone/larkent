@@ -15,6 +15,7 @@ vi.mock('../../../src/platform/spawn', async (importOriginal) => {
 import { prefixBridgeSystemPrompt } from '../../../src/agent/bridge-system-prompt';
 import { AntigravityAdapter } from '../../../src/agent/antigravity/adapter';
 import { buildAntigravityArgs } from '../../../src/agent/antigravity/argv';
+import { log } from '../../../src/core/logger';
 
 interface FakeChild extends EventEmitter {
   pid: number;
@@ -124,6 +125,19 @@ describe('buildAntigravityArgs', () => {
     expect(args.join('\0')).not.toContain('10m');
   });
 
+  it.each(['0', '0s'] as const)('forwards explicit no-cap printTimeout %s onto argv', (printTimeout) => {
+    expect(buildAntigravityArgs({ prompt: 'hello', printTimeout })).toEqual([
+      '-p',
+      'hello',
+      '--output-format',
+      'stream-json',
+      '--dangerously-skip-permissions',
+      '--disable-slash-commands',
+      '--print-timeout',
+      printTimeout,
+    ]);
+  });
+
   it('keeps --conversation and --model when printTimeout is set', () => {
     expect(
       buildAntigravityArgs({
@@ -191,6 +205,61 @@ describe('buildAntigravityArgs', () => {
       '--print-timeout',
       '15m',
     ]);
+  });
+
+  it.each(['0', '0s'] as const)('forwards captured no-cap printTimeout %s onto spawned argv', (printTimeout) => {
+    spawnMock.spawnProcess.mockReturnValue(fakeChild());
+    new AntigravityAdapter({
+      binary: '/usr/local/bin/agy',
+      agentOptions: { printTimeout },
+    }).run({
+      runId: `run-print-timeout-${printTimeout}`,
+      prompt: 'hi',
+      cwd: tmpdir(),
+    });
+    const argv = spawnMock.spawnProcess.mock.calls[0]?.[1] as string[];
+    const flag = argv.indexOf('--print-timeout');
+    expect(flag).toBeGreaterThan(-1);
+    expect(argv[flag + 1]).toBe(printTimeout);
+  });
+
+  it('keeps the construction-time printTimeout after the source options object is mutated', () => {
+    spawnMock.spawnProcess.mockReturnValue(fakeChild());
+    const agentOptions = { printTimeout: '10m' };
+    const adapter = new AntigravityAdapter({
+      binary: '/usr/local/bin/agy',
+      agentOptions,
+    });
+    agentOptions.printTimeout = '30m';
+    adapter.run({
+      runId: 'run-print-timeout-snapshot',
+      prompt: 'hi',
+      cwd: tmpdir(),
+    });
+    const argv = spawnMock.spawnProcess.mock.calls[0]?.[1] as string[];
+    const flag = argv.indexOf('--print-timeout');
+    expect(argv[flag + 1]).toBe('10m');
+    expect(argv).not.toContain('30m');
+  });
+
+  it('logs captured printTimeout at run start without prompt or argv', () => {
+    spawnMock.spawnProcess.mockReturnValue(fakeChild());
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    new AntigravityAdapter({
+      binary: '/usr/local/bin/agy',
+      agentOptions: { printTimeout: '15m' },
+      larkChannel: { profile: 'cursor', configPath: '/tmp/config.json' },
+    }).run({
+      runId: 'run-print-timeout-log',
+      prompt: 'super-secret-user-prompt',
+      cwd: tmpdir(),
+    });
+    const timing = info.mock.calls.filter((call) => call[0] === 'adapter' && call[1] === 'effective-timing');
+    expect(timing.some((call) => (call[2] as { reason?: string }).reason === 'run')).toBe(true);
+    const logged = JSON.stringify(timing);
+    expect(logged).toContain('"printTimeout":"15m"');
+    expect(logged).not.toContain('super-secret-user-prompt');
+    expect(logged).not.toContain('--print-timeout');
   });
 });
 
