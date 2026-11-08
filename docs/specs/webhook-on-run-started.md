@@ -18,7 +18,7 @@ Ship a generic, opt-in plugin under `plugins/webhook-on-run-started/` that is lo
   - `task_key` = the task (stable across retries and bridge restarts; different tasks never share one).
   - `run_id` = one execution (`randomUUID()`, changes on retry/restart); used to locate that execution in the unredacted local log.
   - truncated `chat_id` / `thread_id` / `message_id` = auxiliary hints only.
-  - Runs with no source message (automations, comments, meetings, commands) carry no `task_key` in v1; the plugin then uses `key = run_id` and sets `task_key: null`.
+  - Runs with no source message (automations, comments, meetings, commands) carry no `task_key` in v1; the plugin then uses `key = run_id` and sets `task_key: null`. **Limitation:** such runs are deduped only within one execution (same `run_id`); a retry or restart gets a new `run_id`, so the receiver may open a second patrol for the same logical job. Cross-retry dedupe for these runs is out of scope for v1.
   - Repeated wakes for the same task (retry, restart re-execution) are expected; the receiver dedupes on `task_key` and must not create a duplicate patrol.
 - **D3a Receiver contract** — the receiver (Keeper) **reuses the existing patrol** for a known `task_key`; a new `task_key` opens a new patrol. When full ids are needed, Keeper greps the local, unredacted bridge log by `run_id` to resolve the full bot/chat/message ids. If that resolution fails, the patrol is marked **pending verification**; Keeper never guesses ids from the truncated last-6 values.
 - **D4 Auth** — when a key is configured, send it as **both** `Authorization: Bearer <key>` and `X-Automation-Key: <key>` (same convention as larkent-monitor `src/wake.ts`).
