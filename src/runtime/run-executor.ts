@@ -63,6 +63,12 @@ export interface SubmitRunInput {
     agent: string;
     source: string;
     stage: string;
+    /** Stable task identity; omitted for non-message runs (automations, comments, meetings, commands). */
+    taskKey?: string;
+    /** IM source message; logger sanitization truncates it before telemetry. */
+    messageId?: string;
+    /** IM topic thread; omitted for non-topic chats. */
+    threadId?: string;
   };
 }
 
@@ -208,6 +214,9 @@ export class RunExecutor {
       releaseScope();
       throw new SpawnFailed('agent spawn failed', err);
     }
+    const taskKey = input.observability?.taskKey;
+    const messageId = input.observability?.messageId;
+    const threadId = input.observability?.threadId;
     const dimensions = {
       runId,
       profile: input.observability?.profile ?? 'unknown',
@@ -218,6 +227,9 @@ export class RunExecutor {
     };
     log.info('run', 'started', {
       ...dimensions,
+      ...(typeof taskKey === 'string' && taskKey ? { taskKey } : {}),
+      ...(typeof messageId === 'string' && messageId ? { messageId } : {}),
+      ...(typeof threadId === 'string' && threadId ? { threadId } : {}),
       queueWaitMs,
       accessMode: input.policy.accessMode,
       sandbox: input.policy.sandbox,
