@@ -7,16 +7,33 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -75,16 +92,33 @@ exports[`D03b existing fixture baseline > antigravity/tool-checkpoint-steps.json
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -1227,16 +1261,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -1638,16 +1689,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -1672,16 +1740,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -1765,16 +1850,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -1804,16 +1906,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -2014,16 +2133,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2:explore",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -6231,10 +6367,23 @@ exports[`D03b real capture baseline > antigravity/long-tool.jsonl 1`] = `
     "type": "liveness",
   },
   {
-    "type": "liveness",
+    "id": "<SESSION_1>:2",
+    "input": {
+      "CommandLine": "sleep 45 && echo done",
+      "command": "sleep 45 && echo done",
+    },
+    "name": "run_command",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<SESSION_1>:2",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+done
+",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -6289,10 +6438,23 @@ exports[`D03b real capture baseline > antigravity/narration-tool-answer.jsonl 1`
     "type": "liveness",
   },
   {
-    "type": "liveness",
+    "id": "<SESSION_1>:2",
+    "input": {
+      "CommandLine": "echo hello",
+      "command": "echo hello",
+    },
+    "name": "run_command",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<SESSION_1>:2",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+hello
+",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -7418,7 +7580,23 @@ exports[`D03b real capture baseline > antigravity/two-tools.jsonl 1`] = `
     "type": "liveness",
   },
   {
-    "type": "liveness",
+    "id": "<SESSION_1>:2",
+    "input": {
+      "CommandLine": "echo one",
+      "command": "echo one",
+    },
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "id": "<SESSION_1>:2",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+one
+",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -7430,13 +7608,23 @@ exports[`D03b real capture baseline > antigravity/two-tools.jsonl 1`] = `
     "type": "liveness",
   },
   {
-    "type": "liveness",
+    "id": "<SESSION_1>:4",
+    "input": {
+      "CommandLine": "echo two",
+      "command": "echo two",
+    },
+    "name": "run_command",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
+    "id": "<SESSION_1>:4",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+two
+",
+    "type": "tool_result",
   },
   {
     "type": "liveness",

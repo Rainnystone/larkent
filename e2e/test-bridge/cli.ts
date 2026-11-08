@@ -80,6 +80,7 @@ async function cmdUp(argv: string[]): Promise<void> {
     config,
     realCli: Boolean(flags['real-cli']),
     resetConfig: Boolean(flags['reset-config']),
+    stdoutCapture: Boolean(flags['stdout-capture']),
     ...(stringFlag(flags, 'real-cli-path') ? { realCliPath: stringFlag(flags, 'real-cli-path') } : {}),
   });
   console.log(`test-bridge up pid=${running.pid} root=${running.rootDir} proxy=${running.proxyUrl}`);
@@ -244,7 +245,7 @@ function isProxyMode(value: string): value is FaultProxyMode {
 
 function printHelp(): void {
   console.log(`test-bridge (POSIX)
-  pnpm e2e:up -- [--config e2e/.local/test-bridge.json] [--real-cli] [--reset-config]
+  pnpm e2e:up -- [--config e2e/.local/test-bridge.json] [--real-cli] [--reset-config] [--stdout-capture]
   pnpm e2e:down
   pnpm e2e:fault -- arm cursor-stall --run-id 2
   pnpm e2e:fault -- proxy disconnect [--host open.feishu.cn]

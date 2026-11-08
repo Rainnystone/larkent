@@ -214,11 +214,38 @@ describe('AntigravityJsonlTranslator', () => {
     expect(t.terminalEmitted()).toBe(true);
   });
 
-  it('recognizes official tool and checkpoint steps without tool events or drift', () => {
+  it('pairs official tool steps and leaves checkpoint as a non-tool ping', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, loadJsonl(TOOL_CHECKPOINT_FIXTURE));
-    expect(events).toEqual([{ type: 'system', resumeHandle: CONVERSATION }]);
-    expect(events.filter((e) => e.type === 'tool_use' || e.type === 'tool_result')).toEqual([]);
+    expect(events.filter((event) => event.type === 'system')).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_use' || event.type === 'tool_result')).toEqual([
+      {
+        type: 'tool_use',
+        id: `${CONVERSATION}:1`,
+        name: 'view_file',
+        input: { path: '/tmp/README.md' },
+      },
+      {
+        type: 'tool_result',
+        id: `${CONVERSATION}:1`,
+        output: '# README\n',
+        isError: false,
+      },
+      {
+        type: 'tool_use',
+        id: `${CONVERSATION}:2:explore`,
+        name: 'grep_search',
+        input: { query: 'timeout' },
+      },
+      {
+        type: 'tool_result',
+        id: `${CONVERSATION}:2:explore`,
+        output: 'no matches',
+        isError: false,
+      },
+    ]);
     expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
   });
 
@@ -284,8 +311,11 @@ describe('AntigravityJsonlTranslator', () => {
   it('emits a print-timeout hint for the incident empty SUCCESS after tools and checkpoint', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, loadJsonl(EMPTY_SUCCESS_PRINT_TIMEOUT_FIXTURE));
-    expect(events).toEqual([
+    expect(events.filter((event) => event.type === 'system')).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_use' || event.type === 'tool_result')).toHaveLength(4);
+    expect(events.filter((event) => event.type === 'usage' || event.type === 'final_text' || event.type === 'done')).toEqual([
       {
         type: 'usage',
         inputTokens: 19469,

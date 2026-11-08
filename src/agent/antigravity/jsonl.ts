@@ -1,6 +1,13 @@
 import type { AgentEvent } from '../types';
 import { FinalAnswerCore, type ProtocolDriftState } from '../final-answer/core';
-import { isRecord, nonEmptyString as stringValue, finiteNumber as numberValue, truncate } from '../final-answer/values';
+import {
+  isRecord,
+  nonEmptyString as stringValue,
+  finiteNumber as numberValue,
+  record,
+  recordValue,
+  truncate,
+} from '../final-answer/values';
 import { log } from '../../core/logger';
 import { scrubSystemMessageEnvelopes } from './envelopes';
 
@@ -19,8 +26,9 @@ const PRINT_TIMEOUT_HINT =
  *
  * Official `step_type` values `user_input`, `agent_response`, `tool`,
  * `checkpoint`, plus silent `system_message` / `error_message`, are known.
- * `agent_response` `text_delta` fragments are held back. `tool` and
- * `checkpoint` are parse-only (no tool/text events). An empty SUCCESS
+ * `agent_response` `text_delta` fragments are held back. `tool` ACTIVE/DONE
+ * pair by `(conversation_id, step_index)` (and captured `subagent_info` when
+ * present). `checkpoint` stays a liveness ping, not a tool start. An empty SUCCESS
  * after print-timeout is classified (official timeout field, else the
  * incident heuristic) and emits a `final_text` hint so outbound is not
  * muted. The reply body is `result.response` (verified against a live
@@ -36,6 +44,7 @@ export class AntigravityJsonlTranslator {
   private systemEmitted = false;
   private sawRecognizedToolOrCheckpoint = false;
   private sawSystemMessageStep = false;
+  private readonly openTools = new Map<string, OpenAgyTool>();
 
   translate(raw: unknown): AgentEvent[] {
     if (this.core.terminalEmitted()) return [];
@@ -96,9 +105,13 @@ export class AntigravityJsonlTranslator {
     if (stepType === 'user_input' || stepType === 'error_message') {
       return [];
     }
-    if (stepType === 'tool' || stepType === 'checkpoint') {
+    if (stepType === 'checkpoint') {
       this.sawRecognizedToolOrCheckpoint = true;
       return [{ type: 'liveness' }];
+    }
+    if (stepType === 'tool') {
+      this.sawRecognizedToolOrCheckpoint = true;
+      return this.translateToolStep(step);
     }
     if (stepType) {
       this.core.unknown(stepType);
@@ -135,6 +148,64 @@ export class AntigravityJsonlTranslator {
   private rememberConversation(value: unknown): void {
     const id = stringValue(value);
     if (id) this.conversationId = id;
+  }
+
+  private translateToolStep(step: Record<string, unknown>): AgentEvent[] {
+    const identity = this.toolIdentity(step);
+    if (!identity) {
+      this.core.anomaly();
+      return [{ type: 'liveness' }];
+    }
+    const state = stringValue(step.state);
+    if (state === 'ACTIVE') {
+      this.openTools.set(identity.id, identity);
+      const info = recordValue(step.tool_info);
+      const name = stringValue(step.tool_name) ?? stringValue(info?.name) ?? 'tool';
+      // Skip FinalAnswerCore's native boundary: result.response is the
+      // authoritative answer, and classifying pre-tool deltas would duplicate it.
+      return this.core.accept({
+        type: 'tool_use',
+        id: identity.id,
+        name,
+        input: toolInput(info),
+      });
+    }
+    if (state === 'DONE') {
+      const id = this.resolveCloseId(identity);
+      if (!id) return [{ type: 'liveness' }];
+      this.openTools.delete(id);
+      const info = recordValue(step.tool_info);
+      return this.core.accept({
+        type: 'tool_result',
+        id,
+        output: stringValue(info?.output) ?? '',
+        isError: false,
+      });
+    }
+    return [{ type: 'liveness' }];
+  }
+
+  private toolIdentity(step: Record<string, unknown>): OpenAgyTool | undefined {
+    const conversationId = stringValue(step.conversation_id) ?? this.conversationId;
+    const stepIndex = numberValue(step.step_index);
+    if (!conversationId || stepIndex === undefined) return undefined;
+    const sub = recordValue(step.subagent_info);
+    const subagent = stringValue(sub?.name) ?? stringValue(sub?.id) ?? '';
+    return {
+      id: subagent ? `${conversationId}:${stepIndex}:${subagent}` : `${conversationId}:${stepIndex}`,
+      conversationId,
+      stepIndex,
+      subagent,
+    };
+  }
+
+  private resolveCloseId(identity: OpenAgyTool): string | undefined {
+    if (this.openTools.has(identity.id)) return identity.id;
+    if (identity.subagent !== '') return undefined;
+    const matches = [...this.openTools.values()].filter((open) => (
+      open.conversationId === identity.conversationId && open.stepIndex === identity.stepIndex
+    ));
+    return matches.length === 1 ? matches[0]?.id : undefined;
   }
 
   private systemEvents(): AgentEvent[] {
@@ -175,6 +246,22 @@ export class AntigravityJsonlTranslator {
       ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
     };
   }
+}
+
+interface OpenAgyTool {
+  id: string;
+  conversationId: string;
+  stepIndex: number;
+  subagent: string;
+}
+
+function toolInput(info: Record<string, unknown> | undefined): Record<string, unknown> {
+  const parameters = record(info?.parameters);
+  const commandLine = stringValue(parameters.CommandLine);
+  if (commandLine !== undefined && parameters.command === undefined) {
+    return { ...parameters, command: commandLine };
+  }
+  return { ...parameters };
 }
 
 function nonzero(value: number | undefined): boolean {

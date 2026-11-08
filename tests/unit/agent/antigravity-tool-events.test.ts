@@ -10,8 +10,14 @@ function collect(translator: AntigravityJsonlTranslator, lines: unknown[]): Agen
   return lines.flatMap((line) => translator.translate(line));
 }
 
-function toolEvents(events: AgentEvent[]): AgentEvent[] {
-  return events.filter((event) => event.type === 'tool_use' || event.type === 'tool_result');
+function toolEvents(
+  events: AgentEvent[],
+): Array<Extract<AgentEvent, { type: 'tool_use' | 'tool_result' }>> {
+  return events.filter(
+    (event): event is Extract<AgentEvent, { type: 'tool_use' | 'tool_result' }> => (
+      event.type === 'tool_use' || event.type === 'tool_result'
+    ),
+  );
 }
 
 describe('agy tool pairing from real 1.4.8 captures', () => {

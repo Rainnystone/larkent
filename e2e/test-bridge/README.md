@@ -5,7 +5,9 @@ POSIX-only harness for run-reliability work. It starts a **test** instance on
 faults from outside production code (shim path, `HTTPS_PROXY`, signals).
 
 Default agent binary is a scripted JSONL fake. Pass `--real-cli` to point the
-shim at a real CLI.
+shim at a real CLI. Pass `--stdout-capture` to persist redacted CLI stdout
+under `<dataRoot>/stdout-captures` (never the live `~/.lark-channel` root).
+The flag is off unless set. Production bridges must not enable it.
 
 ## Layout
 
@@ -22,7 +24,7 @@ test data root. Never use `~/.lark-channel`.
 ## Commands
 
 ```
-pnpm e2e:up -- [--config e2e/.local/test-bridge.json] [--real-cli]
+pnpm e2e:up -- [--config e2e/.local/test-bridge.json] [--real-cli] [--stdout-capture]
 pnpm e2e:down
 pnpm e2e:fault -- arm cursor-stall --run-id 2
 pnpm e2e:fault -- arm hang --sticky
