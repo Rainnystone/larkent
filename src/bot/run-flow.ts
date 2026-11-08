@@ -54,6 +54,9 @@ export interface StartRunFlowInput {
     agent: string;
     source: string;
     stage: string;
+    taskKey?: string;
+    messageId?: string;
+    threadId?: string;
   };
 }
 
