@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { writeScriptedJsonlExecutable, type ScriptedJsonlExecutable } from './fake-executable.js';
 
@@ -19,10 +20,19 @@ export interface JsonlScript {
   exportSessionId?: string;
 }
 
-export type AgyScenario = 'success' | 'sticky-error' | 'interrupted-on-sigterm' | 'hold-for-kill' | 'exit-without-result';
+export type AgyScenario =
+  | 'success' | 'sticky-error' | 'interrupted-on-sigterm' | 'hold-for-kill' | 'exit-without-result' | 'print-timeout-open-tool';
 
 export const AGY_STICKY_ERROR =
   'agent executor error: generating and executing: request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": Bad Gateway';
+
+/** Conversation id of the captured `print-timeout-open-tool` fixture (agy 1.5.3 probe 2026-11-10, trial 1). */
+export const AGY_PRINT_TIMEOUT_CAPTURED_CONVERSATION = 'ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4';
+
+function agyCapture(name: string, conversationId: string): string {
+  return readFileSync(join(process.cwd(), 'tests/fixtures/antigravity', name), 'utf8')
+    .split(AGY_PRINT_TIMEOUT_CAPTURED_CONVERSATION).join(conversationId);
+}
 
 /**
  * agy 1.5.3 stream-json shapes from the 2026-11-09 captures
@@ -57,6 +67,13 @@ export function agyScript(scenario: AgyScenario, conversationId: string, answer 
       return { lines: [...started, tool], holdAfterLines: true };
     case 'exit-without-result':
       return { lines: started, stderr: 'agy exploded\n', exitCode: 1 };
+    case 'print-timeout-open-tool':
+      // Real stdout/stderr/exit of `--print-timeout 25s` while `sleep 90` ran in the background.
+      return {
+        lines: agyCapture('print-timeout-open-tool.jsonl', conversationId).split('\n').filter(Boolean).map(line => JSON.parse(line) as unknown),
+        stderr: agyCapture('print-timeout-open-tool.stderr.txt', conversationId),
+        exitCode: 3,
+      };
     default: {
       const _never: never = scenario;
       throw new Error(`unhandled agy scenario: ${String(_never)}`);

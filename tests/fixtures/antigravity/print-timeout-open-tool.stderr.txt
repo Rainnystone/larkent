@@ -1,0 +1,5 @@
+root agent idle; waiting up to 25s for 1 background task(s)
+terminating 1 background task(s) on exit
+[agy] print timeout after 25s with 1 background task(s) still running; terminating them
+error: print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 && echo done, running 11s)
+AGY_ERROR: {"short_error":"print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 \u0026\u0026 echo done, running 11s)","status":"DEADLINE_EXCEEDED","retryable":false,"reason":"print_timeout","tasks":[{"id":"ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5","description":"sleep 90 \u0026\u0026 echo done","elapsed_seconds":11,"log_uri":"file:///home/box/.gemini/antigravity-cli/brain/ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/.system_generated/tasks/task-5.log"}]}

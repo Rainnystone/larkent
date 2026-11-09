@@ -31,6 +31,10 @@ const SYSTEM_MESSAGE_ENVELOPE_INCIDENT_FIXTURE = join(
   process.cwd(),
   'tests/fixtures/antigravity/system-message-envelope-incident.jsonl',
 );
+const PRINT_TIMEOUT_OPEN_TOOL_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/print-timeout-open-tool.jsonl',
+);
 const PRINT_TIMEOUT_HINT = '输出不完整（打印超时），可稍后继续';
 const IDLE_WATCHDOG_COPY = '等待预算已用尽';
 const INCIDENT_PROSE = INCIDENT_A_PROSE;
@@ -274,6 +278,17 @@ describe('AntigravityJsonlTranslator', () => {
       message: 'invalid model selection (--model "lark-nonexistent-model-0" --effort ""): model lark-nonexistent-model-0 is not recognized',
       terminationReason: 'failed',
     }]);
+  });
+
+  // agy 1.5.3 probe 2026-11-10: the resume right after this ERROR succeeds
+  // with the conversation's context, so the handle stays resumable.
+  it('keeps resume for a captured print-timeout ERROR with an open background tool', () => {
+    const events = collect(new AntigravityJsonlTranslator(), loadJsonl(PRINT_TIMEOUT_OPEN_TOOL_FIXTURE));
+    expect(events.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 && echo done, running 11s)',
+      terminationReason: 'failed',
+    });
   });
 
   it('pairs official tool steps and leaves checkpoint as a non-tool ping', () => {

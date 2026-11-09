@@ -57,6 +57,51 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
 ]
 `;
 
+exports[`D03b existing fixture baseline > antigravity/print-timeout-open-tool.jsonl 1`] = `
+[
+  {
+    "resumeHandle": "ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4",
+    "type": "system",
+  },
+  {
+    "id": "ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4:5",
+    "input": {
+      "CommandLine": "sleep 90 && echo done",
+      "command": "sleep 90 && echo done",
+    },
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "cachedInputTokens": 0,
+    "inputTokens": 37620,
+    "outputTokens": 67,
+    "reasoningOutputTokens": 0,
+    "type": "usage",
+  },
+  {
+    "delta": "The command \`sleep 90 && echo done\` has been launched in the background. Waiting for it to finish...
+",
+    "type": "text",
+  },
+  {
+    "id": "ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4:5",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
+  },
+  {
+    "message": "print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 && echo done, running 11s)",
+    "terminationReason": "failed",
+    "type": "error",
+  },
+]
+`;
+
 exports[`D03b existing fixture baseline > antigravity/system-message-envelope-incident.jsonl 1`] = `
 [
   {

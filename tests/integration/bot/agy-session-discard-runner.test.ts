@@ -73,6 +73,22 @@ describe('agy session discard through the real runner', { timeout: 40_000 }, () 
     expect(runs[2]!.join(' ')).toContain('summarise the diff');
   });
 
+  // agy 1.5.3 probe 2026-11-10: the resume right after a print timeout with an
+  // open background tool succeeds and recalls the conversation.
+  it('keeps the conversation after an agy print-timeout ERROR with an open background tool', async () => {
+    const h = await harness('antigravity');
+    await h.turn(agyScript('success', CONVERSATION), 'seed');
+    await h.turn(agyScript('print-timeout-open-tool', CONVERSATION), 'run sleep 90 && echo done');
+    expect(h.lastFinal()).toMatchObject({ terminal: 'error' });
+    await vi.waitFor(() => expect(h.text()).toContain('agent 失败'), WAIT);
+    expect(h.text()).not.toContain(FRESH_SESSION_NOTICE);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe(CONVERSATION);
+    expect(h.catalog.entries().filter(entry => entry.status === 'active').map(entry => entry.resumeHandle)).toEqual([CONVERSATION]);
+
+    await h.turn(agyScript('success', CONVERSATION), 'next');
+    expect((await h.runs()).map(conversationFlag)).toEqual([undefined, CONVERSATION, CONVERSATION]);
+  });
+
   it('keeps a non-agy CLI error session', async () => {
     const h = await harness('cursor');
     const init = { type: 'system', subtype: 'init', cwd: h.cwd, session_id: CURSOR_SESSION, model: 'Composer 2.5' };
