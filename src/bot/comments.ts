@@ -298,6 +298,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       });
       if (!execution) return;
       let answer = '';
+      let answerSettled = false;
       let errorMsg: string | undefined;
       let terminal = false;
       let timedOut = false;
@@ -351,13 +352,15 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
           switch (e.type) {
             case 'text':
               answer += e.delta;
+              if (e.heldBack) answerSettled = true;
               break;
             case 'final_text':
               answer = e.content;
+              answerSettled = true;
               break;
             case 'tool_use':
             case 'tool_result':
-              answer = '';
+              if (!answerSettled) answer = '';
               break;
             case 'system':
               break;
