@@ -203,7 +203,7 @@ describe('comment run flow', () => {
   it('does not reuse an existing Codex thread while another document comment run is active', async () => {
     const h = await createBlockingHarness({
       agentKind: 'codex',
-      threadIds: ['thread-one', 'thread-two'],
+      agent: new BlockingAgentAdapter(['thread-one', 'thread-two']),
     });
     await seedCodexCatalog(h, 'seed-thread');
 
@@ -218,6 +218,43 @@ describe('comment run flow', () => {
     h.agent.finishRun(0);
     h.agent.finishRun(1);
     await Promise.all([first, second]);
+  });
+
+  it('keeps the newer document session when an older concurrent agy comment fails', async () => {
+    const h = await createBlockingHarness({
+      agentKind: 'antigravity',
+      withoutCatalog: true,
+      agent: new GatedAgentAdapter([
+        {
+          before: [{ type: 'system', resumeHandle: 'agy-old' }],
+          after: [{ type: 'error', message: 'Bad Gateway', terminationReason: 'failed', invalidateResume: 'agy-old' }],
+        },
+        {
+          before: [],
+          after: [{ type: 'system', resumeHandle: 'agy-new' }, { type: 'text', delta: 'new answer' }, { type: 'done', resumeHandle: 'agy-new', terminationReason: 'normal' }],
+        },
+        {
+          before: [{ type: 'system', resumeHandle: 'agy-new' }],
+          after: [{ type: 'text', delta: 'resumed answer' }, { type: 'done', resumeHandle: 'agy-new', terminationReason: 'normal' }],
+        },
+      ]),
+    });
+    h.sessions.set(docSessionScope('doc-token'), 'agy-old', await realpath(h.tmp.workspace), 'antigravity');
+
+    const older = handleCommentMention(h.deps(event({ commentId: 'comment-1', replyId: 'reply-1' })));
+    await waitFor(() => h.agent.runOptions.length === 1);
+    const newer = handleCommentMention(h.deps(event({ commentId: 'comment-2', replyId: 'reply-2' })));
+    await waitFor(() => h.agent.runOptions.length === 2);
+    h.agent.release(1);
+    await newer;
+    h.agent.release(0);
+    await older;
+    const next = handleCommentMention(h.deps(event({ commentId: 'comment-3', replyId: 'reply-1' })));
+    await waitFor(() => h.agent.runOptions.length === 3);
+    h.agent.release(2);
+    await next;
+
+    expect(h.agent.runOptions.map((opts) => opts.resumeHandle)).toEqual(['agy-old', undefined, 'agy-new']);
   });
 
   it('keeps replying when typing reaction add fails', async () => {
@@ -428,12 +465,14 @@ async function createHarness(options: {
   };
 }
 
-async function createBlockingHarness(options: {
-  agentKind: 'codex';
-  threadIds: string[];
+async function createBlockingHarness<A extends AgentAdapter & { runOptions: AgentRunOptions[] }>(options: {
+  agentKind: 'codex' | 'antigravity';
+  agent: A;
+  withoutCatalog?: boolean;
 }): Promise<{
   tmp: TmpProfile;
-  agent: BlockingAgentAdapter;
+  agent: A;
+  sessions: SessionStore;
   sessionCatalog: SessionCatalog;
   workspaces: WorkspaceStore;
   profileConfig: ProfileConfig;
@@ -441,7 +480,7 @@ async function createBlockingHarness(options: {
 }> {
   const tmp = await createTmpProfile('comment-run-flow-blocking-');
   const requests: RequestRecord[] = [];
-  const agent = new BlockingAgentAdapter(options.threadIds);
+  const { agent } = options;
   const rawClient: FakeCommentChannel['rawClient'] = {
     async request(input) {
       requests.push(input);
@@ -493,6 +532,7 @@ async function createBlockingHarness(options: {
   return {
     tmp,
     agent,
+    sessions,
     sessionCatalog,
     workspaces,
     profileConfig,
@@ -501,7 +541,7 @@ async function createBlockingHarness(options: {
       evt,
       agent,
       sessions,
-      sessionCatalog,
+      ...(options.withoutCatalog ? {} : { sessionCatalog }),
       workspaces,
       activeRuns,
       executor,
@@ -606,6 +646,43 @@ class BlockingAgentAdapter implements AgentAdapter {
         terminationReason: 'normal',
       };
     }
+  }
+}
+
+/** Yields each run's `before` events, then waits for `release(index)` before the rest. */
+class GatedAgentAdapter implements AgentAdapter {
+  readonly id = 'fake-agent';
+  readonly displayName = 'Fake Agent';
+  readonly runOptions: AgentRunOptions[] = [];
+  private readonly gates: Array<() => void> = [];
+
+  constructor(private readonly scripts: Array<{ before: AgentEvent[]; after: AgentEvent[] }>) {}
+
+  async isAvailable(): Promise<boolean> {
+    return true;
+  }
+
+  run(opts: AgentRunOptions): AgentRun {
+    const index = this.runOptions.length;
+    this.runOptions.push(opts);
+    const gate = new Promise<void>((resolve) => {
+      this.gates[index] = resolve;
+    });
+    const script = this.scripts[index] ?? { before: [], after: [] };
+    return {
+      runId: opts.runId,
+      events: (async function* () {
+        yield* script.before;
+        await gate;
+        yield* script.after;
+      })(),
+      stop: async () => this.gates[index]?.(),
+      waitForExit: async () => true,
+    };
+  }
+
+  release(index: number): void {
+    this.gates[index]?.();
   }
 }
 
