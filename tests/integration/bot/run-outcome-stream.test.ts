@@ -445,6 +445,41 @@ describe('run outcome stream', () => {
     continued.releaseCleanup();
     await drainIO();
   }, 15_000);
+
+  it('keeps a current-turn antigravity ERROR as a failed outcome and notes that the next message starts a new session', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'system', resumeHandle: 'sess-agy-err' });
+    run.push({
+      type: 'error',
+      message: 'FAILED_PRECONDITION (code 400): current turn failed',
+      terminationReason: 'failed',
+    });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'failed:unclassified'));
+    expect(cardFinal(info).at(-1)).toMatchObject({ terminal: 'error', outcome: 'failed:unclassified' });
+    await waitFor(() => rendered(h.channel).includes('agent 失败'));
+    const text = rendered(h.channel);
+    expect(text).toContain('agent 失败');
+    expect(text).toContain('下一条消息将开启新会话');
+
+    await h.channel.handlers.message?.(message('second', 'next message'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+    const nextRun = h.agent.manual[1]!;
+    nextRun.push({ type: 'final_text', content: 'FRESH_NEXT' });
+    nextRun.push({ type: 'done', terminationReason: 'normal' });
+    nextRun.close();
+    nextRun.releaseCleanup();
+    await drainIO();
+  }, 15_000);
 });
 
 async function harness(options?: {

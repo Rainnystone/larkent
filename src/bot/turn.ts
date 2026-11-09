@@ -112,10 +112,13 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
   const discardSessionOnError = Boolean(
     descriptorFor(run.capability.agentId).resume.discardOnError || run.capability.discardSessionOnError,
   );
+  let hadSession = Boolean(flow.resumeFrom);
+  let sessionDiscarded = false;
   const recordSession = (event: AgentEvent): void => {
     if (delivery.kind === 'chat' && delivery.canRecordSession?.() === false) return;
     recordRunSessionEvent({ ...run, policy: flow.policy, event });
     if (event.type === 'error' && discardSessionOnError) {
+      if (hadSession) sessionDiscarded = true;
       if (delivery.journal && delivery.turnId) {
         delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: undefined });
       }
@@ -123,6 +126,7 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
       return;
     }
     if (event.type === 'system' && event.resumeHandle) {
+      hadSession = true;
       if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: event.resumeHandle });
       if (delivery.kind === 'chat') log.info('session', 'set', { resumeHandle: event.resumeHandle });
     }
@@ -133,7 +137,7 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
   if (delivery.kind === 'automation') return deliverAutomationTurn(input, flow, delivery, recordSession);
   delivery.activePolicyFingerprints?.set(run.scopeId, flow.policy.policyFingerprint);
   try {
-    const state = await deliverChatTurn(input, flow, delivery, recordSession);
+    const state = await deliverChatTurn(input, flow, delivery, recordSession, () => sessionDiscarded);
     return { ok: true, state, handle: flow.execution.handle };
   } finally {
     delivery.activePolicyFingerprints?.delete(run.scopeId);
@@ -191,6 +195,7 @@ async function deliverChatTurn(
   flow: StartedFlow,
   delivery: ChatTurnDelivery,
   recordSession: (event: AgentEvent) => void,
+  sessionDiscarded?: () => boolean,
 ): Promise<RunState> {
   const { execution, cwdRealpath: cwd } = flow;
   const { outbox, channel, chatId, sendOpts, turnId, journal, callbackAuth, cliSelfSent,
@@ -200,7 +205,7 @@ async function deliverChatTurn(
   const eventStream = execution.subscribe();
   const idleTimeoutMs = input.idleTimeoutMs;
   const runContext = { currentChatId: chatId, batchMessageIds: delivery.batchMessageIds ?? [] };
-  const reliability = streamReliability(input.run.profileConfig);
+  const reliability = { ...streamReliability(input.run.profileConfig), sessionDiscarded };
   const lastMsg = { messageId: sendOpts.replyTo, content: delivery.cot?.inputPreview ?? '' };
   log.info('session', flow.resumeFrom ? 'resume' : 'fresh', { ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}), cwd });
   const replyMode = delivery.replyMode;
@@ -734,7 +739,11 @@ async function processAgentStream(
     signature: matched,
     agent: reliability.agent,
   });
-  const userMessage = cardUserMessage(outcome, matched);
+  const rawUserMessage = cardUserMessage(outcome, matched);
+  const userMessage =
+    rawUserMessage !== undefined && reliability.sessionDiscarded?.()
+      ? `${rawUserMessage}\n下一条消息将开启新会话。`
+      : rawUserMessage;
   if (
     state.terminal === 'running'
     || cardTerminalFromOutcome(outcome) !== state.terminal
@@ -806,6 +815,7 @@ function applyOutcomeToState(
 interface StreamReliability {
   signatures?: readonly CliSignature[];
   agent?: string;
+  sessionDiscarded?: () => boolean;
 }
 
 function streamReliability(
