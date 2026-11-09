@@ -213,6 +213,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: 'FAILED_PRECONDITION (code 400): User location is not supported for the API use.',
         terminationReason: 'failed',
+        invalidateResume: true,
       },
     ]);
     expect(t.terminalEmitted()).toBe(true);
@@ -468,6 +469,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: 'timeout waiting for response',
         terminationReason: 'failed',
+        invalidateResume: true,
       },
     ]);
   });
@@ -828,6 +830,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED_PRECONDITION: leaked ${INCIDENT_ENVELOPE}`,
         terminationReason: 'failed',
+        invalidateResume: true,
       },
     ]);
   });
@@ -852,6 +855,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED: leaked ${INCIDENT_ENVELOPE}`,
         terminationReason: 'failed',
+        invalidateResume: true,
       },
     ]);
   });
@@ -1060,6 +1064,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED_PRECONDITION: leaked ${TASK_NOTIFICATION_ENVELOPE}`,
         terminationReason: 'failed',
+        invalidateResume: true,
       },
     ]);
   });
@@ -1239,7 +1244,7 @@ describe('AntigravityJsonlTranslator', () => {
     translator.translate({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: '<SYSTEM_MESSAGE>[Message] internal</SYSTEM_MESSAGE>Partial' } });
     expect(translator.translate({ event: 'result', result: { status: 'ERROR', error: 'upstream failed' } })).toEqual([
       { type: 'text', delta: 'Partial' },
-      { type: 'error', message: 'upstream failed', terminationReason: 'failed' },
+      { type: 'error', message: 'upstream failed', terminationReason: 'failed', invalidateResume: true },
     ]);
   });
 });

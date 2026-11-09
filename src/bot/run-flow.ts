@@ -243,6 +243,10 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
 }
 
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
+  if (input.event.type === 'error' && input.event.invalidateResume) {
+    discardRunResumeHandle(input);
+    return;
+  }
   if (input.event.type !== 'system' || !input.event.resumeHandle) return;
   const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
   if (descriptorFor(input.capability.agentId).resume.label === 'session') {
@@ -254,5 +258,17 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
     cwdRealpath,
     policyFingerprint: input.policy.policyFingerprint,
     resumeHandle: input.event.resumeHandle,
+  });
+}
+
+function discardRunResumeHandle(input: RecordRunSessionEventInput): void {
+  if (descriptorFor(input.capability.agentId).resume.label === 'session') {
+    input.sessions.clear(input.scopeId, input.capability.agentId);
+  }
+  input.sessionCatalog?.archiveActive({
+    scopeId: input.scopeId,
+    agentId: input.capability.agentId,
+    cwdRealpath: input.policy.cwdRealpath,
+    policyFingerprint: input.policy.policyFingerprint,
   });
 }

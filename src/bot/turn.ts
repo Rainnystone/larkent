@@ -116,6 +116,9 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
       if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: event.resumeHandle });
       if (delivery.kind === 'chat') log.info('session', 'set', { resumeHandle: event.resumeHandle });
     }
+    if (event.type === 'error' && event.invalidateResume) {
+      if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: undefined });
+    }
     if (delivery.kind === 'chat' && event.type === 'system' && event.model) log.info('session', 'model', {
       requested: delivery.requestedModel ?? 'default', actual: event.model,
     });
@@ -681,6 +684,7 @@ async function processAgentStream(
       if (evt.type === 'done' || evt.type === 'error') {
         lastTerminal = evt;
         noteTerminalStop(handle, evt);
+        if (evt.type === 'error' && evt.invalidateResume) recordSession(evt);
       }
 
       const prevTerminal = state.terminal;
@@ -727,6 +731,9 @@ async function processAgentStream(
   }
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };
+  }
+  if (lastTerminal?.type === 'error' && lastTerminal.invalidateResume && state.terminal === 'error') {
+    state = appendFreshSessionNotice(state);
   }
   log.info('card', 'final', {
     scope,
@@ -784,6 +791,17 @@ function applyOutcomeToState(
       return _exhaustive;
     }
   }
+}
+
+const FRESH_SESSION_NOTICE = '下一条消息将开始新会话';
+
+function appendFreshSessionNotice(state: RunState): RunState {
+  const existing = state.errorMsg?.trim();
+  if (existing?.includes(FRESH_SESSION_NOTICE)) return state;
+  return {
+    ...state,
+    errorMsg: existing ? `${existing}\n${FRESH_SESSION_NOTICE}` : FRESH_SESSION_NOTICE,
+  };
 }
 
 interface StreamReliability {

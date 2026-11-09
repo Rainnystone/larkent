@@ -152,7 +152,16 @@ export class AntigravityJsonlTranslator {
     if (status === 'ERROR' || status === 'FAILED') {
       const message =
         stringValue(result.error) ?? stringValue(result.message) ?? 'antigravity reported an error';
-      return this.core.accept({ type: 'complete', terminal: { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' }, prefix: events });
+      return this.core.accept({
+        type: 'complete',
+        terminal: {
+          type: 'error',
+          message: truncate(message, 4096),
+          terminationReason: 'failed',
+          invalidateResume: true,
+        },
+        prefix: events,
+      });
     }
     const response = typeof result.response === 'string' ? result.response : undefined;
     return this.core.accept({ type: 'complete', terminal: this.doneEvent('normal'),
