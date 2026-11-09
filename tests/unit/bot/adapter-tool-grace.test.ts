@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl';
 import { CursorJsonlTranslator } from '../../../src/agent/cursor/jsonl';
 import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import type { AgentEvent, AgentRun } from '../../../src/agent/types';
@@ -91,6 +92,55 @@ describe('heartbeat-only adapter liveness never extends tool grace', () => {
     expect(heartbeats.length).toBeGreaterThan(0);
     expect(heartbeats.every((event) => event.type === 'liveness')).toBe(true);
     expectOpenToolIgnoresHeartbeats(heartbeats);
+  });
+});
+
+describe('held-back model output refreshes ordinary idle', () => {
+  const chunkers: Array<[string, () => (i: number) => AgentEvent[]]> = [
+    ['grok text chunks', () => {
+      const grok = new GrokJsonlTranslator();
+      return (i) => grok.translate({ type: 'text', data: `chunk ${i} ` });
+    }],
+    ['agy agent_response deltas', () => {
+      const agy = new AntigravityJsonlTranslator();
+      return (i) => agy.translate({ event: 'step_update', step_update: {
+        conversation_id: 'conv-1', step_index: 1, state: 'ACTIVE', step_type: 'agent_response', text_delta: `chunk ${i} `,
+      } });
+    }],
+    ['cursor thinking deltas', () => {
+      const cursor = new CursorJsonlTranslator();
+      return (i) => cursor.translate({ type: 'thinking', subtype: 'delta', text: `thought ${i} `, session_id: 's-1' });
+    }],
+  ];
+
+  it.each(chunkers)('%s every minute keep a run alive past idle, then silence stops it', (_label, makeChunker) => {
+    const chunk = makeChunker();
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    for (let i = 0; i < 30; i++) {
+      for (const event of chunk(i)) noteWatchdogActivity(handle, watchdog, event);
+      clock.elapse(60_000);
+    }
+    expect(handle.interrupted, 'continuous output was cut at idle').toBe(false);
+    clock.elapse(IDLE_MS + TICK_MS);
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle' });
+    watchdog.dispose();
+  });
+
+  it('keeps cursor thinking completion and retry pings heartbeat-only', () => {
+    const cursor = new CursorJsonlTranslator();
+    const pings = [
+      ...cursor.translate({ type: 'thinking', subtype: 'completed', session_id: 's-1' }),
+      ...cursor.translate({ type: 'retry', attempt: 1 }),
+    ];
+    const clock = createFakeClock();
+    const { handle, watchdog } = startWatch(clock);
+    for (let i = 0; i < 30 && !handle.interrupted; i++) {
+      for (const event of pings) noteWatchdogActivity(handle, watchdog, event);
+      clock.elapse(60_000);
+    }
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog', timer: 'idle' });
+    watchdog.dispose();
   });
 });
 
