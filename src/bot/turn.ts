@@ -721,13 +721,12 @@ async function processAgentStream(
   const matched = matchCliSignature(failure.stderrTail, failure.signatures);
   const outcome = handle.outcome;
   if (!outcome) throw new Error('run settled without an outcome');
+  // Spec D2: only a translated CLI error result may discard the session.
+  // Stderr-only, killed-externally or exit-code failures keep it.
   const sessionDiscarded =
     outcome.kind === 'failed'
-    && recordSession(
-      lastTerminal?.type === 'error'
-        ? lastTerminal
-        : { type: 'error', message: failure.stderrTail || 'agent failed', terminationReason: 'failed' },
-    );
+    && lastTerminal?.type === 'error'
+    && recordSession(lastTerminal);
   noteUnclassifiedStderr({
     outcome,
     stderrTail: failure.stderrTail,

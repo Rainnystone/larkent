@@ -480,6 +480,38 @@ describe('run outcome stream', () => {
     nextRun.releaseCleanup();
     await drainIO();
   }, 15_000);
+
+  it('keeps the antigravity session when the run fails without a CLI error result', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'system', resumeHandle: 'sess-agy-keep' });
+    // Process dies with stderr only: no translated `result` ERROR terminal.
+    run.stderrSnapshot = 'agy exploded';
+    run.exit = 1;
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => String(entry.outcome).startsWith('failed')));
+    expect(cardFinal(info).at(-1)).toMatchObject({ terminal: 'error' });
+    await waitFor(() => rendered(h.channel).includes('agent 失败'));
+    expect(rendered(h.channel)).not.toContain('下一条消息将开启新会话');
+    expect(h.journal?.list().some((entry) => entry.resumeHandle === 'sess-agy-keep')).toBe(true);
+
+    await h.channel.handlers.message?.(message('second', 'next message'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBe('sess-agy-keep');
+    const nextRun = h.agent.manual[1]!;
+    nextRun.push({ type: 'final_text', content: 'RESUMED_NEXT' });
+    nextRun.push({ type: 'done', terminationReason: 'normal' });
+    nextRun.close();
+    nextRun.releaseCleanup();
+    await drainIO();
+  }, 15_000);
 });
 
 async function harness(options?: {
