@@ -267,7 +267,10 @@ export function discardRunResumeHandle(
   input: Pick<RecordRunSessionEventInput, 'scopeId' | 'sessions' | 'sessionCatalog' | 'capability'>,
   resumeHandle: string,
 ): void {
-  if (descriptorFor(input.capability.agentId).resume.label === 'session') {
+  if (
+    descriptorFor(input.capability.agentId).resume.label === 'session'
+    && input.sessions.getRaw(input.scopeId, input.capability.agentId)?.resumeHandle === resumeHandle
+  ) {
     input.sessions.clear(input.scopeId, input.capability.agentId);
   }
   input.sessionCatalog?.archiveResumeHandle({
