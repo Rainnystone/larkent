@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { CommentEvent } from '@larksuite/channel';
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types.js';
+import { AntigravityJsonlTranslator, type AntigravityFinishReason } from '../../../src/agent/antigravity/jsonl.js';
+import { ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE } from '../../../src/agent/antigravity/stderr-signatures.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { handleCommentMention } from '../../../src/bot/comments.js';
 import { commentDocumentScopeId, commentTokenDigest } from '../../../src/bot/comment-resource.js';
@@ -146,6 +148,23 @@ describe('comment run flow', () => {
 
     expect(h.agent.runOptions.map((opts) => opts.resumeHandle)).toEqual(['agy-legacy', undefined]);
     expect(h.inThreadReplies).toEqual([expect.stringMatching(/Bad Gateway\n下一条消息将开始新会话$/), 'fresh answer']);
+  });
+
+  it('keeps the agy answer, print-timeout hint, or partial when a tool is still open at the end', async () => {
+    const h = await createHarness({
+      agentKind: 'antigravity',
+      agentEventRuns: [
+        agyEventsWithOpenTool('agy-answer', [{ event: 'result', result: { conversation_id: 'agy-answer', status: 'SUCCESS', response: 'final answer' } }]),
+        agyEventsWithOpenTool('agy-timeout', [{ event: 'result', result: { conversation_id: 'agy-timeout', status: 'SUCCESS', response: '' } }]),
+        agyEventsWithOpenTool('agy-partial', [{ event: 'step_update', step_update: { conversation_id: 'agy-partial', step_index: 2, state: 'ACTIVE', step_type: 'agent_response', text_delta: 'partial answer' } }], 'timeout'),
+      ],
+    });
+
+    for (const commentId of ['comment-1', 'comment-2', 'comment-3']) {
+      await handleCommentMention(h.deps(event({ commentId, replyId: 'reply-1' })));
+    }
+
+    expect(h.inThreadReplies).toEqual(['final answer', ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE, 'partial answer']);
   });
 
   it('keeps Codex pre-tool progress text out of every comment reply', async () => {
@@ -606,6 +625,22 @@ function codexRunWithProgress(threadId: string, progress: string, finalAnswer: s
     { type: 'final_text', content: finalAnswer },
     { type: 'done', resumeHandle: threadId, terminationReason: 'normal' },
   ];
+}
+
+/** Real translator output for an agy turn whose `run_command` tool never reports DONE. */
+function agyEventsWithOpenTool(
+  conversationId: string,
+  tail: unknown[],
+  finish?: AntigravityFinishReason,
+): AgentEvent[] {
+  const translator = new AntigravityJsonlTranslator();
+  const lines = [
+    { event: 'init', conversation_id: conversationId, init: { cwd: '/tmp', tools: [] } },
+    { event: 'step_update', step_update: { conversation_id: conversationId, step_index: 0, state: 'DONE', step_type: 'user_input' } },
+    { event: 'step_update', step_update: { conversation_id: conversationId, step_index: 1, state: 'ACTIVE', step_type: 'tool', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: { CommandLine: 'sleep 600' } } } },
+    ...tail,
+  ];
+  return [...lines.flatMap((line) => translator.translate(line)), ...(finish ? translator.finish(finish) : [])];
 }
 
 function docSessionScope(fileToken: string): string {
