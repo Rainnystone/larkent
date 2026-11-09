@@ -32,6 +32,13 @@ export interface ArchiveSessionCatalogInput extends SessionCatalogIdentity {
   now?: number;
 }
 
+export interface ArchiveResumeHandleInput {
+  scopeId: string;
+  agentId: CatalogAgentId;
+  resumeHandle: string;
+  now?: number;
+}
+
 export interface SessionCatalogGcOptions {
   now?: number;
   maxArchivedAgeMs?: number;
@@ -143,6 +150,20 @@ export class SessionCatalog {
     });
     this.schedulePersist();
     return true;
+  }
+
+  /** Archive this handle in every cwd and policy fingerprint of the scope. */
+  archiveResumeHandle(input: ArchiveResumeHandleInput): number {
+    this.assertMutable();
+    let archived = 0;
+    for (const [key, entry] of this.data) {
+      if (entry.status !== 'active' || entry.scopeId !== input.scopeId || entry.agentId !== input.agentId) continue;
+      if (entry.resumeHandle !== input.resumeHandle) continue;
+      this.data.set(key, { ...entry, status: 'archived', updatedAt: input.now ?? Date.now() });
+      archived += 1;
+    }
+    if (archived > 0) this.schedulePersist();
+    return archived;
   }
 
   entries(): SessionCatalogEntry[] {

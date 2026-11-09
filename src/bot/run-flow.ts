@@ -244,7 +244,7 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
 
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
   if (input.event.type === 'error' && input.event.invalidateResume) {
-    discardRunResumeHandle(input);
+    discardRunResumeHandle(input, input.event.invalidateResume);
     return;
   }
   if (input.event.type !== 'system' || !input.event.resumeHandle) return;
@@ -261,14 +261,17 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
   });
 }
 
-function discardRunResumeHandle(input: RecordRunSessionEventInput): void {
+/** Drops the scope's session-store handle and every catalog entry holding the poisoned one. */
+export function discardRunResumeHandle(
+  input: Pick<RecordRunSessionEventInput, 'scopeId' | 'sessions' | 'sessionCatalog' | 'capability'>,
+  resumeHandle: string,
+): void {
   if (descriptorFor(input.capability.agentId).resume.label === 'session') {
     input.sessions.clear(input.scopeId, input.capability.agentId);
   }
-  input.sessionCatalog?.archiveActive({
+  input.sessionCatalog?.archiveResumeHandle({
     scopeId: input.scopeId,
     agentId: input.capability.agentId,
-    cwdRealpath: input.policy.cwdRealpath,
-    policyFingerprint: input.policy.policyFingerprint,
+    resumeHandle,
   });
 }
