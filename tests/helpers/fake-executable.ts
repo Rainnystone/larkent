@@ -14,6 +14,8 @@ export interface ScriptedJsonlExecutableOptions {
   recordAppendPath?: string;
   holdAfterLines?: boolean;
   closeStdoutAfterLines?: boolean;
+  /** POSIX only: on SIGTERM print these lines and stderr, then exit (agy's interrupt echo). */
+  onSigterm?: { lines?: readonly unknown[]; stderr?: string; exitCode?: number };
   /** Controlled Codex only: record state under the actual, fixture-contained CODEX_HOME. */
   codexStateRoot?: string;
 }
@@ -153,6 +155,12 @@ async function writeNodeSource(
     '  if (typeof script.exitCode === "number") exitCode = script.exitCode;',
     '  if (typeof script.hang === "boolean") hang = script.hang;',
     '}',
+    'if (script.onSigterm) process.on("SIGTERM", () => {',
+    '  const reply = script.onSigterm;',
+    '  if (reply.stderr) process.stderr.write(reply.stderr);',
+    '  const out = (reply.lines ?? []).map(line => (typeof line === "string" ? line : JSON.stringify(line)) + "\\n").join("");',
+    '  process.stdout.write(out, () => process.exit(reply.exitCode ?? 1));',
+    '});',
     DEVIN_ACP_FIXTURE_SOURCE,
     'if (argv.includes("acp")) { await serveDevinAcp(script, {recordPath}); await new Promise(() => {}); }',
     'if (script.recordAppendPath || script.readyPath || script.releasePath) {',
