@@ -152,13 +152,17 @@ export class AntigravityJsonlTranslator {
     if (status === 'ERROR' || status === 'FAILED') {
       const message =
         stringValue(result.error) ?? stringValue(result.message) ?? 'antigravity reported an error';
+      // agy 1.5.3 keeps an in-conversation error on every later resumed result.
+      // Its SIGTERM echo (`finished_reason: interrupted`) and failures before it
+      // attached to a conversation do not stick (probe 2026-11-09).
+      const poisoned = stringValue(result.finished_reason) === 'interrupted' ? undefined : this.conversationId;
       return this.core.accept({
         type: 'complete',
         terminal: {
           type: 'error',
           message: truncate(message, 4096),
           terminationReason: 'failed',
-          invalidateResume: true,
+          ...(poisoned ? { invalidateResume: poisoned } : {}),
         },
         prefix: events,
       });

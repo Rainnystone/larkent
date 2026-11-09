@@ -191,7 +191,7 @@ describe('agent-aware run-flow resume', () => {
         type: 'error',
         message: 'sticky historical error',
         terminationReason: 'failed',
-        invalidateResume: true,
+        invalidateResume: 'sess-agy',
       },
     });
     const identity = {

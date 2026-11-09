@@ -27,7 +27,7 @@ const AGY_ERROR: AgentEvent = {
   type: 'error',
   message: 'FAILED_PRECONDITION (code 400): User location is not supported for the API use.',
   terminationReason: 'failed',
-  invalidateResume: true,
+  invalidateResume: 'sess-agy',
 };
 
 const cleanups: Array<() => Promise<void>> = [];

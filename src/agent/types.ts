@@ -37,11 +37,12 @@ export type AgentEvent =
       message: string;
       terminationReason: 'failed' | 'interrupted' | 'timeout';
       /**
-       * Adapter-declared: this CLI conversation must not be resumed.
-       * Antigravity sets it on CLI `result` ERROR/FAILED. Shared code must
-       * not key this off `agentId === 'antigravity'`.
+       * Adapter-declared: this resume handle must not be resumed again.
+       * Antigravity sets it to the conversation id when a CLI `result`
+       * ERROR/FAILED belongs to an attached, non-interrupted conversation.
+       * Shared code must not key this off `agentId === 'antigravity'`.
        */
-      invalidateResume?: true;
+      invalidateResume?: string;
     };
 
 export interface AgentRunOptions {

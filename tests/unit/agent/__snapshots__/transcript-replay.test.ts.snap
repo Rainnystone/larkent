@@ -1325,7 +1325,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "invalidateResume": true,
+    "invalidateResume": "<ID_1>",
     "message": "FAILED_PRECONDITION: leaked <SYSTEM_MESSAGE>
 {"type":"task_complete","task_id":"bg-1","cwd":"/tmp/workspace"}
 </SYSTEM_MESSAGE>",
@@ -1342,7 +1342,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "invalidateResume": true,
+    "invalidateResume": "<ID_1>",
     "message": "FAILED_PRECONDITION: leaked <task_notification>
 {"type":"task_update","task_id":"tn-1"}
 </task_notification>",
@@ -1359,7 +1359,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "invalidateResume": true,
+    "invalidateResume": "<ID_1>",
     "message": "FAILED: leaked <SYSTEM_MESSAGE>
 {"type":"task_complete","task_id":"bg-1","cwd":"/tmp/workspace"}
 </SYSTEM_MESSAGE>",
@@ -1941,7 +1941,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "liveness",
   },
   {
-    "invalidateResume": true,
+    "invalidateResume": "<ID_1>",
     "message": "timeout waiting for response",
     "terminationReason": "failed",
     "type": "error",
@@ -2098,7 +2098,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "invalidateResume": true,
+    "invalidateResume": "<ID_1>",
     "message": "FAILED_PRECONDITION (code 400): User location is not supported for the API use.",
     "terminationReason": "failed",
     "type": "error",
@@ -6335,7 +6335,6 @@ exports[`D03b real capture baseline > antigravity/answer-only.jsonl 1`] = `
 exports[`D03b real capture baseline > antigravity/error-unknown-model.jsonl 1`] = `
 [
   {
-    "invalidateResume": true,
     "message": "invalid model selection (--model "lark-nonexistent-model-0" --effort ""): model lark-nonexistent-model-0 is not recognized as a known model or custom model in settings
 Available models:
   Gemini 4 Argon (Medium)
