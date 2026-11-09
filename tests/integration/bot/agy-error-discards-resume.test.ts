@@ -186,7 +186,7 @@ async function harness(options: { agentKind: 'antigravity' | 'claude'; journal?:
   const agent = new StreamingFakeAgent(agentKind);
   const channel = createRecordingLarkChannel();
   sdk.channel = channel;
-  const cwd = requestedCwd;
+  const cwd = await realpath(requestedCwd);
   const bridge = await startChannel({
     cfg, agent, sessions, sessionCatalog: catalog, workspaces,
     probe: async () => true,
