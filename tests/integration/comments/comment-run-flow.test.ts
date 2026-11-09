@@ -124,6 +124,30 @@ describe('comment run flow', () => {
     expect(h.agent.runOptions[2]?.resumeHandle).toBe('thread-two');
   });
 
+  it('starts the next document comment on a fresh agy conversation after an agy ERROR, legacy scope included', async () => {
+    const h = await createHarness({
+      agentKind: 'antigravity',
+      agentEventRuns: [
+        [
+          { type: 'system', resumeHandle: 'agy-legacy' },
+          { type: 'error', message: 'Bad Gateway', terminationReason: 'failed', invalidateResume: 'agy-legacy' },
+        ],
+        [
+          { type: 'system', resumeHandle: 'agy-fresh' },
+          { type: 'text', delta: 'fresh answer' },
+          { type: 'done', resumeHandle: 'agy-fresh', terminationReason: 'normal' },
+        ],
+      ],
+    });
+    h.sessions.set('doc:doc-token', 'agy-legacy', await realpath(h.tmp.workspace), 'antigravity');
+
+    await handleCommentMention(h.deps(event({ commentId: 'comment-1', replyId: 'reply-1' })));
+    await handleCommentMention(h.deps(event({ commentId: 'comment-2', replyId: 'reply-2' })));
+
+    expect(h.agent.runOptions.map((opts) => opts.resumeHandle)).toEqual(['agy-legacy', undefined]);
+    expect(h.inThreadReplies).toEqual(['⚠️ Claude 报错：Bad Gateway\n下一条消息将开始新会话', 'fresh answer']);
+  });
+
   it('keeps Codex pre-tool progress text out of every comment reply', async () => {
     const h = await createHarness({
       agentKind: 'codex',
@@ -214,7 +238,7 @@ describe('comment run flow', () => {
 });
 
 async function createHarness(options: {
-  agentKind?: 'claude' | 'codex';
+  agentKind?: 'claude' | 'codex' | 'antigravity';
   agentTexts?: string[];
   agentEventRuns?: AgentEvent[][];
   sessionIds?: string[];
@@ -556,7 +580,7 @@ async function waitFor(predicate: () => boolean): Promise<void> {
   throw new Error('timed out waiting for condition');
 }
 
-function profile(defaultWorkspace: string, agentKind: 'claude' | 'codex' = 'claude'): ProfileConfig {
+function profile(defaultWorkspace: string, agentKind: 'claude' | 'codex' | 'antigravity' = 'claude'): ProfileConfig {
   const config = createDefaultProfileConfig({
     agentKind,
     accounts: { app: { id: 'cli_test', secret: '${APP_SECRET}', tenant: 'feishu' } },
