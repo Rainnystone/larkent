@@ -150,6 +150,24 @@ describe('comment run flow', () => {
     expect(h.inThreadReplies).toEqual([expect.stringMatching(/Bad Gateway\n下一条消息将开始新会话$/), 'fresh answer']);
   });
 
+  it('keeps the new-session notice when a long agy ERROR fills the comment reply', async () => {
+    const longError = `Bad Gateway ${'x'.repeat(2500)}`;
+    const h = await createHarness({
+      agentKind: 'antigravity',
+      agentEventRuns: [[
+        { type: 'system', resumeHandle: 'agy-long' },
+        { type: 'error', message: longError, terminationReason: 'failed', invalidateResume: 'agy-long' },
+      ]],
+    });
+
+    await handleCommentMention(h.deps(event({ commentId: 'comment-1', replyId: 'reply-1' })));
+
+    const reply = h.inThreadReplies[0]!;
+    expect(reply.length).toBeLessThanOrEqual(2000);
+    expect(reply).toContain('Bad Gateway');
+    expect(reply).toMatch(/…\n下一条消息将开始新会话$/);
+  });
+
   it('keeps the agy answer, print-timeout hint, or partial when a tool is still open at the end', async () => {
     const h = await createHarness({
       agentKind: 'antigravity',
