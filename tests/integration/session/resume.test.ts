@@ -235,6 +235,103 @@ describe('agent-aware run-flow resume', () => {
     expect(argv).not.toContain('conv-poisoned');
     await collect(second.execution.subscribe());
   });
+
+  it('keeps resuming the same conversation on an antigravity SUCCESS result', async () => {
+    const h = await createHarness('antigravity');
+    const first = await start(h);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('expected initial run');
+    await collect(first.execution.subscribe());
+
+    const translator = new AntigravityJsonlTranslator();
+    const events = [
+      ...translator.translate({ event: 'init', conversation_id: 'conv-healthy' }),
+      ...translator.translate({
+        event: 'result',
+        result: {
+          conversation_id: 'conv-healthy',
+          status: 'SUCCESS',
+          response: 'All good',
+        },
+      }),
+    ];
+    for (const event of events) {
+      recordRunSessionEvent({
+        scopeId: 'chat-1',
+        sessions: h.sessions,
+        sessionCatalog: h.catalog,
+        capability: antigravityCapability(h.profileConfig),
+        policy: first.policy,
+        event,
+      });
+    }
+
+    expect(
+      h.sessions.resumeFor('chat-1', first.cwdRealpath, 'antigravity'),
+    ).toBe('conv-healthy');
+    expect(
+      h.catalog.activeFor({
+        scopeId: 'chat-1',
+        agentId: 'antigravity',
+        cwdRealpath: first.cwdRealpath,
+        policyFingerprint: first.policy.policyFingerprint,
+      }),
+    ).toMatchObject({ resumeHandle: 'conv-healthy' });
+
+    const second = await start(h);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('expected second run');
+    expect(second.resumeFrom).toBe('conv-healthy');
+    expect(h.agent.runOptions.at(-1)?.resumeHandle).toBe('conv-healthy');
+    const argv = buildAntigravityArgs({
+      prompt: 'next prompt',
+      conversationId: second.resumeFrom,
+    });
+    expect(argv).toContain('--conversation');
+    expect(argv).toContain('conv-healthy');
+    await collect(second.execution.subscribe());
+  });
+
+  it('keeps a non-antigravity adapter session when an error event is recorded', async () => {
+    const h = await createHarness('claude');
+    const first = await start(h);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('expected initial run');
+    await collect(first.execution.subscribe());
+
+    for (const event of [
+      { type: 'system' as const, resumeHandle: 'claude-sess-keep' },
+      { type: 'error' as const, message: 'claude transient failure', terminationReason: 'failed' as const },
+    ]) {
+      recordRunSessionEvent({
+        scopeId: 'chat-1',
+        sessions: h.sessions,
+        sessionCatalog: h.catalog,
+        capability: claudeCapability(h.profileConfig),
+        policy: first.policy,
+        event,
+      });
+    }
+
+    expect(
+      h.sessions.resumeFor('chat-1', first.cwdRealpath, 'claude'),
+    ).toBe('claude-sess-keep');
+    expect(
+      h.catalog.activeFor({
+        scopeId: 'chat-1',
+        agentId: 'claude',
+        cwdRealpath: first.cwdRealpath,
+        policyFingerprint: first.policy.policyFingerprint,
+      }),
+    ).toMatchObject({ resumeHandle: 'claude-sess-keep' });
+
+    const second = await start(h);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('expected second run');
+    expect(second.resumeFrom).toBe('claude-sess-keep');
+    expect(h.agent.runOptions.at(-1)?.resumeHandle).toBe('claude-sess-keep');
+    await collect(second.execution.subscribe());
+  });
 });
 
 async function createHarness(agentKind: 'claude' | 'codex' | 'antigravity'): Promise<{
