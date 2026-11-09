@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 import { redactDiagnosticText } from '../../core/logger';
-import { isRecord } from '../final-answer/values';
+import { isRecord, truncate } from '../final-answer/values';
 
 export const STDOUT_CAPTURE_ENV = 'LARKENT_STDOUT_CAPTURE_DIR';
 export const DEFAULT_CAPTURE_MAX_BYTES = 2 * 1024 * 1024;
@@ -24,7 +24,16 @@ const PAYLOAD_KEYS = new Set([
   'commandline',
   'prompt',
   'stdin',
+  'input',
 ]);
+
+const STRUCTURE_KEYS = new Set([
+  'type', 'subtype', 'event', 'method', 'jsonrpc', 'kind', 'role', 'state', 'status', 'steptype',
+  'sessionupdate', 'stopreason', 'finishedreason', 'terminalreason', 'errorcode', 'errortype',
+  'toolname', 'name', 'model', 'canonicalmodel', 'version', 'cliversion', 'claudecodeversion',
+  'permissionmode', 'apikeysource', 'provider', 'servicetier', 'cwd', 'hookevent', 'tasktype', 'outcome',
+]);
+const DIAGNOSTIC_TEXT_CHARS = 200;
 
 export interface StdoutCapture {
   readonly path: string;
@@ -51,9 +60,9 @@ export function stdoutCaptureDirFromEnv(env: NodeJS.ProcessEnv = process.env): s
 
 export function redactStdoutLine(line: string): unknown {
   try {
-    return redactNode(JSON.parse(line) as unknown, []);
+    return redactNode(JSON.parse(line) as unknown, undefined, undefined, []);
   } catch {
-    return { text: redactDiagnosticText(line) };
+    return { text: diagnosticText(line) };
   }
 }
 
@@ -163,17 +172,40 @@ function pruneCaptures(dir: string, maxFiles: number): void {
   }
 }
 
-function redactNode(value: unknown, ancestors: string[]): unknown {
-  if (typeof value === 'string') return redactDiagnosticText(value);
-  if (Array.isArray(value)) return value.map((item) => redactNode(item, ancestors));
+function redactNode(
+  value: unknown,
+  key: string | undefined,
+  owner: Record<string, unknown> | undefined,
+  ancestors: string[],
+): unknown {
+  if (typeof value === 'string') return redactString(value, key, owner, ancestors);
+  if (Array.isArray(value)) return value.map((item) => redactNode(item, key, owner, ancestors));
   if (!isRecord(value)) return value;
   const out: Record<string, unknown> = {};
-  for (const [key, nested] of Object.entries(value)) {
-    out[key] = shouldRedactKey(key, ancestors)
+  for (const [nestedKey, nested] of Object.entries(value)) {
+    out[nestedKey] = shouldRedactKey(nestedKey, ancestors)
       ? '[REDACTED]'
-      : redactNode(nested, [...ancestors, key]);
+      : redactNode(nested, nestedKey, value, [...ancestors, nestedKey]);
   }
   return out;
+}
+
+function redactString(
+  value: string,
+  key: string | undefined,
+  owner: Record<string, unknown> | undefined,
+  ancestors: string[],
+): string {
+  const name = key?.toLowerCase().replace(/[^a-z]/g, '');
+  if (!name) return '[REDACTED]';
+  if (STRUCTURE_KEYS.has(name) || name.endsWith('id')) return redactDiagnosticText(value);
+  const errorText = name === 'error' || name === 'errormessage'
+    || (name === 'message' && (owner?.type === 'error' || ancestors.at(-2)?.toLowerCase() === 'error'));
+  return errorText ? diagnosticText(value) : '[REDACTED]';
+}
+
+function diagnosticText(value: string): string {
+  return truncate(redactDiagnosticText(value), DIAGNOSTIC_TEXT_CHARS);
 }
 
 function shouldRedactKey(key: string, ancestors: string[]): boolean {
