@@ -154,8 +154,10 @@ export class AntigravityJsonlTranslator {
         stringValue(result.error) ?? stringValue(result.message) ?? 'antigravity reported an error';
       // agy 1.5.3 keeps an in-conversation error on every later resumed result.
       // Its SIGTERM echo (`finished_reason: interrupted`) and failures before it
-      // attached to a conversation do not stick (probe 2026-11-09).
-      const poisoned = stringValue(result.finished_reason) === 'interrupted' ? undefined : this.conversationId;
+      // attached to a conversation do not stick (probe 2026-11-09), nor does a
+      // print timeout (`print_timeout`, probe 2026-11-10 with an open background tool).
+      const finishedReason = stringValue(result.finished_reason);
+      const poisoned = finishedReason === 'interrupted' || finishedReason === 'print_timeout' ? undefined : this.conversationId;
       return this.core.accept({
         type: 'complete',
         terminal: {
