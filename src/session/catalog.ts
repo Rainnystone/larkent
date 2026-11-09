@@ -152,7 +152,6 @@ export class SessionCatalog {
     return true;
   }
 
-  /** Archive this handle in every cwd and policy fingerprint of the scope. */
   archiveResumeHandle(input: ArchiveResumeHandleInput): number {
     this.assertMutable();
     let archived = 0;

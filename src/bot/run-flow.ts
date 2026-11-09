@@ -261,7 +261,8 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
   });
 }
 
-/** Drops the scope's session-store handle and every catalog entry holding the poisoned one. */
+export const FRESH_SESSION_NOTICE = '下一条消息将开始新会话';
+
 export function discardRunResumeHandle(
   input: Pick<RecordRunSessionEventInput, 'scopeId' | 'sessions' | 'sessionCatalog' | 'capability'>,
   resumeHandle: string,

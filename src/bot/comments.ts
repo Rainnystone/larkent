@@ -16,7 +16,7 @@ import { RunRejected } from '../runtime/errors';
 import type { ActiveRuns } from './active-runs';
 import { createIdleWatchdog, noteWatchdogActivity } from './idle-watchdog';
 import { idleWatchdogStopNote, type StopRequest } from './run-outcome';
-import { recordRunSessionEvent } from './run-flow';
+import { discardRunResumeHandle, FRESH_SESSION_NOTICE, recordRunSessionEvent } from './run-flow';
 import type { RunExecutor } from '../runtime/run-executor';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
@@ -301,6 +301,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       let errorMsg: string | undefined;
       let terminal = false;
       let timedOut = false;
+      let sessionDiscarded = false;
       const eventStream = execution.subscribe()[Symbol.asyncIterator]();
       const watchdog = createIdleWatchdog({
         handle: execution.handle,
@@ -334,6 +335,10 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             policy,
             event: e,
           });
+          if (e.type === 'error' && e.invalidateResume) {
+            discardRunResumeHandle({ scopeId: legacyDocSessionScopeId, sessions, sessionCatalog, capability }, e.invalidateResume);
+            sessionDiscarded = true;
+          }
           if (
             descriptorFor(capability.agentId).resume.label === 'session' &&
             e.type === 'system' &&
@@ -408,7 +413,7 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       }
 
       let reply = stripMarkdown(answer.trim());
-      if (errorMsg) reply = `⚠️ Claude 报错：${errorMsg}`;
+      if (errorMsg) reply = `⚠️ Claude 报错：${errorMsg}${sessionDiscarded ? `\n${FRESH_SESSION_NOTICE}` : ''}`;
       if (!reply) reply = '（无回复内容）';
       if (reply.length > REPLY_MAX_CHARS) reply = `${reply.slice(0, REPLY_MAX_CHARS - 1)}…`;
 

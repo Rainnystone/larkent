@@ -11,7 +11,7 @@ import type { CallbackAuth } from '../card/callback-auth';
 import type { RunHandle } from './active-runs';
 import { createIdleWatchdog, noteWatchdogActivity } from './idle-watchdog';
 import { cardTerminalFromOutcome, formatRunOutcome, formatStopRequest, idleWatchdogStopNote, noteTerminalStop, requestStop, shouldDeliverAgentEvent, type RunOutcome, type StopRequest } from './run-outcome';
-import { recordRunSessionEvent, startRunFlow, type StartRunFlowInput, type StartRunFlowResult } from './run-flow';
+import { FRESH_SESSION_NOTICE, recordRunSessionEvent, startRunFlow, type StartRunFlowInput, type StartRunFlowResult } from './run-flow';
 import { Outbox, type StreamDelivery } from './outbox';
 import type { TurnJournal } from './turn-journal';
 import { outboundMessageId, withOutboundTimeout, type CliSelfSendTracker } from './self-message';
@@ -792,8 +792,6 @@ function applyOutcomeToState(
     }
   }
 }
-
-const FRESH_SESSION_NOTICE = '下一条消息将开始新会话';
 
 function appendFreshSessionNotice(state: RunState): RunState {
   const existing = state.errorMsg?.trim();
