@@ -9,6 +9,7 @@ import {
   redactStdoutLine,
   stdoutCaptureDirFromEnv,
 } from '../../../src/agent/runner/stdout-capture';
+import { fixtureText } from '../../helpers/transcript-replay';
 
 const dirs: string[] = [];
 
@@ -21,6 +22,9 @@ async function tempDir(prefix: string): Promise<string> {
   dirs.push(dir);
   return dir;
 }
+
+/** Reply, thinking, bridge prompt and tool argument text present in the D03a captures. */
+const PRIVATE_TEXT = ['TRANSCRIPT-OK', '运行约定', 'sleep 45', 'Sleep for 45'];
 
 const SECRET_LINE = JSON.stringify({
   event: 'step_update',
@@ -79,6 +83,38 @@ describe('opt-in stdout capture redaction', () => {
     const asText = JSON.stringify(redacted);
     expect(asText).not.toContain('sk-secret-token');
     expect(asText).not.toContain('secret-output-should-not-leak');
+  });
+
+  it.each(['claude', 'codex', 'kimi', 'grok', 'cursor', 'antigravity'])(
+    'keeps prompts, replies, thinking and tool text from real %s stdout out of the capture',
+    async (kind) => {
+      const dir = await tempDir(`stdout-cap-${kind}-`);
+      const capture = openStdoutCapture({ dir, runId: `run-${kind}`, spawnName: kind });
+      const raw: string[] = [];
+      for (const scenario of ['answer-only', 'narration-tool-answer', 'long-tool', 'two-tools', 'stop-mid-answer', 'error-unknown-model']) {
+        for (const record of fixtureText(`transcripts/${kind}/${scenario}.jsonl`).trim().split('\n')) {
+          const line = (JSON.parse(record) as { line?: unknown }).line;
+          if (typeof line !== 'string') continue;
+          raw.push(line);
+          capture.noteLine(line);
+        }
+      }
+      capture.close();
+      const body = await readFile(capture.path, 'utf8');
+
+      const leaked = PRIVATE_TEXT.filter((text) => raw.some((line) => line.includes(text)) && body.includes(text));
+      expect(leaked).toEqual([]);
+      expect(PRIVATE_TEXT.some((text) => raw.some((line) => line.includes(text)))).toBe(true);
+      expect(body).toContain('<SESSION_1>');
+      expect(body).toMatch(/"(type|event)":"[a-z_.]+"/);
+    },
+  );
+
+  it('keeps the agy terminal error text that ticket 01 diagnoses', async () => {
+    const line = fixtureText('transcripts/antigravity/error-unknown-model.jsonl').trim().split('\n')
+      .map((record) => (JSON.parse(record) as { line?: string }).line)
+      .find((value) => value?.includes('"result"'));
+    expect(JSON.stringify(redactStdoutLine(line!))).toContain('invalid model selection');
   });
 
   it('creates the capture file with owner-only permissions', async () => {
