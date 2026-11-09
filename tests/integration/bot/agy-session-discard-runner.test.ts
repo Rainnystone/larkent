@@ -40,8 +40,11 @@ describe('agy session discard through the real runner', { timeout: 40_000 }, () 
     await h.turn(agyScript('success', CONVERSATION), 'seed');
     await h.turn(agyScript('sticky-error', CONVERSATION, 'PONG-01'), 'follow up');
     expect(h.lastFinal()).toMatchObject({ terminal: 'error', outcome: 'failed:unclassified' });
-    expect(h.text()).toContain('agent 失败');
-    expect(h.text()).toContain(FRESH_SESSION_NOTICE);
+    // text-mode Outbox send is after card.final; Windows journal.flush lags that log.
+    await vi.waitFor(() => {
+      expect(h.text()).toContain('agent 失败');
+      expect(h.text()).toContain(FRESH_SESSION_NOTICE);
+    }, WAIT);
     expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
     expect(h.catalog.entries().filter(entry => entry.status === 'active')).toEqual([]);
 
@@ -185,9 +188,11 @@ async function harness(kind: 'antigravity' | 'cursor') {
       .map(line => (JSON.parse(line) as { argv: string[] }).argv),
     turn: async (next: JsonlScript, content: string) => {
       const before = finals().length;
+      const sentBefore = channel.sent.length;
       await script(next);
       await send(content);
       await vi.waitFor(() => expect(finals()).toHaveLength(before + 1), WAIT);
+      await vi.waitFor(() => expect(channel.sent.length).toBeGreaterThan(sentBefore), WAIT);
     },
   };
 }
