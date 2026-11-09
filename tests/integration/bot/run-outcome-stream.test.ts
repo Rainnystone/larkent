@@ -412,6 +412,39 @@ describe('run outcome stream', () => {
       outcome: 'interrupted:runner-timeout',
     });
   });
+
+  it('does not pass the poisoned conversation id on 继续 after an antigravity error', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'system', resumeHandle: 'sess-agy-poisoned' });
+    run.push({
+      type: 'error',
+      message: 'ECONNRESET: streamGenerateContent failed',
+      terminationReason: 'failed',
+    });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'failed:transient-upstream'));
+    await waitFor(() => h.journal?.list().some((entry) => entry.continuation?.status === 'offered') === true);
+    expect(h.journal?.list().every((entry) => entry.resumeHandle === undefined)).toBe(true);
+    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes(CONTINUE_HINT)));
+
+    await h.channel.handlers.message?.(message('cont', '继续'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+    const continued = h.agent.manual[1]!;
+    continued.push({ type: 'final_text', content: 'FRESH_CONTINUED' });
+    continued.push({ type: 'done', terminationReason: 'normal' });
+    continued.close();
+    continued.releaseCleanup();
+    await drainIO();
+  }, 15_000);
 });
 
 async function harness(options?: {

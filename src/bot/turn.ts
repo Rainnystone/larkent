@@ -109,9 +109,19 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
     ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}),
     policyFingerprint: flow.policy.policyFingerprint,
   });
+  const discardSessionOnError = Boolean(
+    descriptorFor(run.capability.agentId).resume.discardOnError || run.capability.discardSessionOnError,
+  );
   const recordSession = (event: AgentEvent): void => {
     if (delivery.kind === 'chat' && delivery.canRecordSession?.() === false) return;
     recordRunSessionEvent({ ...run, policy: flow.policy, event });
+    if (event.type === 'error' && discardSessionOnError) {
+      if (delivery.journal && delivery.turnId) {
+        delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: undefined });
+      }
+      if (delivery.kind === 'chat') log.info('session', 'clear', { scope: run.scopeId, reason: 'error' });
+      return;
+    }
     if (event.type === 'system' && event.resumeHandle) {
       if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: event.resumeHandle });
       if (delivery.kind === 'chat') log.info('session', 'set', { resumeHandle: event.resumeHandle });
@@ -711,6 +721,13 @@ async function processAgentStream(
   const matched = matchCliSignature(failure.stderrTail, failure.signatures);
   const outcome = handle.outcome;
   if (!outcome) throw new Error('run settled without an outcome');
+  if (outcome.kind === 'failed') {
+    recordSession(
+      lastTerminal?.type === 'error'
+        ? lastTerminal
+        : { type: 'error', message: failure.stderrTail || 'agent failed', terminationReason: 'failed' },
+    );
+  }
   noteUnclassifiedStderr({
     outcome,
     stderrTail: failure.stderrTail,
