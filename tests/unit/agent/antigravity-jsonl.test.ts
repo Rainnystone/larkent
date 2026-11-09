@@ -218,6 +218,35 @@ describe('AntigravityJsonlTranslator', () => {
     expect(t.terminalEmitted()).toBe(true);
   });
 
+  it('declares invalidateResume on CLI result ERROR and FAILED, not on fail()', () => {
+    const errorEvents = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      { event: 'result', result: { conversation_id: CONVERSATION, status: 'ERROR', error: 'sticky' } },
+    ]);
+    expect(errorEvents.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'sticky',
+      terminationReason: 'failed',
+      invalidateResume: true,
+    });
+    const failedEvents = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      { event: 'result', result: { conversation_id: CONVERSATION, status: 'FAILED', error: 'sticky' } },
+    ]);
+    expect(failedEvents.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'sticky',
+      terminationReason: 'failed',
+      invalidateResume: true,
+    });
+    const failEvents = new AntigravityJsonlTranslator().fail('agy exited with code 1');
+    expect(failEvents.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'agy exited with code 1',
+      terminationReason: 'failed',
+    });
+  });
+
   it('pairs official tool steps and leaves checkpoint as a non-tool ping', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, loadJsonl(TOOL_CHECKPOINT_FIXTURE));

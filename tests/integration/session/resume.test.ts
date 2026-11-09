@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { claudeCapability, codexCapability } from '../../../src/agent/capability.js';
+import { antigravityCapability, claudeCapability, codexCapability } from '../../../src/agent/capability.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
 import {
@@ -166,9 +166,85 @@ describe('agent-aware run-flow resume', () => {
     ).toMatchObject({ resumeHandle: 'thread-recorded' });
     expect(codex.sessions.getRaw('chat-1')).toBeUndefined();
   });
+
+  it('discards store and catalog resume handles on an invalidateResume error', async () => {
+    const h = await createHarness('antigravity');
+    const first = await start(h);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('expected initial run');
+    await collect(first.execution.subscribe());
+    recordRunSessionEvent({
+      scopeId: 'chat-1',
+      sessions: h.sessions,
+      sessionCatalog: h.catalog,
+      capability: antigravityCapability(h.profileConfig),
+      policy: first.policy,
+      event: { type: 'system', resumeHandle: 'sess-agy', cwd: first.cwdRealpath },
+    });
+    recordRunSessionEvent({
+      scopeId: 'chat-1',
+      sessions: h.sessions,
+      sessionCatalog: h.catalog,
+      capability: antigravityCapability(h.profileConfig),
+      policy: first.policy,
+      event: {
+        type: 'error',
+        message: 'sticky historical error',
+        terminationReason: 'failed',
+        invalidateResume: true,
+      },
+    });
+    const identity = {
+      scopeId: 'chat-1',
+      agentId: 'antigravity' as const,
+      cwdRealpath: first.cwdRealpath,
+      policyFingerprint: first.policy.policyFingerprint,
+    };
+    expect(h.catalog.activeFor(identity)).toBeUndefined();
+    expect(h.sessions.resumeFor('chat-1', first.cwdRealpath, 'antigravity')).toBeUndefined();
+
+    const second = await start(h);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('expected fresh run');
+    expect(second.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+  });
+
+  it('keeps a non-agy error session when the error has no invalidateResume', async () => {
+    const h = await createHarness('claude');
+    const first = await start(h);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('expected initial run');
+    await collect(first.execution.subscribe());
+    recordRunSessionEvent({
+      scopeId: 'chat-1',
+      sessions: h.sessions,
+      sessionCatalog: h.catalog,
+      capability: claudeCapability(h.profileConfig),
+      policy: first.policy,
+      event: { type: 'system', resumeHandle: 'sess-claude', cwd: first.cwdRealpath },
+    });
+    recordRunSessionEvent({
+      scopeId: 'chat-1',
+      sessions: h.sessions,
+      sessionCatalog: h.catalog,
+      capability: claudeCapability(h.profileConfig),
+      policy: first.policy,
+      event: { type: 'error', message: 'boom', terminationReason: 'failed' },
+    });
+    expect(
+      h.catalog.activeFor({
+        scopeId: 'chat-1',
+        agentId: 'claude',
+        cwdRealpath: first.cwdRealpath,
+        policyFingerprint: first.policy.policyFingerprint,
+      })?.resumeHandle,
+    ).toBe('sess-claude');
+    expect(h.sessions.resumeFor('chat-1', first.cwdRealpath, 'claude')).toBe('sess-claude');
+  });
 });
 
-async function createHarness(agentKind: 'claude' | 'codex'): Promise<{
+async function createHarness(agentKind: 'claude' | 'codex' | 'antigravity'): Promise<{
   tmp: TmpProfile;
   agent: FakeAgentAdapter;
   executor: RunExecutor;
@@ -241,7 +317,9 @@ async function start(h: Awaited<ReturnType<typeof createHarness>>) {
     capability:
       h.profileConfig.agentKind === 'codex'
         ? codexCapability(h.profileConfig)
-        : claudeCapability(h.profileConfig),
+        : h.profileConfig.agentKind === 'antigravity'
+          ? antigravityCapability(h.profileConfig)
+          : claudeCapability(h.profileConfig),
     profileConfig: h.profileConfig,
     sessions: h.sessions,
     sessionCatalog: h.catalog,
