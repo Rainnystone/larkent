@@ -213,7 +213,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: 'FAILED_PRECONDITION (code 400): User location is not supported for the API use.',
         terminationReason: 'failed',
-        invalidateResume: true,
+        invalidateResume: CONVERSATION,
       },
     ]);
     expect(t.terminalEmitted()).toBe(true);
@@ -228,7 +228,7 @@ describe('AntigravityJsonlTranslator', () => {
       type: 'error',
       message: 'sticky',
       terminationReason: 'failed',
-      invalidateResume: true,
+      invalidateResume: CONVERSATION,
     });
     const failedEvents = collect(new AntigravityJsonlTranslator(), [
       INIT,
@@ -238,7 +238,7 @@ describe('AntigravityJsonlTranslator', () => {
       type: 'error',
       message: 'sticky',
       terminationReason: 'failed',
-      invalidateResume: true,
+      invalidateResume: CONVERSATION,
     });
     const failEvents = new AntigravityJsonlTranslator().fail('agy exited with code 1');
     expect(failEvents.find((event) => event.type === 'error')).toEqual({
@@ -246,6 +246,34 @@ describe('AntigravityJsonlTranslator', () => {
       message: 'agy exited with code 1',
       terminationReason: 'failed',
     });
+  });
+
+  // agy 1.5.3 probe 2026-11-09: SIGTERM mid-tool and an
+  // unattached invalid-model run both report ERROR, and the next resume succeeds.
+  it('keeps resume for an agy interrupt echo and for a result that never attached to a conversation', () => {
+    const interrupted = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      { event: 'result', result: {
+        conversation_id: CONVERSATION, status: 'ERROR', response: '', error: 'interrupted',
+        num_turns: 2, finished_reason: 'interrupted',
+      } },
+    ]);
+    expect(interrupted.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'interrupted',
+      terminationReason: 'failed',
+    });
+    const unattached = collect(new AntigravityJsonlTranslator(), [
+      { event: 'result', result: {
+        conversation_id: '', status: 'ERROR', response: '', finished_reason: 'error',
+        error: 'invalid model selection (--model "lark-nonexistent-model-0" --effort ""): model lark-nonexistent-model-0 is not recognized',
+      } },
+    ]);
+    expect(unattached).toEqual([{
+      type: 'error',
+      message: 'invalid model selection (--model "lark-nonexistent-model-0" --effort ""): model lark-nonexistent-model-0 is not recognized',
+      terminationReason: 'failed',
+    }]);
   });
 
   it('pairs official tool steps and leaves checkpoint as a non-tool ping', () => {
@@ -469,7 +497,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: 'timeout waiting for response',
         terminationReason: 'failed',
-        invalidateResume: true,
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -830,7 +858,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED_PRECONDITION: leaked ${INCIDENT_ENVELOPE}`,
         terminationReason: 'failed',
-        invalidateResume: true,
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -855,7 +883,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED: leaked ${INCIDENT_ENVELOPE}`,
         terminationReason: 'failed',
-        invalidateResume: true,
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -1064,7 +1092,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED_PRECONDITION: leaked ${TASK_NOTIFICATION_ENVELOPE}`,
         terminationReason: 'failed',
-        invalidateResume: true,
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -1244,7 +1272,7 @@ describe('AntigravityJsonlTranslator', () => {
     translator.translate({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: '<SYSTEM_MESSAGE>[Message] internal</SYSTEM_MESSAGE>Partial' } });
     expect(translator.translate({ event: 'result', result: { status: 'ERROR', error: 'upstream failed' } })).toEqual([
       { type: 'text', delta: 'Partial' },
-      { type: 'error', message: 'upstream failed', terminationReason: 'failed', invalidateResume: true },
+      { type: 'error', message: 'upstream failed', terminationReason: 'failed' },
     ]);
   });
 });
