@@ -2,6 +2,7 @@ import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { antigravityCapability, claudeCapability, codexCapability } from '../../../src/agent/capability.js';
+import type { AgentEvent } from '../../../src/agent/types.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
 import {
@@ -10,6 +11,7 @@ import {
   type StartRunFlowInput,
 } from '../../../src/bot/run-flow.js';
 import { createDefaultProfileConfig, type ProfileConfig } from '../../../src/config/profile-schema.js';
+import type { RunPolicyAllow } from '../../../src/policy/run-policy.js';
 import { RunExecutor } from '../../../src/runtime/run-executor.js';
 import { SessionCatalog } from '../../../src/session/catalog.js';
 import { SessionStore } from '../../../src/session/store.js';
@@ -208,6 +210,34 @@ describe('agent-aware run-flow resume', () => {
     if (!second.ok) throw new Error('expected fresh run');
     expect(second.resumeFrom).toBeUndefined();
     expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+  });
+
+  it('does not resume a discarded handle after the policy fingerprint changes back', async () => {
+    const h = await createHarness('antigravity');
+    const record = (policy: RunPolicyAllow, event: AgentEvent) =>
+      recordRunSessionEvent({
+        scopeId: 'chat-1', sessions: h.sessions, sessionCatalog: h.catalog,
+        capability: antigravityCapability(h.profileConfig), policy, event,
+      });
+    const original = h.profileConfig;
+    const first = await start(h);
+    if (!first.ok) throw new Error('expected initial run');
+    await collect(first.execution.subscribe());
+    record(first.policy, { type: 'system', resumeHandle: 'sess-agy' });
+
+    h.profileConfig = { ...original, access: { ...original.access, allowedChats: ['oc_added'] } };
+    const widened = await start(h);
+    if (!widened.ok) throw new Error('expected widened run');
+    expect(widened.resumeFrom).toBe('sess-agy');
+    await collect(widened.execution.subscribe());
+    record(widened.policy, { type: 'system', resumeHandle: 'sess-agy' });
+    record(widened.policy, { type: 'error', message: 'sticky', terminationReason: 'failed', invalidateResume: 'sess-agy' });
+
+    h.profileConfig = original;
+    const restored = await start(h);
+    if (!restored.ok) throw new Error('expected restored run');
+    expect(restored.resumeFrom).toBeUndefined();
+    expect(h.catalog.entries().filter(entry => entry.status === 'active')).toEqual([]);
   });
 
   it('keeps a non-agy error session when the error has no invalidateResume', async () => {
