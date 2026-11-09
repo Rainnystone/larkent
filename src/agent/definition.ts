@@ -22,6 +22,7 @@ export interface CapabilityShape<K extends string = string, S extends string = s
   promptInjection: PromptInjectionMode;
   systemPrompt: string;
   supportsNativeHistory: boolean;
+  discardSessionOnError?: boolean;
   callback: {
     marker: '__bridge_cb';
     legacyMarkers: string[];
@@ -38,7 +39,11 @@ export interface AgentMetadata<K extends string = string, S extends string = str
   readonly envBinVar: string;
   readonly models: readonly ModelOption[];
   readonly replyMode: AgentReplyMode;
-  readonly resume: { readonly flag: string; readonly label: 'session' | 'thread' };
+  readonly resume: {
+    readonly flag: string;
+    readonly label: 'session' | 'thread';
+    readonly discardOnError?: boolean;
+  };
   readonly sessionKind: S;
   readonly promptInjection: PromptInjectionMode;
   readonly supportsNativeHistory: boolean;

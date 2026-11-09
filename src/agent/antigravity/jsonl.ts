@@ -145,11 +145,12 @@ export class AntigravityJsonlTranslator {
     const result = isRecord(raw.result) ? raw.result : raw;
     logTerminalResult(raw, result);
     this.rememberConversation(result.conversation_id ?? raw.conversation_id);
-    const events: AgentEvent[] = [...this.systemEvents()];
+    const status = stringValue(result.status);
+    const isErrorResult = status === 'ERROR' || status === 'FAILED';
+    const events: AgentEvent[] = isErrorResult ? [] : [...this.systemEvents()];
     const usage = this.usageEvent(result);
     if (usage) events.push(usage);
-    const status = stringValue(result.status);
-    if (status === 'ERROR' || status === 'FAILED') {
+    if (isErrorResult) {
       const message =
         stringValue(result.error) ?? stringValue(result.message) ?? 'antigravity reported an error';
       return this.core.accept({ type: 'complete', terminal: { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' }, prefix: events });

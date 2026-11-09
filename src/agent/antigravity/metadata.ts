@@ -21,6 +21,7 @@ export function antigravityCapability(
     promptInjection: 'argv-prefix',
     systemPrompt: BRIDGE_SYSTEM_PROMPT,
     supportsNativeHistory: true,
+    discardSessionOnError: true,
     callback: {
       marker: '__bridge_cb',
       legacyMarkers: [],
@@ -52,7 +53,7 @@ export const antigravityMetadata = defineMetadata({
     { value: 'gpt-oss-120b-medium', label: 'GPT-OSS 120B (Medium)' },
   ],
   replyMode: 'final-answer',
-  resume: { flag: '--conversation', label: 'session' },
+  resume: { flag: '--conversation', label: 'session', discardOnError: true },
   sessionKind: 'antigravity-session',
   promptInjection: 'argv-prefix',
   supportsNativeHistory: true,

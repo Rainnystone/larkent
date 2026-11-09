@@ -1,11 +1,14 @@
 import { realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { claudeCapability, codexCapability } from '../../../src/agent/capability.js';
+import { buildAntigravityArgs } from '../../../src/agent/antigravity/argv.js';
+import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl.js';
+import { antigravityCapability, claudeCapability, codexCapability } from '../../../src/agent/capability.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
 import {
   recordRunSessionEvent,
+  resolveRunResumeHandle,
   startRunFlow,
   type StartRunFlowInput,
 } from '../../../src/bot/run-flow.js';
@@ -166,9 +169,75 @@ describe('agent-aware run-flow resume', () => {
     ).toMatchObject({ resumeHandle: 'thread-recorded' });
     expect(codex.sessions.getRaw('chat-1')).toBeUndefined();
   });
+
+  it('clears the scope resume handle in store and catalog on an antigravity ERROR result so the next run argv has no conversation id', async () => {
+    const h = await createHarness('antigravity');
+    const first = await start(h);
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error('expected initial run');
+    await collect(first.execution.subscribe());
+
+    const translator = new AntigravityJsonlTranslator();
+    const events = [
+      ...translator.translate({ event: 'init', conversation_id: 'conv-poisoned' }),
+      ...translator.translate({
+        event: 'result',
+        result: {
+          conversation_id: 'conv-poisoned',
+          status: 'ERROR',
+          error: 'FAILED_PRECONDITION (code 400): sticky error',
+        },
+      }),
+    ];
+    for (const event of events) {
+      recordRunSessionEvent({
+        scopeId: 'chat-1',
+        sessions: h.sessions,
+        sessionCatalog: h.catalog,
+        capability: antigravityCapability(h.profileConfig),
+        policy: first.policy,
+        event,
+      });
+    }
+
+    expect(
+      h.sessions.resumeFor('chat-1', first.cwdRealpath, 'antigravity'),
+    ).toBeUndefined();
+    expect(
+      h.catalog.activeFor({
+        scopeId: 'chat-1',
+        agentId: 'antigravity',
+        cwdRealpath: first.cwdRealpath,
+        policyFingerprint: first.policy.policyFingerprint,
+      }),
+    ).toBeUndefined();
+    expect(
+      resolveRunResumeHandle({
+        sessionCatalog: h.catalog,
+        sessions: h.sessions,
+        scopeId: 'chat-1',
+        agentId: 'antigravity',
+        cwdRealpath: first.cwdRealpath,
+        policyFingerprint: first.policy.policyFingerprint,
+      }),
+    ).toBeUndefined();
+
+    const second = await start(h);
+    expect(second.ok).toBe(true);
+    if (!second.ok) throw new Error('expected second run');
+    expect(second.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions.at(-1)?.resumeHandle).toBeUndefined();
+    const argv = buildAntigravityArgs({
+      prompt: 'next prompt',
+      conversationId: second.resumeFrom,
+    });
+    expect(argv).not.toContain('--conversation');
+    expect(argv).not.toContain('conv-poisoned');
+    await collect(second.execution.subscribe());
+  });
 });
 
-async function createHarness(agentKind: 'claude' | 'codex'): Promise<{
+async function createHarness(agentKind: 'claude' | 'codex' | 'antigravity'): Promise<{
   tmp: TmpProfile;
   agent: FakeAgentAdapter;
   executor: RunExecutor;
@@ -241,7 +310,9 @@ async function start(h: Awaited<ReturnType<typeof createHarness>>) {
     capability:
       h.profileConfig.agentKind === 'codex'
         ? codexCapability(h.profileConfig)
-        : claudeCapability(h.profileConfig),
+        : h.profileConfig.agentKind === 'antigravity'
+          ? antigravityCapability(h.profileConfig)
+          : claudeCapability(h.profileConfig),
     profileConfig: h.profileConfig,
     sessions: h.sessions,
     sessionCatalog: h.catalog,
