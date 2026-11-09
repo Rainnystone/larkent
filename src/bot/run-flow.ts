@@ -242,10 +242,10 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
   };
 }
 
-export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
+export function recordRunSessionEvent(input: RecordRunSessionEventInput): boolean {
   const resumeMeta = descriptorFor(input.capability.agentId).resume;
   if (input.event.type === 'error') {
-    if (!resumeMeta.discardOnError && !input.capability.discardSessionOnError) return;
+    if (!resumeMeta.discardOnError) return false;
     if (resumeMeta.label === 'session') {
       input.sessions.clear(input.scopeId, input.capability.agentId);
     }
@@ -255,9 +255,9 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
       cwdRealpath: input.policy.cwdRealpath,
       policyFingerprint: input.policy.policyFingerprint,
     });
-    return;
+    return true;
   }
-  if (input.event.type !== 'system' || !input.event.resumeHandle) return;
+  if (input.event.type !== 'system' || !input.event.resumeHandle) return false;
   const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
   if (resumeMeta.label === 'session') {
     input.sessions.set(input.scopeId, input.event.resumeHandle, cwdRealpath, input.capability.agentId);
@@ -269,4 +269,5 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
     policyFingerprint: input.policy.policyFingerprint,
     resumeHandle: input.event.resumeHandle,
   });
+  return true;
 }

@@ -21,7 +21,6 @@ export function antigravityCapability(
     promptInjection: 'argv-prefix',
     systemPrompt: BRIDGE_SYSTEM_PROMPT,
     supportsNativeHistory: true,
-    discardSessionOnError: true,
     callback: {
       marker: '__bridge_cb',
       legacyMarkers: [],

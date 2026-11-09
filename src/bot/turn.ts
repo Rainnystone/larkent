@@ -109,21 +109,16 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
     ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}),
     policyFingerprint: flow.policy.policyFingerprint,
   });
-  const discardSessionOnError = Boolean(
-    descriptorFor(run.capability.agentId).resume.discardOnError || run.capability.discardSessionOnError,
-  );
   let hadSession = Boolean(flow.resumeFrom);
-  let sessionDiscarded = false;
-  const recordSession = (event: AgentEvent): void => {
-    if (delivery.kind === 'chat' && delivery.canRecordSession?.() === false) return;
-    recordRunSessionEvent({ ...run, policy: flow.policy, event });
-    if (event.type === 'error' && discardSessionOnError) {
-      if (hadSession) sessionDiscarded = true;
+  const recordSession = (event: AgentEvent): boolean => {
+    if (delivery.kind === 'chat' && delivery.canRecordSession?.() === false) return false;
+    const applied = recordRunSessionEvent({ ...run, policy: flow.policy, event });
+    if (event.type === 'error' && applied) {
       if (delivery.journal && delivery.turnId) {
         delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: undefined });
       }
       if (delivery.kind === 'chat') log.info('session', 'clear', { scope: run.scopeId, reason: 'error' });
-      return;
+      return hadSession;
     }
     if (event.type === 'system' && event.resumeHandle) {
       hadSession = true;
@@ -133,11 +128,12 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
     if (delivery.kind === 'chat' && event.type === 'system' && event.model) log.info('session', 'model', {
       requested: delivery.requestedModel ?? 'default', actual: event.model,
     });
+    return applied;
   };
   if (delivery.kind === 'automation') return deliverAutomationTurn(input, flow, delivery, recordSession);
   delivery.activePolicyFingerprints?.set(run.scopeId, flow.policy.policyFingerprint);
   try {
-    const state = await deliverChatTurn(input, flow, delivery, recordSession, () => sessionDiscarded);
+    const state = await deliverChatTurn(input, flow, delivery, recordSession);
     return { ok: true, state, handle: flow.execution.handle };
   } finally {
     delivery.activePolicyFingerprints?.delete(run.scopeId);
@@ -148,7 +144,7 @@ async function deliverAutomationTurn(
   input: TurnInput,
   flow: StartedFlow,
   delivery: AutomationTurnDelivery,
-  recordSession: (event: AgentEvent) => void,
+  recordSession: (event: AgentEvent) => boolean,
 ): Promise<TurnResult> {
   const { run } = input;
   const { chatId, journal, turnId } = delivery;
@@ -194,8 +190,7 @@ async function deliverChatTurn(
   input: TurnInput,
   flow: StartedFlow,
   delivery: ChatTurnDelivery,
-  recordSession: (event: AgentEvent) => void,
-  sessionDiscarded?: () => boolean,
+  recordSession: (event: AgentEvent) => boolean,
 ): Promise<RunState> {
   const { execution, cwdRealpath: cwd } = flow;
   const { outbox, channel, chatId, sendOpts, turnId, journal, callbackAuth, cliSelfSent,
@@ -205,7 +200,7 @@ async function deliverChatTurn(
   const eventStream = execution.subscribe();
   const idleTimeoutMs = input.idleTimeoutMs;
   const runContext = { currentChatId: chatId, batchMessageIds: delivery.batchMessageIds ?? [] };
-  const reliability = { ...streamReliability(input.run.profileConfig), sessionDiscarded };
+  const reliability = streamReliability(input.run.profileConfig);
   const lastMsg = { messageId: sendOpts.replyTo, content: delivery.cot?.inputPreview ?? '' };
   log.info('session', flow.resumeFrom ? 'resume' : 'fresh', { ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}), cwd });
   const replyMode = delivery.replyMode;
@@ -647,7 +642,7 @@ async function processAgentStream(
   events: AsyncIterable<AgentEvent>,
   scope: string,
   idleTimeoutMs: number | undefined,
-  recordSession: (event: AgentEvent) => void,
+  recordSession: (event: AgentEvent) => boolean,
   flush: (state: RunState) => Promise<void>,
   runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
   reliability: StreamReliability = {},
@@ -726,13 +721,13 @@ async function processAgentStream(
   const matched = matchCliSignature(failure.stderrTail, failure.signatures);
   const outcome = handle.outcome;
   if (!outcome) throw new Error('run settled without an outcome');
-  if (outcome.kind === 'failed') {
-    recordSession(
+  const sessionDiscarded =
+    outcome.kind === 'failed'
+    && recordSession(
       lastTerminal?.type === 'error'
         ? lastTerminal
         : { type: 'error', message: failure.stderrTail || 'agent failed', terminationReason: 'failed' },
     );
-  }
   noteUnclassifiedStderr({
     outcome,
     stderrTail: failure.stderrTail,
@@ -741,7 +736,7 @@ async function processAgentStream(
   });
   const rawUserMessage = cardUserMessage(outcome, matched);
   const userMessage =
-    rawUserMessage !== undefined && reliability.sessionDiscarded?.()
+    rawUserMessage !== undefined && sessionDiscarded
       ? `${rawUserMessage}\n下一条消息将开启新会话。`
       : rawUserMessage;
   if (
@@ -815,7 +810,6 @@ function applyOutcomeToState(
 interface StreamReliability {
   signatures?: readonly CliSignature[];
   agent?: string;
-  sessionDiscarded?: () => boolean;
 }
 
 function streamReliability(

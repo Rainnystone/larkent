@@ -334,12 +334,13 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             policy,
             event: e,
           });
-          if (
-            descriptorFor(capability.agentId).resume.label === 'session' &&
-            e.type === 'system' &&
-            e.resumeHandle
-          ) {
-            sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath, capability.agentId);
+          const resumeMeta = descriptorFor(capability.agentId).resume;
+          if (resumeMeta.label === 'session') {
+            if (e.type === 'system' && e.resumeHandle) {
+              sessions.set(docSessionScopeId, e.resumeHandle, policy.cwdRealpath, capability.agentId);
+            } else if (e.type === 'error' && resumeMeta.discardOnError) {
+              sessions.clear(docSessionScopeId, capability.agentId);
+            }
           }
           // Preserve the final session event, but never post an interrupted answer.
           if (execution.handle.interrupted) continue;

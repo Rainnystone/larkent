@@ -22,7 +22,6 @@ export interface CapabilityShape<K extends string = string, S extends string = s
   promptInjection: PromptInjectionMode;
   systemPrompt: string;
   supportsNativeHistory: boolean;
-  discardSessionOnError?: boolean;
   callback: {
     marker: '__bridge_cb';
     legacyMarkers: string[];

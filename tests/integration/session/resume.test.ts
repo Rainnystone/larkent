@@ -3,7 +3,12 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { buildAntigravityArgs } from '../../../src/agent/antigravity/argv.js';
 import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl.js';
-import { antigravityCapability, claudeCapability, codexCapability } from '../../../src/agent/capability.js';
+import {
+  antigravityCapability,
+  capabilityForProfile,
+  claudeCapability,
+  codexCapability,
+} from '../../../src/agent/capability.js';
 import { ActiveRuns } from '../../../src/bot/active-runs.js';
 import { ProcessPool } from '../../../src/bot/process-pool.js';
 import {
@@ -404,12 +409,7 @@ async function start(h: Awaited<ReturnType<typeof createHarness>>) {
     prompt: 'hello',
     attachments: [],
     access: { ok: true, reason: 'allowed-user' },
-    capability:
-      h.profileConfig.agentKind === 'codex'
-        ? codexCapability(h.profileConfig)
-        : h.profileConfig.agentKind === 'antigravity'
-          ? antigravityCapability(h.profileConfig)
-          : claudeCapability(h.profileConfig),
+    capability: capabilityForProfile(h.profileConfig),
     profileConfig: h.profileConfig,
     sessions: h.sessions,
     sessionCatalog: h.catalog,
