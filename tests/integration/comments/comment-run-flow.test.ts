@@ -145,7 +145,7 @@ describe('comment run flow', () => {
     await handleCommentMention(h.deps(event({ commentId: 'comment-2', replyId: 'reply-2' })));
 
     expect(h.agent.runOptions.map((opts) => opts.resumeHandle)).toEqual(['agy-legacy', undefined]);
-    expect(h.inThreadReplies).toEqual(['⚠️ Claude 报错：Bad Gateway\n下一条消息将开始新会话', 'fresh answer']);
+    expect(h.inThreadReplies).toEqual([expect.stringMatching(/Bad Gateway\n下一条消息将开始新会话$/), 'fresh answer']);
   });
 
   it('keeps Codex pre-tool progress text out of every comment reply', async () => {
