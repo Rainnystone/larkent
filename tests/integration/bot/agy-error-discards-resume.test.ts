@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, realpath, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO, setTimeout as waitIO } from 'node:timers/promises';
 import type { NormalizedMessage } from '@larksuite/channel';
@@ -177,14 +177,16 @@ async function harness(options: { agentKind: 'antigravity' | 'claude'; journal?:
       cotMessages: 'off',
     },
   });
-  cfg.workspaces.default = tmp.workspace;
+  const requestedCwd = join(tmp.root, 'requested-cwd');
+  await symlink(tmp.workspace, requestedCwd, process.platform === 'win32' ? 'junction' : 'dir');
+  cfg.workspaces.default = requestedCwd;
   const sessions = new SessionStore(join(tmp.profile, 'sessions.json'));
   const catalog = new SessionCatalog(join(tmp.profile, 'session-catalog.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = new StreamingFakeAgent(agentKind);
   const channel = createRecordingLarkChannel();
   sdk.channel = channel;
-  const cwd = tmp.workspace;
+  const cwd = requestedCwd;
   const bridge = await startChannel({
     cfg, agent, sessions, sessionCatalog: catalog, workspaces,
     probe: async () => true,
