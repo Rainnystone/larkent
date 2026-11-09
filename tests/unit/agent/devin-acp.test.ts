@@ -6,8 +6,8 @@ const text = (value: string) => ({ sessionUpdate: 'agent_message_chunk', content
 describe('Devin ACP translation', () => {
   it('preserves paragraph whitespace and code indentation across chunks', () => {
     const t = new DevinTranscriptTranslator();
-    expect([...t.translate(text('Intro\n\n```python\n'))]).toEqual([{ type: 'liveness' }]);
-    expect([...t.translate(text('if True:\n    print("hello")\n```\n'))]).toEqual([{ type: 'liveness' }]);
+    expect([...t.translate(text('Intro\n\n```python\n'))]).toEqual([{ type: 'liveness', progress: true }]);
+    expect([...t.translate(text('if True:\n    print("hello")\n```\n'))]).toEqual([{ type: 'liveness', progress: true }]);
     expect([...t.finish('end_turn')]).toEqual([
       { type: 'final_text', content: 'Intro\n\n```python\nif True:\n    print("hello")\n```\n' },
       { type: 'done', terminationReason: 'normal' },
@@ -60,11 +60,11 @@ describe('Devin ACP translation', () => {
   it('flushes the previous message as progress text when the message id changes', () => {
     const t = new DevinTranscriptTranslator();
     const chunk = (value: string, id: string) => ({ ...text(value), _meta: { 'cognition.ai/messageId': id } });
-    expect([...t.translate(chunk('First ', 'm1'))]).toEqual([{ type: 'liveness' }]);
-    expect([...t.translate(chunk('thought.', 'm1'))]).toEqual([{ type: 'liveness' }]);
+    expect([...t.translate(chunk('First ', 'm1'))]).toEqual([{ type: 'liveness', progress: true }]);
+    expect([...t.translate(chunk('thought.', 'm1'))]).toEqual([{ type: 'liveness', progress: true }]);
     expect([...t.translate(chunk('Second.', 'm2'))]).toEqual([
       { type: 'text', delta: 'First thought.\n\n' },
-      { type: 'liveness' },
+      { type: 'liveness', progress: true },
     ]);
     expect([...t.finish('end_turn')]).toEqual([
       { type: 'final_text', content: 'Second.' },

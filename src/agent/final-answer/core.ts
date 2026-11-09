@@ -36,7 +36,7 @@ export class FinalAnswerCore {
         const events = newMessage || replacement ? this.classifySegment() : [];
         if (input.messageId !== undefined) this.messageId = input.messageId;
         this.pending = this.policy.accumulation === 'delta' ? this.pending + input.text : input.text;
-        return [...events, { type: 'liveness' }];
+        return [...events, { type: 'liveness', progress: true }];
       }
       case 'boundary':
         // A fresh native start may reuse a completed ID; updates do not reopen it.

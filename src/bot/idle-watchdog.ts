@@ -48,6 +48,7 @@ export function isWatchdogProgress(event: AgentEvent): boolean {
     case 'error':
       return true;
     case 'liveness':
+      return event.progress === true;
     case 'usage':
     case 'system':
       return false;

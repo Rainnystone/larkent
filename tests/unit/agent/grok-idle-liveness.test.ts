@@ -28,7 +28,7 @@ describe('Grok held-back answers and the idle watchdog', () => {
       for (const chunk of CHUNKS) {
         await vi.advanceTimersByTimeAsync(GAP_MS);
         const activity = translator.translate({ type: 'text', data: chunk });
-        expect(activity).toEqual([{ type: 'liveness' }]);
+        expect(activity).toEqual([{ type: 'liveness', progress: true }]);
         consume(watchdog, handle, activity, delivered);
       }
       await vi.advanceTimersByTimeAsync(GAP_MS);

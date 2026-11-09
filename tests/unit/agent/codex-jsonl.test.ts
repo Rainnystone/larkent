@@ -44,7 +44,7 @@ describe('Codex JSONL translator', () => {
         isError: false,
       },
     ]);
-    expect(t.translate({ type: 'agent_message', message: 'hello' })).toEqual([{ type: 'liveness' }]);
+    expect(t.translate({ type: 'agent_message', message: 'hello' })).toEqual([{ type: 'liveness', progress: true }]);
     expect(
       t.translate({
         type: 'turn.completed',
@@ -89,7 +89,7 @@ describe('Codex JSONL translator', () => {
           text: 'hello from item',
         },
       }),
-    ).toEqual([{ type: 'liveness' }]);
+    ).toEqual([{ type: 'liveness', progress: true }]);
     expect(t.translate({ type: 'turn.completed' })).toEqual([
       { type: 'final_text', content: 'hello from item' },
       { type: 'done', terminationReason: 'normal' },
@@ -151,7 +151,7 @@ describe('Codex JSONL translator', () => {
       }),
     ).toEqual([]);
     expect(t.terminalEmitted()).toBe(false);
-    expect(t.translate({ type: 'agent_message', message: 'after retry' })).toEqual([{ type: 'liveness' }]);
+    expect(t.translate({ type: 'agent_message', message: 'after retry' })).toEqual([{ type: 'liveness', progress: true }]);
     expect(t.translate({ type: 'turn.completed' })).toEqual([
       { type: 'final_text', content: 'after retry' },
       { type: 'done', resumeHandle: 'thread-retry', terminationReason: 'normal' },

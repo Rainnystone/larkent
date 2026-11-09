@@ -12,7 +12,7 @@ export interface AgentOptionsSchema {
 export type AgentEvent =
   | { type: 'system'; resumeHandle?: string; cwd?: string; model?: string }
   /** Native stream activity with no renderable content. */
-  | { type: 'liveness' }
+  | { type: 'liveness'; progress?: true }
   /** heldBack marks terminal partial progress; only explicit user-stop admits it after stop. */
   | { type: 'text'; delta: string; heldBack?: true }
   | { type: 'final_text'; content: string }
