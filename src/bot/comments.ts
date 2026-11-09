@@ -416,9 +416,12 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       }
 
       let reply = stripMarkdown(answer.trim());
-      if (errorMsg) reply = `⚠️ Claude 报错：${errorMsg}${sessionDiscarded ? `\n${FRESH_SESSION_NOTICE}` : ''}`;
+      if (errorMsg) reply = `⚠️ Claude 报错：${errorMsg}`;
       if (!reply) reply = '（无回复内容）';
-      if (reply.length > REPLY_MAX_CHARS) reply = `${reply.slice(0, REPLY_MAX_CHARS - 1)}…`;
+      const notice = errorMsg && sessionDiscarded ? `\n${FRESH_SESSION_NOTICE}` : '';
+      const room = REPLY_MAX_CHARS - notice.length;
+      if (reply.length > room) reply = `${reply.slice(0, room - 1)}…`;
+      reply += notice;
 
       await postCommentReply(channel, target, evt, reply, { isWhole: ctx.isWhole }).catch((err) => {
         log.fail('comment', err, { step: 'postCommentReply' });
