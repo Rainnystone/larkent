@@ -22,6 +22,8 @@ import { AWAKE_TICK_MS, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-wat
 
 const NOW = 1_760_000_000_000;
 const STALL_AFTER_RECOVERY_MS = 2 * 60_000;
+// Keep in lockstep with STREAM_TERMINAL_GRACE_MS in src/bot/turn.ts.
+const STREAM_TERMINAL_GRACE_MS = 3_000;
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -58,7 +60,7 @@ describe('stall check after recovery', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
-    await waitFor(() => rendered(h.channel).includes('notice.continue'));
+    await waitForStopDelivery(() => rendered(h.channel).includes('notice.continue'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
     expect(rendered(h.channel)).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
   });
@@ -93,7 +95,7 @@ describe('stall check after recovery', () => {
     expect(h.agent.runs[0]!.stopped).toBe(false);
 
     await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
-    await waitFor(() => rendered(h.channel).includes('等待预算已用尽（普通空闲，15 分钟觉醒）'));
+    await waitForStopDelivery(() => rendered(h.channel).includes('等待预算已用尽（普通空闲，15 分钟觉醒）'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
@@ -171,7 +173,7 @@ describe('stall check after recovery', () => {
     expect(rendered(h.channel)).not.toContain('等待预算已用尽');
 
     await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS);
-    await waitFor(() => rendered(h.channel).includes('notice.continue'));
+    await waitForStopDelivery(() => rendered(h.channel).includes('notice.continue'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
     expect(rendered(h.channel)).toContain('等待预算已用尽（工具宽限 long_tool，60 分钟觉醒）');
     expect((rendered(h.channel).match(/notice\.continue/g) ?? []).length).toBe(1);
@@ -362,4 +364,13 @@ async function waitFor(predicate: () => boolean) {
     await yieldIO();
   }
   throw new Error('expected stall-after-recovery transition was not observed');
+}
+
+async function waitForStopDelivery(predicate: () => boolean) {
+  // Watchdog `stop()` is fire-and-forget; card mode then races the progress
+  // stream against this grace. Arm that timer before advancing it.
+  await drainIO();
+  await vi.advanceTimersByTimeAsync(STREAM_TERMINAL_GRACE_MS);
+  await drainIO();
+  await waitFor(predicate);
 }
