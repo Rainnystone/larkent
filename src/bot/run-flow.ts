@@ -243,6 +243,10 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
 }
 
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
+  if (input.event.type === 'error' && input.event.invalidateResume) {
+    discardRunResumeHandle(input, input.event.invalidateResume);
+    return;
+  }
   if (input.event.type !== 'system' || !input.event.resumeHandle) return;
   const cwdRealpath = input.event.cwd ?? input.policy.cwdRealpath;
   if (descriptorFor(input.capability.agentId).resume.label === 'session') {
@@ -254,5 +258,24 @@ export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
     cwdRealpath,
     policyFingerprint: input.policy.policyFingerprint,
     resumeHandle: input.event.resumeHandle,
+  });
+}
+
+export const FRESH_SESSION_NOTICE = '下一条消息将开始新会话';
+
+export function discardRunResumeHandle(
+  input: Pick<RecordRunSessionEventInput, 'scopeId' | 'sessions' | 'sessionCatalog' | 'capability'>,
+  resumeHandle: string,
+): void {
+  if (
+    descriptorFor(input.capability.agentId).resume.label === 'session'
+    && input.sessions.getRaw(input.scopeId, input.capability.agentId)?.resumeHandle === resumeHandle
+  ) {
+    input.sessions.clear(input.scopeId, input.capability.agentId);
+  }
+  input.sessionCatalog?.archiveResumeHandle({
+    scopeId: input.scopeId,
+    agentId: input.capability.agentId,
+    resumeHandle,
   });
 }

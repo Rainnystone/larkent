@@ -8,6 +8,12 @@ import { readProcessStartMs } from '../../platform/process-info';
 import type { AgentEvent, AgentRun } from '../types';
 import { stripTerminalText } from '../terminal-text';
 import { BoundedStderr } from './bounded-stderr';
+import {
+  STDOUT_CAPTURE_ENV,
+  openStdoutCapture,
+  stdoutCaptureDirFromEnv,
+  type StdoutCapture,
+} from './stdout-capture';
 
 export type JsonlFinishReason = 'normal' | 'interrupted' | 'timeout';
 
@@ -45,6 +51,8 @@ export interface JsonlCliRunnerInput {
   failNonzeroAfterTerminal?: boolean;
   successFinish?: JsonlFinishReason;
   logFields?: Record<string, unknown>;
+  /** Opt-in test-bridge diagnostic dir. Unset in production. */
+  stdoutCaptureDir?: string;
 }
 
 type CliChild = SpawnedProcessByStdio<Writable, Readable, Readable>;
@@ -84,10 +92,11 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
   const detached = true;
   const child = spawnProcess(input.binaryPath, [...input.argv], {
     cwd: input.cwd,
-    env: input.env,
+    env: childSpawnEnv(input.env),
     stdio: ['pipe', 'pipe', 'pipe'],
     detached: true,
   }) as CliChild;
+  const stdoutCapture = openRunnerStdoutCapture(input);
   const startedAt = child.pid ? (readProcessStartMs(child.pid) ?? Date.now()) : undefined;
 
   log.info('agent', 'spawn', {
@@ -437,6 +446,7 @@ export function runJsonlCli(input: JsonlCliRunnerInput): AgentRun {
     waitForExitCode: () => eventExit,
     getSignal: () => exitSignal,
     onTerminal: () => { terminalEmitted = true; },
+    stdoutCapture,
     cleanup: async terminal => {
       if (exited) await settlement;
       else if (!terminal) await stop('interrupted');
@@ -495,6 +505,7 @@ async function* iterateEvents(input: {
   waitForExitCode: () => Promise<number | null>;
   getSignal: () => NodeJS.Signals | string | null;
   onTerminal: () => void;
+  stdoutCapture?: StdoutCapture;
   cleanup: (terminal: boolean) => Promise<void>;
 }): AsyncGenerator<AgentEvent> {
   let terminalSeen = false;
@@ -526,6 +537,7 @@ async function* iterateEvents(input: {
       let line = input.stdout.nextLine();
       while (line !== undefined) {
         producedStdout = true;
+        input.stdoutCapture?.noteLine(line);
         yield* emit(input.translator.translate(line));
         line = input.stdout.nextLine();
       }
@@ -601,6 +613,7 @@ async function* iterateEvents(input: {
     failed = true;
     throw error;
   } finally {
+    input.stdoutCapture?.close();
     await input.cleanup(terminalSeen && !failed);
   }
 }
@@ -637,4 +650,29 @@ function isWindowsCommandNotFoundLine(line: string): boolean {
     process.platform === 'win32' &&
     /is not recognized as an internal or external command|operable program or batch file/i.test(line)
   );
+}
+
+function childSpawnEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out = { ...env };
+  delete out[STDOUT_CAPTURE_ENV];
+  return out;
+}
+
+function openRunnerStdoutCapture(input: JsonlCliRunnerInput): StdoutCapture | undefined {
+  const dir = input.stdoutCaptureDir
+    ?? stdoutCaptureDirFromEnv(process.env)
+    ?? stdoutCaptureDirFromEnv(input.env);
+  if (!dir) return undefined;
+  try {
+    return openStdoutCapture({
+      dir,
+      runId: input.runId,
+      spawnName: input.spawnName,
+    });
+  } catch (error) {
+    log.warn('agent', 'stdout-capture-open-failed', {
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return undefined;
+  }
 }

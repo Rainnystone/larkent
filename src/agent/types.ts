@@ -12,7 +12,7 @@ export interface AgentOptionsSchema {
 export type AgentEvent =
   | { type: 'system'; resumeHandle?: string; cwd?: string; model?: string }
   /** Native stream activity with no renderable content. */
-  | { type: 'liveness' }
+  | { type: 'liveness'; progress?: true }
   /** heldBack marks terminal partial progress; only explicit user-stop admits it after stop. */
   | { type: 'text'; delta: string; heldBack?: true }
   | { type: 'final_text'; content: string }
@@ -32,7 +32,18 @@ export type AgentEvent =
       resumeHandle?: string;
       terminationReason: 'normal' | 'interrupted' | 'timeout';
     }
-  | { type: 'error'; message: string; terminationReason: 'failed' | 'interrupted' | 'timeout' };
+  | {
+      type: 'error';
+      message: string;
+      terminationReason: 'failed' | 'interrupted' | 'timeout';
+      /**
+       * Adapter-declared: this resume handle must not be resumed again.
+       * Antigravity sets it to the conversation id when a CLI `result`
+       * ERROR/FAILED belongs to an attached, non-interrupted conversation.
+       * Shared code must not key this off `agentId === 'antigravity'`.
+       */
+      invalidateResume?: string;
+    };
 
 export interface AgentRunOptions {
   runId: string;

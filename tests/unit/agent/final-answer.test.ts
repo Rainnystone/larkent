@@ -5,7 +5,7 @@ import { FinalAnswerCore } from '../../../src/agent/final-answer/core';
 describe('answer hold-back', () => {
   it('holds an answer until success and ignores late input', () => {
     const core = new FinalAnswerCore({ accumulation: 'message', preTool: 'progress', separator: 'none' });
-    expect(core.accept({ type: 'answer', text: 'Answer' })).toEqual([{ type: 'liveness' }]);
+    expect(core.accept({ type: 'answer', text: 'Answer' })).toEqual([{ type: 'liveness', progress: true }]);
     expect(core.accept({ type: 'done', terminationReason: 'normal' })).toEqual([
       { type: 'final_text', content: 'Answer' }, { type: 'done', terminationReason: 'normal' },
     ]);
@@ -40,9 +40,9 @@ describe('answer hold-back', () => {
   it('deduplicates complete messages and flushes progress before an error', () => {
     const core = new FinalAnswerCore({ accumulation: 'message', preTool: 'progress', separator: 'paragraph' });
     core.accept({ type: 'answer', text: 'First' });
-    expect(core.accept({ type: 'answer', text: 'First' })).toEqual([{ type: 'liveness' }]);
+    expect(core.accept({ type: 'answer', text: 'First' })).toEqual([{ type: 'liveness', progress: true }]);
     expect(core.accept({ type: 'answer', text: 'Second' })).toEqual([
-      { type: 'text', delta: 'First\n\n' }, { type: 'liveness' },
+      { type: 'text', delta: 'First\n\n' }, { type: 'liveness', progress: true },
     ]);
     expect(core.accept({ type: 'error', message: 'failure', terminationReason: 'failed' })).toEqual([
       { type: 'text', delta: 'Second\n\n' }, { type: 'error', message: 'failure', terminationReason: 'failed' },
@@ -60,7 +60,7 @@ describe('answer hold-back', () => {
   it('keeps the last complete message under the discard policy', () => {
     const core = new FinalAnswerCore({ accumulation: 'message', preTool: 'discard', separator: 'paragraph' });
     core.accept({ type: 'answer', text: 'Plan' });
-    expect(core.accept({ type: 'answer', text: 'Answer' })).toEqual([{ type: 'liveness' }]);
+    expect(core.accept({ type: 'answer', text: 'Answer' })).toEqual([{ type: 'liveness', progress: true }]);
     expect(core.accept({ type: 'done', terminationReason: 'normal' })).toEqual([
       { type: 'final_text', content: 'Answer' }, { type: 'done', terminationReason: 'normal' },
     ]);
@@ -70,7 +70,7 @@ describe('answer hold-back', () => {
     core.accept({ type: 'answer', text: 'Intro\n', messageId: 'one' });
     core.accept({ type: 'answer', text: '    code\n', messageId: 'one' });
     expect(core.accept({ type: 'answer', text: 'Answer', messageId: 'two' })).toEqual([
-      { type: 'text', delta: 'Intro\n    code\n' }, { type: 'liveness' },
+      { type: 'text', delta: 'Intro\n    code\n' }, { type: 'liveness', progress: true },
     ]);
     expect(core.accept({ type: 'done', terminationReason: 'normal' })).toEqual([
       { type: 'final_text', content: 'Answer' }, { type: 'done', terminationReason: 'normal' },

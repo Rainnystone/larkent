@@ -301,6 +301,10 @@ export function finalAnswerOnlyState(state: RunState): RunState {
 /** Text `applyOutcomeToState` appended after `finalText` (partial-outcome warnings). */
 export function appendOutcomeNotice(state: RunState, userMessage: string | undefined): RunState {
   if (!userMessage) return state;
+  if (state.finalText === userMessage) return state;
+  if (state.blocks.some((block) => block.kind === 'text' && block.content === userMessage)) {
+    return state;
+  }
   return {
     ...state,
     blocks: [

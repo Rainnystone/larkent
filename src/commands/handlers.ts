@@ -70,6 +70,7 @@ import {
 } from '../policy/access';
 import { evaluateRunPolicy } from '../policy/run-policy';
 import { resolveWorkingDirectory } from '../policy/workspace';
+import { assertReconnectConfig } from '../runtime/agent-runtime';
 import { RunRejected } from '../runtime/errors';
 import { isAlive, readAndPrune, resolveTarget } from '../runtime/registry';
 import type { RunExecutor } from '../runtime/run-executor';
@@ -810,10 +811,15 @@ function formatAgo(ms: number): string {
 export async function handleReconnect(args: string, ctx: UserActionContext): Promise<void> {
   const wait = args.trim().split(/\s+/).filter(Boolean).includes('--wait');
   log.info('command', 'reconnect', { wait });
-  await reply(ctx, wait ? '⏳ 将在当前运行结束后重连…' : '⏳ 正在停止当前运行并重连…');
   let resumeNewRuns: (() => void) | undefined;
   try {
     resumeNewRuns = ctx.activeRuns.pauseNewRuns('reconnect-in-progress');
+    await assertReconnectConfig({
+      configPath: ctx.controls.configPath,
+      profile: ctx.controls.profile,
+      currentAgentKind: ctx.controls.profileConfig.agentKind,
+    });
+    await reply(ctx, wait ? '⏳ 将在当前运行结束后重连…' : '⏳ 正在停止当前运行并重连…');
     if (wait) {
       await ctx.activeRuns.waitForAll();
     } else {

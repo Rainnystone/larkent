@@ -205,7 +205,7 @@ describe('skip final reply when the agent already IM-sent to this chat', () => {
     {
       name: 'idle_timeout',
       events: [{ type: 'text' as const, delta: ANSWER }],
-      expectText: '无响应',
+      expectText: '等待预算已用尽',
       idleTimeoutMinutes: 0.01,
     },
   ])('sends the error reply after a CLI self-send when terminal is $name', async (row) => {

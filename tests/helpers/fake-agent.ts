@@ -18,6 +18,7 @@ class FakeRun implements FakeAgentRun {
   readonly events: AsyncIterable<AgentEvent>;
   readonly waitForExitResult: boolean;
   readonly stderrSnapshot?: string;
+  readonly exit?: number | null;
   #stopped = false;
   #waitForExitCalls = 0;
   #hold: Promise<void> | undefined;
@@ -30,11 +31,13 @@ class FakeRun implements FakeAgentRun {
     waitForExitResult: boolean,
     hold?: Promise<void>,
     stderr?: string,
+    exit?: number | null,
   ) {
     this.runId = opts.runId;
     this.opts = opts;
     this.waitForExitResult = waitForExitResult;
     this.stderrSnapshot = stderr;
+    this.exit = exit;
     this.#hold = hold;
     this.#stoppedAt = new Promise<void>((resolve) => {
       this.#markStopped = resolve;
@@ -85,6 +88,7 @@ export class FakeAgentAdapter implements AgentAdapter {
   #waitForExitResults: boolean[];
   #hold: Promise<void> | undefined;
   #stderr: string | undefined;
+  #exit: number | null | undefined;
 
   constructor(options: {
     id?: string;
@@ -95,6 +99,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     /** Keep the event stream open until this settles so pending can accumulate. */
     hold?: Promise<void>;
     stderr?: string;
+    exit?: number | null;
   } = {}) {
     this.id = options.id ?? 'fake-agent';
     this.displayName = options.displayName ?? 'Fake Agent';
@@ -103,6 +108,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     this.#waitForExitResults = normalizeWaitForExitResults(options.waitForExit);
     this.#hold = options.hold;
     this.#stderr = options.stderr;
+    this.#exit = options.exit;
   }
 
   async isAvailable(): Promise<boolean> {
@@ -117,7 +123,7 @@ export class FakeAgentAdapter implements AgentAdapter {
     this.runOptions.push(opts);
     const events = this.#eventRuns.shift() ?? [];
     const waitForExitResult = this.#waitForExitResults.shift() ?? true;
-    const run = new FakeRun(opts, events, waitForExitResult, this.#hold, this.#stderr);
+    const run = new FakeRun(opts, events, waitForExitResult, this.#hold, this.#stderr, this.#exit);
     this.runs.push(run);
     return run;
   }

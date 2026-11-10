@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consumeCotEvents, CotClient, CotPublisher, cotBriefToolTitle, finalAnswerOnlyState } from '../../../src/bot/cot.js';
+import { appendOutcomeNotice, consumeCotEvents, CotClient, CotPublisher, cotBriefToolTitle, finalAnswerOnlyState } from '../../../src/bot/cot.js';
 import type { AgentEvent } from '../../../src/agent/types.js';
 import { initialState, type RunState } from '../../../src/card/run-state.js';
 
@@ -111,6 +111,26 @@ describe('COT event mapping', () => {
 
     expect(finalAnswerOnlyState(state).blocks).toEqual([
       { kind: 'text', content: 'FINAL_SENTINEL', streaming: false },
+    ]);
+  });
+
+  it('does not append a partial notice that is already finalText or a text block', () => {
+    const warning = '输出不完整（打印超时），可稍后继续';
+    const withFinal = {
+      ...initialState,
+      finalText: warning,
+      terminal: 'done' as const,
+    };
+    expect(appendOutcomeNotice(withFinal, warning).blocks).toEqual(withFinal.blocks);
+    const withBlock = {
+      ...initialState,
+      blocks: [{ kind: 'text' as const, content: warning, streaming: false }],
+      terminal: 'done' as const,
+    };
+    expect(appendOutcomeNotice(withBlock, warning).blocks).toEqual(withBlock.blocks);
+    const empty = { ...initialState, terminal: 'done' as const };
+    expect(appendOutcomeNotice(empty, warning).blocks).toEqual([
+      { kind: 'text', content: warning, streaming: false, notice: true },
     ]);
   });
 

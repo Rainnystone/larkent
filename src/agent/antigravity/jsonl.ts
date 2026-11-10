@@ -1,17 +1,43 @@
 import type { AgentEvent } from '../types';
 import { FinalAnswerCore, type ProtocolDriftState } from '../final-answer/core';
-import { isRecord, nonEmptyString as stringValue, finiteNumber as numberValue, truncate } from '../final-answer/values';
-import { log } from '../../core/logger';
+import {
+  isRecord,
+  nonEmptyString as stringValue,
+  finiteNumber as numberValue,
+  record,
+  recordValue,
+  truncate,
+} from '../final-answer/values';
+import { log, redactDiagnosticText } from '../../core/logger';
 import { scrubSystemMessageEnvelopes } from './envelopes';
+import { ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE } from './stderr-signatures';
 
 export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'timeout';
 
-const PRINT_TIMEOUT_HINT =
-  'Antigravity print-timeout reached before a reply was produced.';
+const TERMINAL_RESULT_ERROR_CHARS = 200;
+
+function logTerminalResult(raw: Record<string, unknown>, result: Record<string, unknown>): void {
+  const status = stringValue(result.status);
+  const conversationId = stringValue(result.conversation_id) ?? stringValue(raw.conversation_id);
+  const numTurns = numberValue(result.num_turns);
+  const errorMessage = stringValue(result.error);
+  const errorCode = stringValue(result.error_code);
+  const errorType = stringValue(result.error_type);
+  log.info('agent', 'terminal-result', {
+    ...(status ? { status } : {}),
+    ...(errorCode ? { errorCode } : {}),
+    ...(errorType ? { errorType } : {}),
+    ...(errorMessage
+      ? { errorMessage: truncate(redactDiagnosticText(errorMessage), TERMINAL_RESULT_ERROR_CHARS) }
+      : {}),
+    ...(conversationId ? { conversationId } : {}),
+    ...(numTurns !== undefined ? { numTurns } : {}),
+  });
+}
 
 /**
  * Translates `agy -p --output-format stream-json` NDJSON into bridge
- * AgentEvents. Captured line shapes (Antigravity CLI 1.2.1):
+ * AgentEvents. Captured line shapes (Antigravity CLI 1.4.8 D03a):
  *
  *   {"event":"init","conversation_id":"<uuid>","init":{...}}
  *   {"event":"step_update","step_update":{"conversation_id","step_index","state","step_type","text_delta"?,"tool_name"?,"tool_info"?}}
@@ -19,8 +45,9 @@ const PRINT_TIMEOUT_HINT =
  *
  * Official `step_type` values `user_input`, `agent_response`, `tool`,
  * `checkpoint`, plus silent `system_message` / `error_message`, are known.
- * `agent_response` `text_delta` fragments are held back. `tool` and
- * `checkpoint` are parse-only (no tool/text events). An empty SUCCESS
+ * `agent_response` `text_delta` fragments are held back. `tool` ACTIVE/DONE
+ * pair by `(conversation_id, step_index)` from the 1.4.8 D03a captures.
+ * `checkpoint` stays a liveness ping, not a tool start. An empty SUCCESS
  * after print-timeout is classified (official timeout field, else the
  * incident heuristic) and emits a `final_text` hint so outbound is not
  * muted. The reply body is `result.response` (verified against a live
@@ -36,6 +63,7 @@ export class AntigravityJsonlTranslator {
   private systemEmitted = false;
   private sawRecognizedToolOrCheckpoint = false;
   private sawSystemMessageStep = false;
+  private readonly openTools = new Set<string>();
 
   translate(raw: unknown): AgentEvent[] {
     if (this.core.terminalEmitted()) return [];
@@ -96,9 +124,13 @@ export class AntigravityJsonlTranslator {
     if (stepType === 'user_input' || stepType === 'error_message') {
       return [];
     }
-    if (stepType === 'tool' || stepType === 'checkpoint') {
+    if (stepType === 'checkpoint') {
       this.sawRecognizedToolOrCheckpoint = true;
       return [{ type: 'liveness' }];
+    }
+    if (stepType === 'tool') {
+      this.sawRecognizedToolOrCheckpoint = true;
+      return this.translateToolStep(step);
     }
     if (stepType) {
       this.core.unknown(stepType);
@@ -111,6 +143,7 @@ export class AntigravityJsonlTranslator {
   private translateResult(raw: Record<string, unknown>): AgentEvent[] {
     if (this.core.terminalEmitted()) return [];
     const result = isRecord(raw.result) ? raw.result : raw;
+    logTerminalResult(raw, result);
     this.rememberConversation(result.conversation_id ?? raw.conversation_id);
     const events: AgentEvent[] = [...this.systemEvents()];
     const usage = this.usageEvent(result);
@@ -119,7 +152,22 @@ export class AntigravityJsonlTranslator {
     if (status === 'ERROR' || status === 'FAILED') {
       const message =
         stringValue(result.error) ?? stringValue(result.message) ?? 'antigravity reported an error';
-      return this.core.accept({ type: 'complete', terminal: { type: 'error', message: truncate(message, 4096), terminationReason: 'failed' }, prefix: events });
+      // agy 1.5.3 keeps an in-conversation error on every later resumed result.
+      // Its SIGTERM echo (`finished_reason: interrupted`) and failures before it
+      // attached to a conversation do not stick (probe 2026-11-09), nor does a
+      // print timeout (`print_timeout`, probe 2026-11-10 with an open background tool).
+      const finishedReason = stringValue(result.finished_reason);
+      const poisoned = finishedReason === 'interrupted' || finishedReason === 'print_timeout' ? undefined : this.conversationId;
+      return this.core.accept({
+        type: 'complete',
+        terminal: {
+          type: 'error',
+          message: truncate(message, 4096),
+          terminationReason: 'failed',
+          ...(poisoned ? { invalidateResume: poisoned } : {}),
+        },
+        prefix: events,
+      });
     }
     const response = typeof result.response === 'string' ? result.response : undefined;
     return this.core.accept({ type: 'complete', terminal: this.doneEvent('normal'),
@@ -127,14 +175,55 @@ export class AntigravityJsonlTranslator {
   }
 
   private emptySuccessHint(result: Record<string, unknown>): string | undefined {
-    if (officialPrintTimeoutSignal(result)) return PRINT_TIMEOUT_HINT;
-    if (this.sawRecognizedToolOrCheckpoint) return PRINT_TIMEOUT_HINT;
+    if (officialPrintTimeoutSignal(result)) return ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE;
+    if (this.sawRecognizedToolOrCheckpoint) return ANTIGRAVITY_PRINT_TIMEOUT_USER_MESSAGE;
     return undefined;
   }
 
   private rememberConversation(value: unknown): void {
     const id = stringValue(value);
     if (id) this.conversationId = id;
+  }
+
+  private translateToolStep(step: Record<string, unknown>): AgentEvent[] {
+    const id = this.toolIdentity(step);
+    if (!id) {
+      this.core.anomaly();
+      return [{ type: 'liveness' }];
+    }
+    const state = stringValue(step.state);
+    if (state === 'ACTIVE') {
+      this.openTools.add(id);
+      const info = recordValue(step.tool_info);
+      const name = stringValue(step.tool_name) ?? stringValue(info?.name) ?? 'tool';
+      // Skip FinalAnswerCore's native boundary: result.response is the
+      // authoritative answer, and classifying pre-tool deltas would duplicate it.
+      return this.core.accept({
+        type: 'tool_use',
+        id,
+        name,
+        input: toolInput(info),
+      });
+    }
+    if (state === 'DONE') {
+      if (!this.openTools.has(id)) return [{ type: 'liveness' }];
+      this.openTools.delete(id);
+      const info = recordValue(step.tool_info);
+      return this.core.accept({
+        type: 'tool_result',
+        id,
+        output: stringValue(info?.output) ?? '',
+        isError: false,
+      });
+    }
+    return [{ type: 'liveness' }];
+  }
+
+  private toolIdentity(step: Record<string, unknown>): string | undefined {
+    const conversationId = stringValue(step.conversation_id) ?? this.conversationId;
+    const stepIndex = numberValue(step.step_index);
+    if (!conversationId || stepIndex === undefined) return undefined;
+    return `${conversationId}:${stepIndex}`;
   }
 
   private systemEvents(): AgentEvent[] {
@@ -175,6 +264,15 @@ export class AntigravityJsonlTranslator {
       ...(reasoningOutputTokens !== undefined ? { reasoningOutputTokens } : {}),
     };
   }
+}
+
+function toolInput(info: Record<string, unknown> | undefined): Record<string, unknown> {
+  const parameters = record(info?.parameters);
+  const commandLine = stringValue(parameters.CommandLine);
+  if (commandLine !== undefined && parameters.command === undefined) {
+    return { ...parameters, command: commandLine };
+  }
+  return { ...parameters };
 }
 
 function nonzero(value: number | undefined): boolean {

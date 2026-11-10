@@ -44,7 +44,7 @@ export class CursorJsonlTranslator {
       case 'user':
         return [];
       case 'thinking':
-        return [{ type: 'liveness' }];
+        return [{ type: 'liveness', ...(stringValue(raw.text) ? { progress: true as const } : {}) }];
       case 'assistant':
         return this.translateAssistant(raw);
       case 'tool_call':

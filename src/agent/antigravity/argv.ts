@@ -19,7 +19,8 @@ export interface BuildAntigravityArgsInput {
   sandbox?: AntigravitySandboxOption;
   /**
    * Forwarded to `--print-timeout` as the exact configured duration.
-   * Omitted so agy keeps its own default. Not a product default.
+   * Omitted so agy keeps its own default (`0s`). Explicit `0` / `0s` also
+   * mean no CLI cap. agy host-sleep accounting for this timer is unverified.
    */
   printTimeout?: string;
 }

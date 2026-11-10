@@ -5,7 +5,7 @@ import type { CommentEvent, LarkChannel } from '@larksuite/channel';
 import { capabilityForProfile } from '../agent/capability';
 import { descriptorFor } from '../agent/registry';
 import type { AgentAdapter, AgentEvent } from '../agent/types';
-import { getAgentStopGraceMs } from '../config/schema';
+import { getAgentStopGraceMs, getRunIdleTimeoutMs } from '../config/schema';
 import type { Controls } from '../commands';
 import { resolveAppPaths } from '../config/app-paths';
 import { log } from '../core/logger';
@@ -14,7 +14,9 @@ import { evaluateAccess } from '../policy/access';
 import { resolveWorkingDirectory } from '../policy/workspace';
 import { RunRejected } from '../runtime/errors';
 import type { ActiveRuns } from './active-runs';
-import { recordRunSessionEvent } from './run-flow';
+import { createIdleWatchdog, noteWatchdogActivity } from './idle-watchdog';
+import { idleWatchdogStopNote, type StopRequest } from './run-outcome';
+import { discardRunResumeHandle, FRESH_SESSION_NOTICE, recordRunSessionEvent } from './run-flow';
 import type { RunExecutor } from '../runtime/run-executor';
 import type { SessionCatalog } from '../session/catalog';
 import type { SessionStore } from '../session/store';
@@ -200,11 +202,14 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
 
   try {
     const capability = capabilityForProfile(controls.profileConfig);
-    const runTimeoutMs = commentRunTimeoutMs(sessions, runScopeId);
-    const threadTimeoutMs = commentRunTimeoutMs(sessions, commentThreadScopeId);
-    const commentTimeoutMs = runTimeoutMs !== undefined ? runTimeoutMs : threadTimeoutMs;
-    if (typeof commentTimeoutMs === 'number') {
-      log.info('comment', 'timeout-watchdog', { commentScopeId: runScopeId, timeoutMs: commentTimeoutMs });
+    const idleTimeoutMs = resolveCommentIdleTimeoutMs(
+      sessions,
+      runScopeId,
+      commentThreadScopeId,
+      controls.cfg,
+    );
+    if (idleTimeoutMs !== undefined) {
+      log.info('comment', 'timeout-watchdog', { commentScopeId: runScopeId, timeoutMs: idleTimeoutMs });
     }
     const policy = evaluateRunPolicy({
       scope: {
@@ -221,7 +226,6 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       capability,
       profileConfig: controls.profileConfig,
       now: Date.now(),
-      ...(typeof commentTimeoutMs === 'number' ? { ttlMs: commentTimeoutMs } : {}),
     });
     if (!policy.ok) {
       log.warn('policy', 'denied', {
@@ -231,7 +235,6 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       });
       return;
     }
-    const commentExpiresAt = typeof commentTimeoutMs === 'number' ? policy.expiresAt : undefined;
 
     const agentSessionRun = markCommentAgentSessionRun(agentSessionScopeId);
     try {
@@ -295,31 +298,21 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       });
       if (!execution) return;
       let answer = '';
+      let answerSettled = false;
       let errorMsg: string | undefined;
       let terminal = false;
       let timedOut = false;
+      let sessionDiscarded = false;
       const eventStream = execution.subscribe()[Symbol.asyncIterator]();
+      const watchdog = createIdleWatchdog({
+        handle: execution.handle,
+        idleTimeoutMs,
+        scope: runScopeId,
+      });
       try {
         while (true) {
-          const next = await nextCommentEvent(eventStream, commentExpiresAt);
-          if (next === 'expired') {
-            await execution.stop().catch((err) => {
-              log.warn('comment', 'expired-stop-failed', {
-                commentScopeId: runScopeId,
-                err: err instanceof Error ? err.message : String(err),
-              });
-            });
-            timedOut = true;
-            terminal = true;
-            break;
-          }
-          if (commentExpiresAt !== undefined && Date.now() > commentExpiresAt) {
-            await execution.stop().catch((err) => {
-              log.warn('comment', 'expired-stop-failed', {
-                commentScopeId: runScopeId,
-                err: err instanceof Error ? err.message : String(err),
-              });
-            });
+          const next = await eventStream.next();
+          if (isIdleWatchdogStop(execution.handle.stopRequest)) {
             timedOut = true;
             terminal = true;
             break;
@@ -329,6 +322,12 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             break;
           }
           const e = next.value;
+          noteWatchdogActivity(execution.handle, watchdog, e);
+          if (isIdleWatchdogStop(execution.handle.stopRequest)) {
+            timedOut = true;
+            terminal = true;
+            break;
+          }
           recordCommentSessionEvent({
             scopeId: agentSessionScopeId,
             sessions,
@@ -337,6 +336,10 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             policy,
             event: e,
           });
+          if (e.type === 'error' && e.invalidateResume) {
+            discardRunResumeHandle({ scopeId: legacyDocSessionScopeId, sessions, sessionCatalog, capability }, e.invalidateResume);
+            sessionDiscarded = true;
+          }
           if (
             descriptorFor(capability.agentId).resume.label === 'session' &&
             e.type === 'system' &&
@@ -349,13 +352,15 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
           switch (e.type) {
             case 'text':
               answer += e.delta;
+              if (e.heldBack) answerSettled = true;
               break;
             case 'final_text':
               answer = e.content;
+              answerSettled = true;
               break;
             case 'tool_use':
             case 'tool_result':
-              answer = '';
+              if (!answerSettled) answer = '';
               break;
             case 'system':
               break;
@@ -364,10 +369,16 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
               terminal = true;
               break;
             case 'usage':
+            case 'thinking':
+            case 'liveness':
               break;
             case 'done':
               terminal = true;
               break;
+            default: {
+              const _exhaustive: never = e;
+              void _exhaustive;
+            }
           }
           // Don't wait for the subprocess to actually close stdout — break as soon
           // as we have the final result. Some claude versions hang briefly post-
@@ -375,15 +386,20 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
           if (terminal) break;
         }
       } finally {
+        watchdog.dispose();
         await eventStream.return?.();
       }
 
       if (timedOut) {
+        const reason = execution.handle.stopRequest;
+        const note = isIdleWatchdogStop(reason)
+          ? idleWatchdogStopNote(reason)
+          : '等待预算已用尽（普通空闲，1 分钟觉醒）';
         log.info('comment', 'reply-skip', {
           reason: 'policy-expired',
           commentScopeId: runScopeId,
         });
-        await postCommentReply(channel, target, evt, '本次评论任务已超时，请重新 @ 我。', {
+        await postCommentReply(channel, target, evt, note, {
           isWhole: ctx.isWhole,
         }).catch((err) => {
           log.fail('comment', err, { step: 'postTimeoutReply' });
@@ -402,7 +418,10 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
       let reply = stripMarkdown(answer.trim());
       if (errorMsg) reply = `⚠️ Claude 报错：${errorMsg}`;
       if (!reply) reply = '（无回复内容）';
-      if (reply.length > REPLY_MAX_CHARS) reply = `${reply.slice(0, REPLY_MAX_CHARS - 1)}…`;
+      const notice = errorMsg && sessionDiscarded ? `\n${FRESH_SESSION_NOTICE}` : '';
+      const room = REPLY_MAX_CHARS - notice.length;
+      if (reply.length > room) reply = `${reply.slice(0, room - 1)}…`;
+      reply += notice;
 
       await postCommentReply(channel, target, evt, reply, { isWhole: ctx.isWhole }).catch((err) => {
         log.fail('comment', err, { step: 'postCommentReply' });
@@ -760,7 +779,7 @@ export function stripMarkdown(s: string): string {
 function commentRunTimeoutMs(
   sessions: SessionStore,
   scopeId: string,
-): number | null | undefined {
+): number | undefined | null {
   const scopeOverride = sessions.getIdleTimeoutMinutes(scopeId);
   if (scopeOverride !== undefined) {
     return scopeOverride > 0 ? scopeOverride * 60_000 : null;
@@ -768,25 +787,24 @@ function commentRunTimeoutMs(
   return undefined;
 }
 
-async function nextCommentEvent(
-  iterator: AsyncIterator<AgentEvent>,
-  expiresAt: number | undefined,
-): Promise<IteratorResult<AgentEvent> | 'expired'> {
-  if (expiresAt === undefined) {
-    return iterator.next();
+function isIdleWatchdogStop(
+  reason: StopRequest | undefined,
+): reason is Extract<StopRequest, { type: 'bridge-idle-watchdog' }> {
+  return reason?.type === 'bridge-idle-watchdog';
+}
+
+function resolveCommentIdleTimeoutMs(
+  sessions: SessionStore,
+  runScopeId: string,
+  commentThreadScopeId: string,
+  cfg: Parameters<typeof getRunIdleTimeoutMs>[0],
+): number | undefined {
+  for (const scopeId of [runScopeId, commentThreadScopeId]) {
+    const override = commentRunTimeoutMs(sessions, scopeId);
+    if (override === null) return undefined;
+    if (typeof override === 'number') return override;
   }
-  const delayMs = Math.max(0, expiresAt - Date.now() + 1);
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      iterator.next(),
-      new Promise<'expired'>((resolve) => {
-        timer = setTimeout(() => resolve('expired'), delayMs);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+  return getRunIdleTimeoutMs(cfg);
 }
 
 async function postCommentReply(

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { parseClaudeAgentOptions } from '../../../src/agent/claude/options';
 import { parseCodexAgentOptions } from '../../../src/agent/codex/options';
 import { parseCursorAgentOptions } from '../../../src/agent/cursor/options';
+import { parseDevinAgentOptions } from '../../../src/agent/devin/options';
 import { parseGrokAgentOptions } from '../../../src/agent/grok/options';
 import { parseKimiAgentOptions } from '../../../src/agent/kimi/options';
 import {
@@ -35,13 +36,17 @@ describe('parseAntigravityAgentOptions', () => {
     });
   });
 
+  it.each(['0', '0s'] as const)('accepts printTimeout %s as no CLI cap', (printTimeout) => {
+    expect(parseAntigravityAgentOptions({ printTimeout }, true)).toEqual({ printTimeout });
+    expect(antigravityAgentOptionsSchema.parse({ printTimeout })).toEqual({ printTimeout });
+  });
+
   it.each([
     '',
     '10',
     '10minutes',
     '5M',
     '-5m',
-    '0s',
     '.1ns',
     '999999999999999999999h',
     ' 5m',
@@ -80,6 +85,7 @@ describe('printTimeout is antigravity-only', () => {
     ['cursor', parseCursorAgentOptions, 'unknown cursor agent option: printTimeout'],
     ['grok', parseGrokAgentOptions, 'unknown grok agent option: printTimeout'],
     ['kimi', parseKimiAgentOptions, 'unknown kimi agent option: printTimeout'],
+    ['devin', parseDevinAgentOptions, 'unknown devin agent option: printTimeout'],
   ] as const)('strict %s parse rejects printTimeout', (_kind, parse, message) => {
     expect(() => parse({ printTimeout: '10m' }, true)).toThrow(message);
   });

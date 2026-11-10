@@ -257,7 +257,7 @@ export class RunExecutor {
       finishing ??= (async () => {
         await toolsClosed;
         if (!(await rawRun.waitForExit(this.postDoneExitGraceMs))) {
-          log.warn('run', 'post-done-exit-timeout', {
+          log.warn('run', 'post-terminal-exit-timeout', {
             ...dimensions, graceMs: this.postDoneExitGraceMs,
           });
           stopChild();
@@ -324,7 +324,7 @@ export class RunExecutor {
       const failure = cliFailureInput(rawRun.stderrSnapshot,
         terminalEvent?.type === 'error' ? terminalEvent.message : undefined,
         this.stderrSignatures?.(input.promptVariant));
-      handle.outcome = deriveRunOutcome({
+      const outcome = deriveRunOutcome({
         stopRequest,
         terminalEvent,
         ...failure,
@@ -332,14 +332,22 @@ export class RunExecutor {
         signal: rawRun.signal,
         outageOverlapped: runOverlappedOutage(this.getLink?.(), startedEpoch, startedDown),
       });
-      if (terminalEvent?.type === 'error') {
+      handle.outcome = outcome;
+      if (outcome.kind === 'partial') {
+        log.info('run', 'completed', {
+          ...dimensions,
+          result: 'partial',
+          durationMs: this.now() - startedAt,
+          outcome: formatRunOutcome(outcome),
+        });
+      } else if (terminalEvent?.type === 'error') {
         log.warn('run', 'failed', {
           ...dimensions,
           result: terminalEvent.terminationReason,
           durationMs: this.now() - startedAt,
           error: terminalEvent.message,
           ...(stopRequest ? { stopReason: formatStopRequest(stopRequest) } : {}),
-          outcome: formatRunOutcome(handle.outcome),
+          outcome: formatRunOutcome(outcome),
         });
       } else if (terminalEvent?.type === 'done') {
         log.info('run', 'completed', {

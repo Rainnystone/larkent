@@ -13,7 +13,12 @@ export type StopRequest =
   | { type: 'account-restart' }
   | { type: 'shutdown-signal' }
   | { type: 'exit-command' }
-  | { type: 'bridge-idle-watchdog' }
+  | {
+      type: 'bridge-idle-watchdog';
+      timer?: 'idle' | 'tool-grace';
+      tool?: string;
+      awakeMinutes?: number;
+    }
   | { type: 'runner-timeout' }
   | { type: 'meeting' }
   | { type: 'subscriber-abandoned' }
@@ -117,6 +122,15 @@ function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
   // that decision even when the source pump has already observed the terminal.
   if (input.stopRequest?.type === 'policy-guard') return interrupted(input.stopRequest);
   const signed = matchCliSignature(input.stderrTail, input.signatures);
+  const terminal = input.terminalEvent;
+  // Print-timeout (and other partial signatures) may overlay an explicit done.
+  // Failure and interrupted signatures must not downgrade that done.
+  if (signed?.classify.kind === 'partial' && signatureApplies(signed.classify, input)) {
+    return applySignatureOverlay(signed.classify);
+  }
+  if (terminal?.type === 'done' && terminal.terminationReason === 'normal') {
+    return completed();
+  }
   if (signed && signatureApplies(signed.classify, input)) {
     return applySignatureOverlay(signed.classify);
   }
@@ -125,11 +139,6 @@ function deriveRunOutcomeShape(input: DeriveRunOutcomeInput): RunOutcome {
   // instead of letting that failed exit become unclassified.
   if (signed?.classify.kind === 'interrupted' && input.stopRequest) {
     return interrupted(input.stopRequest);
-  }
-
-  const terminal = input.terminalEvent;
-  if (terminal?.type === 'done' && terminal.terminationReason === 'normal') {
-    return completed();
   }
   if (
     (terminal?.type === 'done' || terminal?.type === 'error')
@@ -321,6 +330,20 @@ export function describeRunOutcome(outcome: RunOutcome): string {
   }
 }
 
+/** User-facing watchdog stop: waiting budget used up, which timer, awake minutes. */
+export function idleWatchdogStopNote(
+  reason: Extract<StopRequest, { type: 'bridge-idle-watchdog' }>,
+): string {
+  const minutes = Math.max(1, reason.awakeMinutes ?? 1);
+  if (reason.timer === 'tool-grace') {
+    const named = reason.tool?.trim();
+    return named
+      ? `等待预算已用尽（工具宽限 ${named}，${minutes} 分钟觉醒）`
+      : `等待预算已用尽（工具宽限，${minutes} 分钟觉醒）`;
+  }
+  return `等待预算已用尽（普通空闲，${minutes} 分钟觉醒）`;
+}
+
 function describeStopRequest(reason: StopRequest): string {
   switch (reason.type) {
     case 'user-stop':
@@ -336,7 +359,7 @@ function describeStopRequest(reason: StopRequest): string {
     case 'exit-command':
       return '退出命令';
     case 'bridge-idle-watchdog':
-      return '空闲超时';
+      return idleWatchdogStopNote(reason);
     case 'runner-timeout':
       return '运行超时';
     case 'meeting':

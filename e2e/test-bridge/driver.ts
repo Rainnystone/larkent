@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { access, chmod, mkdir, open, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { STDOUT_CAPTURE_ENV } from '../../src/agent/runner/stdout-capture';
 import { createDefaultProfileConfig } from '../../src/config/profile-schema';
 import { createRootConfig, saveRootConfig, writeActiveProfile } from '../../src/config/profile-store';
 import type { TestBridgeConfig } from './config';
@@ -27,6 +28,20 @@ export interface UpOptions {
   realCliPath?: string;
   /** When true, regenerate config.json. Otherwise keep an existing file. */
   resetConfig?: boolean;
+  /** Opt-in redacted CLI stdout capture. Off unless set. POSIX test-bridge only. */
+  stdoutCapture?: boolean;
+}
+
+export function testBridgeStdoutCaptureDir(dataRoot: string): string {
+  return join(dataRoot, 'stdout-captures');
+}
+
+export function testBridgeStdoutCaptureEnv(input: {
+  stdoutCapture: boolean;
+  dataRoot: string;
+}): NodeJS.ProcessEnv {
+  if (!input.stdoutCapture) return {};
+  return { [STDOUT_CAPTURE_ENV]: testBridgeStdoutCaptureDir(input.dataRoot) };
 }
 
 export async function shouldRewriteTestBridgeConfig(
@@ -102,6 +117,10 @@ export async function up(opts: UpOptions): Promise<RunningBridge> {
     LARKENT_E2E_SHIM_TARGET: target,
     LARKENT_E2E_REPO_ROOT: REPO_ROOT,
     LARKENT_E2E_TSX: join(REPO_ROOT, 'node_modules', '.bin', 'tsx'),
+    ...testBridgeStdoutCaptureEnv({
+      stdoutCapture: opts.stdoutCapture === true,
+      dataRoot: config.dataRoot,
+    }),
   };
   const log = await open(join(config.dataRoot, 'test-bridge.stdout.log'), 'a');
   const child = spawn(

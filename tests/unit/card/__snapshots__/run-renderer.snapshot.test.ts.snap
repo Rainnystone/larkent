@@ -346,7 +346,7 @@ exports[`run card renderer snapshots > renders done, error, interrupted, idle-ti
         "tag": "markdown",
       },
       {
-        "content": "_⏱ 15 分钟无响应,已自动终止_",
+        "content": "_⏱ 等待预算已用尽（普通空闲，15 分钟觉醒）_",
         "tag": "markdown",
         "text_size": "notation",
       },
@@ -451,7 +451,7 @@ exports[`run card renderer snapshots > renders markdown text mode without card-o
 
 Done
 
-_⏱ 10 分钟无响应,已自动终止_"
+_⏱ 等待预算已用尽（普通空闲，10 分钟觉醒）_"
 `;
 
 exports[`run card renderer snapshots > renders markdown text mode without card-only controls 4`] = `"⚠️ agent 失败:process failed"`;

@@ -85,7 +85,7 @@ describe('Grok thoughts', () => {
     await vi.advanceTimersByTimeAsync(900);
     expect(handle.interrupted).toBe(false);
     await vi.advanceTimersByTimeAsync(100);
-    expect(handle.stopRequest).toEqual({ type: 'bridge-idle-watchdog' });
+    expect(handle.stopRequest).toMatchObject({ type: 'bridge-idle-watchdog' });
     watchdog.dispose();
   });
 });

@@ -18,9 +18,12 @@ vi.mock('@larksuite/channel', async importOriginal => ({
   createLarkChannel: () => sdk.channel,
 }));
 import { startChannel } from '../../../src/bot/channel';
+import { AWAKE_TICK_MS, TOOL_IDLE_PAUSE_CAP_MS } from '../../../src/bot/idle-watchdog';
 
 const NOW = 1_760_000_000_000;
 const STALL_AFTER_RECOVERY_MS = 2 * 60_000;
+// Keep in lockstep with STREAM_TERMINAL_GRACE_MS in src/bot/turn.ts.
+const STREAM_TERMINAL_GRACE_MS = 3_000;
 const cleanups: Array<() => Promise<void>> = [];
 
 afterEach(async () => {
@@ -30,8 +33,39 @@ afterEach(async () => {
   sdk.channel = undefined;
 });
 
+const IDLE_MS = 15 * 60_000;
+
 describe('stall check after recovery', () => {
-  it('stops a run silent since before the outage within 2 min with a retriable notice', async () => {
+  it('keeps a silent run alive past 2 min after recovery while remaining idle remains', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(message('first', 'first request'));
+    await vi.advanceTimersByTimeAsync(600);
+    await h.agent.started;
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+    const lastEventAt = Date.now();
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    const since = Date.now();
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.bridge.recover({ since, until: Date.now(), hostSuspended: false });
+
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+
+    const remaining = IDLE_MS - (Date.now() - lastEventAt);
+    await vi.advanceTimersByTimeAsync(Math.max(0, remaining - AWAKE_TICK_MS));
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
+    await waitForStopDelivery(() => rendered(h.channel).includes('notice.continue'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+    expect(rendered(h.channel)).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
+  });
+
+  it('does not count a 10m38s host sleep toward remaining idle', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'first request'));
     await vi.advanceTimersByTimeAsync(600);
@@ -40,20 +74,49 @@ describe('stall check after recovery', () => {
     run.push({ type: 'text', delta: 'WORKING' });
     await waitFor(() => rendered(h.channel).includes('WORKING'));
 
-    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.advanceTimersByTimeAsync(4 * 60_000);
+    const suspendStartedAt = Date.now();
+    // Sleep is a wall jump, not 10m38s of fired timers (those would be awake ticks).
+    vi.setSystemTime(Date.now() + 10 * 60_000 + 38_000);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await h.bridge.recover({
+      since: suspendStartedAt,
+      until: Date.now(),
+      hostSuspended: true,
+      suspendStartedAt,
+    });
+
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+
+    const remainingAwake = IDLE_MS - 4 * 60_000 - AWAKE_TICK_MS;
+    await vi.advanceTimersByTimeAsync(remainingAwake - STALL_AFTER_RECOVERY_MS - AWAKE_TICK_MS);
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+
+    await vi.advanceTimersByTimeAsync(AWAKE_TICK_MS);
+    await waitForStopDelivery(() => rendered(h.channel).includes('等待预算已用尽（普通空闲，15 分钟觉醒）'));
+    expect(h.agent.runs[0]!.stopped).toBe(true);
+  });
+
+  it('excludes a 30-minute wall jump from idle even when the sleep probe reports not-suspended', async () => {
+    const h = await harness();
+    await h.channel.handlers.message?.(message('first', 'first request'));
+    await vi.advanceTimersByTimeAsync(600);
+    await h.agent.started;
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'text', delta: 'WORKING' });
+    await waitFor(() => rendered(h.channel).includes('WORKING'));
+
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
     const since = Date.now();
+    vi.setSystemTime(Date.now() + 30 * 60_000);
     await vi.advanceTimersByTimeAsync(1_000);
     await h.bridge.recover({ since, until: Date.now(), hostSuspended: false });
 
-    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
-
-    await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
-    expect(h.agent.runs[0]!.stopped).toBe(true);
-    await drainIO();
-    await waitFor(() => rendered(h.channel).includes('空闲超时'));
-    expect(rendered(h.channel)).toContain('notice.continue');
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
   });
 
   it('reviews a tool-call run that started after last Feishu evidence when the host slept', async () => {
@@ -76,14 +139,17 @@ describe('stall check after recovery', () => {
       suspendStartedAt,
     });
 
-    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
+    await vi.advanceTimersByTimeAsync(IDLE_MS - (Date.now() - toolAt));
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS);
+    await waitFor(() => h.agent.runs[0]!.stopped);
     expect(h.agent.runs[0]!.stopped).toBe(true);
   });
 
-  it('after a host suspend, a silent open-tool run is stopped and posts one retriable notice within 2 min', async () => {
+  it('after a host suspend, a silent open-tool run keeps the 60-minute tool grace', async () => {
     const h = await harness();
     await h.channel.handlers.message?.(message('first', 'please run the tool'));
     await vi.advanceTimersByTimeAsync(600);
@@ -91,21 +157,25 @@ describe('stall check after recovery', () => {
     const run = h.agent.manual[0]!;
     run.push({ type: 'tool_use', id: 'tool-1', name: 'long_tool', input: {} });
     await waitFor(() => rendered(h.channel).includes('long_tool'));
+    const lastEventAt = Date.now();
 
     await vi.advanceTimersByTimeAsync(5_000);
     const since = Date.now();
     await vi.advanceTimersByTimeAsync(1_000);
     await h.bridge.recover({ since, until: Date.now(), hostSuspended: true });
 
-    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS - 1);
+    await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('2 分钟无响应');
 
-    await vi.advanceTimersByTimeAsync(1);
-    await waitFor(() => rendered(h.channel).includes('2 分钟无响应'));
+    await vi.advanceTimersByTimeAsync(IDLE_MS - (Date.now() - lastEventAt));
+    expect(h.agent.runs[0]!.stopped).toBe(false);
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
+
+    await vi.advanceTimersByTimeAsync(TOOL_IDLE_PAUSE_CAP_MS - IDLE_MS);
+    await waitForStopDelivery(() => rendered(h.channel).includes('notice.continue'));
     expect(h.agent.runs[0]!.stopped).toBe(true);
-    await drainIO();
-    await waitFor(() => rendered(h.channel).includes('空闲超时'));
-    expect(rendered(h.channel)).toContain('notice.continue');
+    expect(rendered(h.channel)).toContain('等待预算已用尽（工具宽限 long_tool，60 分钟觉醒）');
     expect((rendered(h.channel).match(/notice\.continue/g) ?? []).length).toBe(1);
   });
 
@@ -135,7 +205,7 @@ describe('stall check after recovery', () => {
     await drainIO();
     await waitFor(() => rendered(h.channel).includes('DONE_AFTER_TOOL'));
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
-    expect(rendered(h.channel)).not.toContain('空闲超时');
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
     const deliveries = h.channel.snapshotCalls().filter((call) => call.op === 'send' || call.op === 'stream');
     expect(deliveries).toHaveLength(1);
     expect(JSON.stringify(deliveries[0])).toContain('DONE_AFTER_TOOL');
@@ -161,7 +231,7 @@ describe('stall check after recovery', () => {
     await vi.advanceTimersByTimeAsync(STALL_AFTER_RECOVERY_MS);
     expect(h.agent.runs[0]!.stopped).toBe(false);
     expect(rendered(h.channel)).not.toContain('2 分钟无响应');
-    expect(rendered(h.channel)).not.toContain('空闲超时');
+    expect(rendered(h.channel)).not.toContain('等待预算已用尽');
   });
 });
 
@@ -294,4 +364,13 @@ async function waitFor(predicate: () => boolean) {
     await yieldIO();
   }
   throw new Error('expected stall-after-recovery transition was not observed');
+}
+
+async function waitForStopDelivery(predicate: () => boolean) {
+  // Watchdog `stop()` is fire-and-forget; card mode then races the progress
+  // stream against this grace. Arm that timer before advancing it.
+  await drainIO();
+  await vi.advanceTimersByTimeAsync(STREAM_TERMINAL_GRACE_MS);
+  await drainIO();
+  await waitFor(predicate);
 }

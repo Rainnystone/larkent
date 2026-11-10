@@ -4,14 +4,14 @@ import { descriptorFor, isAgentKind } from '../agent/registry';
 import { cardUserMessage, cliFailureInput, matchCliSignature, NETWORK_TRANSIENT_SIGNATURES, noteUnclassifiedStderr, type CliSignature } from '../agent/cli-signatures';
 import { renderCard } from '../card/run-renderer';
 import { renderText } from '../card/text-renderer';
-import { finalizeIfRunning, initialState, markIdleTimeout, markInterrupted, markRunnerTimeout, reduce, seedRunState, shouldSkipFinalReply, type RunState } from '../card/run-state';
+import { initialState, markDone, markIdleTimeout, markInterrupted, markRunnerTimeout, reduce, seedRunState, shouldSkipFinalReply, type RunState } from '../card/run-state';
 import { log, reportMetric } from '../core/logger';
 import type { MessageReplyMode, CotMessagesMode } from '../config/schema';
 import type { CallbackAuth } from '../card/callback-auth';
-import { noteRunEvent, type RunHandle } from './active-runs';
-import { createIdleWatchdog } from './idle-watchdog';
-import { cardTerminalFromOutcome, formatRunOutcome, formatStopRequest, noteTerminalStop, requestStop, shouldDeliverAgentEvent, type RunOutcome, type StopRequest } from './run-outcome';
-import { recordRunSessionEvent, startRunFlow, type StartRunFlowInput, type StartRunFlowResult } from './run-flow';
+import type { RunHandle } from './active-runs';
+import { createIdleWatchdog, noteWatchdogActivity } from './idle-watchdog';
+import { cardTerminalFromOutcome, formatRunOutcome, formatStopRequest, idleWatchdogStopNote, noteTerminalStop, requestStop, shouldDeliverAgentEvent, type RunOutcome, type StopRequest } from './run-outcome';
+import { FRESH_SESSION_NOTICE, recordRunSessionEvent, startRunFlow, type StartRunFlowInput, type StartRunFlowResult } from './run-flow';
 import { Outbox, type StreamDelivery } from './outbox';
 import type { TurnJournal } from './turn-journal';
 import { outboundMessageId, withOutboundTimeout, type CliSelfSendTracker } from './self-message';
@@ -115,6 +115,9 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
     if (event.type === 'system' && event.resumeHandle) {
       if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: event.resumeHandle });
       if (delivery.kind === 'chat') log.info('session', 'set', { resumeHandle: event.resumeHandle });
+    }
+    if (event.type === 'error' && event.invalidateResume) {
+      if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: undefined });
     }
     if (delivery.kind === 'chat' && event.type === 'system' && event.model) log.info('session', 'model', {
       requested: delivery.requestedModel ?? 'default', actual: event.model,
@@ -642,16 +645,17 @@ async function processAgentStream(
   let state: RunState = seedRunState(runContext ?? {});
   let lastTerminal: AgentEvent | undefined;
 
-  // Idle watchdog: silence for `idleTimeoutMs` is treated as "presumed hung".
+  // Idle watchdog: awake silence for `idleTimeoutMs` is presumed hung.
   // An open tool call pauses that bound (a long `lark-cli` OAuth can be
-  // quiet for a while) but the pause itself is capped at 60 minutes.
-  // Shared with agent-task fires via createIdleWatchdog.
+  // quiet for a while) but the pause itself is capped at max(60 minutes,
+  // configured idle) from that tool's start. Main-conversation output
+  // resets idle and does not move the cap. Shared with agent-task, meeting,
+  // and comment consumers via createIdleWatchdog.
   const watchdog = createIdleWatchdog({ handle, idleTimeoutMs, scope });
 
   try {
     for await (const evt of events) {
-      noteRunEvent(handle);
-      if (!handle.interrupted) watchdog.noteDelivered(evt);
+      noteWatchdogActivity(handle, watchdog, evt);
       // A stopped run can still deliver its final resume handle before cleanup.
       // Keep draining owned events while suppressing further UI updates.
       if (evt.type === 'system') {
@@ -680,6 +684,7 @@ async function processAgentStream(
       if (evt.type === 'done' || evt.type === 'error') {
         lastTerminal = evt;
         noteTerminalStop(handle, evt);
+        if (evt.type === 'error' && evt.invalidateResume) recordSession(evt);
       }
 
       const prevTerminal = state.terminal;
@@ -727,6 +732,9 @@ async function processAgentStream(
   if (userMessage !== undefined && state.terminal === 'error') {
     state = { ...state, errorMsg: userMessage };
   }
+  if (lastTerminal?.type === 'error' && lastTerminal.invalidateResume && state.terminal === 'error') {
+    state = appendFreshSessionNotice(state);
+  }
   log.info('card', 'final', {
     scope,
     terminal: state.terminal,
@@ -750,8 +758,19 @@ function applyOutcomeToState(
 ): RunState {
   const terminal = cardTerminalFromOutcome(outcome);
   switch (terminal) {
-    case 'idle_timeout':
+    case 'idle_timeout': {
+      if (outcome.kind === 'interrupted' && outcome.reason.type === 'bridge-idle-watchdog') {
+        const minutes = Math.max(
+          1,
+          outcome.reason.awakeMinutes ?? Math.round((idleTimeoutMs ?? 0) / 60_000),
+        );
+        return markIdleTimeout(state, minutes, idleWatchdogStopNote({
+          ...outcome.reason,
+          awakeMinutes: minutes,
+        }));
+      }
       return markIdleTimeout(state, Math.round((idleTimeoutMs ?? 0) / 60_000));
+    }
     case 'runner_timeout':
       return markRunnerTimeout(state);
     case 'interrupted':
@@ -764,7 +783,7 @@ function applyOutcomeToState(
         ...(userMessage !== undefined ? { errorMsg: userMessage } : {}),
       };
     case 'done':
-      return appendOutcomeNotice(finalizeIfRunning(state), userMessage);
+      return appendOutcomeNotice(markDone(state), userMessage);
     case 'running':
       return state;
     default: {
@@ -772,6 +791,15 @@ function applyOutcomeToState(
       return _exhaustive;
     }
   }
+}
+
+function appendFreshSessionNotice(state: RunState): RunState {
+  const existing = state.errorMsg?.trim();
+  if (existing?.includes(FRESH_SESSION_NOTICE)) return state;
+  return {
+    ...state,
+    errorMsg: existing ? `${existing}\n${FRESH_SESSION_NOTICE}` : FRESH_SESSION_NOTICE,
+  };
 }
 
 interface StreamReliability {

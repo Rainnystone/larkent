@@ -124,6 +124,31 @@ describe('automation agent-task run', { timeout: 20_000 }, () => {
     expect(resultBodies(h.channel)).toEqual([`${human}\n\n${FOOTER}`]);
   });
 
+  it('posts a print-timeout error-terminal partial once without agent 失败', async () => {
+    const warning = '输出不完整（打印超时），可稍后继续';
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const h = await harness({
+      nowMs: t0, seed: true, agentKind: 'antigravity', messageReply: 'text', cotMessages: 'off',
+      stderr: '[agy] print timeout after 10m0s with turn in progress; returning partial output',
+      exit: 3,
+      events: [[{
+        type: 'system', resumeHandle: 'sess-fire',
+      }, { type: 'final_text', content: GROK_ANSWER }, {
+        type: 'error', message: 'agy exited with code 3', terminationReason: 'failed',
+      }]],
+    });
+    await waitFor(() => bodies(h.channel).some((body) => (
+      body.includes(warning) || body.includes('agent 失败') || body.includes('自动化任务中断')
+    )));
+    const post = resultBodies(h.channel)[0]
+      ?? bodies(h.channel).find((body) => body.includes(GROK_ANSWER))
+      ?? '';
+    expect(post).toContain(GROK_ANSWER);
+    expect(post.split(warning).length - 1).toBe(1);
+    expect(post).not.toMatch(/agent 失败|自动化任务中断/);
+    expect(warn.mock.calls.filter((call) => call[0] === 'run' && call[1] === 'failed')).toEqual([]);
+  });
+
   it('keeps a final answer when stderr matches a failure signature', async () => {
     const h = await harness({
       nowMs: t0,
@@ -703,6 +728,7 @@ async function harness(opts: {
   cotMessages?: 'off' | 'detailed';
   agentKind?: 'claude' | 'grok' | 'antigravity';
   stderr?: string;
+  exit?: number | null;
   tmp?: Awaited<ReturnType<typeof createTmpProfile>>;
   store?: AutomationsStore;
   reuseCleanup?: boolean;
@@ -754,6 +780,7 @@ async function harness(opts: {
     events: opts.events ?? [],
     ...(opts.hold ? { hold: opts.hold } : {}),
     ...(opts.stderr ? { stderr: opts.stderr } : {}),
+    ...(opts.exit !== undefined ? { exit: opts.exit } : {}),
   });
   const channel = createRecordingLarkChannel({
     chats: [{ id: CHAT, name: 'G' }],

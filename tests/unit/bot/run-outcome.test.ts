@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { antigravityStderrSignatures } from '../../../src/agent/antigravity/stderr-signatures';
 import {
   cardTerminalFromOutcome,
   deriveRunOutcome,
@@ -14,6 +15,9 @@ import {
   type StoppableHandle,
   type StopRequest,
 } from '../../../src/bot/run-outcome';
+
+const PRINT_TIMEOUT_STDERR =
+  '[agy] print timeout after 10m0s with turn in progress; returning partial output';
 
 const STOP_REQUESTS = [
   { type: 'user-stop' },
@@ -44,6 +48,60 @@ describe('deriveRunOutcome', () => {
       expected: { kind: 'completed', retriable: false, needsHuman: false },
       terminal: 'done',
       formatted: 'completed',
+    },
+    {
+      name: 'done(normal) is not downgraded by a matching stderr failure signature',
+      input: {
+        exit: 0,
+        terminalEvent: { type: 'done' as const, terminationReason: 'normal' as const },
+        stderrTail: 'RetriableError: Connection stalled repeatedly',
+        signatures: [
+          {
+            pattern: /Connection stalled repeatedly/,
+            cliVersion: 'test',
+            classify: { kind: 'failed', cause: 'transient-upstream', retriable: true, needsHuman: false },
+            userMessage: 'stall',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'completed', retriable: false, needsHuman: false },
+      terminal: 'done',
+      formatted: 'completed',
+    },
+    {
+      name: 'done(normal) after post-terminal SIGTERM is not interrupted by stderr',
+      input: {
+        exit: 0,
+        signal: 'SIGTERM',
+        terminalEvent: { type: 'done' as const, terminationReason: 'normal' as const },
+        stderrTail: 'error: interrupted',
+        signatures: [
+          {
+            pattern: /error:\s*interrupted/,
+            cliVersion: 'test',
+            classify: {
+              kind: 'interrupted',
+              reason: { type: 'external-signal' },
+              retriable: true,
+              needsHuman: false,
+            },
+            userMessage: 'interrupted',
+          },
+        ] satisfies CliSignature[],
+      },
+      expected: { kind: 'completed', retriable: false, needsHuman: false },
+      terminal: 'done',
+      formatted: 'completed',
+    },
+    {
+      name: 'error terminal on exit 0 is still failed',
+      input: {
+        exit: 0,
+        terminalEvent: { type: 'error' as const, message: 'boom', terminationReason: 'failed' as const },
+      },
+      expected: { kind: 'failed', cause: 'unclassified', retriable: true, needsHuman: false },
+      terminal: 'error',
+      formatted: 'failed:unclassified',
     },
     {
       name: 'partial from a signature match even on exit 0',
@@ -355,10 +413,22 @@ describe('deriveRunOutcome', () => {
   it('maps user-facing notices to Chinese without internal codes', () => {
     expect(describeRunOutcome({
       kind: 'interrupted',
-      reason: { type: 'bridge-idle-watchdog' },
+      reason: { type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 },
       retriable: true,
       needsHuman: false,
-    })).toBe('空闲超时');
+    })).toBe('等待预算已用尽（普通空闲，15 分钟觉醒）');
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'bridge-idle-watchdog', timer: 'tool-grace', tool: 'Bash', awakeMinutes: 60 },
+      retriable: true,
+      needsHuman: false,
+    })).toBe('等待预算已用尽（工具宽限 Bash，60 分钟觉醒）');
+    expect(describeRunOutcome({
+      kind: 'interrupted',
+      reason: { type: 'bridge-idle-watchdog', timer: 'idle', awakeMinutes: 15 },
+      retriable: true,
+      needsHuman: false,
+    })).not.toMatch(/卡住|无响应/);
     expect(describeRunOutcome({
       kind: 'failed',
       cause: 'transient-upstream',
@@ -387,6 +457,63 @@ describe('deriveRunOutcome', () => {
       expect(text).not.toMatch(/interrupted:|failed:/);
       expect(text.length).toBeGreaterThan(0);
     }
+  });
+
+  it('classifies CLI error + exit 3 + print-timeout stderr as partial, not failed', () => {
+    const outcome = deriveRunOutcome({
+      exit: 3,
+      terminalEvent: {
+        type: 'error',
+        message: 'agy exited with code 3',
+        terminationReason: 'failed',
+      },
+      stderrTail: PRINT_TIMEOUT_STDERR,
+      signatures: antigravityStderrSignatures,
+    });
+    expect(outcome).toEqual({ kind: 'partial', retriable: true, needsHuman: false });
+    expect(cardTerminalFromOutcome(outcome)).toBe('done');
+    expect(formatRunOutcome(outcome)).toBe('partial');
+  });
+
+  it('does not overlay a partial signature on stop plus a real error terminal', () => {
+    const outcome = deriveRunOutcome({
+      stopRequest: { type: 'user-stop' },
+      exit: 3,
+      terminalEvent: {
+        type: 'error',
+        message: 'agy exited with code 3',
+        terminationReason: 'failed',
+      },
+      stderrTail: PRINT_TIMEOUT_STDERR,
+      signatures: antigravityStderrSignatures,
+    });
+    expect(outcome).toEqual({
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: true,
+      needsHuman: false,
+    });
+    expect(cardTerminalFromOutcome(outcome)).toBe('error');
+  });
+
+  it('keeps a genuine error terminal without a print-timeout signature as failed', () => {
+    const outcome = deriveRunOutcome({
+      exit: 3,
+      terminalEvent: {
+        type: 'error',
+        message: 'agy exited with code 3',
+        terminationReason: 'failed',
+      },
+      stderrTail: 'agy exploded',
+      signatures: antigravityStderrSignatures,
+    });
+    expect(outcome).toEqual({
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: true,
+      needsHuman: false,
+    });
+    expect(cardTerminalFromOutcome(outcome)).toBe('error');
   });
 });
 

@@ -82,9 +82,9 @@ describe('GrokJsonlTranslator', () => {
 
   it('emits one liveness event per non-empty text chunk and none for an empty chunk', () => {
     const t = new GrokJsonlTranslator();
-    expect(t.translate({ type: 'text', data: 'Hel' })).toEqual([{ type: 'liveness' }]);
-    expect(t.translate({ type: 'text', data: 'lo' })).toEqual([{ type: 'liveness' }]);
-    expect(t.translate({ type: 'text', text: '!' })).toEqual([{ type: 'liveness' }]);
+    expect(t.translate({ type: 'text', data: 'Hel' })).toEqual([{ type: 'liveness', progress: true }]);
+    expect(t.translate({ type: 'text', data: 'lo' })).toEqual([{ type: 'liveness', progress: true }]);
+    expect(t.translate({ type: 'text', text: '!' })).toEqual([{ type: 'liveness', progress: true }]);
     expect(t.translate({ type: 'text', data: '' })).toEqual([]);
     expect(t.translate({ type: 'text' })).toEqual([]);
     const end = t.translate({ type: 'end', sessionId: SESSION });

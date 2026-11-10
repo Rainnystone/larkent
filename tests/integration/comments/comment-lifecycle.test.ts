@@ -101,7 +101,7 @@ describe('comment lifecycle', () => {
     expect(h.channel.inThreadReplies).toEqual(['stale answer', 'stale answer']);
   });
 
-  it('does not expire comment runs by default', async () => {
+  it('does not expire comment runs on a wall-clock jump without awake ticks', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T12:00:00.000Z'));
     const h = await createHarness();
@@ -120,6 +120,44 @@ describe('comment lifecycle', () => {
     expect(h.channel.inThreadReplies).toEqual(['stale answer']);
   });
 
+  it('expires comment runs at the shared 15-minute idle budget (Q4)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T12:00:00.000Z'));
+    const h = await createHarness();
+    const scopeId = commentRunScopeId('doc-token', 'comment-1');
+
+    const running = handleCommentMention(h.deps(event()));
+    await waitForActiveCommentScope(h, scopeId);
+
+    await vi.advanceTimersByTimeAsync(15 * 60 * 1000 + 1000);
+    await running;
+
+    expect(h.agent.stopped).toBe(true);
+    expect(h.channel.inThreadReplies).toEqual(['等待预算已用尽（普通空闲，15 分钟觉醒）']);
+  });
+
+  it('keeps a comment tool-use alive past 15 minutes until its 60-minute cap (Q4/Q5)', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-05-25T12:00:00.000Z'));
+    const h = await createHarness({
+      eventsBeforeHold: [{ type: 'tool_use', id: 't1', name: 'Bash', input: {} }],
+    });
+    const scopeId = commentRunScopeId('doc-token', 'comment-1');
+
+    const running = handleCommentMention(h.deps(event()));
+    await waitForActiveCommentScope(h, scopeId);
+
+    await vi.advanceTimersByTimeAsync(16 * 60 * 1000);
+    expect(h.agent.stopped).toBe(false);
+    expect(activeCommentScopes(h, scopeId)).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(44 * 60 * 1000 + 1000);
+    await running;
+
+    expect(h.agent.stopped).toBe(true);
+    expect(h.channel.inThreadReplies).toEqual(['等待预算已用尽（工具宽限 Bash，60 分钟觉醒）']);
+  });
+
   it('stops and replies when a per-comment timeout expires without another agent event', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-05-25T12:00:00.000Z'));
@@ -134,7 +172,7 @@ describe('comment lifecycle', () => {
     await running;
 
     expect(h.agent.stopped).toBe(true);
-    expect(h.channel.inThreadReplies).toEqual(['本次评论任务已超时，请重新 @ 我。']);
+    expect(h.channel.inThreadReplies).toEqual(['等待预算已用尽（普通空闲，1 分钟觉醒）']);
   });
 
   it('uses the per-comment timeout override for comment runs with subsequent events', async () => {
@@ -151,7 +189,7 @@ describe('comment lifecycle', () => {
     await running;
 
     expect(h.agent.stopped).toBe(true);
-    expect(h.channel.inThreadReplies).toEqual(['本次评论任务已超时，请重新 @ 我。']);
+    expect(h.channel.inThreadReplies).toEqual(['等待预算已用尽（普通空闲，1 分钟觉醒）']);
   });
 
   it('does not expire comment runs when the per-comment timeout override is off', async () => {
@@ -175,7 +213,10 @@ describe('comment lifecycle', () => {
   });
 });
 
-async function createHarness(options: { autoCompleteAgent?: boolean } = {}): Promise<{
+async function createHarness(options: {
+  autoCompleteAgent?: boolean;
+  eventsBeforeHold?: readonly AgentEvent[];
+} = {}): Promise<{
   tmp: TmpProfile;
   channel: FakeCommentChannel;
   agent: BlockingAgentAdapter;
@@ -229,7 +270,7 @@ async function createHarness(options: { autoCompleteAgent?: boolean } = {}): Pro
   });
   const profileConfig = profile(tmp.workspace);
   const activeRuns = new ActiveRuns();
-  const agent = new BlockingAgentAdapter(options.autoCompleteAgent === true);
+  const agent = new BlockingAgentAdapter(options.autoCompleteAgent === true, options.eventsBeforeHold);
   const executor = new RunExecutor({
     agent,
     pool: new ProcessPool(() => 2),
@@ -274,7 +315,10 @@ class BlockingAgentAdapter implements AgentAdapter {
   private releases: Array<(() => void) | undefined> = [];
   private wasStopped = false;
 
-  constructor(private readonly autoComplete: boolean = false) {}
+  constructor(
+    private readonly autoComplete: boolean = false,
+    private readonly eventsBeforeHold: readonly AgentEvent[] = [],
+  ) {}
 
   async isAvailable(): Promise<boolean> {
     return true;
@@ -303,6 +347,7 @@ class BlockingAgentAdapter implements AgentAdapter {
   }
 
   private async *events(runIndex: number): AsyncIterable<AgentEvent> {
+    for (const event of this.eventsBeforeHold) yield event;
     yield { type: 'text', delta: 'stale answer' };
     if (this.autoComplete) {
       yield { type: 'done', terminationReason: 'normal' };

@@ -7,16 +7,33 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -29,13 +46,58 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
     "type": "usage",
   },
   {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {
     "resumeHandle": "f8c7af3a-4080-4505-981e-87dc09f7f50e",
     "terminationReason": "normal",
     "type": "done",
+  },
+]
+`;
+
+exports[`D03b existing fixture baseline > antigravity/print-timeout-open-tool.jsonl 1`] = `
+[
+  {
+    "resumeHandle": "ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4",
+    "type": "system",
+  },
+  {
+    "id": "ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4:5",
+    "input": {
+      "CommandLine": "sleep 90 && echo done",
+      "command": "sleep 90 && echo done",
+    },
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "cachedInputTokens": 0,
+    "inputTokens": 37620,
+    "outputTokens": 67,
+    "reasoningOutputTokens": 0,
+    "type": "usage",
+  },
+  {
+    "delta": "The command \`sleep 90 && echo done\` has been launched in the background. Waiting for it to finish...
+",
+    "type": "text",
+  },
+  {
+    "id": "ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4:5",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
+  },
+  {
+    "message": "print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 && echo done, running 11s)",
+    "terminationReason": "failed",
+    "type": "error",
   },
 ]
 `;
@@ -47,6 +109,7 @@ exports[`D03b existing fixture baseline > antigravity/system-message-envelope-in
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -75,16 +138,33 @@ exports[`D03b existing fixture baseline > antigravity/tool-checkpoint-steps.json
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "f8c7af3a-4080-4505-981e-87dc09f7f50e:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -422,6 +502,7 @@ line-two
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -489,6 +570,7 @@ exports[`D03b existing fixture baseline > grok/s2-thoughts.jsonl 1`] = `
     "type": "thinking",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -963,6 +1045,7 @@ exports[`D03b existing fixture baseline > stderr/network/socket-tls-disconnect.t
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > A1: prependHeldBack strips a fingerprinted envelope and keeps the prose / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -1117,6 +1200,7 @@ FAIL tests/unit/agent/antigravity-jsonl.test.ts
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > B4: prependHeldBack leaves a vitest-title unclosed opener byte-identical / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -1227,22 +1311,39 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
+  },
+  {
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
+  },
+  {
+    "id": "<ID_1>:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
+  },
+  {
+    "id": "<ID_1>:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {
@@ -1274,6 +1375,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "invalidateResume": "<ID_1>",
     "message": "FAILED_PRECONDITION: leaked <SYSTEM_MESSAGE>
 {"type":"task_complete","task_id":"bg-1","cwd":"/tmp/workspace"}
 </SYSTEM_MESSAGE>",
@@ -1290,6 +1392,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "invalidateResume": "<ID_1>",
     "message": "FAILED_PRECONDITION: leaked <task_notification>
 {"type":"task_update","task_id":"tn-1"}
 </task_notification>",
@@ -1306,6 +1409,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "invalidateResume": "<ID_1>",
     "message": "FAILED: leaked <SYSTEM_MESSAGE>
 {"type":"task_complete","task_id":"bg-1","cwd":"/tmp/workspace"}
 </SYSTEM_MESSAGE>",
@@ -1460,6 +1564,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > TN1: prependHeldBack drops task_notification and keeps the title citation plus Chinese answer / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -1638,16 +1743,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -1672,16 +1794,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -1694,7 +1833,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "usage",
   },
   {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {
@@ -1708,6 +1847,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > fail() flushes held-back reply text and a resume handle from step_update / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -1729,6 +1869,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > finish(failed) flushes held-back reply text when the stream had no result / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -1765,21 +1906,39 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
+  },
+  {
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
+  },
+  {
+    "id": "<ID_1>:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
+  },
+  {
+    "id": "<ID_1>:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -1804,21 +1963,39 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
+  },
+  {
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
+  },
+  {
+    "id": "<ID_1>:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
+  },
+  {
+    "id": "<ID_1>:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "invalidateResume": "<ID_1>",
     "message": "timeout waiting for response",
     "terminationReason": "failed",
     "type": "error",
@@ -1946,6 +2123,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -1975,6 +2153,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "invalidateResume": "<ID_1>",
     "message": "FAILED_PRECONDITION (code 400): User location is not supported for the API use.",
     "terminationReason": "failed",
     "type": "error",
@@ -1989,9 +2168,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2014,16 +2195,33 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "input": {
+      "path": "/tmp/README.md",
+    },
+    "name": "view_file",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:1",
+    "isError": false,
+    "output": "# README
+",
+    "type": "tool_result",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2",
+    "input": {
+      "query": "timeout",
+    },
+    "name": "grep_search",
+    "type": "tool_use",
   },
   {
-    "type": "liveness",
+    "id": "<ID_1>:2",
+    "isError": false,
+    "output": "no matches",
+    "type": "tool_result",
   },
   {
     "type": "liveness",
@@ -2038,6 +2236,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2062,6 +2261,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
 exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/agent/antigravity-jsonl.test.ts > AntigravityJsonlTranslator > scrubs held-back agent_response text flushed through prependHeldBack / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2087,7 +2287,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > antigravity tests/unit/a
     "type": "system",
   },
   {
-    "content": "Antigravity print-timeout reached before a reply was produced.",
+    "content": "输出不完整（打印超时），可稍后继续",
     "type": "final_text",
   },
   {
@@ -2303,6 +2503,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2368,6 +2569,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > streams earlier agent messages but reserves the last one as the final answer / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2375,6 +2577,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "type": "text",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2390,6 +2593,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "type": "tool_use",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2421,6 +2625,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > translates current Codex agent messages emitted as completed items / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2470,6 +2675,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2494,9 +2700,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/codex-jsonl.test.ts > Codex JSONL translator > treats a message announced twice as one message / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2522,6 +2730,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/c
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'account-restart' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2540,6 +2749,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'bridge-idle-watchdog' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2558,6 +2768,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'exit-command' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2576,6 +2787,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'external-signal' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2594,6 +2806,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'meeting' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2612,6 +2825,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'policy-guard', …(1) } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2630,6 +2844,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'reconnect-command' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2648,6 +2863,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'runner-timeout' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2666,6 +2882,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'shutdown-signal' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2684,6 +2901,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'subscriber-abandoned' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2702,6 +2920,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'cd' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2720,6 +2939,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'new' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2738,6 +2958,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'resume' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2756,6 +2977,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'ws' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2774,6 +2996,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'codex' delivers a buffered answer only for explicit user stop: { type: 'user-stop' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2792,6 +3015,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > codex tests/unit/agent/g
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > clears pending assistant text on each tool_call and keeps only the last answer as final_text / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2809,6 +3033,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2826,6 +3051,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2843,9 +3069,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > does not emit text for a duplicated pre-tool assistant segment / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2864,6 +3092,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2881,6 +3110,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > does not resurrect discarded pre-tool assistant text on finish(failed) or fail() / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2908,6 +3138,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > does not resurrect discarded pre-tool assistant text on finish(failed) or fail() / 2 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2941,6 +3172,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -2993,9 +3225,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3016,6 +3250,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3033,6 +3268,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > holds back pre-tool assistant text instead of streaming it as text deltas / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3051,6 +3287,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3077,6 +3314,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3105,6 +3343,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3155,6 +3394,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3172,9 +3412,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/cursor-jsonl.test.ts > CursorJsonlTranslator > replaces a held assistant segment without emitting the earlier one as text / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3220,6 +3462,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > cursor tests/unit/agent/
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > does not publish pre-tool narration as a final answer / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3259,6 +3502,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > emits the held-back answer as final_text on cancel / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3286,6 +3530,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > flushes held-back text before the error on failure / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3305,9 +3550,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > flushes the previous message as progress text when the message id changes / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3317,6 +3564,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "type": "text",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3333,9 +3581,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > holds back the answer and emits it once as final_text at end_turn / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3352,6 +3602,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > ignores replayed history including tool events / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3368,6 +3619,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > merges late tool input, deduplicates updates and preserves the command / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3403,6 +3655,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3419,9 +3672,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
 exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/devin-acp.test.ts > Devin ACP translation > preserves paragraph whitespace and code indentation across chunks / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3470,6 +3725,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > devin tests/unit/agent/d
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3530,18 +3786,23 @@ YELLOWERR
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-idle-liveness.test.ts > Grok held-back answers and the idle watchdog > delivers one final_text when text chunks outlast the idle timeout / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3586,6 +3847,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > answers with the last non-empty pre-tool segment when no text follows the last tool / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3619,6 +3881,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3640,9 +3903,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > concatenates incremental text chunks into one final_text / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3783,6 +4048,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > does not prefix a failed finish with a control-token-only buffer / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3872,6 +4138,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > drops a final answer that is only a model control token / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3889,9 +4156,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > drops a final answer that is only a model control token / 2 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3915,6 +4184,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > drops a final answer that is only a model control token / 3 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3936,12 +4206,15 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > emits one bare system event per non-empty text chunk and none for an empty chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3963,6 +4236,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > emits pre-tool text as progress before the tool and keeps it out of the answer / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -3980,6 +4254,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_use",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4017,6 +4292,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > flushes buffered text before an error and before fail / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4036,6 +4312,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > flushes buffered text before an error and before fail / 2 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4199,6 +4476,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > maps a plain text run to system + final_text + done / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4289,9 +4567,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-jsonl.test.ts > GrokJsonlTranslator > shows every pre-tool segment as progress and answers with the text after the last tool / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4313,6 +4593,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4334,6 +4615,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4359,6 +4641,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "thinking",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4382,6 +4665,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4922,6 +5206,7 @@ line-two
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4961,6 +5246,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'account-restart' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4978,6 +5264,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'bridge-idle-watchdog' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -4995,6 +5282,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'exit-command' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5012,6 +5300,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'external-signal' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5029,6 +5318,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'meeting' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5046,6 +5336,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'policy-guard', …(1) } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5063,6 +5354,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'reconnect-command' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5080,6 +5372,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'runner-timeout' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5097,6 +5390,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'shutdown-signal' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5114,6 +5408,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'subscriber-abandoned' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5131,6 +5426,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'cd' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5148,6 +5444,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'new' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5165,6 +5462,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'resume' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5182,6 +5480,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'superseded', by: 'ws' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5199,6 +5498,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > 'grok' delivers a buffered answer only for explicit user stop: { type: 'user-stop' } / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5216,6 +5516,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > answers with the last pre-tool text after a user stop with no text after the tool / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5253,9 +5554,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > delivers held text as the card answer after a user stop / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5273,6 +5576,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/grok-stop-answer.test.ts > buffered answers after stop > shows text that arrived before a tool call as progress, not as the answer / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5290,6 +5594,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_use",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5341,6 +5646,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5370,6 +5676,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
     "type": "thinking",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5400,6 +5707,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/gr
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts EOF / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5423,6 +5731,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5446,6 +5755,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5469,6 +5779,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII below the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5492,6 +5803,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts EOF / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5515,6 +5827,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5538,6 +5851,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5561,6 +5875,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > ASCII exactly at the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5584,6 +5899,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts EOF / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5607,6 +5923,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5630,6 +5947,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5653,6 +5971,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese below the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5676,6 +5995,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts EOF / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5703,6 +6023,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts LF in next chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5730,6 +6051,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts LF in same chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5757,6 +6079,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > Chinese exactly at the default byte cap > accepts split UTF-8 / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5784,9 +6107,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > applies the cap per line when several valid records share a chunk / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5810,6 +6135,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/jsonl-line-cap.test.ts > jsonl line cap > counts CR and whitespace before trimming, excluding only the LF delimiter / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -5973,9 +6299,11 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > grok tests/unit/agent/js
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > dedupes an identical assistant message repeat / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6020,6 +6348,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > finish(interrupted) flushes pending text and marks done interrupted / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6060,6 +6389,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6099,6 +6429,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6120,6 +6451,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
 exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/kimi-jsonl.test.ts > KimiJsonlTranslator > streams intermediate assistant messages as text deltas / 1 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6141,6 +6473,7 @@ exports[`D03b frozen unit protocol inputs at 222d4c72 > kimi tests/unit/agent/ki
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6166,9 +6499,11 @@ exports[`D03b real capture baseline > antigravity/answer-only.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6222,27 +6557,46 @@ exports[`D03b real capture baseline > antigravity/long-tool.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "id": "<SESSION_1>:2",
+    "input": {
+      "CommandLine": "sleep 45 && echo done",
+      "command": "sleep 45 && echo done",
+    },
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "id": "<SESSION_1>:2",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+done
+",
+    "type": "tool_result",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6274,33 +6628,54 @@ exports[`D03b real capture baseline > antigravity/narration-tool-answer.jsonl 1`
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "id": "<SESSION_1>:2",
+    "input": {
+      "CommandLine": "echo hello",
+      "command": "echo hello",
+    },
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "id": "<SESSION_1>:2",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+hello
+",
+    "type": "tool_result",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -6331,753 +6706,1003 @@ exports[`D03b real capture baseline > antigravity/stop-mid-answer.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -7406,42 +8031,77 @@ exports[`D03b real capture baseline > antigravity/two-tools.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "id": "<SESSION_1>:2",
+    "input": {
+      "CommandLine": "echo one",
+      "command": "echo one",
+    },
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "id": "<SESSION_1>:2",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+one
+",
+    "type": "tool_result",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "id": "<SESSION_1>:4",
+    "input": {
+      "CommandLine": "echo two",
+      "command": "echo two",
+    },
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "id": "<SESSION_1>:4",
+    "isError": false,
+    "output": "Command exited with code 0.
+
+Command output:
+two
+",
+    "type": "tool_result",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -7784,6 +8444,7 @@ exports[`D03b real capture baseline > codex/answer-only.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -7832,6 +8493,7 @@ exports[`D03b real capture baseline > codex/long-tool.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -7855,6 +8517,7 @@ exports[`D03b real capture baseline > codex/long-tool.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -7886,6 +8549,7 @@ exports[`D03b real capture baseline > codex/narration-tool-answer.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -7909,6 +8573,7 @@ exports[`D03b real capture baseline > codex/narration-tool-answer.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -7944,6 +8609,7 @@ exports[`D03b real capture baseline > codex/stop-mid-answer.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8274,6 +8940,7 @@ exports[`D03b real capture baseline > codex/two-tools.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8312,6 +8979,7 @@ exports[`D03b real capture baseline > codex/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8342,33 +9010,42 @@ exports[`D03b real capture baseline > cursor/answer-only.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8402,66 +9079,86 @@ exports[`D03b real capture baseline > cursor/long-tool.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8526,18 +9223,22 @@ exports[`D03b real capture baseline > cursor/long-tool.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8561,54 +9262,70 @@ exports[`D03b real capture baseline > cursor/narration-tool-answer.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8662,18 +9379,22 @@ exports[`D03b real capture baseline > cursor/narration-tool-answer.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -8701,96 +9422,126 @@ exports[`D03b real capture baseline > cursor/stop-mid-answer.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9113,78 +9864,102 @@ exports[`D03b real capture baseline > cursor/two-tools.jsonl 1`] = `
     "type": "system",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9288,15 +10063,18 @@ exports[`D03b real capture baseline > cursor/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
     "type": "liveness",
   },
   {
     "type": "liveness",
   },
   {
-    "type": "liveness",
-  },
-  {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9314,9 +10092,11 @@ exports[`D03b real capture baseline > cursor/two-tools.jsonl 1`] = `
 exports[`D03b real capture baseline > devin/answer-only.jsonl 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9397,21 +10177,27 @@ exports[`D03b real capture baseline > devin/long-tool.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9430,15 +10216,19 @@ DONE",
 exports[`D03b real capture baseline > devin/narration-tool-answer.jsonl 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9477,18 +10267,23 @@ exports[`D03b real capture baseline > devin/narration-tool-answer.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9559,123 +10354,163 @@ exports[`D03b real capture baseline > devin/stop-mid-answer.jsonl 1`] = `
     "type": "thinking",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9812,24 +10647,31 @@ exports[`D03b real capture baseline > devin/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9848,15 +10690,19 @@ DONE",
 exports[`D03b real capture baseline > grok/answer-only.jsonl 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -9934,63 +10780,83 @@ Setting \`block_until_ms\`",
     "type": "thinking",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10026,6 +10892,7 @@ Setting \`block_until_ms\`",
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10067,48 +10934,63 @@ exports[`D03b real capture baseline > grok/narration-tool-answer.jsonl 1`] = `
     "type": "thinking",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10143,60 +11025,79 @@ exports[`D03b real capture baseline > grok/narration-tool-answer.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10277,45 +11178,59 @@ exports[`D03b real capture baseline > grok/two-tools.jsonl 1`] = `
     "type": "thinking",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10375,6 +11290,7 @@ exports[`D03b real capture baseline > grok/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10407,6 +11323,7 @@ exports[`D03b real capture baseline > kimi/answer-only.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10461,6 +11378,7 @@ exports[`D03b real capture baseline > kimi/long-tool.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10500,6 +11418,7 @@ exports[`D03b real capture baseline > kimi/narration-tool-answer.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10528,6 +11447,7 @@ exports[`D03b real capture baseline > kimi/stop-mid-answer.jsonl 1`] = `
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10881,6 +11801,7 @@ exports[`D03b real capture baseline > kimi/two-tools.jsonl 1`] = `
     "type": "tool_result",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10911,6 +11832,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'empt
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'error after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10928,6 +11850,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'erro
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'interrupted after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10945,6 +11868,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'inte
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'late text and repeated terminal' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10961,6 +11885,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'late
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'narration only before EOF' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10978,9 +11903,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'narr
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'repeated message' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -10997,6 +11924,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'repe
 exports[`D03b synthetic boundary baseline (not CLI captures) > antigravity 'tool without result' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11137,6 +12065,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'empty answ
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'error after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11154,6 +12083,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'error afte
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'interrupted after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11172,6 +12102,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'interrupte
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'late text and repeated terminal' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11189,6 +12120,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'late text 
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'narration only before EOF' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11206,9 +12138,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'narration 
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'repeated message' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11226,6 +12160,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'repeated m
 exports[`D03b synthetic boundary baseline (not CLI captures) > codex 'tool without result' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11266,6 +12201,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'empty ans
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'error after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11285,6 +12221,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'error aft
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'interrupted after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11302,6 +12239,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'interrupt
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'late text and repeated terminal' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11318,6 +12256,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'late text
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'narration only before EOF' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11337,9 +12276,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'narration
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'repeated message' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11356,6 +12297,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'repeated 
 exports[`D03b synthetic boundary baseline (not CLI captures) > cursor 'tool without result' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11391,6 +12333,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'empty answ
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'error after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11410,6 +12353,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'error afte
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'interrupted after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11427,6 +12371,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'interrupte
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'late text and repeated terminal' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11443,6 +12388,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'late text 
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'narration only before EOF' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11459,9 +12405,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'narration 
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'repeated message' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11478,6 +12426,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'repeated m
 exports[`D03b synthetic boundary baseline (not CLI captures) > devin 'tool without result' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11519,6 +12468,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'empty answe
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'error after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11538,6 +12488,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'error after
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'interrupted after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11555,6 +12506,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'interrupted
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'late text and repeated terminal' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11571,6 +12523,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'late text a
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'narration only before EOF' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11590,9 +12543,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'narration o
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'repeated message' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11609,6 +12564,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'repeated me
 exports[`D03b synthetic boundary baseline (not CLI captures) > grok 'tool without result' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11654,6 +12610,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'empty answe
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'error after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11673,6 +12630,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'error after
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'interrupted after text' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11690,6 +12648,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'interrupted
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'late text and repeated terminal' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11706,6 +12665,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'late text a
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'narration only before EOF' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11725,9 +12685,11 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'narration o
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'repeated message' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {
+    "progress": true,
     "type": "liveness",
   },
   {
@@ -11744,6 +12706,7 @@ exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'repeated me
 exports[`D03b synthetic boundary baseline (not CLI captures) > kimi 'tool without result' 1`] = `
 [
   {
+    "progress": true,
     "type": "liveness",
   },
   {

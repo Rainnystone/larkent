@@ -295,6 +295,7 @@ async function runAutomationAgentFireBody(
     });
   } catch (error) {
     if (!(error instanceof TurnStartFailed)) throw error;
+    log.fail('auto', error.cause ?? error, { event: 'agent-start-failed' });
     noteUnanchored(runtime, fire, turnId, scope, {
       kind: 'failed', cause: 'unclassified', retriable: false, needsHuman: true,
     });

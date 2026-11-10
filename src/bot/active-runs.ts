@@ -9,16 +9,22 @@ export interface RunHandle {
   stopRequest?: StopRequest;
   /** Set once by RunExecutor after child exit, cleanup and source drainage. */
   outcome?: RunOutcome;
-  /** Last agent-stream event (or register time if none yet). */
+  /** Last watchdog progress (or register time if none yet). Liveness does not advance this. */
   lastEventAt: number;
   /** True while the stream processor has a tool call in flight. */
   hasOpenToolCall?: boolean;
+  /** Configured normal idle bound; recovery uses remaining time after an outage. */
+  idleTimeoutMs?: number;
   /** Set by recovery when the run was silent before the outage. */
   stallDeadlineMs?: number;
-  /** Set once a stall deadline is armed; later reviews must not extend it. */
+  /** Leftover: recovery no longer skips later reviews based on this. */
   stallArmedAt?: number;
-  /** Installed by the stream processor so recovery can shorten the idle bound. */
+  /** Installed by the stream processor; treated as extend-only. */
   armStallDeadline?: (delayMs: number) => void;
+  /** Watchdog-owned remaining awake budget; recovery must not reconstruct this from wall clocks. */
+  remainingWatchdogMs?: () => number | undefined;
+  /** Recovery may only raise this floor; it must not shorten an existing deadline. */
+  extendWatchdogMs?: (minRemainingMs: number) => void;
 }
 
 export function noteRunEvent(handle: RunHandle, at = Date.now()): void {

@@ -401,6 +401,14 @@ describe('profile schema', () => {
       accounts: { app },
     });
     expect(antigravity.agent.options).toEqual({ printTimeout: '15m' });
+    expect(
+      normalizeProfileConfig({
+        schemaVersion: 3,
+        agent: { kind: 'antigravity', options: { printTimeout: '0s' } },
+        agentKind: 'antigravity',
+        accounts: { app },
+      }).agent.options,
+    ).toEqual({ printTimeout: '0s' });
     expect(() =>
       normalizeProfileConfig({
         schemaVersion: 3,

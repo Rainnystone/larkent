@@ -16,11 +16,11 @@ describe('run outcome card copy', () => {
     const idleCard = JSON.stringify(renderCard(idle));
     const runnerCard = JSON.stringify(renderCard(runner));
 
-    expect(idleCard).toContain('15 分钟无响应');
+    expect(idleCard).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
     expect(idleCard).not.toContain('运行超时');
     expect(runnerCard).toContain('运行超时');
-    expect(runnerCard).not.toContain('分钟无响应');
-    expect(renderText(idle)).toContain('15 分钟无响应');
+    expect(runnerCard).not.toContain('等待预算已用尽');
+    expect(renderText(idle)).toContain('等待预算已用尽（普通空闲，15 分钟觉醒）');
     expect(renderText(runner)).toContain('运行超时');
     expect(idleCard).not.toEqual(runnerCard);
   });

@@ -31,8 +31,12 @@ const SYSTEM_MESSAGE_ENVELOPE_INCIDENT_FIXTURE = join(
   process.cwd(),
   'tests/fixtures/antigravity/system-message-envelope-incident.jsonl',
 );
-const PRINT_TIMEOUT_HINT = 'Antigravity print-timeout reached before a reply was produced.';
-const IDLE_WATCHDOG_COPY = '分钟无响应';
+const PRINT_TIMEOUT_OPEN_TOOL_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/print-timeout-open-tool.jsonl',
+);
+const PRINT_TIMEOUT_HINT = '输出不完整（打印超时），可稍后继续';
+const IDLE_WATCHDOG_COPY = '等待预算已用尽';
 const INCIDENT_PROSE = INCIDENT_A_PROSE;
 const INCIDENT_ENVELOPE = INCIDENT_A_ENVELOPE;
 
@@ -57,6 +61,10 @@ const INIT = {
 // Parsing assertions omit activity; D03b replay and core/watchdog tests pin liveness.
 function collect(translator: AntigravityJsonlTranslator, lines: unknown[]): AgentEvent[] {
   return lines.flatMap((line) => translator.translate(line)).filter(event => event.type !== 'liveness');
+}
+
+function terminalResultCalls(info: { mock: { calls: unknown[][] } }): unknown[][] {
+  return info.mock.calls.filter((call) => call[0] === 'agent' && call[1] === 'terminal-result');
 }
 
 function projectedRenderText(events: AgentEvent[]): string {
@@ -209,16 +217,112 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: 'FAILED_PRECONDITION (code 400): User location is not supported for the API use.',
         terminationReason: 'failed',
+        invalidateResume: CONVERSATION,
       },
     ]);
     expect(t.terminalEmitted()).toBe(true);
   });
 
-  it('recognizes official tool and checkpoint steps without tool events or drift', () => {
+  it('declares invalidateResume on CLI result ERROR and FAILED, not on fail()', () => {
+    const errorEvents = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      { event: 'result', result: { conversation_id: CONVERSATION, status: 'ERROR', error: 'sticky' } },
+    ]);
+    expect(errorEvents.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'sticky',
+      terminationReason: 'failed',
+      invalidateResume: CONVERSATION,
+    });
+    const failedEvents = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      { event: 'result', result: { conversation_id: CONVERSATION, status: 'FAILED', error: 'sticky' } },
+    ]);
+    expect(failedEvents.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'sticky',
+      terminationReason: 'failed',
+      invalidateResume: CONVERSATION,
+    });
+    const failEvents = new AntigravityJsonlTranslator().fail('agy exited with code 1');
+    expect(failEvents.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'agy exited with code 1',
+      terminationReason: 'failed',
+    });
+  });
+
+  // agy 1.5.3 probe 2026-11-09: SIGTERM mid-tool and an
+  // unattached invalid-model run both report ERROR, and the next resume succeeds.
+  it('keeps resume for an agy interrupt echo and for a result that never attached to a conversation', () => {
+    const interrupted = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      { event: 'result', result: {
+        conversation_id: CONVERSATION, status: 'ERROR', response: '', error: 'interrupted',
+        num_turns: 2, finished_reason: 'interrupted',
+      } },
+    ]);
+    expect(interrupted.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'interrupted',
+      terminationReason: 'failed',
+    });
+    const unattached = collect(new AntigravityJsonlTranslator(), [
+      { event: 'result', result: {
+        conversation_id: '', status: 'ERROR', response: '', finished_reason: 'error',
+        error: 'invalid model selection (--model "lark-nonexistent-model-0" --effort ""): model lark-nonexistent-model-0 is not recognized',
+      } },
+    ]);
+    expect(unattached).toEqual([{
+      type: 'error',
+      message: 'invalid model selection (--model "lark-nonexistent-model-0" --effort ""): model lark-nonexistent-model-0 is not recognized',
+      terminationReason: 'failed',
+    }]);
+  });
+
+  // agy 1.5.3 probe 2026-11-10: the resume right after this ERROR succeeds
+  // with the conversation's context, so the handle stays resumable.
+  it('keeps resume for a captured print-timeout ERROR with an open background tool', () => {
+    const events = collect(new AntigravityJsonlTranslator(), loadJsonl(PRINT_TIMEOUT_OPEN_TOOL_FIXTURE));
+    expect(events.find((event) => event.type === 'error')).toEqual({
+      type: 'error',
+      message: 'print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 && echo done, running 11s)',
+      terminationReason: 'failed',
+    });
+  });
+
+  it('pairs official tool steps and leaves checkpoint as a non-tool ping', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, loadJsonl(TOOL_CHECKPOINT_FIXTURE));
-    expect(events).toEqual([{ type: 'system', resumeHandle: CONVERSATION }]);
-    expect(events.filter((e) => e.type === 'tool_use' || e.type === 'tool_result')).toEqual([]);
+    expect(events.filter((event) => event.type === 'system')).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_use' || event.type === 'tool_result')).toEqual([
+      {
+        type: 'tool_use',
+        id: `${CONVERSATION}:1`,
+        name: 'view_file',
+        input: { path: '/tmp/README.md' },
+      },
+      {
+        type: 'tool_result',
+        id: `${CONVERSATION}:1`,
+        output: '# README\n',
+        isError: false,
+      },
+      {
+        type: 'tool_use',
+        id: `${CONVERSATION}:2`,
+        name: 'grep_search',
+        input: { query: 'timeout' },
+      },
+      {
+        type: 'tool_result',
+        id: `${CONVERSATION}:2`,
+        output: 'no matches',
+        isError: false,
+      },
+    ]);
     expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
   });
 
@@ -284,8 +388,11 @@ describe('AntigravityJsonlTranslator', () => {
   it('emits a print-timeout hint for the incident empty SUCCESS after tools and checkpoint', () => {
     const t = new AntigravityJsonlTranslator();
     const events = collect(t, loadJsonl(EMPTY_SUCCESS_PRINT_TIMEOUT_FIXTURE));
-    expect(events).toEqual([
+    expect(events.filter((event) => event.type === 'system')).toEqual([
       { type: 'system', resumeHandle: CONVERSATION },
+    ]);
+    expect(events.filter((event) => event.type === 'tool_use' || event.type === 'tool_result')).toHaveLength(4);
+    expect(events.filter((event) => event.type === 'usage' || event.type === 'final_text' || event.type === 'done')).toEqual([
       {
         type: 'usage',
         inputTokens: 19469,
@@ -298,7 +405,7 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     const body = projectedRenderText(events);
     expect(body.trim()).not.toBe('');
-    expect(body).toContain('print-timeout');
+    expect(body).toContain('打印超时');
     expect(body).not.toContain(IDLE_WATCHDOG_COPY);
     expect(t.protocolDrift()).toEqual({ unknownEvents: 0, anomalies: 0 });
     expect(t.terminalEmitted()).toBe(true);
@@ -405,6 +512,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: 'timeout waiting for response',
         terminationReason: 'failed',
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -765,6 +873,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED_PRECONDITION: leaked ${INCIDENT_ENVELOPE}`,
         terminationReason: 'failed',
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -789,6 +898,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED: leaked ${INCIDENT_ENVELOPE}`,
         terminationReason: 'failed',
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -818,6 +928,14 @@ describe('AntigravityJsonlTranslator', () => {
       },
     ]);
     expect(info.mock.calls).toEqual([
+      [
+        'agent',
+        'terminal-result',
+        {
+          status: 'SUCCESS',
+          conversationId: CONVERSATION,
+        },
+      ],
       [
         'jsonl',
         'system_message_scrubbed',
@@ -989,6 +1107,7 @@ describe('AntigravityJsonlTranslator', () => {
         type: 'error',
         message: `FAILED_PRECONDITION: leaked ${TASK_NOTIFICATION_ENVELOPE}`,
         terminationReason: 'failed',
+        invalidateResume: CONVERSATION,
       },
     ]);
   });
@@ -1009,6 +1128,14 @@ describe('AntigravityJsonlTranslator', () => {
       },
     ]);
     expect(info.mock.calls).toEqual([
+      [
+        'agent',
+        'terminal-result',
+        {
+          status: 'SUCCESS',
+          conversationId: CONVERSATION,
+        },
+      ],
       [
         'jsonl',
         'task_notification_scrubbed',
@@ -1082,6 +1209,79 @@ describe('AntigravityJsonlTranslator', () => {
       expect(JSON.stringify(info.mock.calls)).not.toContain(row.input);
     },
   );
+  it('logs a SUCCESS terminal-result without the reply body or secrets in it', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'SUCCESS',
+          response: 'visible-reply-body Bearer sk-secret-token',
+          num_turns: 1,
+        },
+      },
+    ]);
+    expect(terminalResultCalls(info)).toEqual([
+      [
+        'agent',
+        'terminal-result',
+        {
+          status: 'SUCCESS',
+          conversationId: CONVERSATION,
+          numTurns: 1,
+        },
+      ],
+    ]);
+    const serialized = JSON.stringify(info.mock.calls);
+    expect(serialized).not.toContain('visible-reply-body');
+    expect(serialized).not.toContain('sk-secret-token');
+  });
+
+  it('logs an ERROR terminal-result with redacted truncated error text and no reply body', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const secret = 'sk-live-secret-value';
+    const errorMessage = `FAILED_PRECONDITION (code 400): token=${secret} ${'x'.repeat(250)}`;
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      INIT,
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'ERROR',
+          response: 'error-reply-body-must-not-log',
+          error: errorMessage,
+          num_turns: 2,
+        },
+      },
+    ]);
+    const calls = terminalResultCalls(info);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual([
+      'agent',
+      'terminal-result',
+      expect.objectContaining({
+        status: 'ERROR',
+        conversationId: CONVERSATION,
+        numTurns: 2,
+      }),
+    ]);
+    const logged = (calls[0]?.[2] ?? {}) as { errorMessage?: string };
+    expect(logged.errorMessage).toEqual(expect.any(String));
+    expect(logged.errorMessage!.length).toBeLessThanOrEqual(200);
+    expect(logged.errorMessage).toContain('FAILED_PRECONDITION');
+    expect(logged.errorMessage).toContain('(code 400)');
+    expect(logged.errorMessage).not.toContain(secret);
+    expect(logged.errorMessage).toContain('[REDACTED]');
+    const serialized = JSON.stringify(info.mock.calls);
+    expect(serialized).not.toContain('error-reply-body-must-not-log');
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(errorMessage);
+  });
+
   it('flushes held text as scrubbed progress before a native ERROR result', () => {
     const translator = new AntigravityJsonlTranslator();
     translator.translate({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: '<SYSTEM_MESSAGE>[Message] internal</SYSTEM_MESSAGE>Partial' } });

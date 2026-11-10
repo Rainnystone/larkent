@@ -7,6 +7,7 @@ import { createContinuations } from '../../../src/bot/continuation';
 import { describeRunOutcome } from '../../../src/bot/run-outcome';
 import { capabilityForProfile } from '../../../src/agent/capability';
 import { ActiveRuns } from '../../../src/bot/active-runs';
+import * as watchdogApi from '../../../src/bot/idle-watchdog';
 import { Outbox } from '../../../src/bot/outbox';
 import { ProcessPool } from '../../../src/bot/process-pool';
 import { executeTurn, turnStderrSignatures, type TurnResult } from '../../../src/bot/turn';
@@ -170,7 +171,7 @@ it('stops a silent chat on its idle bound and delivers its continuation notice',
   const result = await pending;
   expect(result.ok && result.state.terminal).toBe('idle_timeout');
   expect(result.ok && result.handle.outcome).toMatchObject({ kind: 'interrupted', reason: { type: 'bridge-idle-watchdog' } });
-  expect(JSON.stringify(h.channel.sent.map(row => row.content))).toContain('空闲超时');
+  expect(JSON.stringify(h.channel.sent.map(row => row.content))).toContain('等待预算已用尽');
   expect(h.journal.get('turn')?.continuation?.status).toBe('offered');
 });
 
@@ -196,7 +197,42 @@ it.each([
   expect(h.journal.get('turn')?.outcome).toEqual(result.ok && result.handle.outcome);
 });
 
-it('updates the returned handle activity time when a liveness event arrives', async () => {
+it.each([
+  ['chat', false],
+  ['agent-task', true],
+] as const)('%s path updates lastEventAt once through noteWatchdogActivity', async (_label, automation) => {
+  const activity = vi.spyOn(watchdogApi, 'noteWatchdogActivity');
+  const h = await fixture({ events: [] });
+  const originalRun = h.agent.run.bind(h.agent);
+  h.agent.run = options => {
+    const run = originalRun(options);
+    return { ...run, runId: run.runId, waitForExit: run.waitForExit.bind(run), stop: run.stop.bind(run),
+      events: { async *[Symbol.asyncIterator]() {
+        vi.setSystemTime(new Date('2026-10-27T13:00:01Z'));
+        yield { type: 'text' as const, delta: 'hi' };
+      } },
+    };
+  };
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-10-27T13:00:00Z'));
+  activity.mockClear();
+  try {
+    const result = await executeTurn({
+      run: automation
+        ? { ...h.run, forceResumeHandle: null, bypassPool: true, promptVariant: 'automation' }
+        : h.run,
+      idleTimeoutMs: 15 * 60_000,
+      delivery: automation ? automationDelivery(h) : h.delivery,
+    });
+    expect(result.ok && result.handle.lastEventAt).toBe(Date.parse('2026-10-27T13:00:01Z'));
+    expect(activity).toHaveBeenCalledTimes(1);
+    expect(activity.mock.calls[0]?.[2]).toEqual({ type: 'text', delta: 'hi' });
+  } finally {
+    activity.mockRestore();
+  }
+});
+
+it('does not treat a liveness event as watchdog progress for lastEventAt', async () => {
   const h = await fixture();
   const originalRun = h.agent.run.bind(h.agent);
   h.agent.run = options => {
@@ -211,7 +247,7 @@ it('updates the returned handle activity time when a liveness event arrives', as
   vi.useFakeTimers();
   vi.setSystemTime(new Date('2026-10-27T13:00:00Z'));
   const result = await executeTurn({ run: h.run, delivery: h.delivery });
-  expect(result.ok && result.handle.lastEventAt).toBe(Date.parse('2026-10-27T13:00:01Z'));
+  expect(result.ok && result.handle.lastEventAt).toBe(Date.parse('2026-10-27T13:00:00Z'));
 });
 
 function automationDelivery(h: Awaited<ReturnType<typeof fixture>>) {

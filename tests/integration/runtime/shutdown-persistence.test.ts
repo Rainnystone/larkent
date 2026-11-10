@@ -352,7 +352,7 @@ describe('settled profile persistence', () => {
       expect(pool?.snapshot()).toMatchObject({ active: 1, waiting: 0 });
       expect(spawn).toHaveBeenCalledTimes(1);
       diagnostics.expect({
-        warnings: [/\[policy\.denied\].*code=reconnect-in-progress/, /\[run\.post-done-exit-timeout\].*profile=test.*agent=claude/],
+        warnings: [/\[policy\.denied\].*code=reconnect-in-progress/, /\[run\.post-terminal-exit-timeout\].*profile=test.*agent=claude/],
         errors: [/\[stream\.fail\].*err=active child remains owned/, /\[disconnect\.fail\].*step=stopAll.*err=failed to stop all active runs/],
       });
     } finally { run.cleanup.resolve(); }
@@ -399,7 +399,7 @@ describe('settled profile persistence', () => {
     await restored.load();
     expect(restored.resumeFor('oc_test', h.root)).toBe('final-on-stop');
     diagnostics.expect({
-      warnings: [/\[run\.post-done-exit-timeout\].*profile=test.*agent=claude/],
+      warnings: [/\[run\.post-terminal-exit-timeout\].*profile=test.*agent=claude/],
       errors: [/\[stream\.fail\].*err=child cleanup failed/, /\[disconnect\.fail\].*step=stopAll.*err=failed to stop all active runs/],
     });
   }, TEST_TIMEOUT_MS);

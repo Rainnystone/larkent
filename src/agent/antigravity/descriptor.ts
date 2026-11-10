@@ -1,7 +1,8 @@
+import { getRunIdleTimeoutMs } from '../../config/schema';
+import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platform/executable';
 import { defineDescriptor } from '../definition';
 import { AntigravityAdapter } from './adapter';
 import { antigravityMetadata } from './metadata';
-import { resolveExecutablePath, resolveFirstAvailableBinary } from '../../platform/executable';
 import { antigravityStderrSignatures } from './stderr-signatures';
 
 export const antigravityDescriptor = defineDescriptor({
@@ -19,5 +20,6 @@ export const antigravityDescriptor = defineDescriptor({
     binary: profile.agent.binaryPath ?? antigravityMetadata.binaryNames[0],
     agentOptions: profile.agent.options,
     larkChannel,
+    idleTimeoutMs: getRunIdleTimeoutMs({ preferences: profile.preferences }),
   }),
 });

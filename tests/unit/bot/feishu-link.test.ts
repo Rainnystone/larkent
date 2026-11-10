@@ -417,7 +417,7 @@ describe('FeishuLink', () => {
     expect(amended).toHaveLength(1);
     expect(amended[0]!.hostSuspended).toBe(true);
     expect(amended[0]!.suspendStartedAt).toBe(now - 5 * 60_000);
-    expect(openTool.stallDeadlineMs).toBe(2 * 60_000);
+    expect(openTool.stallDeadlineMs).toBeUndefined();
   });
 
   it('applies a late sleep probe to the outage that started it', async () => {

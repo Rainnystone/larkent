@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { writeScriptedJsonlExecutable, type ScriptedJsonlExecutable } from './fake-executable.js';
 
@@ -14,8 +15,70 @@ export interface JsonlScript {
   recordAppendPath?: string;
   holdAfterLines?: boolean;
   closeStdoutAfterLines?: boolean;
+  onSigterm?: { lines?: unknown[]; stderr?: string; exitCode?: number };
   /** Devin ACP fixture session id (legacy property name for shared controls). */
   exportSessionId?: string;
+}
+
+export type AgyScenario =
+  | 'success' | 'sticky-error' | 'interrupted-on-sigterm' | 'hold-for-kill' | 'exit-without-result' | 'print-timeout-open-tool';
+
+export const AGY_STICKY_ERROR =
+  'agent executor error: generating and executing: request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": Bad Gateway';
+
+/** Conversation id of the captured `print-timeout-open-tool` fixture (agy 1.5.3 probe 2026-11-10, trial 1). */
+export const AGY_PRINT_TIMEOUT_CAPTURED_CONVERSATION = 'ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4';
+
+function agyCapture(name: string, conversationId: string): string {
+  return readFileSync(join(process.cwd(), 'tests/fixtures/antigravity', name), 'utf8')
+    .split(AGY_PRINT_TIMEOUT_CAPTURED_CONVERSATION).join(conversationId);
+}
+
+/**
+ * agy 1.5.3 stream-json shapes from the 2026-11-09 captures
+ * (round4 01-cli-capture-canonical-sticky, round5 agy-probe-1).
+ */
+export function agyScript(scenario: AgyScenario, conversationId: string, answer = PIN_ANSWER): JsonlScript {
+  const step = (step_index: number, step_type: string, extra: Record<string, unknown> = {}) => ({
+    event: 'step_update',
+    step_update: { conversation_id: conversationId, step_index, state: 'DONE', step_type, ...extra },
+  });
+  const started = [
+    { event: 'init', conversation_id: conversationId, init: { model: 'gemini-3.8-flash-low', cwd: '/tmp', tools: [] } },
+    step(0, 'user_input'),
+  ];
+  const tool = step(1, 'tool', {
+    state: 'ACTIVE', tool_name: 'run_command', tool_info: { name: 'run_command', parameters: { CommandLine: 'sleep 25' } },
+  });
+  const result = (fields: Record<string, unknown>) => ({ event: 'result', result: { conversation_id: conversationId, ...fields } });
+  switch (scenario) {
+    case 'success':
+      return { lines: [...started, step(1, 'agent_response', { text_delta: answer }), result({ status: 'SUCCESS', response: answer })] };
+    case 'sticky-error':
+      // The resumed turn answered, yet agy still reports the earlier error.
+      return { lines: [...started, step(1, 'agent_response', { text_delta: answer }),
+        result({ status: 'ERROR', response: `${answer}\n`, error: AGY_STICKY_ERROR, finished_reason: 'error' })] };
+    case 'interrupted-on-sigterm':
+      return { lines: [...started, tool], holdAfterLines: true, onSigterm: {
+        lines: [result({ status: 'ERROR', response: '', error: 'interrupted', finished_reason: 'interrupted' })],
+        stderr: 'error: interrupted\n', exitCode: 1,
+      } };
+    case 'hold-for-kill':
+      return { lines: [...started, tool], holdAfterLines: true };
+    case 'exit-without-result':
+      return { lines: started, stderr: 'agy exploded\n', exitCode: 1 };
+    case 'print-timeout-open-tool':
+      // Real stdout/stderr/exit of `--print-timeout 25s` while `sleep 90` ran in the background.
+      return {
+        lines: agyCapture('print-timeout-open-tool.jsonl', conversationId).split('\n').filter(Boolean).map(line => JSON.parse(line) as unknown),
+        stderr: agyCapture('print-timeout-open-tool.stderr.txt', conversationId),
+        exitCode: 3,
+      };
+    default: {
+      const _never: never = scenario;
+      throw new Error(`unhandled agy scenario: ${String(_never)}`);
+    }
+  }
 }
 
 export interface KindCliInstall {

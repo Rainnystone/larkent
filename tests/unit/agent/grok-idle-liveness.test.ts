@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GrokJsonlTranslator } from '../../../src/agent/grok/jsonl';
 import type { AgentEvent, AgentRun } from '../../../src/agent/types';
 import type { RunHandle } from '../../../src/bot/active-runs';
-import { createIdleWatchdog, type IdleWatchdog } from '../../../src/bot/idle-watchdog';
+import { createIdleWatchdog, noteWatchdogActivity, type IdleWatchdog } from '../../../src/bot/idle-watchdog';
 import { shouldDeliverAgentEvent } from '../../../src/bot/run-outcome';
 
 const SESSION = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
-const IDLE_MS = 10_000;
+// Idle is longer than the held-back gaps so this test does not depend on
+// liveness re-arming the watchdog (ticket 04: heartbeat is not progress).
+const IDLE_MS = 60_000;
 const GAP_MS = 4_000;
 const CHUNKS = ['Held ', 'back ', 'answer ', 'stays ', 'whole.'];
 const ANSWER = CHUNKS.join('');
@@ -26,7 +28,7 @@ describe('Grok held-back answers and the idle watchdog', () => {
       for (const chunk of CHUNKS) {
         await vi.advanceTimersByTimeAsync(GAP_MS);
         const activity = translator.translate({ type: 'text', data: chunk });
-        expect(activity).toEqual([{ type: 'liveness' }]);
+        expect(activity).toEqual([{ type: 'liveness', progress: true }]);
         consume(watchdog, handle, activity, delivered);
       }
       await vi.advanceTimersByTimeAsync(GAP_MS);
@@ -50,7 +52,7 @@ describe('Grok held-back answers and the idle watchdog', () => {
   });
 });
 
-/** Same liveness rules as processAgentStream: metadata and liveness rearm without rendering. */
+/** Same consume path as processAgentStream: liveness is delivered to the watchdog, not rendered. */
 function consume(
   watchdog: IdleWatchdog,
   handle: RunHandle,
@@ -58,7 +60,7 @@ function consume(
   delivered: AgentEvent[],
 ): void {
   for (const event of events) {
-    if (!handle.interrupted) watchdog.noteDelivered(event);
+    noteWatchdogActivity(handle, watchdog, event);
     if (event.type === 'system' || event.type === 'liveness') continue;
     if (!shouldDeliverAgentEvent(handle, event)) continue;
     delivered.push(event);
