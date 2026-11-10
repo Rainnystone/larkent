@@ -108,7 +108,7 @@ export function runDevinAcp(input: {
   const settlement = (async () => {
     let terminal: AgentEvent[] = [];
     try {
-      const initialized = await connection.agent.request('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'larkent', version: '0.8.0' } });
+      const initialized = await connection.agent.request('initialize', { protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 'larkent', version: '0.9.0' } });
       if (initialized.protocolVersion !== 1) throw new Error('Unsupported Devin ACP protocol version');
       if (stopping) throw new Error('Devin cancelled');
       if (options.resumeHandle && !initialized.agentCapabilities?.loadSession) throw new Error('Devin does not support session loading');
