@@ -272,6 +272,47 @@ describe('agent-aware run-flow resume', () => {
     ).toBe('sess-claude');
     expect(h.sessions.resumeFor('chat-1', first.cwdRealpath, 'claude')).toBe('sess-claude');
   });
+
+  it('discards store and catalog resume handles on a done event carrying invalidateResume', async () => {
+    const h = await createHarness('antigravity');
+    const first = await start(h);
+    if (!first.ok) throw new Error('expected initial run');
+    await collect(first.execution.subscribe());
+    recordRunSessionEvent({
+      scopeId: 'chat-1',
+      sessions: h.sessions,
+      sessionCatalog: h.catalog,
+      capability: antigravityCapability(h.profileConfig),
+      policy: first.policy,
+      event: { type: 'system', resumeHandle: 'sess-agy-done', cwd: first.cwdRealpath },
+    });
+    recordRunSessionEvent({
+      scopeId: 'chat-1',
+      sessions: h.sessions,
+      sessionCatalog: h.catalog,
+      capability: antigravityCapability(h.profileConfig),
+      policy: first.policy,
+      event: {
+        type: 'done',
+        terminationReason: 'normal',
+        invalidateResume: 'sess-agy-done',
+      },
+    });
+    expect(
+      h.catalog.activeFor({
+        scopeId: 'chat-1',
+        agentId: 'antigravity',
+        cwdRealpath: first.cwdRealpath,
+        policyFingerprint: first.policy.policyFingerprint,
+      }),
+    ).toBeUndefined();
+    expect(h.sessions.resumeFor('chat-1', first.cwdRealpath, 'antigravity')).toBeUndefined();
+
+    const second = await start(h);
+    if (!second.ok) throw new Error('expected fresh run');
+    expect(second.resumeFrom).toBeUndefined();
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+  });
 });
 
 async function createHarness(agentKind: 'claude' | 'codex' | 'antigravity'): Promise<{

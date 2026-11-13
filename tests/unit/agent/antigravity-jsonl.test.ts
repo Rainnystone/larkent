@@ -1468,4 +1468,322 @@ describe('AntigravityJsonlTranslator', () => {
     ]);
     expect(JSON.stringify(info.mock.calls)).not.toContain('partial answer');
   });
+
+  it('delivers final_text + done with invalidateResume and warns when ERROR follows a completed answer', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, loadJsonl(ERROR_WITH_RESPONSE_FIXTURE));
+    expect(events).toEqual([
+      { type: 'system', resumeHandle: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f' },
+      { type: 'final_text', content: 'PONG-01\n' },
+      {
+        type: 'done',
+        terminationReason: 'normal',
+        invalidateResume: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f',
+      },
+    ]);
+    expect(warn.mock.calls).toEqual([
+      [
+        'agent',
+        'error-with-answer-recovered',
+        {
+          status: 'ERROR',
+          finished_reason: 'error',
+          conversationId: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f',
+          errorMessage:
+            'failed to construct executor: unknown model key MODEL_PLACEHOLDER_M418: model not found',
+        },
+      ],
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('PONG-01');
+  });
+
+  it('scrubs envelopes, falls back to held pending text, and redacts secrets in warn log on FAILED/ERROR', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const secret = 'sk-live-secret-123456';
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: `${INCIDENT_A_ENVELOPE}Clean reply\n`,
+        },
+      },
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'FAILED',
+          response: '   \n',
+          error: `executor token=${secret}`,
+        },
+      },
+    ]);
+    expect(events).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+      { type: 'final_text', content: 'Clean reply' },
+      { type: 'done', terminationReason: 'normal', invalidateResume: CONVERSATION },
+    ]);
+    expect(warn.mock.calls).toEqual([
+      [
+        'agent',
+        'error-with-answer-recovered',
+        {
+          status: 'FAILED',
+          conversationId: CONVERSATION,
+          errorMessage: expect.stringContaining('[REDACTED]'),
+        },
+      ],
+    ]);
+    const serialized = JSON.stringify(warn.mock.calls);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain('Clean reply');
+  });
+
+  it('delivers multi-step narration + completed tool + DONE answer on sticky ERROR', () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: 'Let me check.\n',
+        },
+      },
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 2,
+          state: 'ACTIVE',
+          step_type: 'tool',
+          tool_name: 'run_command',
+          tool_info: { name: 'run_command', parameters: { CommandLine: 'echo ok' } },
+        },
+      },
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 2,
+          state: 'DONE',
+          step_type: 'tool',
+          tool_name: 'run_command',
+          tool_info: { output: 'ok\n' },
+        },
+      },
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 3,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: 'All good.\n',
+        },
+      },
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'ERROR',
+          finished_reason: 'error',
+          response: 'Let me check.\nAll good.\n',
+          error: 'earlier step transient error',
+        },
+      },
+    ]);
+    expect(events.filter(e => e.type === 'final_text' || e.type === 'done')).toEqual([
+      { type: 'final_text', content: 'Let me check.\nAll good.\n' },
+      { type: 'done', terminationReason: 'normal', invalidateResume: CONVERSATION },
+    ]);
+  });
+
+  it('keeps captured interim-narration ERROR and print_timeout ERROR on the error path', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+
+    const interim = collect(
+      new AntigravityJsonlTranslator(),
+      loadJsonl(ERROR_INTERIM_NARRATION_FIXTURE),
+    );
+    expect(interim.at(-1)).toEqual({
+      type: 'error',
+      message: 'There was a network issue connecting to the server, please try again.',
+      terminationReason: 'failed',
+      invalidateResume: '9315cd1d-3eec-480a-8dcc-39ac851db27d',
+    });
+    expect(interim.some(e => e.type === 'final_text')).toBe(false);
+
+    const printTimeout = collect(
+      new AntigravityJsonlTranslator(),
+      loadJsonl(PRINT_TIMEOUT_OPEN_TOOL_FIXTURE),
+    );
+    const timeoutLast = printTimeout.at(-1);
+    expect(timeoutLast).toMatchObject({
+      type: 'error',
+      terminationReason: 'failed',
+    });
+    expect(timeoutLast).not.toHaveProperty('invalidateResume');
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'interrupted finished_reason even after DONE agent_response',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: 'Finished answer\n',
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'interrupted',
+        response: 'Finished answer\n',
+        error: 'interrupted',
+      },
+      expectInvalidate: undefined,
+    },
+    {
+      name: 'post-tool thinking-only DONE agent_response after earlier narration',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: 'I will run a command first.\n',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 2,
+            state: 'ACTIVE',
+            step_type: 'tool',
+            tool_name: 'run_command',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 2,
+            state: 'DONE',
+            step_type: 'tool',
+            tool_name: 'run_command',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 3,
+            state: 'DONE',
+            step_type: 'agent_response',
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'error',
+        response: 'I will run a command first.\n',
+        error: 'failed after tool',
+      },
+      expectInvalidate: CONVERSATION,
+    },
+    {
+      name: 'unclosed ACTIVE tool step before DONE agent_response',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'ACTIVE',
+            step_type: 'tool',
+            tool_name: 'run_command',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 2,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: 'Still waiting on background command.\n',
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'error',
+        response: 'Still waiting on background command.\n',
+        error: 'background failed',
+      },
+      expectInvalidate: CONVERSATION,
+    },
+    {
+      name: 'envelope-only DONE agent_response',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: INCIDENT_A_ENVELOPE,
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'error',
+        response: INCIDENT_A_ENVELOPE,
+        error: 'upstream failed',
+      },
+      expectInvalidate: CONVERSATION,
+    },
+  ])('does not treat $name as a completed answer', ({ steps, result, expectInvalidate }) => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const events = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      ...steps,
+      { event: 'result', result },
+    ]);
+    expect(events.some(e => e.type === 'final_text')).toBe(false);
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      message: result.error,
+      terminationReason: 'failed',
+      ...(expectInvalidate ? { invalidateResume: expectInvalidate } : {}),
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
 });

@@ -1,5 +1,5 @@
 import type { LarkChannel } from '@larksuite/channel';
-import type { AgentEvent, AgentPromptVariant } from '../agent/types';
+import { invalidatedResumeHandle, type AgentEvent, type AgentPromptVariant } from '../agent/types';
 import { descriptorFor, isAgentKind } from '../agent/registry';
 import { cardUserMessage, cliFailureInput, matchCliSignature, NETWORK_TRANSIENT_SIGNATURES, noteUnclassifiedStderr, type CliSignature } from '../agent/cli-signatures';
 import { renderCard } from '../card/run-renderer';
@@ -116,7 +116,7 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
       if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: event.resumeHandle });
       if (delivery.kind === 'chat') log.info('session', 'set', { resumeHandle: event.resumeHandle });
     }
-    if (event.type === 'error' && event.invalidateResume) {
+    if (invalidatedResumeHandle(event)) {
       if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, { resumeHandle: undefined });
     }
     if (delivery.kind === 'chat' && event.type === 'system' && event.model) log.info('session', 'model', {
@@ -684,7 +684,7 @@ async function processAgentStream(
       if (evt.type === 'done' || evt.type === 'error') {
         lastTerminal = evt;
         noteTerminalStop(handle, evt);
-        if (evt.type === 'error' && evt.invalidateResume) recordSession(evt);
+        if (evt.invalidateResume) recordSession(evt);
       }
 
       const prevTerminal = state.terminal;

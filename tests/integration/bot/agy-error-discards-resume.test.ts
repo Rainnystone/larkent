@@ -1,8 +1,9 @@
-import { mkdir, realpath, symlink } from 'node:fs/promises';
+import { mkdir, readFile, realpath, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { setImmediate as yieldIO, setTimeout as waitIO } from 'node:timers/promises';
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl';
 import type { AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
 import { CONTINUE_HINT } from '../../../src/bot/interruption-notice';
 import { TurnJournal } from '../../../src/bot/turn-journal';
@@ -154,9 +155,81 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     next.releaseCleanup();
     await drainIO();
   });
+
+  it('delivers a normal card reply without failure tail or 继续 card on agy ERROR-with-answer, yet discards the poisoned session so the next turn logs session fresh', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const warn = vi.spyOn(logger.log, 'warn').mockImplementation(() => {});
+    const poisoned = '6b9dd5db-bd08-4f29-adb6-a0380b7f563f';
+    const rawFixture = await readFile(
+      join(process.cwd(), 'tests/fixtures/antigravity/error-with-response.jsonl'),
+      'utf8',
+    );
+    const translator = new AntigravityJsonlTranslator();
+    const translated = rawFixture
+      .trim()
+      .split('\n')
+      .flatMap((line) => translator.translate(JSON.parse(line) as unknown));
+
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    await h.channel.handlers.message?.(message('first', 'ping'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    for (const evt of translated) run.push(evt);
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(
+      () =>
+        cardFinal(info).some((entry) => entry.outcome === 'completed') &&
+        h.channel.callLog.some((call) => call.op === 'send' || call.op === 'stream'),
+    );
+    await drainIO();
+
+    expect(cardFinal(info).at(-1)).toMatchObject({ terminal: 'done', outcome: 'completed' });
+    const text = rendered(h.channel);
+    expect(text).toContain('PONG-01');
+    expect(text).not.toContain('agent 失败');
+    expect(text).not.toContain(FRESH_SESSION_NOTICE);
+    expect(text).not.toContain(CONTINUE_HINT);
+    expect(h.journal?.list().some((entry) => entry.continuation?.status === 'offered')).toBe(false);
+    expect(h.journal?.list().some((entry) => entry.resumeHandle === poisoned)).toBe(false);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
+    expect(
+      h.catalog
+        .entries()
+        .some((entry) => entry.status === 'active' && entry.resumeHandle === poisoned),
+    ).toBe(false);
+    expect(
+      warn.mock.calls.some(
+        (call) => call[0] === 'agent' && call[1] === 'error-with-answer-recovered',
+      ),
+    ).toBe(true);
+
+    const sessionLogsBeforeSecond = info.mock.calls.filter((call) => call[0] === 'session').length;
+    await h.channel.handlers.message?.(message('second', 'next question'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+    const secondSessionLogs = info.mock.calls
+      .filter((call) => call[0] === 'session')
+      .slice(sessionLogsBeforeSecond);
+    expect(secondSessionLogs).toContainEqual(['session', 'fresh', { cwd: h.cwd }]);
+
+    const next = h.agent.manual[1]!;
+    next.push({ type: 'final_text', content: 'FRESH-REPLY' });
+    next.push({ type: 'done', terminationReason: 'normal' });
+    next.close();
+    next.releaseCleanup();
+    await drainIO();
+  });
 });
 
-async function harness(options: { agentKind: 'antigravity' | 'claude'; journal?: boolean }) {
+async function harness(options: {
+  agentKind: 'antigravity' | 'claude';
+  journal?: boolean;
+  messageReply?: 'text' | 'card';
+}) {
   const tmp = await createTmpProfile('agy-error-discards-resume-');
   const agentKind = options.agentKind;
   const journal = options.journal
@@ -170,7 +243,7 @@ async function harness(options: { agentKind: 'antigravity' | 'claude'; journal?:
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
     access: { allowedUsers: ['ou_user'] },
     preferences: {
-      messageReply: 'text',
+      messageReply: options.messageReply ?? 'text',
       messageReplyMigrated: true,
       showToolCalls: true,
       runIdleTimeoutMinutes: 1,
@@ -269,7 +342,11 @@ function manualRun(recorded: AgentRun) {
 }
 
 function rendered(channel: ReturnType<typeof createRecordingLarkChannel>) {
-  return JSON.stringify({ sent: channel.sent, streams: channel.streams });
+  return JSON.stringify({
+    sent: channel.sent,
+    streams: channel.streams,
+    calls: channel.snapshotCalls(),
+  });
 }
 
 function cardFinal(info: ReturnType<typeof vi.spyOn>) {

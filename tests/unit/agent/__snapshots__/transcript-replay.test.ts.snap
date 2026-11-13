@@ -108,15 +108,14 @@ exports[`D03b existing fixture baseline > antigravity/error-with-response.jsonl 
     "type": "liveness",
   },
   {
-    "delta": "PONG-01
+    "content": "PONG-01
 ",
-    "type": "text",
+    "type": "final_text",
   },
   {
     "invalidateResume": "6b9dd5db-bd08-4f29-adb6-a0380b7f563f",
-    "message": "failed to construct executor: unknown model key MODEL_PLACEHOLDER_M418: model not found",
-    "terminationReason": "failed",
-    "type": "error",
+    "terminationReason": "normal",
+    "type": "done",
   },
 ]
 `;

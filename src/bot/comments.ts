@@ -4,7 +4,7 @@ import { dirname } from 'node:path';
 import type { CommentEvent, LarkChannel } from '@larksuite/channel';
 import { capabilityForProfile } from '../agent/capability';
 import { descriptorFor } from '../agent/registry';
-import type { AgentAdapter, AgentEvent } from '../agent/types';
+import { invalidatedResumeHandle, type AgentAdapter, type AgentEvent } from '../agent/types';
 import { getAgentStopGraceMs, getRunIdleTimeoutMs } from '../config/schema';
 import type { Controls } from '../commands';
 import { resolveAppPaths } from '../config/app-paths';
@@ -336,8 +336,9 @@ export async function handleCommentMention(deps: CommentDeps): Promise<void> {
             policy,
             event: e,
           });
-          if (e.type === 'error' && e.invalidateResume) {
-            discardRunResumeHandle({ scopeId: legacyDocSessionScopeId, sessions, sessionCatalog, capability }, e.invalidateResume);
+          const invalidated = invalidatedResumeHandle(e);
+          if (invalidated) {
+            discardRunResumeHandle({ scopeId: legacyDocSessionScopeId, sessions, sessionCatalog, capability }, invalidated);
             sessionDiscarded = true;
           }
           if (
