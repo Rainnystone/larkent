@@ -57,6 +57,111 @@ exports[`D03b existing fixture baseline > antigravity/empty-success-print-timeou
 ]
 `;
 
+exports[`D03b existing fixture baseline > antigravity/error-interim-narration.jsonl 1`] = `
+[
+  {
+    "resumeHandle": "9315cd1d-3eec-480a-8dcc-39ac851db27d",
+    "type": "system",
+  },
+  {
+    "id": "9315cd1d-3eec-480a-8dcc-39ac851db27d:5",
+    "input": {},
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "id": "9315cd1d-3eec-480a-8dcc-39ac851db27d:5",
+    "isError": false,
+    "output": "[REDACTED]",
+    "type": "tool_result",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "delta": "后台任务已启动（Task ID: \`task-5\`），正在等待命令执行完成。完成后将更新结果。
+",
+    "type": "text",
+  },
+  {
+    "invalidateResume": "9315cd1d-3eec-480a-8dcc-39ac851db27d",
+    "message": "There was a network issue connecting to the server, please try again.",
+    "terminationReason": "failed",
+    "type": "error",
+  },
+]
+`;
+
+exports[`D03b existing fixture baseline > antigravity/error-with-response.jsonl 1`] = `
+[
+  {
+    "resumeHandle": "6b9dd5db-bd08-4f29-adb6-a0380b7f563f",
+    "type": "system",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "delta": "PONG-01
+",
+    "type": "text",
+  },
+  {
+    "invalidateResume": "6b9dd5db-bd08-4f29-adb6-a0380b7f563f",
+    "message": "failed to construct executor: unknown model key MODEL_PLACEHOLDER_M418: model not found",
+    "terminationReason": "failed",
+    "type": "error",
+  },
+]
+`;
+
+exports[`D03b existing fixture baseline > antigravity/error-without-response.jsonl 1`] = `
+[
+  {
+    "resumeHandle": "6b9dd5db-bd08-4f29-adb6-a0380b7f563f",
+    "type": "system",
+  },
+  {
+    "invalidateResume": "6b9dd5db-bd08-4f29-adb6-a0380b7f563f",
+    "message": "FAILED_PRECONDITION (code 400): User location is not supported for the API use.",
+    "terminationReason": "failed",
+    "type": "error",
+  },
+]
+`;
+
+exports[`D03b existing fixture baseline > antigravity/interrupted-open-tool.jsonl 1`] = `
+[
+  {
+    "resumeHandle": "6c145f8d-74f0-44e7-a4e1-939a15929e61",
+    "type": "system",
+  },
+  {
+    "id": "6c145f8d-74f0-44e7-a4e1-939a15929e61:8",
+    "input": {},
+    "name": "run_command",
+    "type": "tool_use",
+  },
+  {
+    "id": "6c145f8d-74f0-44e7-a4e1-939a15929e61:8",
+    "isError": true,
+    "output": "Tool did not complete before the run ended.",
+    "type": "tool_result",
+  },
+  {
+    "message": "interrupted",
+    "terminationReason": "failed",
+    "type": "error",
+  },
+]
+`;
+
 exports[`D03b existing fixture baseline > antigravity/print-timeout-open-tool.jsonl 1`] = `
 [
   {
@@ -98,6 +203,33 @@ exports[`D03b existing fixture baseline > antigravity/print-timeout-open-tool.js
     "message": "print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 && echo done, running 11s)",
     "terminationReason": "failed",
     "type": "error",
+  },
+]
+`;
+
+exports[`D03b existing fixture baseline > antigravity/success-pong.jsonl 1`] = `
+[
+  {
+    "resumeHandle": "6c145f8d-74f0-44e7-a4e1-939a15929e61",
+    "type": "system",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "progress": true,
+    "type": "liveness",
+  },
+  {
+    "content": "PONG-A3
+",
+    "type": "final_text",
+  },
+  {
+    "resumeHandle": "6c145f8d-74f0-44e7-a4e1-939a15929e61",
+    "terminationReason": "normal",
+    "type": "done",
   },
 ]
 `;
