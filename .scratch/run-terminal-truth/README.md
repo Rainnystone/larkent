@@ -17,6 +17,7 @@ Docs PR #71 (`docs/run-terminal-truth`) is read-only input for code PR #70. Neve
 | 05 | [Feishu E2E (Bot Arena)](issues/05-feishu-e2e.md) | 02, 03, 04, 06, 07, 08, 09 | Final acceptance after revised watchdog tickets |
 | 10 | [Comment error replies always say "Claude"](issues/10-comment-error-agent-label.md) | — | New; not in scope for #70 (pre-existing on master) |
 | 11 | [Comment new-session notice wrong while another comment holds a newer session](issues/11-comment-stale-fresh-session-notice.md) | — | New; not in scope for #70 (follow-up to 02) |
+| 12 | [agy ERROR: deliver answer or rerun once in a fresh session](issues/12-agy-error-auto-recover.md) | — | On hold, observe first (user 2026-11-11); instance 2026-11-13 15:08 |
 
 2026-11-08 (Asia/Shanghai): Q1 per-tool awake cap (60-minute default, normal-idle floor); Q2 heartbeat-only liveness never extends runs; Q3 child model waits use normal idle. Spec records the decisions and host-resume versus bridge-restart boundary. Earlier 04 commits are preserved but do not prove the revised sleep/tool requirements.
 

@@ -36,6 +36,7 @@ The on-disk `~/.lark-channel/config.json:95–101` already said `cursor.agent.op
 - **Q7 — Early tool signals never skip safety:** opening tool grace on an early start signal must not bypass or reorder the automation policy guard / safety inspection of that tool (tickets 06, 07).
 - **Q8 — Timeout wording:** a watchdog stop says the waiting budget was used up, not that the agent was stuck. It names which timer fired (normal idle or tool grace, and which tool) and the awake minutes consumed (tickets 07, 09).
 - **Q9 — CLI whole-turn cap default off:** once 04/06/07 are proven, the CLI's own whole-turn cap (agy `--print-timeout`) stays off by default so the bridge owns timing; it is already omitted unless configured (`src/agent/antigravity/argv.ts:61`, `options.ts:27`). Signals that cannot be verified stay a known gap rather than a reason to keep a short CLI cap (ticket 08).
+  - **Amended 2026-11-11 (user):** the agy whole-turn cap stays **on** as the runaway-cost guard (哈基米 90m, longer than the 60m tool grace). Other CLIs get no whole-turn cap; the bridge watchdog is enough. Follow-up behaviour on agy ERROR is ticket 12 (on hold, observe first).
 
 For agy, capture sanitized real NDJSON from the installed 1.5.3 first, and retain a bounded, opt-in, redacted stdout diagnostic capture on the test bridge. Never persist unredacted prompts, credentials or tool payloads.
 
