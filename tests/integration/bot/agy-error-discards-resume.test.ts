@@ -4,11 +4,13 @@ import { setImmediate as yieldIO, setTimeout as waitIO } from 'node:timers/promi
 import type { NormalizedMessage } from '@larksuite/channel';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl';
-import type { AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
+import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
+import { BackfillLedger } from '../../../src/bot/backfill-ledger';
 import { CONTINUE_HINT } from '../../../src/bot/interruption-notice';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import * as logger from '../../../src/core/logger';
+import { SpawnFailed } from '../../../src/runtime/errors';
 import { SessionCatalog } from '../../../src/session/catalog';
 import { SessionStore } from '../../../src/session/store';
 import { WorkspaceStore } from '../../../src/workspace/store';
@@ -452,12 +454,155 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     next.releaseCleanup();
     await drainIO();
   });
+
+  it('delivers one clear error card instead of silence when the automatic rerun fails to start (TurnStartFailed)', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const fail = vi.spyOn(logger.log, 'fail').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    await h.channel.handlers.message?.(message('first', 'summarise the diff'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+
+    h.agent.prepareRun = async () => {
+      throw new SpawnFailed('agy binary check failed', new Error('ENOENT'), 'agent-prepare-failed');
+    };
+    firstAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(fail.mock.calls.some((call) => String(call[1]).includes('agy binary check failed'))).toBe(true);
+    expect(h.channel.sent).toHaveLength(1);
+    const text = rendered(h.channel);
+    expect(text).toContain('agent 失败');
+    expect(text).toContain(FRESH_SESSION_NOTICE);
+    expect(text).not.toContain(CONTINUE_HINT);
+    expect(text).not.toContain('notice.continue');
+    const entries = h.journal!.list();
+    expect(entries.some((entry) => entry.status === 'reply-delivered')).toBe(true);
+    expect(entries.some((entry) => entry.status === 'queued' || entry.status === 'running')).toBe(false);
+  });
+
+  it('delivers the first failure card when the automatic rerun is skipped after topic-context fetch because session writer was superseded', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    let listCalled = false;
+    let releaseList!: () => void;
+    const listGate = new Promise<void>((resolve) => { releaseList = resolve; });
+    cleanups.push(async () => { releaseList(); });
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      messageReply: 'card',
+      chatMode: 'topic',
+      onMessageList: async () => {
+        listCalled = true;
+        await listGate;
+      },
+    });
+    const otherDir = join(h.tmpRoot, 'other-cwd');
+    await mkdir(otherDir, { recursive: true });
+
+    const scope = 'oc_topic:omt_t1';
+    h.sessions.set(scope, 'sess-topic', h.cwd, 'antigravity');
+    h.catalog.upsertActive({
+      scopeId: scope,
+      agentId: 'antigravity',
+      cwdRealpath: h.cwd,
+      policyFingerprint: 'fp-seed',
+      resumeHandle: 'sess-topic',
+    });
+
+    await h.channel.handlers.message?.(topicMessage('topic-1', 'check topic'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-topic' });
+    firstAttempt.push({
+      type: 'error',
+      message: 'upstream failed',
+      terminationReason: 'failed',
+      invalidateResume: 'sess-topic',
+    });
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await waitFor(() => listCalled);
+
+    // Supersede session writer during fetchTopicContext before Attempt 2 starts.
+    await h.channel.handlers.message?.(topicMessage('cd-cmd', `/cd ${otherDir}`));
+    await drainIO();
+    releaseList();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(h.agent.runOptions).toHaveLength(1);
+    const firstReplyTexts = h.channel.sent
+      .filter((row) => (row.options as { replyTo?: string } | undefined)?.replyTo === 'topic-1')
+      .map((row) => JSON.stringify(row.content))
+      .join('\n');
+    expect(firstReplyTexts).toContain('agent 失败');
+    expect(firstReplyTexts).toContain(FRESH_SESSION_NOTICE);
+    expect(firstReplyTexts).not.toContain(CONTINUE_HINT);
+  });
+
+  it('unrecords the accepted batch for backfill instead of swallowing it when shutdown aborts the automatic rerun handoff', async () => {
+    let listCalled = false;
+    let releaseList!: () => void;
+    const listGate = new Promise<void>((resolve) => { releaseList = resolve; });
+    cleanups.push(async () => { releaseList(); });
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      ledger: true,
+      messageReply: 'card',
+      chatMode: 'topic',
+      onMessageList: async () => {
+        listCalled = true;
+        await listGate;
+      },
+    });
+    const scope = 'oc_topic:omt_t1';
+    h.sessions.set(scope, 'sess-topic', h.cwd, 'antigravity');
+
+    const inbound = topicMessage('topic-shutdown', 'recover me after restart');
+    await h.channel.handlers.message?.(inbound);
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    expect(h.ledger?.has('topic-shutdown')).toBe(true);
+
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-topic' });
+    firstAttempt.push({
+      type: 'error',
+      message: 'upstream failed',
+      terminationReason: 'failed',
+      invalidateResume: 'sess-topic',
+    });
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await waitFor(() => listCalled);
+
+    const disconnecting = h.bridge.disconnect();
+    await drainIO();
+    releaseList();
+    await disconnecting;
+
+    expect(h.agent.runOptions).toHaveLength(1);
+    expect(h.ledger?.has('topic-shutdown')).toBe(false);
+    expect(h.ledger?.getIncompleteFrom()).toBeDefined();
+    expect(h.ledger!.getIncompleteFrom()!).toBeLessThanOrEqual(inbound.createTime);
+  });
 });
 
 async function harness(options: {
   agentKind: 'antigravity' | 'claude';
   journal?: boolean;
+  ledger?: boolean;
   messageReply?: 'text' | 'card';
+  chatMode?: 'group' | 'topic';
+  onMessageList?: () => Promise<void>;
 }) {
   const tmp = await createTmpProfile('agy-error-discards-resume-');
   const agentKind = options.agentKind;
@@ -465,18 +610,23 @@ async function harness(options: {
     ? new TurnJournal(join(tmp.profile, 'turn-journal.json'))
     : undefined;
   if (journal) await journal.load();
+  const ledger = options.ledger
+    ? new BackfillLedger(join(tmp.profile, 'backfill-state.json'))
+    : undefined;
+  if (ledger) await ledger.load();
   const mediaDir = join(tmp.profile, 'media');
   if (journal) await mkdir(mediaDir, { recursive: true });
   const cfg = createDefaultProfileConfig({
     agentKind,
     accounts: { app: { id: 'cli_test', secret: 'secret', tenant: 'feishu' } },
-    access: { allowedUsers: ['ou_user'] },
+    access: { allowedUsers: ['ou_user'], admins: ['ou_user'], allowedChats: ['oc_topic'] },
     preferences: {
       messageReply: options.messageReply ?? 'text',
       messageReplyMigrated: true,
       showToolCalls: true,
       runIdleTimeoutMinutes: 1,
       cotMessages: 'off',
+      requireMentionInGroup: false,
     },
   });
   const requestedCwd = join(tmp.root, 'requested-cwd');
@@ -486,12 +636,20 @@ async function harness(options: {
   const catalog = new SessionCatalog(join(tmp.profile, 'session-catalog.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = new StreamingFakeAgent(agentKind);
-  const channel = createRecordingLarkChannel();
+  const channel = createRecordingLarkChannel({ chatMode: options.chatMode });
+  if (options.onMessageList) {
+    const origList = channel.rawClient.im.v1.message.list.bind(channel.rawClient.im.v1.message);
+    channel.rawClient.im.v1.message.list = async (params: unknown) => {
+      await options.onMessageList!();
+      return origList(params);
+    };
+  }
   sdk.channel = channel;
   const cwd = await realpath(requestedCwd);
   const bridge = await startChannel({
     cfg, agent, sessions, sessionCatalog: catalog, workspaces,
     probe: async () => true,
+    ...(ledger ? { ledger } : {}),
     ...(journal ? {
       journal,
       appPaths: {
@@ -509,17 +667,19 @@ async function harness(options: {
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   cleanups.push(async () => {
     for (const run of agent.manual) run.releaseCleanup();
-    await bridge.disconnect();
+    await bridge.disconnect().catch(() => {});
     await drainIO();
     await journal?.flush().catch(() => {});
+    await ledger?.flush().catch(() => {});
     await Promise.all([sessions.flush(), catalog.flush(), workspaces.flush()]);
     await tmp.cleanup();
   });
-  return { channel, agent, journal, sessions, catalog, cwd };
+  return { channel, agent, journal, ledger, sessions, catalog, cwd, bridge, tmpRoot: tmp.root };
 }
 
 class StreamingFakeAgent extends FakeAgentAdapter {
   readonly manual: ReturnType<typeof manualRun>[] = [];
+  prepareRun?: AgentAdapter['prepareRun'];
   constructor(id: string) { super({ id }); }
   override run(opts: AgentRunOptions): AgentRun {
     const recorded = super.run(opts);
@@ -592,6 +752,13 @@ function message(messageId: string, content: string): NormalizedMessage {
   return { messageId, content, chatId: 'oc_dm', chatType: 'p2p', senderId: 'ou_user',
     senderName: 'User', rawContentType: 'text', resources: [], mentionedBot: false,
     createTime: 1760000001000,
+  } as unknown as NormalizedMessage;
+}
+
+function topicMessage(messageId: string, content: string): NormalizedMessage {
+  return { messageId, content, chatId: 'oc_topic', threadId: 'omt_t1', chatType: 'group',
+    senderId: 'ou_user', senderName: 'User', rawContentType: 'text', resources: [],
+    mentionedBot: true, createTime: Date.now(),
   } as unknown as NormalizedMessage;
 }
 

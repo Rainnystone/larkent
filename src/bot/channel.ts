@@ -664,7 +664,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     draftCards: deps.automations,
     draftJournal: deps.automations?.outboxJournal,
     isDown: () => closing || link.isDown(),
-    isActive: (scope) => activeRuns.get(scope) !== undefined,
+    isActive: (scope) => activeRuns.get(scope) !== undefined || activeRuns.hasActiveSessionWriter(scope),
     now: deps.now,
     noticeAuth,
     onNotInChat: removeFromChat,
@@ -1686,93 +1686,106 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const cotMessages = getCotMessages(controls.cfg);
   const policyAttachments = attachments.map(toPolicyAttachment);
   const batchMessageIds = batch.map((msg) => msg.messageId);
+  const enqueueBatchTurn = (): string | undefined => {
+    if (!journal) return undefined;
+    const turnId = randomUUID();
+    const initiatorType = senderTypeOf(lastMsg);
+    journal.enqueue({
+      turnId,
+      scope,
+      chatId,
+      ...(threadId ? { threadId } : {}),
+      messageIds: batchMessageIds,
+      senderId: firstMsg.senderId,
+      initiatorId: lastMsg.senderId,
+      ...(initiatorType ? { initiatorType } : {}),
+      status: 'queued',
+      userInput: userInputText,
+      ...journalResources(batch),
+    });
+    return turnId;
+  };
   const runChatAttempt = async (attempt: {
     prompt: string;
+    turnId?: string;
     forceResumeHandle?: string | null;
     forceResumeFingerprint?: string;
     isAutoRerun?: boolean;
+    onFlowStarted?: () => void;
   }) => {
-    const turnId = journal ? randomUUID() : undefined;
-    if (journal && turnId) {
-      const initiatorType = senderTypeOf(lastMsg);
-      journal.enqueue({
-        turnId,
-        scope,
-        chatId,
-        ...(threadId ? { threadId } : {}),
-        messageIds: batchMessageIds,
-        senderId: firstMsg.senderId,
-        initiatorId: lastMsg.senderId,
-        ...(initiatorType ? { initiatorType } : {}),
-        status: 'queued',
-        userInput: userInputText,
-        ...journalResources(batch),
+    const turnId = attempt.turnId ?? enqueueBatchTurn();
+    try {
+      return await executeTurn({
+        run: {
+          toolContext,
+          scopeId: scope,
+          scope: scopeContext,
+          prompt: attempt.prompt,
+          attachments: policyAttachments,
+          access: accessDecision,
+          capability,
+          profileConfig: controls.profileConfig,
+          sessions,
+          sessionCatalog,
+          workspaces,
+          executor,
+          now: Date.now(),
+          stopGraceMs: getAgentStopGraceMs(controls.cfg),
+          ...(attempt.forceResumeHandle !== undefined
+            ? {
+                forceResumeHandle: attempt.forceResumeHandle,
+                ...(attempt.forceResumeFingerprint
+                  ? { forceResumeFingerprint: attempt.forceResumeFingerprint }
+                  : {}),
+              }
+            : {}),
+          observability: {
+            profile: controls.profile,
+            agent: capability.agentId,
+            source: 'im',
+            stage: 'submit',
+            taskKey: computeRunTaskKey(controls.profile, chatId, firstMsg.messageId),
+            messageId: firstMsg.messageId,
+            ...(firstMsg.threadId ? { threadId: firstMsg.threadId } : {}),
+          },
+        },
+        idleTimeoutMs,
+        delivery: {
+          kind: 'chat', outbox, channel, journal, turnId, chatId, sendOpts,
+          batchMessageIds,
+          replyMode: getMessageReplyMode(controls.cfg), callbackAuth, activePolicyFingerprints,
+          canRecordSession: deps.canRecordSession, isClosing: deps.isClosing, requestedModel, cliSelfSent,
+          outboundTimeoutMs, onWait: onDeliveryWait,
+          autoRerunOnSessionDiscard: !attempt.isAutoRerun,
+          ...(attempt.isAutoRerun ? { isAutoRerun: true } : {}),
+          ...(attempt.onFlowStarted ? { onFlowStarted: attempt.onFlowStarted } : {}),
+          onRejected: reason => {
+            if (reason.code !== 'reconnect-in-progress' || !ledger) return;
+            unrecordAcceptedMessages(ledger, batch);
+            log.info('pending', 'handoff', { count: batch.length, reason: reason.code, incompleteFrom: ledger.getIncompleteFrom() });
+          },
+          onNotInChat: chatId => automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+          filterState: state => stripLegacyAutomationTagsFromState(getShowToolCalls(controls.cfg)
+            ? state : { ...state, blocks: state.blocks.filter(block => block.kind !== 'tool') }),
+          notice: journal && !isAutomationRunScope(scope) ? {
+            enabled: true, auth: noticeAuth, continuations, ownerId: controls.botOwnerId,
+            requireBotMention: lastMsg.chatType !== 'p2p'
+              && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
+          } : undefined,
+          ...(cotMessages !== 'off' ? { cot: { client: cotClient, detail: cotMessages, inputPreview: lastMsg.content } } : {}),
+        },
       });
+    } catch (error) {
+      if (journal && turnId) journal.voidTurn(turnId);
+      throw error;
     }
-    return executeTurn({
-      run: {
-        toolContext,
-        scopeId: scope,
-        scope: scopeContext,
-        prompt: attempt.prompt,
-        attachments: policyAttachments,
-        access: accessDecision,
-        capability,
-        profileConfig: controls.profileConfig,
-        sessions,
-        sessionCatalog,
-        workspaces,
-        executor,
-        now: Date.now(),
-        stopGraceMs: getAgentStopGraceMs(controls.cfg),
-        ...(attempt.forceResumeHandle !== undefined
-          ? {
-              forceResumeHandle: attempt.forceResumeHandle,
-              ...(attempt.forceResumeFingerprint
-                ? { forceResumeFingerprint: attempt.forceResumeFingerprint }
-                : {}),
-            }
-          : {}),
-        observability: {
-          profile: controls.profile,
-          agent: capability.agentId,
-          source: 'im',
-          stage: 'submit',
-          taskKey: computeRunTaskKey(controls.profile, chatId, firstMsg.messageId),
-          messageId: firstMsg.messageId,
-          ...(firstMsg.threadId ? { threadId: firstMsg.threadId } : {}),
-        },
-      },
-      idleTimeoutMs,
-      delivery: {
-        kind: 'chat', outbox, channel, journal, turnId, chatId, sendOpts,
-        batchMessageIds,
-        replyMode: getMessageReplyMode(controls.cfg), callbackAuth, activePolicyFingerprints,
-        canRecordSession: deps.canRecordSession, requestedModel, cliSelfSent,
-        outboundTimeoutMs, onWait: onDeliveryWait,
-        autoRerunOnSessionDiscard: !attempt.isAutoRerun,
-        ...(attempt.isAutoRerun ? { isAutoRerun: true } : {}),
-        onRejected: reason => {
-          if (reason.code !== 'reconnect-in-progress' || !ledger) return;
-          unrecordAcceptedMessages(ledger, batch);
-          log.info('pending', 'handoff', { count: batch.length, reason: reason.code, incompleteFrom: ledger.getIncompleteFrom() });
-        },
-        onNotInChat: chatId => automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve(),
-        filterState: state => stripLegacyAutomationTagsFromState(getShowToolCalls(controls.cfg)
-          ? state : { ...state, blocks: state.blocks.filter(block => block.kind !== 'tool') }),
-        notice: journal && !isAutomationRunScope(scope) ? {
-          enabled: true, auth: noticeAuth, continuations, ownerId: controls.botOwnerId,
-          requireBotMention: lastMsg.chatType !== 'p2p'
-            && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
-        } : undefined,
-        ...(cotMessages !== 'off' ? { cot: { client: cotClient, detail: cotMessages, inputPreview: lastMsg.content } } : {}),
-      },
-    });
   };
 
+  const firstTurnId = enqueueBatchTurn();
   try {
     const firstResult = await runChatAttempt({
       prompt,
+      turnId: firstTurnId,
       ...(taken.kind === 'continue'
         ? taken.resumeHandle
           ? {
@@ -1784,12 +1797,39 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           : { forceResumeHandle: null }
         : {}),
     });
-    if (
-      firstResult.ok
-      && firstResult.autoRerunOutcome
-      && !deps.isClosing?.()
-      && deps.canRecordSession()
-    ) {
+    if (firstResult.ok && firstResult.autoRerunOutcome) {
+      const fallbackFromSkippedRerun = async (reason: string): Promise<void> => {
+        if (deps.isClosing?.()) {
+          if (ledger) {
+            firstResult.voidSuppressedTurn?.();
+            unrecordAcceptedMessages(ledger, batch);
+            log.info('pending', 'handoff', {
+              count: batch.length,
+              reason,
+              incompleteFrom: ledger.getIncompleteFrom(),
+            });
+            return;
+          }
+        }
+        let overrideTurnId: string | undefined;
+        if (
+          journal
+          && firstTurnId
+          && journal.get(firstTurnId)?.status === 'voided'
+        ) {
+          overrideTurnId = enqueueBatchTurn();
+        }
+        await firstResult.deliverSuppressedFailure?.(overrideTurnId);
+      };
+
+      if (deps.isClosing?.()) {
+        await fallbackFromSkippedRerun('auto-rerun-closing');
+        return;
+      }
+      if (!deps.canRecordSession()) {
+        await fallbackFromSkippedRerun('auto-rerun-superseded');
+        return;
+      }
       if (mode === 'topic' && threadId && topicContext.length === 0 && topicResumeHandle) {
         const exclude = new Set([...batchIds, ...quoteTargets]);
         topicContext = (await fetchTopicContext(channel, threadId, {
@@ -1803,7 +1843,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
             count: topicContext.length,
           });
         }
-        if (deps.isClosing?.() || !deps.canRecordSession()) return;
+        if (deps.isClosing?.()) {
+          await fallbackFromSkippedRerun('auto-rerun-closing');
+          return;
+        }
+        if (!deps.canRecordSession()) {
+          await fallbackFromSkippedRerun('auto-rerun-superseded');
+          return;
+        }
       }
       const rerunInstructions = [
         continueExtraInstruction(firstResult.autoRerunOutcome, userInputText),
@@ -1822,11 +1869,33 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         outcome: formatRunOutcome(firstResult.autoRerunOutcome),
         promptChars: rerunPrompt.length,
       });
-      await runChatAttempt({
-        prompt: rerunPrompt,
-        forceResumeHandle: null,
-        isAutoRerun: true,
-      });
+      let rerunAccepted = false;
+      try {
+        const secondResult = await runChatAttempt({
+          prompt: rerunPrompt,
+          forceResumeHandle: null,
+          isAutoRerun: true,
+          onFlowStarted: () => {
+            rerunAccepted = true;
+            firstResult.voidSuppressedTurn?.();
+          },
+        });
+        if (!secondResult.ok) {
+          if (secondResult.rejectReason.code === 'reconnect-in-progress' && deps.isClosing?.()) {
+            await fallbackFromSkippedRerun('auto-rerun-closing');
+          } else {
+            firstResult.voidSuppressedTurn?.();
+          }
+        }
+      } catch (rerunError) {
+        log.fail('turn', rerunError instanceof TurnStartFailed ? rerunError.cause : rerunError, {
+          scope,
+          step: rerunAccepted ? 'auto-rerun' : 'auto-rerun-start',
+        });
+        if (!rerunAccepted) {
+          await fallbackFromSkippedRerun('auto-rerun-start-failed');
+        }
+      }
     }
   } catch (error) {
     if (error instanceof TurnStartFailed) throw error.cause;

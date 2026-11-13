@@ -40,8 +40,10 @@ export interface ChatTurnDelivery extends TurnTarget {
   callbackAuth?: CallbackAuth;
   activePolicyFingerprints?: Map<string, string>;
   canRecordSession?: () => boolean;
+  isClosing?: () => boolean;
   requestedModel?: string;
   onRejected?: (reason: Extract<StartRunFlowResult, { ok: false }>['rejectReason']) => void;
+  onFlowStarted?: () => void;
   notice?: FinalDelivery['notice'];
   cliSelfSent?: CliSelfSendTracker;
   onWait?: FinalDelivery['onWait'];
@@ -76,6 +78,8 @@ export type TurnResult = Exclude<StartRunFlowResult, { ok: true }> | {
   state: RunState;
   handle: RunHandle;
   autoRerunOutcome?: RunOutcome;
+  voidSuppressedTurn?: () => void;
+  deliverSuppressedFailure?: (overrideTurnId?: string) => Promise<void>;
 };
 
 /** A launch error is distinct from event consumption or child settlement failure. */
@@ -103,11 +107,16 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
       log.info('run-flow', 'rejected', { scope: run.scopeId, code: flow.rejectReason.code });
       log.warn('policy', 'denied', { scope: run.scopeId, source: 'im', code: flow.rejectReason.code });
       delivery.onRejected?.(flow.rejectReason);
+      if (delivery.isAutoRerun && flow.rejectReason.code === 'reconnect-in-progress' && delivery.isClosing?.()) {
+        if (delivery.journal && delivery.turnId) delivery.journal.voidTurn(delivery.turnId);
+        return flow;
+      }
       await delivery.channel.send(delivery.chatId, { markdown: flow.rejectReason.userVisible }, delivery.sendOpts);
       if (delivery.journal && delivery.turnId) delivery.journal.voidTurn(delivery.turnId);
     }
     return flow;
   }
+  if (delivery.kind === 'chat') delivery.onFlowStarted?.();
   if (delivery.journal && delivery.turnId) delivery.journal.noteTurnMeta(delivery.turnId, {
     ...(flow.resumeFrom ? { resumeHandle: flow.resumeFrom } : {}),
     policyFingerprint: flow.policy.policyFingerprint,
@@ -134,7 +143,13 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
       ok: true,
       state: delivered.state,
       handle: flow.execution.handle,
-      ...(delivered.autoRerunOutcome ? { autoRerunOutcome: delivered.autoRerunOutcome } : {}),
+      ...(delivered.autoRerunOutcome
+        ? {
+            autoRerunOutcome: delivered.autoRerunOutcome,
+            voidSuppressedTurn: delivered.voidSuppressedTurn,
+            deliverSuppressedFailure: delivered.deliverSuppressedFailure,
+          }
+        : {}),
     };
   } finally {
     delivery.activePolicyFingerprints?.delete(run.scopeId);
@@ -192,7 +207,12 @@ async function deliverChatTurn(
   flow: StartedFlow,
   delivery: ChatTurnDelivery,
   recordSession: (event: AgentEvent) => void,
-): Promise<{ state: RunState; autoRerunOutcome?: RunOutcome }> {
+): Promise<{
+  state: RunState;
+  autoRerunOutcome?: RunOutcome;
+  voidSuppressedTurn?: () => void;
+  deliverSuppressedFailure?: (overrideTurnId?: string) => Promise<void>;
+}> {
   const { execution, cwdRealpath: cwd } = flow;
   const { outbox, channel, chatId, sendOpts, turnId, journal, callbackAuth, cliSelfSent,
     outboundTimeoutMs, notice: noticeCtx, onWait: onDeliveryWait } = delivery;
@@ -204,10 +224,24 @@ async function deliverChatTurn(
     autoRerunOutcome = info.outcome;
     return true;
   };
-  const effectiveNotice = () =>
-    delivery.isAutoRerun && handle.outcome?.kind === 'failed' && handle.outcome.cause !== 'auth-required'
+  const fallbackNotice = () =>
+    handle.outcome?.kind === 'failed' && handle.outcome.cause !== 'auth-required'
       ? undefined
       : noticeCtx;
+  const effectiveNotice = () =>
+    delivery.isAutoRerun ? fallbackNotice() : noticeCtx;
+  const voidSuppressedTurn = (): void => {
+    if (journal && turnId) journal.voidTurn(turnId);
+  };
+  const logSuppressedFinal = (state: RunState): void => {
+    log.info('card', 'final', {
+      scope,
+      terminal: state.terminal,
+      stopReason: handle.stopRequest ? formatStopRequest(handle.stopRequest) : undefined,
+      outcome: handle.outcome ? formatRunOutcome(handle.outcome) : 'unknown',
+      interrupted: handle.interrupted,
+    });
+  };
   const eventStream = execution.subscribe();
   const idleTimeoutMs = input.idleTimeoutMs;
   const runContext = { currentChatId: chatId, batchMessageIds: delivery.batchMessageIds ?? [] };
@@ -244,6 +278,33 @@ async function deliverChatTurn(
     cotEnabled || replyMode === 'card' ? undefined : addWorkingReaction(channel, lastMsg.messageId);
 
   const onNotInChat = delivery.onNotInChat;
+  const deliverRecalledStreamFallback = async (
+    stateSnapshot: RunState,
+    overrideTurnId?: string,
+  ): Promise<void> => {
+    logSuppressedFinal(stateSnapshot);
+    const noneStream: StreamDelivery = { kind: 'none' };
+    const visible = filterForPrefs(stateSnapshot);
+    const terminalState = finalAnswerOnly
+      ? finalReplyState(noneStream, visible)
+      : finalReplyFor(visible, { replyMode: 'stream-deltas', streamed: false });
+    await outbox.deliverFinalReply({
+      chatId,
+      scope,
+      state: terminalState,
+      skipFrom: stateSnapshot,
+      stream: noneStream,
+      dedicatedFinal: finalAnswerOnly,
+      replyMode,
+      sendOpts,
+      cardRenderOptions,
+      turnId: overrideTurnId ?? turnId,
+      outcome: handle.outcome,
+      notice: fallbackNotice(),
+      onWait: onDeliveryWait,
+      onNotInChat,
+    });
+  };
   cliSelfSent?.begin(scope, turnId);
   try {
     if (cotEnabled) {
@@ -277,8 +338,40 @@ async function deliverChatTurn(
         );
         await cotDone;
         if (autoRerunOutcome) {
-          if (journal && turnId) journal.voidTurn(turnId);
-          return { state: finalState, autoRerunOutcome };
+          return {
+            state: finalState,
+            autoRerunOutcome,
+            voidSuppressedTurn,
+            deliverSuppressedFailure: async (overrideTurnId) => {
+              logSuppressedFinal(finalState);
+              const targetTurnId = overrideTurnId ?? turnId;
+              if (cotPublisher.degradedReason) {
+                await sendCotDegradedNotice({
+                  channel,
+                  chatId,
+                  scope,
+                  sendOpts,
+                  reason: cotPublisher.degradedReason,
+                  journal,
+                  turnId: targetTurnId,
+                });
+              }
+              await outbox.deliverFinalReply({
+                chatId,
+                scope,
+                state: finalAnswerOnlyState(finalState),
+                skipFrom: finalState,
+                replyMode,
+                sendOpts,
+                cardRenderOptions,
+                turnId: targetTurnId,
+                outcome: handle.outcome,
+                notice: fallbackNotice(),
+                onWait: onDeliveryWait,
+                onNotInChat,
+              });
+            },
+          };
         }
         if (cotPublisher.degradedReason) {
           await sendCotDegradedNotice({
@@ -372,10 +465,16 @@ async function deliverChatTurn(
         suppressed: () => Boolean(autoRerunOutcome),
         timeoutMs: outboundTimeoutMs,
       });
+      const finalState = await renderDone;
       if (autoRerunOutcome) {
         await outbox.recallStream(progress, scope);
-        if (journal && turnId) journal.voidTurn(turnId);
-        return { state: latestState, autoRerunOutcome };
+        return {
+          state: finalState,
+          autoRerunOutcome,
+          voidSuppressedTurn,
+          deliverSuppressedFailure: (overrideTurnId) =>
+            deliverRecalledStreamFallback(finalState, overrideTurnId),
+        };
       }
       await outbox.recallEmptyStream(progress, filterForPrefs(latestState), scope);
       const visible = filterForPrefs(latestState);
@@ -456,10 +555,16 @@ async function deliverChatTurn(
         suppressed: () => Boolean(autoRerunOutcome),
         timeoutMs: outboundTimeoutMs,
       });
+      const finalState = await renderDone;
       if (autoRerunOutcome) {
         await outbox.recallStream(progress, scope);
-        if (journal && turnId) journal.voidTurn(turnId);
-        return { state: latestState, autoRerunOutcome };
+        return {
+          state: finalState,
+          autoRerunOutcome,
+          voidSuppressedTurn,
+          deliverSuppressedFailure: (overrideTurnId) =>
+            deliverRecalledStreamFallback(finalState, overrideTurnId),
+        };
       }
       await outbox.recallEmptyStream(progress, filterForPrefs(latestState), scope);
       const visible = filterForPrefs(latestState);
@@ -501,8 +606,31 @@ async function deliverChatTurn(
         checkAutoRerun,
       );
       if (autoRerunOutcome) {
-        if (journal && turnId) journal.voidTurn(turnId);
-        return { state: finalState, autoRerunOutcome };
+        return {
+          state: finalState,
+          autoRerunOutcome,
+          voidSuppressedTurn,
+          deliverSuppressedFailure: async (overrideTurnId) => {
+            logSuppressedFinal(finalState);
+            await outbox.deliverFinalReply({
+              chatId,
+              scope,
+              state: finalReplyFor(filterForPrefs(finalState), {
+                replyMode: finalAnswerOnly ? 'final-answer' : 'stream-deltas',
+                streamed: false,
+              }),
+              skipFrom: finalState,
+              replyMode,
+              sendOpts,
+              cardRenderOptions,
+              turnId: overrideTurnId ?? turnId,
+              outcome: handle.outcome,
+              notice: fallbackNotice(),
+              onWait: onDeliveryWait,
+              onNotInChat,
+            });
+          },
+        };
       }
       await outbox.deliverFinalReply({
         chatId,

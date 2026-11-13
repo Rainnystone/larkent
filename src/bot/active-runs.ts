@@ -119,6 +119,13 @@ export class ActiveRuns {
     };
   }
 
+  hasActiveSessionWriter(scope: string): boolean {
+    for (const writer of this.sessionWriters.get(scope) ?? []) {
+      if (writer.current) return true;
+    }
+    return false;
+  }
+
   /** An accepted session choice revokes old consumers before requesting stop. */
   supersedeSession(scope: string, reason: StopRequest): boolean {
     this.hooks.onSupersede?.(scope);
