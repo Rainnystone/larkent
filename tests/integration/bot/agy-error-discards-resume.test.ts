@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl';
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
+import { CotClient } from '../../../src/bot/cot';
 import { ABANDON_HINT, CONTINUE_HINT } from '../../../src/bot/interruption-notice';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
@@ -992,6 +993,135 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     expect(text).toContain(FRESH_SESSION_NOTICE);
     expect(text).not.toContain(CONTINUE_HINT);
   });
+
+  it('suppresses and recalls Attempt 1 CoT bubble on auto-rerun so a successful rerun leaves no failed CoT bubble', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    let cotCreateCount = 0;
+    const cotEventsById = new Map<string, Array<{ event_type: string; content: string }>>();
+    const cotCompletions: Array<{ cotId: string; messageId: string; reason: string }> = [];
+
+    vi.spyOn(CotClient.prototype, 'create').mockImplementation(async () => {
+      cotCreateCount += 1;
+      return {
+        cot_id: `cot_attempt_${cotCreateCount}`,
+        message_id: `om_cot_attempt_${cotCreateCount}`,
+      };
+    });
+    vi.spyOn(CotClient.prototype, 'update').mockImplementation(async (ref, events) => {
+      const list = cotEventsById.get(ref.cotId) ?? [];
+      list.push(...events.map((evt) => ({ event_type: evt.event_type, content: evt.content })));
+      cotEventsById.set(ref.cotId, list);
+    });
+    vi.spyOn(CotClient.prototype, 'complete').mockImplementation(async (ref, reason) => {
+      cotCompletions.push({ cotId: ref.cotId, messageId: ref.messageId, reason });
+    });
+
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      messageReply: 'card',
+      cotMessages: 'brief',
+    });
+
+    await h.channel.handlers.message?.(message('first', 'explain architecture'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push({ type: 'thinking', delta: 'inspecting modules' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+
+    await waitFor(() => h.agent.manual.length === 2);
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-fresh' });
+    secondAttempt.push({ type: 'thinking', delta: 'drafting clean answer' });
+    secondAttempt.push({ type: 'final_text', content: 'COT-RECOVERED-OK' });
+    secondAttempt.push({ type: 'done', terminationReason: 'normal', resumeHandle: 'sess-fresh' });
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(cotCreateCount).toBe(2);
+    const firstCotEventTypes = (cotEventsById.get('cot_attempt_1') ?? []).map((evt) => evt.event_type);
+    expect(firstCotEventTypes).not.toContain('RUN_ERROR');
+    expect(cotCompletions).toEqual([
+      { cotId: 'cot_attempt_2', messageId: 'om_cot_attempt_2', reason: 'done' },
+    ]);
+    const recalled = h.channel.callLog
+      .filter((call): call is Extract<typeof call, { op: 'recall' }> => call.op === 'recall')
+      .map((call) => call.messageId);
+    expect(recalled).toContain('om_cot_attempt_1');
+    expect(recalled).not.toContain('om_cot_attempt_2');
+
+    const text = rendered(h.channel);
+    expect(text).toContain('COT-RECOVERED-OK');
+    expect(text).not.toContain('agent 失败');
+    expect(text).not.toContain(FRESH_SESSION_NOTICE);
+  });
+
+  it('still completes Attempt 2 CoT bubble with RUN_ERROR when the automatic rerun itself fails', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    let cotCreateCount = 0;
+    const cotEventsById = new Map<string, Array<{ event_type: string; content: string }>>();
+    const cotCompletions: Array<{ cotId: string; messageId: string; reason: string }> = [];
+
+    vi.spyOn(CotClient.prototype, 'create').mockImplementation(async () => {
+      cotCreateCount += 1;
+      return {
+        cot_id: `cot_fail_${cotCreateCount}`,
+        message_id: `om_cot_fail_${cotCreateCount}`,
+      };
+    });
+    vi.spyOn(CotClient.prototype, 'update').mockImplementation(async (ref, events) => {
+      const list = cotEventsById.get(ref.cotId) ?? [];
+      list.push(...events.map((evt) => ({ event_type: evt.event_type, content: evt.content })));
+      cotEventsById.set(ref.cotId, list);
+    });
+    vi.spyOn(CotClient.prototype, 'complete').mockImplementation(async (ref, reason) => {
+      cotCompletions.push({ cotId: ref.cotId, messageId: ref.messageId, reason });
+    });
+
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      messageReply: 'card',
+      cotMessages: 'brief',
+    });
+
+    await h.channel.handlers.message?.(message('first', 'explain architecture'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+
+    await waitFor(() => h.agent.manual.length === 2);
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-agy-rerun' });
+    secondAttempt.push(AGY_ERROR_RERUN);
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(cotCreateCount).toBe(2);
+    expect((cotEventsById.get('cot_fail_1') ?? []).map((evt) => evt.event_type)).not.toContain('RUN_ERROR');
+    expect((cotEventsById.get('cot_fail_2') ?? []).map((evt) => evt.event_type)).toContain('RUN_ERROR');
+    expect(cotCompletions).toEqual([
+      { cotId: 'cot_fail_2', messageId: 'om_cot_fail_2', reason: 'error' },
+    ]);
+    const recalled = h.channel.callLog
+      .filter((call): call is Extract<typeof call, { op: 'recall' }> => call.op === 'recall')
+      .map((call) => call.messageId);
+    expect(recalled).toContain('om_cot_fail_1');
+    expect(recalled).not.toContain('om_cot_fail_2');
+    expect(rendered(h.channel)).toContain('agent 失败');
+  });
 });
 
 async function harness(options: {
@@ -999,6 +1129,7 @@ async function harness(options: {
   journal?: boolean;
   ledger?: boolean;
   messageReply?: 'text' | 'card';
+  cotMessages?: 'off' | 'brief' | 'detailed';
   chatMode?: 'group' | 'topic';
   outboundTimeoutMs?: number;
   messagesByChat?: Record<string, unknown[]>;
@@ -1025,7 +1156,7 @@ async function harness(options: {
       messageReplyMigrated: true,
       showToolCalls: true,
       runIdleTimeoutMinutes: 1,
-      cotMessages: 'off',
+      cotMessages: options.cotMessages ?? 'off',
       requireMentionInGroup: false,
     },
   });

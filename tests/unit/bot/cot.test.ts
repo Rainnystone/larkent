@@ -255,6 +255,35 @@ describe('COT event mapping', () => {
     expect(publisher.degradedReason).toBe('field validation failed');
     expect(client.completed).toEqual([]);
   });
+
+  it('suppresses RUN_ERROR and finish("error") when shouldSuppressError resolves true', async () => {
+    const client = new FakeCotClient();
+    const publisher = new CotPublisher({
+      client,
+      chatId: 'oc_chat',
+      originMessageId: 'om_origin',
+      runId: 'run-suppressed',
+      scope: 'oc_chat',
+      inputPreview: 'run',
+    });
+    await publisher.start();
+
+    await consumeCotEvents(
+      iterate([
+        { type: 'thinking', delta: 'checking' },
+        { type: 'error', message: 'upstream failed', terminationReason: 'failed', invalidateResume: 'sess-1' },
+      ]),
+      publisher,
+      {
+        detail: 'brief',
+        shouldSuppressError: async () => true,
+      },
+    );
+
+    expect(client.events.map((event) => event.event_type)).not.toContain('RUN_ERROR');
+    expect(client.completed).toEqual([]);
+    expect(publisher.disabled).toBe(true);
+  });
 });
 
 class FakeCotClient {

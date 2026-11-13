@@ -330,22 +330,37 @@ async function deliverChatTurn(
       });
       await cotPublisher.start();
       if (!cotPublisher.disabled) {
+        let resolveCotErrorSuppression!: (suppress: boolean) => void;
+        const cotErrorSuppression = new Promise<boolean>((resolve) => {
+          resolveCotErrorSuppression = resolve;
+        });
         const cotDone = consumeCotEvents(execution.subscribe(), cotPublisher, {
           detail: delivery.cot!.detail,
+          shouldSuppressError: () => cotErrorSuppression,
         });
-        const finalState = await processAgentStream(
-          handle,
-          eventStream,
-          scope,
-          idleTimeoutMs,
-          recordSession,
-          async () => {},
-          runContext,
-          reliability,
-          checkAutoRerun,
-        );
+        let finalState: RunState;
+        try {
+          finalState = await processAgentStream(
+            handle,
+            eventStream,
+            scope,
+            idleTimeoutMs,
+            recordSession,
+            async () => {},
+            runContext,
+            reliability,
+            (info) => {
+              const suppress = checkAutoRerun(info);
+              resolveCotErrorSuppression(suppress);
+              return suppress;
+            },
+          );
+        } finally {
+          resolveCotErrorSuppression(false);
+        }
         await cotDone;
         if (autoRerunOutcome) {
+          await recallCotBubble(channel, cotPublisher.ref?.messageId, scope, outboundTimeoutMs);
           return {
             state: finalState,
             autoRerunOutcome,
@@ -1181,6 +1196,25 @@ function scheduleWorkingReactionCleanup(
   })();
 }
 
+
+async function recallCotBubble(
+  channel: LarkChannel,
+  messageId: string | undefined,
+  scope: string,
+  timeoutMs: number,
+): Promise<void> {
+  if (!messageId) return;
+  try {
+    await withOutboundTimeout('recallMessage', channel.recallMessage(messageId), timeoutMs);
+    log.info('cot', 'recalled', { scope, messageId });
+  } catch (err) {
+    log.warn('cot', 'recall-failed', {
+      scope,
+      messageId,
+      err: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
 
 function delay(ms: number): Promise<void> { return new Promise(resolve => setTimeout(resolve, ms)); }
 
