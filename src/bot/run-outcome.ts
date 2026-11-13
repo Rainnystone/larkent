@@ -1,5 +1,5 @@
 import { matchCliSignature, type CliSignature } from '../agent/cli-signatures';
-import type { AgentEvent } from '../agent/types';
+import { invalidatedResumeHandle, type AgentEvent } from '../agent/types';
 import type { Terminal } from '../card/run-state';
 
 export type { CliSignature };
@@ -33,10 +33,10 @@ export type FailedCause =
   | 'unclassified';
 
 export type RunOutcome =
-  | { kind: 'completed'; retriable: boolean; needsHuman: boolean }
-  | { kind: 'partial'; retriable: boolean; needsHuman: boolean }
-  | { kind: 'interrupted'; reason: StopRequest; retriable: boolean; needsHuman: boolean }
-  | { kind: 'failed'; cause: FailedCause; retriable: boolean; needsHuman: boolean };
+  | { kind: 'completed'; retriable: boolean; needsHuman: boolean; sessionDiscarded?: true }
+  | { kind: 'partial'; retriable: boolean; needsHuman: boolean; sessionDiscarded?: true }
+  | { kind: 'interrupted'; reason: StopRequest; retriable: boolean; needsHuman: boolean; sessionDiscarded?: true }
+  | { kind: 'failed'; cause: FailedCause; retriable: boolean; needsHuman: boolean; sessionDiscarded?: true };
 
 export interface DeriveRunOutcomeInput {
   stopRequest?: StopRequest;
@@ -104,7 +104,11 @@ export function shouldDeliverAgentEvent(
 }
 
 export function deriveRunOutcome(input: DeriveRunOutcomeInput): RunOutcome {
-  return applyOutageOverlap(deriveRunOutcomeShape(input), input);
+  const outcome = applyOutageOverlap(deriveRunOutcomeShape(input), input);
+  if (input.terminalEvent && invalidatedResumeHandle(input.terminalEvent)) {
+    return { ...outcome, sessionDiscarded: true };
+  }
+  return outcome;
 }
 
 export function runOverlappedOutage(

@@ -515,6 +515,50 @@ describe('deriveRunOutcome', () => {
     });
     expect(cardTerminalFromOutcome(outcome)).toBe('error');
   });
+
+  it('marks sessionDiscarded on RunOutcome only when terminalEvent carries invalidateResume', () => {
+    const discardedError = deriveRunOutcome({
+      exit: 1,
+      terminalEvent: {
+        type: 'error',
+        message: 'Bad Gateway',
+        terminationReason: 'failed',
+        invalidateResume: 'conv-discarded',
+      },
+    });
+    expect(discardedError).toEqual({
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: true,
+      needsHuman: false,
+      sessionDiscarded: true,
+    });
+
+    const discardedDone = deriveRunOutcome({
+      exit: 1,
+      terminalEvent: {
+        type: 'done',
+        terminationReason: 'normal',
+        invalidateResume: 'conv-discarded',
+      },
+    });
+    expect(discardedDone).toEqual({
+      kind: 'completed',
+      retriable: false,
+      needsHuman: false,
+      sessionDiscarded: true,
+    });
+
+    const preservedError = deriveRunOutcome({
+      exit: 3,
+      terminalEvent: {
+        type: 'error',
+        message: 'print timeout',
+        terminationReason: 'failed',
+      },
+    });
+    expect(preservedError).not.toHaveProperty('sessionDiscarded');
+  });
 });
 
 describe('shouldDeliverAgentEvent', () => {

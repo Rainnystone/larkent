@@ -725,6 +725,20 @@ export async function recallIfEmptyStreamedReply(
   scope: string,
 ): Promise<void> {
   if (!progress.opened()) return;
+  if (!progress.abandoned() && renderText(finalState).trim() !== '') return;
+  await recallStreamedReply(channel, progress, scope);
+}
+
+export async function recallStreamedReply(
+  channel: LarkChannel,
+  progress: {
+    opened(): boolean;
+    abandoned(): boolean;
+    settled: Promise<unknown>;
+  },
+  scope: string,
+): Promise<void> {
+  if (!progress.opened()) return;
   // An abandoned stream renders nothing, so whatever message it eventually
   // posts is empty by construction. It is still in flight (that is why we gave
   // up on it), so clean up in the background instead of blocking the run on it.
@@ -735,7 +749,6 @@ export async function recallIfEmptyStreamedReply(
     );
     return;
   }
-  if (renderText(finalState).trim() !== '') return;
   const result = await progress.settled.catch(() => undefined);
   await recallStreamedMessage(channel, result, scope);
 }

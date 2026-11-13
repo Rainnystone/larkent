@@ -17,6 +17,7 @@ import {
   deliverFinalReply,
   resendJournalReply,
   recallIfEmptyStreamedReply,
+  recallStreamedReply,
   stagedOutboxCount,
 } from './outbox-reply';
 import {
@@ -124,6 +125,17 @@ export class Outbox {
       state,
       scope,
     );
+  }
+
+  recallStream(
+    progress: {
+      opened(): boolean;
+      abandoned(): boolean;
+      settled: Promise<unknown>;
+    },
+    scope: string,
+  ): Promise<void> {
+    return recallStreamedReply(this.options.channel, progress, scope);
   }
 
   async deliverNotice(input: {

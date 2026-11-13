@@ -48,6 +48,8 @@ export interface ChatTurnDelivery extends TurnTarget {
   onNotInChat?: FinalDelivery['onNotInChat'];
   outboundTimeoutMs: number;
   cot?: { client: CotClient; detail: Exclude<CotMessagesMode, 'off'>; inputPreview: string };
+  autoRerunOnSessionDiscard?: boolean;
+  isAutoRerun?: boolean;
 }
 
 export interface AutomationTurnDelivery extends TurnTarget {
@@ -73,6 +75,7 @@ export type TurnResult = Exclude<StartRunFlowResult, { ok: true }> | {
   ok: true;
   state: RunState;
   handle: RunHandle;
+  autoRerunOutcome?: RunOutcome;
 };
 
 /** A launch error is distinct from event consumption or child settlement failure. */
@@ -126,8 +129,13 @@ export async function executeTurn(input: TurnInput): Promise<TurnResult> {
   if (delivery.kind === 'automation') return deliverAutomationTurn(input, flow, delivery, recordSession);
   delivery.activePolicyFingerprints?.set(run.scopeId, flow.policy.policyFingerprint);
   try {
-    const state = await deliverChatTurn(input, flow, delivery, recordSession);
-    return { ok: true, state, handle: flow.execution.handle };
+    const delivered = await deliverChatTurn(input, flow, delivery, recordSession);
+    return {
+      ok: true,
+      state: delivered.state,
+      handle: flow.execution.handle,
+      ...(delivered.autoRerunOutcome ? { autoRerunOutcome: delivered.autoRerunOutcome } : {}),
+    };
   } finally {
     delivery.activePolicyFingerprints?.delete(run.scopeId);
   }
@@ -184,12 +192,22 @@ async function deliverChatTurn(
   flow: StartedFlow,
   delivery: ChatTurnDelivery,
   recordSession: (event: AgentEvent) => void,
-): Promise<RunState> {
+): Promise<{ state: RunState; autoRerunOutcome?: RunOutcome }> {
   const { execution, cwdRealpath: cwd } = flow;
   const { outbox, channel, chatId, sendOpts, turnId, journal, callbackAuth, cliSelfSent,
     outboundTimeoutMs, notice: noticeCtx, onWait: onDeliveryWait } = delivery;
   const scope = input.run.scopeId;
   const handle = execution.handle;
+  let autoRerunOutcome: RunOutcome | undefined;
+  const checkAutoRerun = (info: { terminalEvent?: AgentEvent; outcome: RunOutcome }): boolean => {
+    if (!shouldAutoRerunDiscardedError({ delivery, handle, ...info })) return false;
+    autoRerunOutcome = info.outcome;
+    return true;
+  };
+  const effectiveNotice = () =>
+    delivery.isAutoRerun && handle.outcome?.kind === 'failed' && handle.outcome.cause !== 'auth-required'
+      ? undefined
+      : noticeCtx;
   const eventStream = execution.subscribe();
   const idleTimeoutMs = input.idleTimeoutMs;
   const runContext = { currentChatId: chatId, batchMessageIds: delivery.batchMessageIds ?? [] };
@@ -255,8 +273,13 @@ async function deliverChatTurn(
           async () => {},
           runContext,
           reliability,
+          checkAutoRerun,
         );
         await cotDone;
+        if (autoRerunOutcome) {
+          if (journal && turnId) journal.voidTurn(turnId);
+          return { state: finalState, autoRerunOutcome };
+        }
         if (cotPublisher.degradedReason) {
           await sendCotDegradedNotice({
             channel,
@@ -278,13 +301,13 @@ async function deliverChatTurn(
           cardRenderOptions,
           turnId,
           outcome: handle.outcome,
-          notice: noticeCtx,
+          notice: effectiveNotice(),
           cliSelfSent,
           onWait: onDeliveryWait,
           onNotInChat,
 
         });
-        return finalState;
+        return { state: finalState };
       }
       log.warn('cot', 'fallback-existing-reply', { reason: 'create-disabled' });
     }
@@ -338,6 +361,7 @@ async function deliverChatTurn(
         },
         runContext,
         reliability,
+        checkAutoRerun,
       );
       const stream = await awaitRenderAwareStream({
         mode: replyMode,
@@ -345,8 +369,14 @@ async function deliverChatTurn(
         renderDone,
         producerStarted: () => producerStarted,
         producerRendered: () => producerRendered,
+        suppressed: () => Boolean(autoRerunOutcome),
         timeoutMs: outboundTimeoutMs,
       });
+      if (autoRerunOutcome) {
+        await outbox.recallStream(progress, scope);
+        if (journal && turnId) journal.voidTurn(turnId);
+        return { state: latestState, autoRerunOutcome };
+      }
       await outbox.recallEmptyStream(progress, filterForPrefs(latestState), scope);
       const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
@@ -364,13 +394,13 @@ async function deliverChatTurn(
         cardRenderOptions,
         turnId,
         outcome: handle.outcome,
-        notice: noticeCtx,
+        notice: effectiveNotice(),
         cliSelfSent,
         onWait: onDeliveryWait,
         onNotInChat,
 
       });
-      return latestState;
+      return { state: latestState };
     } else if (replyMode === 'markdown') {
       let latestState: RunState = seedRunState(runContext);
       let producerStarted = false;
@@ -415,6 +445,7 @@ async function deliverChatTurn(
         },
         runContext,
         reliability,
+        checkAutoRerun,
       );
       const stream = await awaitRenderAwareStream({
         mode: replyMode,
@@ -422,8 +453,14 @@ async function deliverChatTurn(
         renderDone,
         producerStarted: () => producerStarted,
         producerRendered: () => producerRendered,
+        suppressed: () => Boolean(autoRerunOutcome),
         timeoutMs: outboundTimeoutMs,
       });
+      if (autoRerunOutcome) {
+        await outbox.recallStream(progress, scope);
+        if (journal && turnId) journal.voidTurn(turnId);
+        return { state: latestState, autoRerunOutcome };
+      }
       await outbox.recallEmptyStream(progress, filterForPrefs(latestState), scope);
       const visible = filterForPrefs(latestState);
       const terminalState = finalAnswerOnly
@@ -441,13 +478,13 @@ async function deliverChatTurn(
         cardRenderOptions,
         turnId,
         outcome: handle.outcome,
-        notice: noticeCtx,
+        notice: effectiveNotice(),
         cliSelfSent,
         onWait: onDeliveryWait,
         onNotInChat,
 
       });
-      return latestState;
+      return { state: latestState };
     } else {
       // text mode: drain the agent stream without sending anything during
       // the run, then post the final rendered text once as a plain markdown
@@ -461,7 +498,12 @@ async function deliverChatTurn(
         async () => {},
         runContext,
         reliability,
+        checkAutoRerun,
       );
+      if (autoRerunOutcome) {
+        if (journal && turnId) journal.voidTurn(turnId);
+        return { state: finalState, autoRerunOutcome };
+      }
       await outbox.deliverFinalReply({
         chatId,
         scope,
@@ -475,13 +517,13 @@ async function deliverChatTurn(
         cardRenderOptions,
         turnId,
         outcome: handle.outcome,
-        notice: noticeCtx,
+        notice: effectiveNotice(),
         cliSelfSent,
         onWait: onDeliveryWait,
         onNotInChat,
 
       });
-      return finalState;
+      return { state: finalState };
     }
   } finally {
     cliSelfSent?.consume(scope);
@@ -639,6 +681,7 @@ async function processAgentStream(
   flush: (state: RunState) => Promise<void>,
   runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
   reliability: StreamReliability = {},
+  shouldSuppressTerminalError?: (input: { terminalEvent?: AgentEvent; outcome: RunOutcome }) => boolean,
 ): Promise<RunState> {
   const signatures = reliability.signatures;
   const runStart = Date.now();
@@ -735,6 +778,14 @@ async function processAgentStream(
   if (lastTerminal?.type === 'error' && lastTerminal.invalidateResume && state.terminal === 'error') {
     state = appendFreshSessionNotice(state);
   }
+  if (shouldSuppressTerminalError?.({ terminalEvent: lastTerminal, outcome })) {
+    log.info('turn', 'auto-rerun-scheduled', {
+      scope,
+      outcome: formatRunOutcome(outcome),
+    });
+    reportMetric('run_e2e_ms', Date.now() - runStart, { terminal: state.terminal });
+    return state;
+  }
   log.info('card', 'final', {
     scope,
     terminal: state.terminal,
@@ -748,6 +799,34 @@ async function processAgentStream(
     await handle.run.stop();
   }
   return state;
+}
+
+function shouldAutoRerunDiscardedError(input: {
+  delivery: ChatTurnDelivery;
+  handle: RunHandle;
+  terminalEvent?: AgentEvent;
+  outcome: RunOutcome;
+}): boolean {
+  const { delivery, handle, terminalEvent, outcome } = input;
+  if (!delivery.autoRerunOnSessionDiscard) return false;
+  if (handle.stopRequest || handle.interrupted) return false;
+  if (
+    terminalEvent?.type !== 'error'
+    || terminalEvent.terminationReason !== 'failed'
+    || !terminalEvent.invalidateResume
+  ) {
+    return false;
+  }
+  if (outcome.kind !== 'failed' || outcome.needsHuman) return false;
+  if (delivery.canRecordSession?.() === false) return false;
+  if (
+    delivery.journal
+    && delivery.turnId
+    && delivery.journal.get(delivery.turnId)?.status === 'voided'
+  ) {
+    return false;
+  }
+  return true;
 }
 
 function applyOutcomeToState(
@@ -823,6 +902,7 @@ async function awaitRenderAwareStream(input: {
   renderDone: Promise<RunState>;
   producerStarted: () => boolean;
   producerRendered: () => boolean;
+  suppressed?: () => boolean;
   timeoutMs: number;
 }): Promise<StreamDelivery> {
   const streamResult = input.progress.settled.then(
@@ -856,6 +936,16 @@ async function awaitRenderAwareStream(input: {
   if (!input.progress.opened()) {
     log.info('outbound', 'progress-stream-skipped', { mode: input.mode });
     return { kind: 'none' };
+  }
+
+  if (input.suppressed?.()) {
+    if (!input.producerStarted()) {
+      input.progress.abandon();
+      return { kind: 'none' };
+    }
+    const settled = await streamResult;
+    if (!settled.ok) return failedStream(settled.err, input.progress);
+    return confirmedStream(settled.result, input.progress);
   }
 
   // The run ended before the stream did. A producer that hasn't started yet is

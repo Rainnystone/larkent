@@ -30,6 +30,12 @@ const AGY_ERROR: AgentEvent = {
   terminationReason: 'failed',
   invalidateResume: 'sess-agy',
 };
+const AGY_ERROR_RERUN: AgentEvent = {
+  type: 'error',
+  message: 'agent executor error: Bad Gateway',
+  terminationReason: 'failed',
+  invalidateResume: 'sess-agy-rerun',
+};
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -40,36 +46,287 @@ afterEach(async () => {
 });
 
 describe('agy error discards resume', { timeout: 20_000 }, () => {
-  it('clears the resume handle after an agy ERROR so the next run has no conversation id', async () => {
+  it('automatically reruns once in a fresh session on no-answer agy ERROR and delivers one normal reply with no failure or 继续 card', async () => {
     const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
-    const h = await harness({ agentKind: 'antigravity' });
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
     await h.channel.handlers.message?.(message('first', 'please run'));
     await vi.advanceTimersByTimeAsync(600);
     await waitFor(() => h.agent.manual.length === 1);
-    const run = h.agent.manual[0]!;
-    run.push({ type: 'system', resumeHandle: 'sess-agy' });
-    run.push(AGY_ERROR);
-    run.close();
-    run.releaseCleanup();
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
     await drainIO();
-    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'failed:unclassified'));
-    expect(cardFinal(info).at(-1)).toMatchObject({ terminal: 'error', outcome: 'failed:unclassified' });
-    const text = rendered(h.channel);
-    expect(text).toContain('agent 失败');
-    expect(text).toContain(FRESH_SESSION_NOTICE);
+
+    // User sends nothing; bridge automatically starts Attempt 2 in a fresh session.
+    await waitFor(() => h.agent.manual.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+    expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
+    expect(h.agent.runOptions[1]?.prompt).toContain('please run');
     expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
     expect(h.catalog.entries().some((entry) => entry.status === 'active' && entry.resumeHandle === 'sess-agy')).toBe(false);
 
-    await h.channel.handlers.message?.(message('second', 'try again'));
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-fresh' });
+    secondAttempt.push({ type: 'final_text', content: 'RECOVERED-OK' });
+    secondAttempt.push({ type: 'done', terminationReason: 'normal' });
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(cardFinal(info)).toEqual([expect.objectContaining({ terminal: 'done', outcome: 'completed' })]);
+    const text = rendered(h.channel);
+    expect(text).toContain('RECOVERED-OK');
+    expect(text).not.toContain('agent 失败');
+    expect(text).not.toContain(FRESH_SESSION_NOTICE);
+    expect(text).not.toContain(CONTINUE_HINT);
+    expect(text).not.toContain('notice.continue');
+    expect(h.journal?.list().some((entry) => entry.continuation?.status === 'offered')).toBe(false);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe('sess-fresh');
+
+    await h.channel.handlers.message?.(message('second', 'follow up'));
     await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.runOptions.length === 2);
-    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
-    const next = h.agent.manual[1]!;
-    next.push({ type: 'final_text', content: 'FRESH' });
+    await waitFor(() => h.agent.runOptions.length === 3);
+    expect(h.agent.runOptions[2]?.resumeHandle).toBe('sess-fresh');
+    const next = h.agent.manual[2]!;
+    next.push({ type: 'final_text', content: 'NEXT' });
     next.push({ type: 'done', terminationReason: 'normal' });
     next.close();
     next.releaseCleanup();
     await drainIO();
+  });
+
+  it('recalls an opened progress card from Attempt 1 on mid-turn no-answer ERROR so a successful rerun leaves no failure card', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const rawFixture = await readFile(
+      join(process.cwd(), 'tests/fixtures/antigravity/error-interim-narration.jsonl'),
+      'utf8',
+    );
+    const translator = new AntigravityJsonlTranslator();
+    const translated = rawFixture
+      .trim()
+      .split('\n')
+      .flatMap((line) => translator.translate(JSON.parse(line) as unknown));
+
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    await h.channel.handlers.message?.(message('first', 'check logs'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    for (const evt of translated) firstAttempt.push(evt);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await drainIO();
+
+    await waitFor(() => h.agent.manual.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+    expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
+
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-clean' });
+    secondAttempt.push({ type: 'final_text', content: 'CLEAN-RECOVERY' });
+    secondAttempt.push({ type: 'done', terminationReason: 'normal' });
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    const text = rendered(h.channel);
+    expect(text).toContain('CLEAN-RECOVERY');
+    expect(text).not.toContain('agent 失败');
+    expect(text).not.toContain(FRESH_SESSION_NOTICE);
+    expect(text).not.toContain(CONTINUE_HINT);
+    if (h.channel.streams.length > 0) {
+      const recalled = h.channel.callLog
+        .filter((call): call is Extract<typeof call, { op: 'recall' }> => call.op === 'recall')
+        .map((call) => call.messageId);
+      expect(recalled).toContain(h.channel.streams[0]?.messageId);
+    }
+  });
+
+  it('shows one clear error, no 继续 card, and no third run when the automatic rerun also fails', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await drainIO();
+
+    await waitFor(() => h.agent.manual.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-agy-rerun' });
+    secondAttempt.push(AGY_ERROR_RERUN);
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await drainIO();
+
+    expect(h.agent.runOptions).toHaveLength(2);
+    expect(cardFinal(info)).toEqual([expect.objectContaining({ terminal: 'error', outcome: 'failed:unclassified' })]);
+    expect(h.channel.sent).toHaveLength(1);
+    const text = rendered(h.channel);
+    expect(text).toContain('agent 失败');
+    expect(text).toContain(FRESH_SESSION_NOTICE);
+    expect(text).not.toContain(CONTINUE_HINT);
+    expect(text).not.toContain('notice.continue');
+    expect(h.journal?.list().some((entry) => entry.continuation?.status === 'offered')).toBe(false);
+    expect(h.journal?.list().some((entry) => Boolean(entry.resumeHandle))).toBe(false);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
+
+    await h.channel.handlers.message?.(message('second', 'try again'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.runOptions.length === 3);
+    expect(h.agent.runOptions[2]?.resumeHandle).toBeUndefined();
+    const third = h.agent.manual[2]!;
+    third.push({ type: 'final_text', content: 'FRESH' });
+    third.push({ type: 'done', terminationReason: 'normal' });
+    third.close();
+    third.releaseCleanup();
+    await drainIO();
+  });
+
+  it('suppresses 继续 card even when the automatic rerun fails before attaching to a conversation', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await drainIO();
+
+    await waitFor(() => h.agent.manual.length === 2);
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'error', message: 'agy exited with code 1', terminationReason: 'failed' });
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(h.agent.runOptions).toHaveLength(2);
+    expect(h.channel.sent).toHaveLength(1);
+    const text = rendered(h.channel);
+    expect(text).toContain('agent 失败');
+    expect(text).not.toContain(CONTINUE_HINT);
+    expect(text).not.toContain('notice.continue');
+    expect(h.journal?.list().some((entry) => entry.continuation?.status === 'offered')).toBe(false);
+  });
+
+  it('does not auto-rerun a pre-attachment CLI error without invalidateResume', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true });
+    await h.channel.handlers.message?.(message('first', 'please run'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run = h.agent.manual[0]!;
+    run.push({ type: 'error', message: 'invalid --model foo', terminationReason: 'failed' });
+    run.close();
+    run.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'failed:unclassified'));
+    await vi.advanceTimersByTimeAsync(1_000);
+    await drainIO();
+
+    expect(h.agent.runOptions).toHaveLength(1);
+  });
+
+  it('handles /stop during the automatic rerun like a normal run', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    await h.channel.handlers.message?.(message('first', 'long work'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await drainIO();
+
+    await waitFor(() => h.agent.manual.length === 2);
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-rerun' });
+    await drainIO();
+
+    await h.channel.handlers.message?.(message('stop-msg', '/stop'));
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await drainIO();
+    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'interrupted:user-stop'));
+    await drainIO();
+
+    expect(h.agent.runOptions).toHaveLength(2);
+    const text = rendered(h.channel);
+    expect(text).not.toContain(CONTINUE_HINT);
+    expect(text).not.toContain('notice.continue');
+    expect(h.journal?.list().some((entry) => entry.continuation?.status === 'offered')).toBe(false);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe('sess-rerun');
+  });
+
+  it('handles a superseding /new and a queued follow-up message during the automatic rerun like a normal run', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true });
+    await h.channel.handlers.message?.(message('first', 'step one'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await drainIO();
+
+    await waitFor(() => h.agent.manual.length === 2);
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-rerun' });
+    await drainIO();
+
+    // Queue an ordinary follow-up while the rerun is active; it waits until the rerun settles.
+    await h.channel.handlers.message?.(message('followup', 'step two'));
+    await vi.advanceTimersByTimeAsync(600);
+    expect(h.agent.runOptions).toHaveLength(2);
+
+    secondAttempt.push({ type: 'final_text', content: 'STEP-ONE-DONE' });
+    secondAttempt.push({ type: 'done', terminationReason: 'normal' });
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 3);
+    expect(h.agent.runOptions[2]?.resumeHandle).toBe('sess-rerun');
+    expect(h.agent.runOptions[2]?.prompt).toContain('step two');
+
+    // Now test superseding /new during an active rerun on the next turn.
+    const thirdRun = h.agent.manual[2]!;
+    thirdRun.push({ type: 'error', message: 'boom', terminationReason: 'failed', invalidateResume: 'sess-rerun' });
+    thirdRun.close();
+    thirdRun.releaseCleanup();
+    await drainIO();
+
+    await waitFor(() => h.agent.manual.length === 4);
+    const fourthAttempt = h.agent.manual[3]!;
+    fourthAttempt.push({ type: 'system', resumeHandle: 'sess-rerun-2' });
+    await drainIO();
+
+    await h.channel.handlers.message?.(message('new-cmd', '/new'));
+    fourthAttempt.close();
+    fourthAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 2);
+    expect(cardFinal(info).some((entry) => entry.outcome === 'interrupted:superseded:new')).toBe(true);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
+    expect(h.agent.runOptions).toHaveLength(4);
   });
 
   it('keeps resuming the same conversation after an agy SUCCESS', async () => {
@@ -95,34 +352,6 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     next.push({ type: 'done', terminationReason: 'normal' });
     next.close();
     next.releaseCleanup();
-    await drainIO();
-  });
-
-  it('does not pass the old conversation id when 继续 follows an agy error', async () => {
-    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
-    const h = await harness({ agentKind: 'antigravity', journal: true });
-    await h.channel.handlers.message?.(message('first', 'please run'));
-    await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.manual.length === 1);
-    const run = h.agent.manual[0]!;
-    run.push({ type: 'system', resumeHandle: 'sess-agy' });
-    run.push(AGY_ERROR);
-    run.close();
-    run.releaseCleanup();
-    await drainIO();
-    await waitFor(() => cardFinal(info).some((entry) => entry.outcome === 'failed:unclassified'));
-    await waitFor(() => h.journal?.list().some((entry) => entry.continuation?.status === 'offered') === true);
-    expect(h.journal?.list().some((entry) => entry.resumeHandle === 'sess-agy')).toBe(false);
-    await waitFor(() => h.channel.sent.some((item) => JSON.stringify(item.content).includes(CONTINUE_HINT)));
-    await h.channel.handlers.message?.(message('cont', '继续'));
-    await vi.advanceTimersByTimeAsync(600);
-    await waitFor(() => h.agent.runOptions.length === 2);
-    expect(h.agent.runOptions[1]?.resumeHandle).toBeUndefined();
-    const continued = h.agent.manual[1]!;
-    continued.push({ type: 'final_text', content: 'FRESH' });
-    continued.push({ type: 'done', terminationReason: 'normal' });
-    continued.close();
-    continued.releaseCleanup();
     await drainIO();
   });
 
@@ -353,6 +582,10 @@ function cardFinal(info: ReturnType<typeof vi.spyOn>) {
   return info.mock.calls
     .filter((call) => call[0] === 'card' && call[1] === 'final')
     .map((call) => call[2] as Record<string, unknown>);
+}
+
+function flushEndCount(info: ReturnType<typeof vi.spyOn>) {
+  return info.mock.calls.filter((call) => call[0] === 'flush' && call[1] === 'end').length;
 }
 
 function message(messageId: string, content: string): NormalizedMessage {

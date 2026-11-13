@@ -56,20 +56,55 @@ describe('agy session discard through the real runner', { timeout: 40_000 }, () 
     expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe(FRESH);
   });
 
-  it('fails an agy ERROR without answer, says so, and starts 继续 as a fresh conversation that replays the failed request', async () => {
+  it('automatically reruns an agy ERROR without answer once in a fresh conversation with no failure or 继续 card', async () => {
     const h = await harness('antigravity');
     await h.turn(agyScript('success', CONVERSATION), 'seed');
-    await h.turn(agyScript('error-without-answer', CONVERSATION), 'summarise the diff');
+    await h.turn(
+      {
+        lines: [],
+        sequence: [
+          agyScript('error-without-answer', CONVERSATION),
+          agyScript('success', FRESH, 'DIFF_SUMMARY'),
+        ],
+      },
+      'summarise the diff',
+    );
+    expect(h.lastFinal()).toMatchObject({ terminal: 'done', outcome: 'completed' });
+    await vi.waitFor(() => {
+      expect(h.text()).toContain('DIFF_SUMMARY');
+    }, WAIT);
+    expect(h.text()).not.toContain('agent 失败');
+    expect(h.text()).not.toContain(FRESH_SESSION_NOTICE);
+    expect(h.text()).not.toContain(CONTINUE_HINT);
+    const runs = await h.runs();
+    expect(runs.map(conversationFlag)).toEqual([undefined, CONVERSATION, undefined]);
+    expect(runs[2]!.join(' ')).toContain(CONTINUE_HINT);
+    expect(runs[2]!.join(' ')).toContain('summarise the diff');
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe(FRESH);
+  });
+
+  it('shows one clear error, no 继续 card, and no third run when the automatic rerun also fails', async () => {
+    const h = await harness('antigravity');
+    await h.turn(agyScript('success', CONVERSATION), 'seed');
+    await h.turn(
+      {
+        lines: [],
+        sequence: [
+          agyScript('error-without-answer', CONVERSATION),
+          agyScript('error-without-answer', FRESH),
+        ],
+      },
+      'summarise the diff',
+    );
     expect(h.lastFinal()).toMatchObject({ terminal: 'error', outcome: 'failed:unclassified' });
     await vi.waitFor(() => {
       expect(h.text()).toContain('agent 失败');
       expect(h.text()).toContain(FRESH_SESSION_NOTICE);
-      expect(h.text()).toContain(CONTINUE_HINT);
     }, WAIT);
-    await h.turn(agyScript('success', FRESH), '继续');
+    expect(h.text()).not.toContain(CONTINUE_HINT);
     const runs = await h.runs();
     expect(runs.map(conversationFlag)).toEqual([undefined, CONVERSATION, undefined]);
-    expect(runs[2]!.join(' ')).toContain('summarise the diff');
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
   });
 
   it('keeps resuming the same conversation after an agy SUCCESS', async () => {
@@ -87,7 +122,10 @@ describe('agy session discard through the real runner', { timeout: 40_000 }, () 
     await h.turn(agyScript('success', CONVERSATION), 'seed');
     await h.turn(agyScript('print-timeout-open-tool', CONVERSATION), 'run sleep 90 && echo done');
     expect(h.lastFinal()).toMatchObject({ terminal: 'error' });
-    await vi.waitFor(() => expect(h.text()).toContain('agent 失败'), WAIT);
+    await vi.waitFor(() => {
+      expect(h.text()).toContain('agent 失败');
+      expect(h.text()).toContain(CONTINUE_HINT);
+    }, WAIT);
     expect(h.text()).not.toContain(FRESH_SESSION_NOTICE);
     expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe(CONVERSATION);
     expect(h.catalog.entries().filter(entry => entry.status === 'active').map(entry => entry.resumeHandle)).toEqual([CONVERSATION]);

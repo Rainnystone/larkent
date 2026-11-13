@@ -25,6 +25,7 @@ import { CallbackAuth } from '../card/callback-auth';
 import { ActionTokenCodec } from '../card/action-token';
 import { CallbackNonceStore } from '../card/callback-store';
 import {
+  continueExtraInstruction,
   NOTICE_RESTART_GAP_MS,
   NoticeActionAuth,
   planInterruptionNotice,
@@ -575,6 +576,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           activePolicyFingerprints,
           lastRunModelByScope,
           canRecordSession: sessionWriter.isCurrent,
+          isClosing: () => closing,
           scope,
           mode,
           backfillMarks,
@@ -1430,6 +1432,7 @@ interface RunBatchDeps {
   activePolicyFingerprints: Map<string, string>;
   lastRunModelByScope: Map<string, string>;
   canRecordSession(): boolean;
+  isClosing?(): boolean;
   scope: string;
   mode: ChatMode;
   backfillMarks: Map<string, BackfillMark>;
@@ -1592,9 +1595,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const prevModel = lastRunModelByScope.get(scope);
   const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
   lastRunModelByScope.set(scope, modelSelection);
-  const extraInstructions: string[] = [];
+  const takenInstructions: string[] = [];
   const taken = await continuations.take(scope, batch);
-  applyTakenInstruction(taken, extraInstructions);
+  applyTakenInstruction(taken, takenInstructions);
   const catalog = deps.pluginCatalog;
   const automationPluginAvailable = await catalog.isAvailable('automation');
   const groupIm = firstMsg.chatType !== 'p2p' && mode !== 'p2p' && !scope.startsWith('meeting:');
@@ -1610,9 +1613,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       : !controls.profileConfig.automations.enabled ? 'automations-disabled'
       : groupIm ? senderUnavailable : 'automation-requires-group',
   };
-  extraInstructions.push(...await bridgeToolInstructions(toolContext));
+  const sharedExtraInstructions: string[] = [];
+  sharedExtraInstructions.push(...await bridgeToolInstructions(toolContext));
   if (modelSwitched) {
-    extraInstructions.push(
+    sharedExtraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
         '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
     );
@@ -1622,17 +1626,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     const oldest = backfilled.reduce((current, msg) => (
       msg.createTime < current.createTime ? msg : current
     ));
-    extraInstructions.push(formatBackfillLatenessHint({
+    sharedExtraInstructions.push(formatBackfillLatenessHint({
       createTimeMs: oldest.createTime,
       nowMs: (now ?? Date.now)(),
       timeZone: controls.profileConfig.automations.timezone,
       delayAnnounced,
     }));
   }
+  const extraInstructions = [...takenInstructions, ...sharedExtraInstructions];
 
   const promptBatch = taken.kind === 'continue' && !taken.resumeHandle && taken.userInput
     ? [{ ...lastMsg, content: taken.userInput }]
     : batch;
+  const userInputText = promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n');
   const prompt = buildPrompt(
     promptBatch,
     attachments,
@@ -1671,23 +1677,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     actorId: firstMsg.senderId,
     ...(threadId && !isAutomationRunScope(scope) ? { threadId } : {}),
   };
-  const turnId = journal ? randomUUID() : undefined;
-  if (journal && turnId) {
-    const initiatorType = senderTypeOf(lastMsg);
-    journal.enqueue({
-      turnId,
-      scope,
-      chatId,
-      ...(threadId ? { threadId } : {}),
-      messageIds: batch.map((msg) => msg.messageId),
-      senderId: firstMsg.senderId,
-      initiatorId: lastMsg.senderId,
-      ...(initiatorType ? { initiatorType } : {}),
-      status: 'queued',
-      userInput: promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n'),
-      ...journalResources(batch),
-    });
-  }
 
   const scopeOverride = sessions.getIdleTimeoutMinutes(scope);
   const idleTimeoutMs = scopeOverride !== undefined
@@ -1695,14 +1684,38 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     : getRunIdleTimeoutMs(controls.cfg);
   if (idleTimeoutMs) log.info('flush', 'idle-watchdog', { idleTimeoutMs });
   const cotMessages = getCotMessages(controls.cfg);
-  try {
-    await executeTurn({
+  const policyAttachments = attachments.map(toPolicyAttachment);
+  const batchMessageIds = batch.map((msg) => msg.messageId);
+  const runChatAttempt = async (attempt: {
+    prompt: string;
+    forceResumeHandle?: string | null;
+    forceResumeFingerprint?: string;
+    isAutoRerun?: boolean;
+  }) => {
+    const turnId = journal ? randomUUID() : undefined;
+    if (journal && turnId) {
+      const initiatorType = senderTypeOf(lastMsg);
+      journal.enqueue({
+        turnId,
+        scope,
+        chatId,
+        ...(threadId ? { threadId } : {}),
+        messageIds: batchMessageIds,
+        senderId: firstMsg.senderId,
+        initiatorId: lastMsg.senderId,
+        ...(initiatorType ? { initiatorType } : {}),
+        status: 'queued',
+        userInput: userInputText,
+        ...journalResources(batch),
+      });
+    }
+    return executeTurn({
       run: {
         toolContext,
         scopeId: scope,
         scope: scopeContext,
-        prompt,
-        attachments: attachments.map(toPolicyAttachment),
+        prompt: attempt.prompt,
+        attachments: policyAttachments,
         access: accessDecision,
         capability,
         profileConfig: controls.profileConfig,
@@ -1712,15 +1725,13 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         executor,
         now: Date.now(),
         stopGraceMs: getAgentStopGraceMs(controls.cfg),
-        ...(taken.kind === 'continue'
-          ? taken.resumeHandle
-            ? {
-              forceResumeHandle: taken.resumeHandle,
-              ...(taken.policyFingerprint
-                ? { forceResumeFingerprint: taken.policyFingerprint }
+        ...(attempt.forceResumeHandle !== undefined
+          ? {
+              forceResumeHandle: attempt.forceResumeHandle,
+              ...(attempt.forceResumeFingerprint
+                ? { forceResumeFingerprint: attempt.forceResumeFingerprint }
                 : {}),
             }
-            : { forceResumeHandle: null }
           : {}),
         observability: {
           profile: controls.profile,
@@ -1735,10 +1746,12 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       idleTimeoutMs,
       delivery: {
         kind: 'chat', outbox, channel, journal, turnId, chatId, sendOpts,
-        batchMessageIds: batch.map(msg => msg.messageId),
+        batchMessageIds,
         replyMode: getMessageReplyMode(controls.cfg), callbackAuth, activePolicyFingerprints,
         canRecordSession: deps.canRecordSession, requestedModel, cliSelfSent,
         outboundTimeoutMs, onWait: onDeliveryWait,
+        autoRerunOnSessionDiscard: !attempt.isAutoRerun,
+        ...(attempt.isAutoRerun ? { isAutoRerun: true } : {}),
         onRejected: reason => {
           if (reason.code !== 'reconnect-in-progress' || !ledger) return;
           unrecordAcceptedMessages(ledger, batch);
@@ -1755,7 +1768,66 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         ...(cotMessages !== 'off' ? { cot: { client: cotClient, detail: cotMessages, inputPreview: lastMsg.content } } : {}),
       },
     });
+  };
 
+  try {
+    const firstResult = await runChatAttempt({
+      prompt,
+      ...(taken.kind === 'continue'
+        ? taken.resumeHandle
+          ? {
+              forceResumeHandle: taken.resumeHandle,
+              ...(taken.policyFingerprint
+                ? { forceResumeFingerprint: taken.policyFingerprint }
+                : {}),
+            }
+          : { forceResumeHandle: null }
+        : {}),
+    });
+    if (
+      firstResult.ok
+      && firstResult.autoRerunOutcome
+      && !deps.isClosing?.()
+      && deps.canRecordSession()
+    ) {
+      if (mode === 'topic' && threadId && topicContext.length === 0 && topicResumeHandle) {
+        const exclude = new Set([...batchIds, ...quoteTargets]);
+        topicContext = (await fetchTopicContext(channel, threadId, {
+          maxMessages: 40,
+          excludeIds: exclude,
+        })).filter((item) => !(item.senderType === 'bot' && item.content === BACKFILL_DELAY_LINE));
+        if (topicContext.length > 0) {
+          log.info('topic', 'context-fetched', {
+            scope,
+            threadId,
+            count: topicContext.length,
+          });
+        }
+        if (deps.isClosing?.() || !deps.canRecordSession()) return;
+      }
+      const rerunInstructions = [
+        continueExtraInstruction(firstResult.autoRerunOutcome, userInputText),
+        ...sharedExtraInstructions,
+      ];
+      const rerunPrompt = buildPrompt(
+        promptBatch,
+        attachments,
+        quotes,
+        topicContext,
+        channel.botIdentity,
+        rerunInstructions,
+      );
+      log.info('turn', 'auto-rerun', {
+        scope,
+        outcome: formatRunOutcome(firstResult.autoRerunOutcome),
+        promptChars: rerunPrompt.length,
+      });
+      await runChatAttempt({
+        prompt: rerunPrompt,
+        forceResumeHandle: null,
+        isAutoRerun: true,
+      });
+    }
   } catch (error) {
     if (error instanceof TurnStartFailed) throw error.cause;
     log.fail('stream', error);

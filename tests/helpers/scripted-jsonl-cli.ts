@@ -10,6 +10,7 @@ export interface JsonlScript {
   stderr?: string;
   exitCode?: number;
   hang?: boolean;
+  sequence?: readonly JsonlScript[];
   readyPath?: string;
   releasePath?: string;
   recordAppendPath?: string;

@@ -7,6 +7,7 @@ export interface ScriptedJsonlExecutableOptions {
   stderr?: string;
   exitCode?: number;
   hang?: boolean;
+  sequence?: readonly ScriptedJsonlExecutableOptions[];
   version?: string;
   helpText?: string;
   readyPath?: string;
@@ -148,8 +149,13 @@ async function writeNodeSource(
     `let stderr = ${JSON.stringify(stderr)};`,
     `let exitCode = ${JSON.stringify(exitCode)};`,
     `let hang = ${JSON.stringify(hang)};`,
-    'const script = existsSync(scriptPath) ? JSON.parse(readFileSync(scriptPath, "utf8")) : {};',
+    'let script = existsSync(scriptPath) ? JSON.parse(readFileSync(scriptPath, "utf8")) : {};',
     'if (existsSync(scriptPath)) {',
+    '  if (Array.isArray(script.sequence) && script.sequence.length > 0) {',
+    '    const [current, ...rest] = script.sequence;',
+    '    writeFileSync(scriptPath, JSON.stringify({ ...script, sequence: rest }) + "\\n");',
+    '    script = { ...script, ...current, sequence: rest };',
+    '  }',
     '  if (Array.isArray(script.lines)) lines = script.lines;',
     '  if (typeof script.stderr === "string") stderr = script.stderr;',
     '  if (typeof script.exitCode === "number") exitCode = script.exitCode;',

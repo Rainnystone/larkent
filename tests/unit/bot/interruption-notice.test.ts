@@ -182,6 +182,43 @@ describe('interruption notice decision', () => {
     expect(continueExtraInstruction(outcome)).not.toContain('打印超时');
     expect(continueExtraInstruction(outcome)).not.toContain('agent 失败');
   });
+
+  it('never plans a continue notice when sessionDiscarded is set on the outcome', () => {
+    expect(planInterruptionNotice({
+      kind: 'failed',
+      cause: 'unclassified',
+      retriable: true,
+      needsHuman: false,
+      sessionDiscarded: true,
+    })).toEqual({ kind: 'none' });
+    expect(planInterruptionNotice({
+      kind: 'failed',
+      cause: 'transient-upstream',
+      retriable: true,
+      needsHuman: false,
+      sessionDiscarded: true,
+    })).toEqual({ kind: 'none' });
+    expect(planInterruptionNotice({
+      kind: 'partial',
+      retriable: true,
+      needsHuman: false,
+      sessionDiscarded: true,
+    })).toEqual({ kind: 'none' });
+    expect(planInterruptionNotice({
+      kind: 'interrupted',
+      reason: { type: 'external-signal' },
+      retriable: true,
+      needsHuman: false,
+      sessionDiscarded: true,
+    })).toEqual({ kind: 'none' });
+    expect(planInterruptionNotice({
+      kind: 'failed',
+      cause: 'auth-required',
+      retriable: false,
+      needsHuman: true,
+      sessionDiscarded: true,
+    })).toEqual({ kind: 'auth' });
+  });
 });
 
 describe('interruption notice actions', () => {
