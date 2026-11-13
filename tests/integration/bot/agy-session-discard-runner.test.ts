@@ -35,16 +35,18 @@ afterEach(async () => {
 });
 
 describe('agy session discard through the real runner', { timeout: 40_000 }, () => {
-  it('fails the sticky ERROR turn, says so, and starts the next message without --conversation', async () => {
+  it('delivers the sticky ERROR-with-answer turn cleanly and starts the next message without --conversation', async () => {
     const h = await harness('antigravity');
     await h.turn(agyScript('success', CONVERSATION), 'seed');
     await h.turn(agyScript('sticky-error', CONVERSATION, 'PONG-01'), 'follow up');
-    expect(h.lastFinal()).toMatchObject({ terminal: 'error', outcome: 'failed:unclassified' });
+    expect(h.lastFinal()).toMatchObject({ terminal: 'done', outcome: 'completed' });
     // text-mode Outbox send is after card.final; Windows journal.flush lags that log.
     await vi.waitFor(() => {
-      expect(h.text()).toContain('agent 失败');
-      expect(h.text()).toContain(FRESH_SESSION_NOTICE);
+      expect(h.text()).toContain('PONG-01');
     }, WAIT);
+    expect(h.text()).not.toContain('agent 失败');
+    expect(h.text()).not.toContain(FRESH_SESSION_NOTICE);
+    expect(h.text()).not.toContain(CONTINUE_HINT);
     expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
     expect(h.catalog.entries().filter(entry => entry.status === 'active')).toEqual([]);
 
@@ -54,23 +56,28 @@ describe('agy session discard through the real runner', { timeout: 40_000 }, () 
     expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe(FRESH);
   });
 
+  it('fails an agy ERROR without answer, says so, and starts 继续 as a fresh conversation that replays the failed request', async () => {
+    const h = await harness('antigravity');
+    await h.turn(agyScript('success', CONVERSATION), 'seed');
+    await h.turn(agyScript('error-without-answer', CONVERSATION), 'summarise the diff');
+    expect(h.lastFinal()).toMatchObject({ terminal: 'error', outcome: 'failed:unclassified' });
+    await vi.waitFor(() => {
+      expect(h.text()).toContain('agent 失败');
+      expect(h.text()).toContain(FRESH_SESSION_NOTICE);
+      expect(h.text()).toContain(CONTINUE_HINT);
+    }, WAIT);
+    await h.turn(agyScript('success', FRESH), '继续');
+    const runs = await h.runs();
+    expect(runs.map(conversationFlag)).toEqual([undefined, CONVERSATION, undefined]);
+    expect(runs[2]!.join(' ')).toContain('summarise the diff');
+  });
+
   it('keeps resuming the same conversation after an agy SUCCESS', async () => {
     const h = await harness('antigravity');
     await h.turn(agyScript('success', CONVERSATION), 'seed');
     await h.turn(agyScript('success', CONVERSATION), 'follow up');
     expect((await h.runs()).map(conversationFlag)).toEqual([undefined, CONVERSATION]);
     expect(h.text()).not.toContain(FRESH_SESSION_NOTICE);
-  });
-
-  it('starts 继续 after an agy ERROR as a fresh conversation that replays the failed request', async () => {
-    const h = await harness('antigravity');
-    await h.turn(agyScript('success', CONVERSATION), 'seed');
-    await h.turn(agyScript('sticky-error', CONVERSATION), 'summarise the diff');
-    await vi.waitFor(() => expect(h.text()).toContain(CONTINUE_HINT), WAIT);
-    await h.turn(agyScript('success', FRESH), '继续');
-    const runs = await h.runs();
-    expect(runs.map(conversationFlag)).toEqual([undefined, CONVERSATION, undefined]);
-    expect(runs[2]!.join(' ')).toContain('summarise the diff');
   });
 
   // agy 1.5.3 probe 2026-11-10: the resume right after a print timeout with an

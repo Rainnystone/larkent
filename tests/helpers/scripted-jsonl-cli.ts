@@ -21,7 +21,13 @@ export interface JsonlScript {
 }
 
 export type AgyScenario =
-  | 'success' | 'sticky-error' | 'interrupted-on-sigterm' | 'hold-for-kill' | 'exit-without-result' | 'print-timeout-open-tool';
+  | 'success'
+  | 'sticky-error'
+  | 'error-without-answer'
+  | 'interrupted-on-sigterm'
+  | 'hold-for-kill'
+  | 'exit-without-result'
+  | 'print-timeout-open-tool';
 
 export const AGY_STICKY_ERROR =
   'agent executor error: generating and executing: request failed: Post "https://daily-cloudcode-pa.googleapis.com/v1internal:streamGenerateContent?alt=sse": Bad Gateway';
@@ -58,6 +64,14 @@ export function agyScript(scenario: AgyScenario, conversationId: string, answer 
       // The resumed turn answered, yet agy still reports the earlier error.
       return { lines: [...started, step(1, 'agent_response', { text_delta: answer }),
         result({ status: 'ERROR', response: `${answer}\n`, error: AGY_STICKY_ERROR, finished_reason: 'error' })] };
+    case 'error-without-answer':
+      return {
+        lines: [
+          ...started,
+          step(1, 'error_message'),
+          result({ status: 'ERROR', response: '', error: AGY_STICKY_ERROR, finished_reason: 'error' }),
+        ],
+      };
     case 'interrupted-on-sigterm':
       return { lines: [...started, tool], holdAfterLines: true, onSigterm: {
         lines: [result({ status: 'ERROR', response: '', error: 'interrupted', finished_reason: 'interrupted' })],
