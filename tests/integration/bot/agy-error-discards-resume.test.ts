@@ -798,6 +798,80 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     expect(text).toContain('agent 失败');
     expect(text).toContain(FRESH_SESSION_NOTICE);
   });
+
+  it('bounds a stalled suppressed progress-stream finalization with outboundTimeoutMs and still recalls and auto-reruns', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    let releaseStalledStream!: () => void;
+    const stalledStreamGate = new Promise<void>((resolve) => { releaseStalledStream = resolve; });
+    cleanups.push(async () => { releaseStalledStream(); });
+    let streamCount = 0;
+
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      messageReply: 'card',
+      outboundTimeoutMs: 250,
+    });
+    const origStream = h.channel.stream.bind(h.channel);
+    h.channel.stream = async (chatId, input, opts) => {
+      streamCount += 1;
+      const cardInput = (input as {
+        card?: { producer: (ctrl: { messageId: string; update(card: unknown): Promise<void> }) => Promise<void> };
+      } | undefined)?.card;
+      if (streamCount === 1 && cardInput) {
+        await cardInput.producer({
+          messageId: 'om_stalled_stream_1',
+          async update() {},
+        });
+        await stalledStreamGate;
+        return { messageId: 'om_stalled_stream_1' };
+      }
+      return origStream(chatId, input, opts);
+    };
+
+    await h.channel.handlers.message?.(message('first', 'check stalled stream'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push({
+      type: 'tool_use',
+      id: 'tool-1',
+      name: 'Read',
+      input: { file_path: 'src/index.ts' },
+    });
+    await drainIO();
+    expect(streamCount).toBe(1);
+
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await drainIO();
+
+    // Advance past outboundTimeoutMs (250ms); stalled finalization must not block rerun or recall.
+    await vi.advanceTimersByTimeAsync(300);
+    await drainIO();
+    expect(h.agent.manual).toHaveLength(2);
+
+    const recalled = h.channel.callLog
+      .filter((call): call is Extract<typeof call, { op: 'recall' }> => call.op === 'recall')
+      .map((call) => call.messageId);
+    expect(recalled).toContain('om_stalled_stream_1');
+
+    const secondAttempt = h.agent.manual[1]!;
+    secondAttempt.push({ type: 'system', resumeHandle: 'sess-fresh' });
+    secondAttempt.push({ type: 'final_text', content: 'RECOVERED-AFTER-STALLED-STREAM' });
+    secondAttempt.push({ type: 'done', terminationReason: 'normal', resumeHandle: 'sess-fresh' });
+    secondAttempt.close();
+    secondAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    const text = rendered(h.channel);
+    expect(text).toContain('RECOVERED-AFTER-STALLED-STREAM');
+    expect(text).not.toContain('agent 失败');
+  });
 });
 
 async function harness(options: {
@@ -806,6 +880,7 @@ async function harness(options: {
   ledger?: boolean;
   messageReply?: 'text' | 'card';
   chatMode?: 'group' | 'topic';
+  outboundTimeoutMs?: number;
   messagesByChat?: Record<string, unknown[]>;
   onMessageList?: () => Promise<void>;
 }) {
@@ -857,6 +932,7 @@ async function harness(options: {
   const bridge = await startChannel({
     cfg, agent, sessions, sessionCatalog: catalog, workspaces,
     probe: async () => true,
+    ...(options.outboundTimeoutMs !== undefined ? { outboundTimeoutMs: options.outboundTimeoutMs } : {}),
     ...(ledger ? { ledger } : {}),
     ...(journal ? {
       journal,

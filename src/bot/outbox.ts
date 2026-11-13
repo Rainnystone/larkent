@@ -131,11 +131,13 @@ export class Outbox {
     progress: {
       opened(): boolean;
       abandoned(): boolean;
+      messageId?(): string | undefined;
       settled: Promise<unknown>;
     },
     scope: string,
+    timeoutMs?: number,
   ): Promise<void> {
-    return recallStreamedReply(this.options.channel, progress, scope);
+    return recallStreamedReply(this.options.channel, progress, scope, timeoutMs);
   }
 
   async deliverNotice(input: {

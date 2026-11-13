@@ -467,7 +467,7 @@ async function deliverChatTurn(
       });
       const finalState = await renderDone;
       if (autoRerunOutcome) {
-        await outbox.recallStream(progress, scope);
+        await outbox.recallStream(progress, scope, outboundTimeoutMs);
         return {
           state: finalState,
           autoRerunOutcome,
@@ -557,7 +557,7 @@ async function deliverChatTurn(
       });
       const finalState = await renderDone;
       if (autoRerunOutcome) {
-        await outbox.recallStream(progress, scope);
+        await outbox.recallStream(progress, scope, outboundTimeoutMs);
         return {
           state: finalState,
           autoRerunOutcome,
@@ -1080,9 +1080,14 @@ async function awaitRenderAwareStream(input: {
       input.progress.abandon();
       return { kind: 'none' };
     }
-    const settled = await streamResult;
-    if (!settled.ok) return failedStream(settled.err, input.progress);
-    return confirmedStream(settled.result, input.progress);
+    try {
+      const settled = await withOutboundTimeout('stream.producer', streamResult, input.timeoutMs);
+      if (!settled.ok) return failedStream(settled.err, input.progress);
+      return confirmedStream(settled.result, input.progress);
+    } catch (err) {
+      input.progress.abandon();
+      return failedStream(err, input.progress);
+    }
   }
 
   // The run ended before the stream did. A producer that hasn't started yet is
