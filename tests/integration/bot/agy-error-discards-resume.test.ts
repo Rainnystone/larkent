@@ -729,6 +729,75 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
 
     expect(rendered(h.channel)).toContain('README-UPDATED');
   });
+
+  it('does not auto-rerun when an inbound CLI self-sent message already arrived for this chat before no-answer ERROR', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    await h.channel.handlers.message?.(message('first', 'post update via cli'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+
+    await h.channel.handlers.message?.({
+      messageId: 'om_cli_echo',
+      content: 'already posted by cli',
+      chatId: 'oc_dm',
+      chatType: 'p2p',
+      senderId: h.channel.botIdentity.openId,
+      senderName: h.channel.botIdentity.name,
+      rawContentType: 'text',
+      resources: [],
+      mentionedBot: false,
+      createTime: Date.now(),
+    } as unknown as NormalizedMessage);
+
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(h.agent.runOptions).toHaveLength(1);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
+    const text = rendered(h.channel);
+    expect(text).toContain('agent 失败');
+    expect(text).toContain(FRESH_SESSION_NOTICE);
+  });
+
+  it('does not auto-rerun when agy already IM-sent to this chat via lark-cli tool call before no-answer ERROR', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    await h.channel.handlers.message?.(message('first', 'post update via cli tool'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push({
+      type: 'tool_use',
+      id: 'tool-1',
+      name: 'run_command',
+      input: { command: 'lark-cli im +messages-send --chat-id oc_dm --text already_delivered' },
+    });
+    firstAttempt.push({
+      type: 'tool_result',
+      id: 'tool-1',
+      output: '{"code":0,"data":{"message_id":"om_sent_1"}}',
+      isError: false,
+    });
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(h.agent.runOptions).toHaveLength(1);
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBeUndefined();
+    const text = rendered(h.channel);
+    expect(text).toContain('agent 失败');
+    expect(text).toContain(FRESH_SESSION_NOTICE);
+  });
 });
 
 async function harness(options: {

@@ -219,8 +219,8 @@ async function deliverChatTurn(
   const scope = input.run.scopeId;
   const handle = execution.handle;
   let autoRerunOutcome: RunOutcome | undefined;
-  const checkAutoRerun = (info: { terminalEvent?: AgentEvent; outcome: RunOutcome }): boolean => {
-    if (!shouldAutoRerunDiscardedError({ delivery, handle, ...info })) return false;
+  const checkAutoRerun = (info: { terminalEvent?: AgentEvent; outcome: RunOutcome; state: RunState }): boolean => {
+    if (!shouldAutoRerunDiscardedError({ delivery, scope, handle, ...info })) return false;
     autoRerunOutcome = info.outcome;
     return true;
   };
@@ -809,7 +809,11 @@ async function processAgentStream(
   flush: (state: RunState) => Promise<void>,
   runContext?: { currentChatId: string; batchMessageIds: readonly string[] },
   reliability: StreamReliability = {},
-  shouldSuppressTerminalError?: (input: { terminalEvent?: AgentEvent; outcome: RunOutcome }) => boolean,
+  shouldSuppressTerminalError?: (input: {
+    terminalEvent?: AgentEvent;
+    outcome: RunOutcome;
+    state: RunState;
+  }) => boolean,
 ): Promise<RunState> {
   const signatures = reliability.signatures;
   const runStart = Date.now();
@@ -906,7 +910,7 @@ async function processAgentStream(
   if (lastTerminal?.type === 'error' && lastTerminal.invalidateResume && state.terminal === 'error') {
     state = appendFreshSessionNotice(state);
   }
-  if (shouldSuppressTerminalError?.({ terminalEvent: lastTerminal, outcome })) {
+  if (shouldSuppressTerminalError?.({ terminalEvent: lastTerminal, outcome, state })) {
     log.info('turn', 'auto-rerun-scheduled', {
       scope,
       outcome: formatRunOutcome(outcome),
@@ -931,11 +935,13 @@ async function processAgentStream(
 
 function shouldAutoRerunDiscardedError(input: {
   delivery: ChatTurnDelivery;
+  scope: string;
   handle: RunHandle;
+  state: RunState;
   terminalEvent?: AgentEvent;
   outcome: RunOutcome;
 }): boolean {
-  const { delivery, handle, terminalEvent, outcome } = input;
+  const { delivery, scope, handle, state, terminalEvent, outcome } = input;
   if (!delivery.autoRerunOnSessionDiscard) return false;
   if (handle.stopRequest || handle.interrupted) return false;
   if (
@@ -946,6 +952,9 @@ function shouldAutoRerunDiscardedError(input: {
     return false;
   }
   if (outcome.kind !== 'failed' || outcome.needsHuman) return false;
+  if (delivery.cliSelfSent?.has(scope) || state.directImSentChatIds.has(delivery.chatId)) {
+    return false;
+  }
   if (delivery.canRecordSession?.() === false) return false;
   if (
     delivery.journal
