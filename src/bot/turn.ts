@@ -52,6 +52,8 @@ export interface ChatTurnDelivery extends TurnTarget {
   cot?: { client: CotClient; detail: Exclude<CotMessagesMode, 'off'>; inputPreview: string };
   autoRerunOnSessionDiscard?: boolean;
   isAutoRerun?: boolean;
+  pendingRerunStopRequest?: () => StopRequest | undefined;
+  onNoAutoRerun?: () => void;
 }
 
 export interface AutomationTurnDelivery extends TurnTarget {
@@ -220,7 +222,13 @@ async function deliverChatTurn(
   const handle = execution.handle;
   let autoRerunOutcome: RunOutcome | undefined;
   const checkAutoRerun = (info: { terminalEvent?: AgentEvent; outcome: RunOutcome; state: RunState }): boolean => {
-    if (!shouldAutoRerunDiscardedError({ delivery, scope, handle, ...info })) return false;
+    if (
+      delivery.pendingRerunStopRequest?.()
+      || !shouldAutoRerunDiscardedError({ delivery, scope, handle, ...info })
+    ) {
+      delivery.onNoAutoRerun?.();
+      return false;
+    }
     autoRerunOutcome = info.outcome;
     return true;
   };

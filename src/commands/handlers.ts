@@ -584,7 +584,7 @@ async function statusCardFor(ctx: UserActionContext): Promise<object> {
     agentName: ctx.agent.displayName,
     runtimeAccess: runtimeAccessStatus(ctx.controls.profileConfig),
     larkCliStatus: await larkCliStatus(ctx),
-    activeRun: Boolean(ctx.activeRuns.get(ctx.scope)),
+    activeRun: Boolean(ctx.activeRuns.get(ctx.scope) || ctx.activeRuns.hasPendingRerun(ctx.scope)),
     activeScopes: ctx.activeRuns.scopes().filter((scope) => !scope.startsWith('comment:')),
     activeCommentScopes: ctx.activeRuns.scopes().filter((scope) => scope.startsWith('comment:')),
     queue: ctx.processPool?.snapshot(),

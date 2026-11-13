@@ -847,12 +847,14 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     firstAttempt.push(AGY_ERROR);
     firstAttempt.close();
     firstAttempt.releaseCleanup();
+    await waitFor(() =>
+      info.mock.calls.some((call) => call[0] === 'turn' && call[1] === 'auto-rerun-scheduled'),
+    );
     await drainIO();
 
     // Advance past outboundTimeoutMs (250ms); stalled finalization must not block rerun or recall.
     await vi.advanceTimersByTimeAsync(300);
-    await drainIO();
-    expect(h.agent.manual).toHaveLength(2);
+    await waitFor(() => h.agent.manual.length === 2);
 
     const recalled = h.channel.callLog
       .filter((call): call is Extract<typeof call, { op: 'recall' }> => call.op === 'recall')
@@ -871,6 +873,124 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     const text = rendered(h.channel);
     expect(text).toContain('RECOVERED-AFTER-STALLED-STREAM');
     expect(text).not.toContain('agent 失败');
+  });
+
+  it('honors /stop during the topic-context fetch gap between Attempt 1 and the automatic rerun without starting Attempt 2 or leaving silence', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    let listCalled = false;
+    let releaseList!: () => void;
+    const listGate = new Promise<void>((resolve) => { releaseList = resolve; });
+    cleanups.push(async () => { releaseList(); });
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      messageReply: 'card',
+      chatMode: 'topic',
+      onMessageList: async () => {
+        listCalled = true;
+        await listGate;
+      },
+    });
+    const scope = 'oc_topic:omt_t1';
+    h.sessions.set(scope, 'sess-topic', h.cwd, 'antigravity');
+
+    await h.channel.handlers.message?.(topicMessage('topic-stop-gap', 'check topic'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-topic' });
+    firstAttempt.push({
+      type: 'error',
+      message: 'upstream failed',
+      terminationReason: 'failed',
+      invalidateResume: 'sess-topic',
+    });
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await waitFor(() => listCalled);
+
+    await h.channel.handlers.message?.(topicMessage('stop-cmd', '/stop'));
+    await drainIO();
+    releaseList();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(
+      info.mock.calls.some(
+        (call) =>
+          call[0] === 'command'
+          && call[1] === 'stop'
+          && (call[2] as { interrupted?: boolean } | undefined)?.interrupted === true,
+      ),
+    ).toBe(true);
+    expect(h.agent.runOptions).toHaveLength(1);
+    const firstReplyTexts = h.channel.sent
+      .filter((row) => (row.options as { replyTo?: string } | undefined)?.replyTo === 'topic-stop-gap')
+      .map((row) => JSON.stringify(row.content))
+      .join('\n');
+    expect(firstReplyTexts).toContain('agent 失败');
+    expect(firstReplyTexts).toContain(FRESH_SESSION_NOTICE);
+    expect(firstReplyTexts).not.toContain(CONTINUE_HINT);
+    expect(h.journal!.list().some((entry) => entry.status === 'reply-delivered')).toBe(true);
+  });
+
+  it('honors /stop during Attempt 1 recall cleanup before runAgentBatch resumes without starting Attempt 2 or leaving silence', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    let recallCalled = false;
+    let releaseRecall!: () => void;
+    const recallGate = new Promise<void>((resolve) => { releaseRecall = resolve; });
+    cleanups.push(async () => { releaseRecall(); });
+
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      messageReply: 'card',
+    });
+    const origRecall = h.channel.recallMessage.bind(h.channel);
+    h.channel.recallMessage = async (messageId: string) => {
+      recallCalled = true;
+      await recallGate;
+      return origRecall(messageId);
+    };
+
+    await h.channel.handlers.message?.(message('first', 'check recall stop gap'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const firstAttempt = h.agent.manual[0]!;
+    firstAttempt.push({ type: 'system', resumeHandle: 'sess-agy' });
+    firstAttempt.push({
+      type: 'tool_use',
+      id: 'tool-1',
+      name: 'Read',
+      input: { file_path: 'src/index.ts' },
+    });
+    await drainIO();
+
+    firstAttempt.push(AGY_ERROR);
+    firstAttempt.close();
+    firstAttempt.releaseCleanup();
+    await waitFor(() => recallCalled);
+
+    await h.channel.handlers.message?.(message('stop-during-recall', '/stop'));
+    await drainIO();
+    releaseRecall();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    expect(
+      info.mock.calls.some(
+        (call) =>
+          call[0] === 'command'
+          && call[1] === 'stop'
+          && (call[2] as { interrupted?: boolean } | undefined)?.interrupted === true,
+      ),
+    ).toBe(true);
+    expect(h.agent.runOptions).toHaveLength(1);
+    expect(h.channel.sent).toHaveLength(1);
+    const text = rendered(h.channel);
+    expect(text).toContain('agent 失败');
+    expect(text).toContain(FRESH_SESSION_NOTICE);
+    expect(text).not.toContain(CONTINUE_HINT);
   });
 });
 

@@ -35,12 +35,25 @@ export interface ActiveRunsHooks {
   onSupersede?: (scope: string) => void;
 }
 
+export interface PendingRerun {
+  arm(): void;
+  disarm(): StopRequest | undefined;
+  stopRequest(): StopRequest | undefined;
+  release(): void;
+}
+
+interface PendingRerunEntry {
+  armed: boolean;
+  stopRequest?: StopRequest;
+}
+
 export class ActiveRuns {
   constructor(private readonly hooks: ActiveRunsHooks = {}) {}
 
   private readonly handles = new Map<string, RunHandle>();
   private readonly reservations = new Set<string>();
   private readonly sessionWriters = new Map<string, Set<{ current: boolean }>>();
+  private readonly pendingReruns = new Map<string, Set<PendingRerunEntry>>();
   private pauseDepth = 0;
   private pauseReason: string | undefined;
 
@@ -119,9 +132,37 @@ export class ActiveRuns {
     };
   }
 
-  hasActiveSessionWriter(scope: string): boolean {
-    for (const writer of this.sessionWriters.get(scope) ?? []) {
-      if (writer.current) return true;
+  trackPendingRerun(scope: string): PendingRerun {
+    const entries = this.pendingReruns.get(scope) ?? new Set<PendingRerunEntry>();
+    this.pendingReruns.set(scope, entries);
+    const entry: PendingRerunEntry = { armed: false };
+    entries.add(entry);
+    return {
+      arm: () => {
+        entry.armed = true;
+        entry.stopRequest = undefined;
+      },
+      disarm: () => {
+        const stopRequest = entry.stopRequest;
+        entry.armed = false;
+        entry.stopRequest = undefined;
+        return stopRequest;
+      },
+      stopRequest: () => entry.stopRequest,
+      release: () => {
+        entry.armed = false;
+        entry.stopRequest = undefined;
+        entries.delete(entry);
+        if (entries.size === 0 && this.pendingReruns.get(scope) === entries) {
+          this.pendingReruns.delete(scope);
+        }
+      },
+    };
+  }
+
+  hasPendingRerun(scope: string): boolean {
+    for (const entry of this.pendingReruns.get(scope) ?? []) {
+      if (entry.armed) return true;
     }
     return false;
   }
@@ -134,21 +175,35 @@ export class ActiveRuns {
   }
 
   /**
-   * Interrupt the current run for this chat, if any. Returns true if an
-   * interrupt was issued. The owner unregisters after asynchronous stop
-   * settlement; failures remain visible to its finished/stopAll callers.
+   * Interrupt the current run for this chat, if any, or cancel a pending
+   * auto-rerun handoff between attempts. Returns true if an interrupt was
+   * issued. The owner unregisters after asynchronous stop settlement; failures
+   * remain visible to its finished/stopAll callers.
    */
   interrupt(chatId: string, reason: StopRequest): boolean {
     const h = this.handles.get(chatId);
-    if (!h) return false;
-    requestStop(h, reason);
-    void h.run.stop().catch(() => {
-      // The owned run retains and reports settlement failure through finished/stopAll.
-    });
-    return true;
+    if (h) {
+      requestStop(h, reason);
+      void h.run.stop().catch(() => {
+        // The owned run retains and reports settlement failure through finished/stopAll.
+      });
+      return true;
+    }
+    let interruptedPending = false;
+    for (const entry of this.pendingReruns.get(chatId) ?? []) {
+      if (!entry.armed) continue;
+      entry.stopRequest ??= reason;
+      interruptedPending = true;
+    }
+    return interruptedPending;
   }
 
   async stopAll(reason: StopRequest): Promise<void> {
+    for (const entries of this.pendingReruns.values()) {
+      for (const entry of entries) {
+        if (entry.armed) entry.stopRequest ??= reason;
+      }
+    }
     const all = [...this.handles.values()];
     for (const h of all) requestStop(h, reason);
     const results = await Promise.allSettled(all.map((h) => h.run.stop()));

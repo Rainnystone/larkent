@@ -77,7 +77,7 @@ import type { SessionCatalog } from '../session/catalog';
 import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
-import { ActiveRuns } from './active-runs';
+import { ActiveRuns, type PendingRerun } from './active-runs';
 import {
   BACKFILL_DELAY_LINE,
   createBackfillRun,
@@ -538,6 +538,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     pending.block(scope);
     void trackConsumer(withTrace({ chatId: firstMsg.chatId }, async () => {
       const sessionWriter = activeRuns.trackSessionWriter(scope);
+      const pendingRerun = activeRuns.trackPendingRerun(scope);
       log.info('flush', 'start', {
         scope,
         batchSize: batch.length,
@@ -576,6 +577,8 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           activePolicyFingerprints,
           lastRunModelByScope,
           canRecordSession: sessionWriter.isCurrent,
+          pendingRerun,
+          interruptActiveRun: (reason) => activeRuns.interrupt(scope, reason),
           isClosing: () => closing,
           scope,
           mode,
@@ -594,6 +597,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           ...(deps.now ? { now: deps.now } : {}),
         });
       } finally {
+        pendingRerun.release();
         sessionWriter.release();
         pending.unblock(scope);
         log.info('flush', 'end');
@@ -664,7 +668,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     draftCards: deps.automations,
     draftJournal: deps.automations?.outboxJournal,
     isDown: () => closing || link.isDown(),
-    isActive: (scope) => activeRuns.get(scope) !== undefined || activeRuns.hasActiveSessionWriter(scope),
+    isActive: (scope) => activeRuns.get(scope) !== undefined || activeRuns.hasPendingRerun(scope),
     now: deps.now,
     noticeAuth,
     onNotInChat: removeFromChat,
@@ -1432,6 +1436,8 @@ interface RunBatchDeps {
   activePolicyFingerprints: Map<string, string>;
   lastRunModelByScope: Map<string, string>;
   canRecordSession(): boolean;
+  pendingRerun: PendingRerun;
+  interruptActiveRun(reason: StopRequest): boolean;
   isClosing?(): boolean;
   scope: string;
   mode: ChatMode;
@@ -1761,6 +1767,14 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           canRecordSession: deps.canRecordSession, isClosing: deps.isClosing, requestedModel, cliSelfSent,
           outboundTimeoutMs, onWait: onDeliveryWait,
           autoRerunOnSessionDiscard: !attempt.isAutoRerun,
+          ...(!attempt.isAutoRerun
+            ? {
+                pendingRerunStopRequest: () => deps.pendingRerun.stopRequest(),
+                onNoAutoRerun: () => {
+                  deps.pendingRerun.disarm();
+                },
+              }
+            : {}),
           ...(attempt.isAutoRerun ? { isAutoRerun: true } : {}),
           ...(attempt.onFlowStarted ? { onFlowStarted: attempt.onFlowStarted } : {}),
           onRejected: reason => {
@@ -1790,6 +1804,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     const firstResult = await runChatAttempt({
       prompt,
       turnId: firstTurnId,
+      onFlowStarted: () => {
+        deps.pendingRerun.arm();
+      },
       ...(taken.kind === 'continue'
         ? taken.resumeHandle
           ? {
@@ -1803,6 +1820,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     });
     if (firstResult.ok && firstResult.autoRerunOutcome) {
       const fallbackFromSkippedRerun = async (reason: string): Promise<void> => {
+        deps.pendingRerun.disarm();
         if (deps.isClosing?.()) {
           if (ledger) {
             firstResult.voidSuppressedTurn?.();
@@ -1834,6 +1852,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         await fallbackFromSkippedRerun('auto-rerun-superseded');
         return;
       }
+      if (deps.pendingRerun.stopRequest()) {
+        await fallbackFromSkippedRerun('auto-rerun-stopped');
+        return;
+      }
       if (mode === 'topic' && threadId && topicContext.length === 0 && topicResumeHandle) {
         const exclude = new Set([...batchIds, ...quoteTargets]);
         topicContext = (await fetchTopicContext(channel, threadId, {
@@ -1853,6 +1875,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
         }
         if (!deps.canRecordSession()) {
           await fallbackFromSkippedRerun('auto-rerun-superseded');
+          return;
+        }
+        if (deps.pendingRerun.stopRequest()) {
+          await fallbackFromSkippedRerun('auto-rerun-stopped');
           return;
         }
       }
@@ -1889,9 +1915,12 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           onFlowStarted: () => {
             rerunAccepted = true;
             firstResult.voidSuppressedTurn?.();
+            const lateStop = deps.pendingRerun.disarm();
+            if (lateStop) deps.interruptActiveRun(lateStop);
           },
         });
         if (!secondResult.ok) {
+          deps.pendingRerun.disarm();
           if (secondResult.rejectReason.code === 'reconnect-in-progress' && deps.isClosing?.()) {
             await fallbackFromSkippedRerun('auto-rerun-closing');
           } else {
@@ -1899,6 +1928,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           }
         }
       } catch (rerunError) {
+        deps.pendingRerun.disarm();
         log.fail('turn', rerunError instanceof TurnStartFailed ? rerunError.cause : rerunError, {
           scope,
           step: rerunAccepted ? 'auto-rerun' : 'auto-rerun-start',
