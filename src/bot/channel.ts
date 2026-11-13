@@ -1639,6 +1639,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     ? [{ ...lastMsg, content: taken.userInput }]
     : batch;
   const userInputText = promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n');
+  const effectiveUserInputText =
+    taken.kind === 'continue' && taken.userInput
+      ? taken.userInput
+      : userInputText;
   const prompt = buildPrompt(
     promptBatch,
     attachments,
@@ -1700,7 +1704,7 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       initiatorId: lastMsg.senderId,
       ...(initiatorType ? { initiatorType } : {}),
       status: 'queued',
-      userInput: userInputText,
+      userInput: effectiveUserInputText,
       ...journalResources(batch),
     });
     return turnId;
@@ -1852,12 +1856,19 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
           return;
         }
       }
+      const rerunPromptBatch =
+        taken.kind === 'continue' && taken.userInput
+          ? [{ ...lastMsg, content: taken.userInput }]
+          : promptBatch;
       const rerunInstructions = [
-        continueExtraInstruction(firstResult.autoRerunOutcome, userInputText),
+        ...(taken.kind === 'abandoned' || (taken.kind === 'continue' && !taken.userInput)
+          ? takenInstructions
+          : []),
+        continueExtraInstruction(firstResult.autoRerunOutcome, effectiveUserInputText),
         ...sharedExtraInstructions,
       ];
       const rerunPrompt = buildPrompt(
-        promptBatch,
+        rerunPromptBatch,
         attachments,
         quotes,
         topicContext,

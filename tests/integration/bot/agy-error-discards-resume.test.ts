@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AntigravityJsonlTranslator } from '../../../src/agent/antigravity/jsonl';
 import type { AgentAdapter, AgentEvent, AgentRun, AgentRunOptions } from '../../../src/agent/types';
 import { BackfillLedger } from '../../../src/bot/backfill-ledger';
-import { CONTINUE_HINT } from '../../../src/bot/interruption-notice';
+import { ABANDON_HINT, CONTINUE_HINT } from '../../../src/bot/interruption-notice';
 import { TurnJournal } from '../../../src/bot/turn-journal';
 import { createDefaultProfileConfig } from '../../../src/config/profile-schema';
 import * as logger from '../../../src/core/logger';
@@ -594,6 +594,141 @@ describe('agy error discards resume', { timeout: 20_000 }, () => {
     expect(h.ledger?.getIncompleteFrom()).toBeDefined();
     expect(h.ledger!.getIncompleteFrom()!).toBeLessThanOrEqual(inbound.createTime);
   });
+
+  it('preserves the original task instead of bare 继续 when a keep-session continuation hits no-answer ERROR and auto-reruns fresh', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const h = await harness({ agentKind: 'antigravity', journal: true, messageReply: 'card' });
+    const originalTask = 'refactor the parser and run unit tests';
+
+    // Turn 0: interrupted after attaching to sess-keep -> offers keep-session 继续.
+    await h.channel.handlers.message?.(message('turn-0', originalTask));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run0 = h.agent.manual[0]!;
+    run0.push({ type: 'system', resumeHandle: 'sess-keep' });
+    run0.push({ type: 'done', terminationReason: 'interrupted' });
+    run0.close();
+    run0.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+    expect(h.sessions.resumeFor('oc_dm', h.cwd, 'antigravity')).toBe('sess-keep');
+
+    // Turn 1: user sends 继续 -> Attempt 1 resumes sess-keep, then hits no-answer ERROR with invalidateResume.
+    await h.channel.handlers.message?.(message('turn-1-cont', '继续'));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBe('sess-keep');
+    expect(h.agent.runOptions[1]?.prompt).toContain(CONTINUE_HINT);
+    expect(h.agent.runOptions[1]?.prompt).toContain(originalTask);
+
+    const attempt1 = h.agent.manual[1]!;
+    attempt1.push({ type: 'system', resumeHandle: 'sess-keep' });
+    attempt1.push({
+      type: 'error',
+      message: 'upstream failed',
+      terminationReason: 'failed',
+      invalidateResume: 'sess-keep',
+    });
+    attempt1.close();
+    attempt1.releaseCleanup();
+    await drainIO();
+
+    // Attempt 2: fresh auto-rerun must carry originalTask instead of bare "继续".
+    await waitFor(() => h.agent.manual.length === 3);
+    expect(h.agent.runOptions[2]?.resumeHandle).toBeUndefined();
+    const rerunPrompt = h.agent.runOptions[2]!.prompt;
+    expect(rerunPrompt).toContain(originalTask);
+    expect(rerunPrompt).toContain(JSON.stringify({ text: originalTask }));
+    expect(rerunPrompt).toContain(`原始输入：\\n${originalTask}`);
+    expect(rerunPrompt).not.toContain('原始输入：\\n继续');
+    expect(rerunPrompt).not.toContain('原始输入：\n继续');
+    expect(rerunPrompt).not.toContain(JSON.stringify({ text: '继续' }));
+
+    const attempt2 = h.agent.manual[2]!;
+    attempt2.push({ type: 'system', resumeHandle: 'sess-fresh' });
+    attempt2.push({ type: 'final_text', content: 'RECOVERED-CONTINUE' });
+    attempt2.push({ type: 'done', terminationReason: 'normal', resumeHandle: 'sess-fresh' });
+    attempt2.close();
+    attempt2.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 2);
+    await drainIO();
+
+    expect(rendered(h.channel)).toContain('RECOVERED-CONTINUE');
+  });
+
+  it('preserves the abandoned-turn hint across fresh auto-rerun after fetching topic history', async () => {
+    const info = vi.spyOn(logger.log, 'info').mockImplementation(() => {});
+    const abandonedTask = 'ABANDONED_OLD_TASK: drop legacy table';
+    const newTask = 'NEW_TASK: only update README';
+    const h = await harness({
+      agentKind: 'antigravity',
+      journal: true,
+      messageReply: 'card',
+      chatMode: 'topic',
+      messagesByChat: {
+        omt_t1: [
+          {
+            message_id: 'topic-0',
+            chat_id: 'oc_topic',
+            msg_type: 'text',
+            create_time: String(Date.now() - 5_000),
+            sender: { id: 'ou_user', id_type: 'open_id', sender_type: 'user' },
+            body: { content: JSON.stringify({ text: abandonedTask }) },
+          },
+        ],
+      },
+    });
+
+    // Turn 0 in topic: interrupted after attaching to sess-topic -> offers 继续.
+    await h.channel.handlers.message?.(topicMessage('topic-0', abandonedTask));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 1);
+    const run0 = h.agent.manual[0]!;
+    run0.push({ type: 'system', resumeHandle: 'sess-topic' });
+    run0.push({ type: 'done', terminationReason: 'interrupted' });
+    run0.close();
+    run0.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 1);
+    await drainIO();
+
+    // Turn 1 in topic: user sends a new message (abandoning Turn 0). Attempt 1 hits no-answer ERROR.
+    await h.channel.handlers.message?.(topicMessage('topic-1', newTask));
+    await vi.advanceTimersByTimeAsync(600);
+    await waitFor(() => h.agent.manual.length === 2);
+    expect(h.agent.runOptions[1]?.resumeHandle).toBe('sess-topic');
+    expect(h.agent.runOptions[1]?.prompt).toContain(ABANDON_HINT);
+
+    const attempt1 = h.agent.manual[1]!;
+    attempt1.push({ type: 'system', resumeHandle: 'sess-topic' });
+    attempt1.push({
+      type: 'error',
+      message: 'upstream failed',
+      terminationReason: 'failed',
+      invalidateResume: 'sess-topic',
+    });
+    attempt1.close();
+    attempt1.releaseCleanup();
+    await drainIO();
+
+    // Attempt 2 fetches topic history (containing abandonedTask) AND must still carry ABANDON_HINT.
+    await waitFor(() => h.agent.manual.length === 3);
+    expect(h.agent.runOptions[2]?.resumeHandle).toBeUndefined();
+    const rerunPrompt = h.agent.runOptions[2]!.prompt;
+    expect(rerunPrompt).toContain(abandonedTask);
+    expect(rerunPrompt).toContain(newTask);
+    expect(rerunPrompt).toContain(ABANDON_HINT);
+
+    const attempt2 = h.agent.manual[2]!;
+    attempt2.push({ type: 'system', resumeHandle: 'sess-topic-fresh' });
+    attempt2.push({ type: 'final_text', content: 'README-UPDATED' });
+    attempt2.push({ type: 'done', terminationReason: 'normal', resumeHandle: 'sess-topic-fresh' });
+    attempt2.close();
+    attempt2.releaseCleanup();
+    await waitFor(() => flushEndCount(info) === 2);
+    await drainIO();
+
+    expect(rendered(h.channel)).toContain('README-UPDATED');
+  });
 });
 
 async function harness(options: {
@@ -602,6 +737,7 @@ async function harness(options: {
   ledger?: boolean;
   messageReply?: 'text' | 'card';
   chatMode?: 'group' | 'topic';
+  messagesByChat?: Record<string, unknown[]>;
   onMessageList?: () => Promise<void>;
 }) {
   const tmp = await createTmpProfile('agy-error-discards-resume-');
@@ -636,7 +772,10 @@ async function harness(options: {
   const catalog = new SessionCatalog(join(tmp.profile, 'session-catalog.json'));
   const workspaces = new WorkspaceStore(join(tmp.profile, 'workspaces.json'));
   const agent = new StreamingFakeAgent(agentKind);
-  const channel = createRecordingLarkChannel({ chatMode: options.chatMode });
+  const channel = createRecordingLarkChannel({
+    chatMode: options.chatMode,
+    ...(options.messagesByChat ? { messagesByChat: options.messagesByChat } : {}),
+  });
   if (options.onMessageList) {
     const origList = channel.rawClient.im.v1.message.list.bind(channel.rawClient.im.v1.message);
     channel.rawClient.im.v1.message.list = async (params: unknown) => {
@@ -666,7 +805,10 @@ async function harness(options: {
   });
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
   cleanups.push(async () => {
-    for (const run of agent.manual) run.releaseCleanup();
+    for (const run of agent.manual) {
+      run.close();
+      run.releaseCleanup();
+    }
     await bridge.disconnect().catch(() => {});
     await drainIO();
     await journal?.flush().catch(() => {});
