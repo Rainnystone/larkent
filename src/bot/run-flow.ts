@@ -1,7 +1,7 @@
 import { descriptorFor, type AgentKind } from '../agent/registry';
 import { resolveModelArg } from '../agent/models';
 import type { AgentCapability } from '../agent/capability';
-import type { AgentEvent, AgentPromptVariant } from '../agent/types';
+import { invalidatedResumeHandle, type AgentEvent, type AgentPromptVariant } from '../agent/types';
 import type { ProfileConfig } from '../config/profile-schema';
 import type { AccessDecision } from '../policy/access';
 import {
@@ -243,8 +243,9 @@ export async function startRunFlow(input: StartRunFlowInput): Promise<StartRunFl
 }
 
 export function recordRunSessionEvent(input: RecordRunSessionEventInput): void {
-  if (input.event.type === 'error' && input.event.invalidateResume) {
-    discardRunResumeHandle(input, input.event.invalidateResume);
+  const invalidated = invalidatedResumeHandle(input.event);
+  if (invalidated) {
+    discardRunResumeHandle(input, invalidated);
     return;
   }
   if (input.event.type !== 'system' || !input.event.resumeHandle) return;

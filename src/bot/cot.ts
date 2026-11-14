@@ -219,6 +219,18 @@ export class CotPublisher {
     }
   }
 
+  async cancel(): Promise<void> {
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    this.buffer.length = 0;
+    this.disabled = true;
+    if (this.flushing) {
+      await this.flushing;
+    }
+  }
+
   private scheduleFlush(): void {
     if (this.timer || this.flushing) return;
     this.timer = setTimeout(() => {
@@ -326,7 +338,12 @@ export function outcomeNoticeBlocks(state: RunState): Array<{ kind: 'text'; cont
 export async function consumeCotEvents(
   events: AsyncIterable<AgentEvent>,
   publisher: CotPublisher,
-  opts: { detail: CotMessagesMode },
+  opts: {
+    detail: CotMessagesMode;
+    shouldSuppressError?: (
+      event: Extract<AgentEvent, { type: 'error' }>,
+    ) => boolean | Promise<boolean>;
+  },
 ): Promise<void> {
   let reasoningOpen = false;
   let textStepOpen = false;
@@ -417,6 +434,10 @@ export async function consumeCotEvents(
         continue;
       }
       if (evt.type === 'final_text') continue;
+      if (evt.type === 'error' && (await opts.shouldSuppressError?.(evt))) {
+        await publisher.cancel();
+        return;
+      }
       if (evt.type === 'done' || evt.type === 'error') {
         closeReasoningIfNeeded();
         closeTextIfNeeded();

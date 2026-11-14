@@ -6,7 +6,7 @@ import { OUTBOUND_SKIP_CLI_SENT_METRIC } from '../card/direct-im-send';
 import { stripLegacyAutomationTagsFromState } from '../card/legacy-automation-tags';
 import { getMessageReplyMode } from '../config/schema';
 import { log, reportMetric } from '../core/logger';
-import type { CliSelfSendTracker } from './self-message';
+import { outboundMessageId, withOutboundTimeout, type CliSelfSendTracker } from './self-message';
 import type { Continuations } from './continuation';
 import type { RunOutcome } from './run-outcome';
 import {
@@ -725,31 +725,64 @@ export async function recallIfEmptyStreamedReply(
   scope: string,
 ): Promise<void> {
   if (!progress.opened()) return;
-  // An abandoned stream renders nothing, so whatever message it eventually
-  // posts is empty by construction. It is still in flight (that is why we gave
-  // up on it), so clean up in the background instead of blocking the run on it.
+  if (!progress.abandoned() && renderText(finalState).trim() !== '') return;
+  await recallStreamedReply(channel, progress, scope);
+}
+
+export async function recallStreamedReply(
+  channel: LarkChannel,
+  progress: {
+    opened(): boolean;
+    abandoned(): boolean;
+    messageId?(): string | undefined;
+    settled: Promise<unknown>;
+  },
+  scope: string,
+  timeoutMs?: number,
+): Promise<void> {
+  if (!progress.opened()) return;
+  // An abandoned stream either never started rendering (clean up in background
+  // once card creation finishes) or timed out after creating a message (recall
+  // its already-known messageId immediately without awaiting unsettled settled).
   if (progress.abandoned()) {
+    const knownId = progress.messageId?.();
+    if (knownId) {
+      await recallStreamedMessage(channel, { messageId: knownId }, scope, timeoutMs);
+      return;
+    }
     void progress.settled.then(
-      (result) => recallStreamedMessage(channel, result, scope),
+      (result) => recallStreamedMessage(channel, result, scope, timeoutMs),
       () => {},
     );
     return;
   }
-  if (renderText(finalState).trim() !== '') return;
-  const result = await progress.settled.catch(() => undefined);
-  await recallStreamedMessage(channel, result, scope);
+  let result: unknown;
+  try {
+    result = timeoutMs !== undefined
+      ? await withOutboundTimeout('stream.recall', progress.settled, timeoutMs)
+      : await progress.settled;
+  } catch {
+    const knownId = progress.messageId?.();
+    result = knownId ? { messageId: knownId } : undefined;
+  }
+  await recallStreamedMessage(channel, result, scope, timeoutMs);
 }
 
 async function recallStreamedMessage(
   channel: LarkChannel,
   streamResult: unknown,
   scope: string,
+  timeoutMs?: number,
 ): Promise<void> {
-  const messageId = (streamResult as { messageId?: string } | undefined)
-    ?.messageId;
+  const messageId = outboundMessageId(streamResult);
   if (!messageId) return;
   try {
-    await channel.recallMessage(messageId);
+    const recall = channel.recallMessage(messageId);
+    if (timeoutMs !== undefined) {
+      await withOutboundTimeout('recallMessage', recall, timeoutMs);
+    } else {
+      await recall;
+    }
     log.info('outbound', 'recall-empty', { scope, messageId });
   } catch (err) {
     log.warn('outbound', 'recall-empty-failed', {

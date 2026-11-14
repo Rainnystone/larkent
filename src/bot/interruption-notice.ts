@@ -29,10 +29,12 @@ export function planInterruptionNotice(outcome: RunOutcome): NoticePlan {
     case 'completed':
       return { kind: 'none' };
     case 'partial':
+      if (outcome.sessionDiscarded) return { kind: 'none' };
       return outcome.retriable ? { kind: 'continue' } : { kind: 'none' };
     case 'interrupted':
       if (
-        outcome.reason.type === 'user-stop'
+        outcome.sessionDiscarded
+        || outcome.reason.type === 'user-stop'
         || outcome.reason.type === 'superseded'
         || outcome.reason.type === 'policy-guard'
       ) {
@@ -41,6 +43,7 @@ export function planInterruptionNotice(outcome: RunOutcome): NoticePlan {
       return { kind: 'continue' };
     case 'failed':
       if (outcome.cause === 'auth-required') return { kind: 'auth' };
+      if (outcome.sessionDiscarded) return { kind: 'none' };
       return outcome.retriable ? { kind: 'continue' } : { kind: 'none' };
     default: {
       const _exhaustive: never = outcome;

@@ -35,6 +35,26 @@ const PRINT_TIMEOUT_OPEN_TOOL_FIXTURE = join(
   process.cwd(),
   'tests/fixtures/antigravity/print-timeout-open-tool.jsonl',
 );
+const ERROR_WITH_RESPONSE_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/error-with-response.jsonl',
+);
+const ERROR_WITHOUT_RESPONSE_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/error-without-response.jsonl',
+);
+const SUCCESS_PONG_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/success-pong.jsonl',
+);
+const INTERRUPTED_OPEN_TOOL_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/interrupted-open-tool.jsonl',
+);
+const ERROR_INTERIM_NARRATION_FIXTURE = join(
+  process.cwd(),
+  'tests/fixtures/antigravity/error-interim-narration.jsonl',
+);
 const PRINT_TIMEOUT_HINT = '输出不完整（打印超时），可稍后继续';
 const IDLE_WATCHDOG_COPY = '等待预算已用尽';
 const INCIDENT_PROSE = INCIDENT_A_PROSE;
@@ -934,6 +954,10 @@ describe('AntigravityJsonlTranslator', () => {
         {
           status: 'SUCCESS',
           conversationId: CONVERSATION,
+          finished_reason: null,
+          responseChars: row.input.length,
+          heldAnswerChars: 0,
+          lastStepType: 'system_message',
         },
       ],
       [
@@ -1134,6 +1158,10 @@ describe('AntigravityJsonlTranslator', () => {
         {
           status: 'SUCCESS',
           conversationId: CONVERSATION,
+          finished_reason: null,
+          responseChars: row.input.length,
+          heldAnswerChars: 0,
+          lastStepType: null,
         },
       ],
       [
@@ -1232,6 +1260,10 @@ describe('AntigravityJsonlTranslator', () => {
           status: 'SUCCESS',
           conversationId: CONVERSATION,
           numTurns: 1,
+          finished_reason: null,
+          responseChars: 41,
+          heldAnswerChars: 0,
+          lastStepType: null,
         },
       ],
     ]);
@@ -1289,5 +1321,469 @@ describe('AntigravityJsonlTranslator', () => {
       { type: 'text', delta: 'Partial' },
       { type: 'error', message: 'upstream failed', terminationReason: 'failed' },
     ]);
+  });
+
+  it.each([
+    {
+      shape: 'ERROR with response',
+      fixture: ERROR_WITH_RESPONSE_FIXTURE,
+      forbiddenBody: 'PONG-01',
+      expected: {
+        status: 'ERROR',
+        errorMessage:
+          'failed to construct executor: unknown model key MODEL_PLACEHOLDER_M418: model not found',
+        conversationId: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f',
+        numTurns: 3,
+        finished_reason: 'error',
+        responseChars: 8,
+        heldAnswerChars: 8,
+        lastStepType: 'agent_response',
+      },
+    },
+    {
+      shape: 'ERROR without response',
+      fixture: ERROR_WITHOUT_RESPONSE_FIXTURE,
+      forbiddenBody: undefined,
+      expected: {
+        status: 'ERROR',
+        errorMessage:
+          'FAILED_PRECONDITION (code 400): User location is not supported for the API use.',
+        conversationId: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f',
+        numTurns: 4,
+        finished_reason: 'error',
+        responseChars: 0,
+        heldAnswerChars: 0,
+        lastStepType: 'error_message',
+      },
+    },
+    {
+      shape: 'SUCCESS',
+      fixture: SUCCESS_PONG_FIXTURE,
+      forbiddenBody: 'PONG-A3',
+      expected: {
+        status: 'SUCCESS',
+        conversationId: '6c145f8d-74f0-44e7-a4e1-939a15929e61',
+        numTurns: 1,
+        finished_reason: null,
+        responseChars: 8,
+        heldAnswerChars: 8,
+        lastStepType: 'agent_response',
+      },
+    },
+    {
+      shape: 'interrupted ERROR',
+      fixture: INTERRUPTED_OPEN_TOOL_FIXTURE,
+      forbiddenBody: undefined,
+      expected: {
+        status: 'ERROR',
+        errorMessage: 'interrupted',
+        conversationId: '6c145f8d-74f0-44e7-a4e1-939a15929e61',
+        numTurns: 3,
+        finished_reason: 'interrupted',
+        responseChars: 0,
+        heldAnswerChars: 0,
+        lastStepType: 'tool',
+      },
+    },
+    {
+      shape: 'print_timeout ERROR',
+      fixture: PRINT_TIMEOUT_OPEN_TOOL_FIXTURE,
+      forbiddenBody: 'launched in the background',
+      expected: {
+        status: 'ERROR',
+        errorMessage:
+          'print timeout after 25s while the agent was waiting on 1 background task(s); the response may be incomplete; terminated ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4/task-5 (sleep 90 && echo done, running 11s)',
+        conversationId: 'ea4ba9fa-67e3-425f-a80b-3c769cdcd8a4',
+        numTurns: 2,
+        finished_reason: 'print_timeout',
+        responseChars: 101,
+        heldAnswerChars: 101,
+        lastStepType: 'agent_response',
+      },
+    },
+    {
+      shape: 'interim-narration ERROR before error_message',
+      fixture: ERROR_INTERIM_NARRATION_FIXTURE,
+      forbiddenBody: '后台任务已启动',
+      expected: {
+        status: 'ERROR',
+        errorMessage: 'There was a network issue connecting to the server, please try again.',
+        conversationId: '9315cd1d-3eec-480a-8dcc-39ac851db27d',
+        numTurns: 2,
+        finished_reason: 'error',
+        responseChars: 48,
+        heldAnswerChars: 48,
+        lastStepType: 'error_message',
+      },
+    },
+  ])('logs terminal-result facts on captured $shape without logging content', ({ fixture, forbiddenBody, expected }) => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    collect(t, loadJsonl(fixture));
+    expect(terminalResultCalls(info)).toEqual([['agent', 'terminal-result', expected]]);
+    if (forbiddenBody) {
+      expect(JSON.stringify(info.mock.calls)).not.toContain(forbiddenBody);
+    }
+  });
+
+  it('logs heldAnswerChars independently when result.response is absent', () => {
+    const info = vi.spyOn(log, 'info').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    collect(t, [
+      INIT,
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: 'partial answer\n',
+        },
+      },
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'ERROR',
+          error: 'stream broke before response field',
+          finished_reason: 'error',
+        },
+      },
+    ]);
+    expect(terminalResultCalls(info)).toEqual([
+      [
+        'agent',
+        'terminal-result',
+        {
+          status: 'ERROR',
+          errorMessage: 'stream broke before response field',
+          conversationId: CONVERSATION,
+          finished_reason: 'error',
+          responseChars: 0,
+          heldAnswerChars: 15,
+          lastStepType: 'agent_response',
+        },
+      ],
+    ]);
+    expect(JSON.stringify(info.mock.calls)).not.toContain('partial answer');
+  });
+
+  it('delivers final_text + done with invalidateResume and warns when ERROR follows a completed answer', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, loadJsonl(ERROR_WITH_RESPONSE_FIXTURE));
+    expect(events).toEqual([
+      { type: 'system', resumeHandle: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f' },
+      { type: 'final_text', content: 'PONG-01\n' },
+      {
+        type: 'done',
+        terminationReason: 'normal',
+        invalidateResume: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f',
+      },
+    ]);
+    expect(warn.mock.calls).toEqual([
+      [
+        'agent',
+        'error-with-answer-recovered',
+        {
+          status: 'ERROR',
+          finished_reason: 'error',
+          conversationId: '6b9dd5db-bd08-4f29-adb6-a0380b7f563f',
+          errorMessage:
+            'failed to construct executor: unknown model key MODEL_PLACEHOLDER_M418: model not found',
+        },
+      ],
+    ]);
+    expect(JSON.stringify(warn.mock.calls)).not.toContain('PONG-01');
+  });
+
+  it('scrubs envelopes, falls back to held pending text, and redacts secrets in warn log on FAILED/ERROR', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const secret = 'sk-live-secret-123456';
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: `${INCIDENT_A_ENVELOPE}Clean reply\n`,
+        },
+      },
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'FAILED',
+          response: '   \n',
+          error: `executor token=${secret}`,
+        },
+      },
+    ]);
+    expect(events).toEqual([
+      { type: 'system', resumeHandle: CONVERSATION },
+      { type: 'final_text', content: 'Clean reply' },
+      { type: 'done', terminationReason: 'normal', invalidateResume: CONVERSATION },
+    ]);
+    expect(warn.mock.calls).toEqual([
+      [
+        'agent',
+        'error-with-answer-recovered',
+        {
+          status: 'FAILED',
+          conversationId: CONVERSATION,
+          errorMessage: expect.stringContaining('[REDACTED]'),
+        },
+      ],
+    ]);
+    const serialized = JSON.stringify(warn.mock.calls);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain('Clean reply');
+  });
+
+  it('delivers multi-step narration + completed tool + DONE answer on sticky ERROR', () => {
+    vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const t = new AntigravityJsonlTranslator();
+    const events = collect(t, [
+      INIT,
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 1,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: 'Let me check.\n',
+        },
+      },
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 2,
+          state: 'ACTIVE',
+          step_type: 'tool',
+          tool_name: 'run_command',
+          tool_info: { name: 'run_command', parameters: { CommandLine: 'echo ok' } },
+        },
+      },
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 2,
+          state: 'DONE',
+          step_type: 'tool',
+          tool_name: 'run_command',
+          tool_info: { output: 'ok\n' },
+        },
+      },
+      {
+        event: 'step_update',
+        step_update: {
+          conversation_id: CONVERSATION,
+          step_index: 3,
+          state: 'DONE',
+          step_type: 'agent_response',
+          text_delta: 'All good.\n',
+        },
+      },
+      {
+        event: 'result',
+        result: {
+          conversation_id: CONVERSATION,
+          status: 'ERROR',
+          finished_reason: 'error',
+          response: 'Let me check.\nAll good.\n',
+          error: 'earlier step transient error',
+        },
+      },
+    ]);
+    expect(events.filter(e => e.type === 'final_text' || e.type === 'done')).toEqual([
+      { type: 'final_text', content: 'Let me check.\nAll good.\n' },
+      { type: 'done', terminationReason: 'normal', invalidateResume: CONVERSATION },
+    ]);
+  });
+
+  it('keeps captured interim-narration ERROR and print_timeout ERROR on the error path', () => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+
+    const interim = collect(
+      new AntigravityJsonlTranslator(),
+      loadJsonl(ERROR_INTERIM_NARRATION_FIXTURE),
+    );
+    expect(interim.at(-1)).toEqual({
+      type: 'error',
+      message: 'There was a network issue connecting to the server, please try again.',
+      terminationReason: 'failed',
+      invalidateResume: '9315cd1d-3eec-480a-8dcc-39ac851db27d',
+    });
+    expect(interim.some(e => e.type === 'final_text')).toBe(false);
+
+    const printTimeout = collect(
+      new AntigravityJsonlTranslator(),
+      loadJsonl(PRINT_TIMEOUT_OPEN_TOOL_FIXTURE),
+    );
+    const timeoutLast = printTimeout.at(-1);
+    expect(timeoutLast).toMatchObject({
+      type: 'error',
+      terminationReason: 'failed',
+    });
+    expect(timeoutLast).not.toHaveProperty('invalidateResume');
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: 'interrupted finished_reason even after DONE agent_response',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: 'Finished answer\n',
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'interrupted',
+        response: 'Finished answer\n',
+        error: 'interrupted',
+      },
+      expectInvalidate: undefined,
+    },
+    {
+      name: 'post-tool thinking-only DONE agent_response after earlier narration',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: 'I will run a command first.\n',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 2,
+            state: 'ACTIVE',
+            step_type: 'tool',
+            tool_name: 'run_command',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 2,
+            state: 'DONE',
+            step_type: 'tool',
+            tool_name: 'run_command',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 3,
+            state: 'DONE',
+            step_type: 'agent_response',
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'error',
+        response: 'I will run a command first.\n',
+        error: 'failed after tool',
+      },
+      expectInvalidate: CONVERSATION,
+    },
+    {
+      name: 'unclosed ACTIVE tool step before DONE agent_response',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'ACTIVE',
+            step_type: 'tool',
+            tool_name: 'run_command',
+          },
+        },
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 2,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: 'Still waiting on background command.\n',
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'error',
+        response: 'Still waiting on background command.\n',
+        error: 'background failed',
+      },
+      expectInvalidate: CONVERSATION,
+    },
+    {
+      name: 'envelope-only DONE agent_response',
+      steps: [
+        {
+          event: 'step_update',
+          step_update: {
+            conversation_id: CONVERSATION,
+            step_index: 1,
+            state: 'DONE',
+            step_type: 'agent_response',
+            text_delta: INCIDENT_A_ENVELOPE,
+          },
+        },
+      ],
+      result: {
+        conversation_id: CONVERSATION,
+        status: 'ERROR',
+        finished_reason: 'error',
+        response: INCIDENT_A_ENVELOPE,
+        error: 'upstream failed',
+      },
+      expectInvalidate: CONVERSATION,
+    },
+  ])('does not treat $name as a completed answer', ({ steps, result, expectInvalidate }) => {
+    const warn = vi.spyOn(log, 'warn').mockImplementation(() => {});
+    const events = collect(new AntigravityJsonlTranslator(), [
+      INIT,
+      ...steps,
+      { event: 'result', result },
+    ]);
+    expect(events.some(e => e.type === 'final_text')).toBe(false);
+    expect(events.at(-1)).toEqual({
+      type: 'error',
+      message: result.error,
+      terminationReason: 'failed',
+      ...(expectInvalidate ? { invalidateResume: expectInvalidate } : {}),
+    });
+    expect(warn).not.toHaveBeenCalled();
   });
 });

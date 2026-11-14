@@ -25,6 +25,7 @@ import { CallbackAuth } from '../card/callback-auth';
 import { ActionTokenCodec } from '../card/action-token';
 import { CallbackNonceStore } from '../card/callback-store';
 import {
+  continueExtraInstruction,
   NOTICE_RESTART_GAP_MS,
   NoticeActionAuth,
   planInterruptionNotice,
@@ -76,7 +77,7 @@ import type { SessionCatalog } from '../session/catalog';
 import { ResumeCandidates } from '../session/resume-candidates';
 import type { SessionStore } from '../session/store';
 import type { WorkspaceStore } from '../workspace/store';
-import { ActiveRuns } from './active-runs';
+import { ActiveRuns, type PendingRerun } from './active-runs';
 import {
   BACKFILL_DELAY_LINE,
   createBackfillRun,
@@ -537,6 +538,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     pending.block(scope);
     void trackConsumer(withTrace({ chatId: firstMsg.chatId }, async () => {
       const sessionWriter = activeRuns.trackSessionWriter(scope);
+      const pendingRerun = activeRuns.trackPendingRerun(scope);
       log.info('flush', 'start', {
         scope,
         batchSize: batch.length,
@@ -575,6 +577,9 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           activePolicyFingerprints,
           lastRunModelByScope,
           canRecordSession: sessionWriter.isCurrent,
+          pendingRerun,
+          interruptActiveRun: (reason) => activeRuns.interrupt(scope, reason),
+          isClosing: () => closing,
           scope,
           mode,
           backfillMarks,
@@ -592,6 +597,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
           ...(deps.now ? { now: deps.now } : {}),
         });
       } finally {
+        pendingRerun.release();
         sessionWriter.release();
         pending.unblock(scope);
         log.info('flush', 'end');
@@ -662,7 +668,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
     draftCards: deps.automations,
     draftJournal: deps.automations?.outboxJournal,
     isDown: () => closing || link.isDown(),
-    isActive: (scope) => activeRuns.get(scope) !== undefined,
+    isActive: (scope) => activeRuns.get(scope) !== undefined || activeRuns.hasPendingRerun(scope),
     now: deps.now,
     noticeAuth,
     onNotInChat: removeFromChat,
@@ -1430,6 +1436,9 @@ interface RunBatchDeps {
   activePolicyFingerprints: Map<string, string>;
   lastRunModelByScope: Map<string, string>;
   canRecordSession(): boolean;
+  pendingRerun: PendingRerun;
+  interruptActiveRun(reason: StopRequest): boolean;
+  isClosing?(): boolean;
   scope: string;
   mode: ChatMode;
   backfillMarks: Map<string, BackfillMark>;
@@ -1592,9 +1601,9 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
   const prevModel = lastRunModelByScope.get(scope);
   const modelSwitched = prevModel !== undefined && prevModel !== modelSelection;
   lastRunModelByScope.set(scope, modelSelection);
-  const extraInstructions: string[] = [];
+  const takenInstructions: string[] = [];
   const taken = await continuations.take(scope, batch);
-  applyTakenInstruction(taken, extraInstructions);
+  applyTakenInstruction(taken, takenInstructions);
   const catalog = deps.pluginCatalog;
   const automationPluginAvailable = await catalog.isAvailable('automation');
   const groupIm = firstMsg.chatType !== 'p2p' && mode !== 'p2p' && !scope.startsWith('meeting:');
@@ -1610,9 +1619,10 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
       : !controls.profileConfig.automations.enabled ? 'automations-disabled'
       : groupIm ? senderUnavailable : 'automation-requires-group',
   };
-  extraInstructions.push(...await bridgeToolInstructions(toolContext));
+  const sharedExtraInstructions: string[] = [];
+  sharedExtraInstructions.push(...await bridgeToolInstructions(toolContext));
   if (modelSwitched) {
-    extraInstructions.push(
+    sharedExtraInstructions.push(
       `用户刚把本会话使用的模型切换为「${modelLabel(agentKind, modelPref)}」。` +
         '之前的对话里可能提到别的模型,请以当前模型为准;若被问到你用的是什么模型,据此回答。',
     );
@@ -1622,17 +1632,23 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     const oldest = backfilled.reduce((current, msg) => (
       msg.createTime < current.createTime ? msg : current
     ));
-    extraInstructions.push(formatBackfillLatenessHint({
+    sharedExtraInstructions.push(formatBackfillLatenessHint({
       createTimeMs: oldest.createTime,
       nowMs: (now ?? Date.now)(),
       timeZone: controls.profileConfig.automations.timezone,
       delayAnnounced,
     }));
   }
+  const extraInstructions = [...takenInstructions, ...sharedExtraInstructions];
 
   const promptBatch = taken.kind === 'continue' && !taken.resumeHandle && taken.userInput
     ? [{ ...lastMsg, content: taken.userInput }]
     : batch;
+  const userInputText = promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n');
+  const effectiveUserInputText =
+    taken.kind === 'continue' && taken.userInput
+      ? taken.userInput
+      : userInputText;
   const prompt = buildPrompt(
     promptBatch,
     attachments,
@@ -1671,23 +1687,6 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     actorId: firstMsg.senderId,
     ...(threadId && !isAutomationRunScope(scope) ? { threadId } : {}),
   };
-  const turnId = journal ? randomUUID() : undefined;
-  if (journal && turnId) {
-    const initiatorType = senderTypeOf(lastMsg);
-    journal.enqueue({
-      turnId,
-      scope,
-      chatId,
-      ...(threadId ? { threadId } : {}),
-      messageIds: batch.map((msg) => msg.messageId),
-      senderId: firstMsg.senderId,
-      initiatorId: lastMsg.senderId,
-      ...(initiatorType ? { initiatorType } : {}),
-      status: 'queued',
-      userInput: promptBatch.map((msg) => msg.content).filter(Boolean).join('\n\n'),
-      ...journalResources(batch),
-    });
-  }
 
   const scopeOverride = sessions.getIdleTimeoutMinutes(scope);
   const idleTimeoutMs = scopeOverride !== undefined
@@ -1695,67 +1694,250 @@ async function runAgentBatch(deps: RunBatchDeps): Promise<void> {
     : getRunIdleTimeoutMs(controls.cfg);
   if (idleTimeoutMs) log.info('flush', 'idle-watchdog', { idleTimeoutMs });
   const cotMessages = getCotMessages(controls.cfg);
-  try {
-    await executeTurn({
-      run: {
-        toolContext,
-        scopeId: scope,
-        scope: scopeContext,
-        prompt,
-        attachments: attachments.map(toPolicyAttachment),
-        access: accessDecision,
-        capability,
-        profileConfig: controls.profileConfig,
-        sessions,
-        sessionCatalog,
-        workspaces,
-        executor,
-        now: Date.now(),
-        stopGraceMs: getAgentStopGraceMs(controls.cfg),
-        ...(taken.kind === 'continue'
-          ? taken.resumeHandle
+  const policyAttachments = attachments.map(toPolicyAttachment);
+  const batchMessageIds = batch.map((msg) => msg.messageId);
+  const enqueueBatchTurn = (): string | undefined => {
+    if (!journal) return undefined;
+    const turnId = randomUUID();
+    const initiatorType = senderTypeOf(lastMsg);
+    journal.enqueue({
+      turnId,
+      scope,
+      chatId,
+      ...(threadId ? { threadId } : {}),
+      messageIds: batchMessageIds,
+      senderId: firstMsg.senderId,
+      initiatorId: lastMsg.senderId,
+      ...(initiatorType ? { initiatorType } : {}),
+      status: 'queued',
+      userInput: effectiveUserInputText,
+      ...journalResources(batch),
+    });
+    return turnId;
+  };
+  const runChatAttempt = async (attempt: {
+    prompt: string;
+    turnId?: string;
+    forceResumeHandle?: string | null;
+    forceResumeFingerprint?: string;
+    isAutoRerun?: boolean;
+    onFlowStarted?: () => void;
+  }) => {
+    const turnId = attempt.turnId ?? enqueueBatchTurn();
+    try {
+      return await executeTurn({
+        run: {
+          toolContext,
+          scopeId: scope,
+          scope: scopeContext,
+          prompt: attempt.prompt,
+          attachments: policyAttachments,
+          access: accessDecision,
+          capability,
+          profileConfig: controls.profileConfig,
+          sessions,
+          sessionCatalog,
+          workspaces,
+          executor,
+          now: Date.now(),
+          stopGraceMs: getAgentStopGraceMs(controls.cfg),
+          ...(attempt.forceResumeHandle !== undefined
             ? {
+                forceResumeHandle: attempt.forceResumeHandle,
+                ...(attempt.forceResumeFingerprint
+                  ? { forceResumeFingerprint: attempt.forceResumeFingerprint }
+                  : {}),
+              }
+            : {}),
+          observability: {
+            profile: controls.profile,
+            agent: capability.agentId,
+            source: 'im',
+            stage: 'submit',
+            taskKey: computeRunTaskKey(controls.profile, chatId, firstMsg.messageId),
+            messageId: firstMsg.messageId,
+            ...(firstMsg.threadId ? { threadId: firstMsg.threadId } : {}),
+          },
+        },
+        idleTimeoutMs,
+        delivery: {
+          kind: 'chat', outbox, channel, journal, turnId, chatId, sendOpts,
+          batchMessageIds,
+          replyMode: getMessageReplyMode(controls.cfg), callbackAuth, activePolicyFingerprints,
+          canRecordSession: deps.canRecordSession, isClosing: deps.isClosing, requestedModel, cliSelfSent,
+          outboundTimeoutMs, onWait: onDeliveryWait,
+          autoRerunOnSessionDiscard: !attempt.isAutoRerun,
+          ...(!attempt.isAutoRerun
+            ? {
+                pendingRerunStopRequest: () => deps.pendingRerun.stopRequest(),
+                onNoAutoRerun: () => {
+                  deps.pendingRerun.disarm();
+                },
+              }
+            : {}),
+          ...(attempt.isAutoRerun ? { isAutoRerun: true } : {}),
+          ...(attempt.onFlowStarted ? { onFlowStarted: attempt.onFlowStarted } : {}),
+          onRejected: reason => {
+            if (reason.code !== 'reconnect-in-progress' || !ledger) return;
+            unrecordAcceptedMessages(ledger, batch);
+            log.info('pending', 'handoff', { count: batch.length, reason: reason.code, incompleteFrom: ledger.getIncompleteFrom() });
+          },
+          onNotInChat: chatId => automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve(),
+          filterState: state => stripLegacyAutomationTagsFromState(getShowToolCalls(controls.cfg)
+            ? state : { ...state, blocks: state.blocks.filter(block => block.kind !== 'tool') }),
+          notice: journal && !isAutomationRunScope(scope) ? {
+            enabled: true, auth: noticeAuth, continuations, ownerId: controls.botOwnerId,
+            requireBotMention: lastMsg.chatType !== 'p2p'
+              && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
+          } : undefined,
+          ...(cotMessages !== 'off' ? { cot: { client: cotClient, detail: cotMessages, inputPreview: lastMsg.content } } : {}),
+        },
+      });
+    } catch (error) {
+      if (journal && turnId) journal.voidTurn(turnId);
+      throw error;
+    }
+  };
+
+  const firstTurnId = enqueueBatchTurn();
+  try {
+    const firstResult = await runChatAttempt({
+      prompt,
+      turnId: firstTurnId,
+      onFlowStarted: () => {
+        deps.pendingRerun.arm();
+      },
+      ...(taken.kind === 'continue'
+        ? taken.resumeHandle
+          ? {
               forceResumeHandle: taken.resumeHandle,
               ...(taken.policyFingerprint
                 ? { forceResumeFingerprint: taken.policyFingerprint }
                 : {}),
             }
-            : { forceResumeHandle: null }
-          : {}),
-        observability: {
-          profile: controls.profile,
-          agent: capability.agentId,
-          source: 'im',
-          stage: 'submit',
-          taskKey: computeRunTaskKey(controls.profile, chatId, firstMsg.messageId),
-          messageId: firstMsg.messageId,
-          ...(firstMsg.threadId ? { threadId: firstMsg.threadId } : {}),
-        },
-      },
-      idleTimeoutMs,
-      delivery: {
-        kind: 'chat', outbox, channel, journal, turnId, chatId, sendOpts,
-        batchMessageIds: batch.map(msg => msg.messageId),
-        replyMode: getMessageReplyMode(controls.cfg), callbackAuth, activePolicyFingerprints,
-        canRecordSession: deps.canRecordSession, requestedModel, cliSelfSent,
-        outboundTimeoutMs, onWait: onDeliveryWait,
-        onRejected: reason => {
-          if (reason.code !== 'reconnect-in-progress' || !ledger) return;
-          unrecordAcceptedMessages(ledger, batch);
-          log.info('pending', 'handoff', { count: batch.length, reason: reason.code, incompleteFrom: ledger.getIncompleteFrom() });
-        },
-        onNotInChat: chatId => automationsScheduler?.removeFromChat(chatId) ?? Promise.resolve(),
-        filterState: state => stripLegacyAutomationTagsFromState(getShowToolCalls(controls.cfg)
-          ? state : { ...state, blocks: state.blocks.filter(block => block.kind !== 'tool') }),
-        notice: journal && !isAutomationRunScope(scope) ? {
-          enabled: true, auth: noticeAuth, continuations, ownerId: controls.botOwnerId,
-          requireBotMention: lastMsg.chatType !== 'p2p'
-            && requireMentionForChat(controls.profileConfig, controls.cfg, lastMsg.chatId),
-        } : undefined,
-        ...(cotMessages !== 'off' ? { cot: { client: cotClient, detail: cotMessages, inputPreview: lastMsg.content } } : {}),
-      },
+          : { forceResumeHandle: null }
+        : {}),
     });
+    if (firstResult.ok && firstResult.autoRerunOutcome) {
+      const fallbackFromSkippedRerun = async (reason: string): Promise<void> => {
+        deps.pendingRerun.disarm();
+        if (deps.isClosing?.()) {
+          if (ledger) {
+            firstResult.voidSuppressedTurn?.();
+            unrecordAcceptedMessages(ledger, batch);
+            log.info('pending', 'handoff', {
+              count: batch.length,
+              reason,
+              incompleteFrom: ledger.getIncompleteFrom(),
+            });
+            return;
+          }
+        }
+        let overrideTurnId: string | undefined;
+        if (
+          journal
+          && firstTurnId
+          && journal.get(firstTurnId)?.status === 'voided'
+        ) {
+          overrideTurnId = enqueueBatchTurn();
+        }
+        await firstResult.deliverSuppressedFailure?.(overrideTurnId);
+      };
 
+      if (deps.isClosing?.()) {
+        await fallbackFromSkippedRerun('auto-rerun-closing');
+        return;
+      }
+      if (!deps.canRecordSession()) {
+        await fallbackFromSkippedRerun('auto-rerun-superseded');
+        return;
+      }
+      if (deps.pendingRerun.stopRequest()) {
+        await fallbackFromSkippedRerun('auto-rerun-stopped');
+        return;
+      }
+      if (mode === 'topic' && threadId && topicContext.length === 0 && topicResumeHandle) {
+        const exclude = new Set([...batchIds, ...quoteTargets]);
+        topicContext = (await fetchTopicContext(channel, threadId, {
+          maxMessages: 40,
+          excludeIds: exclude,
+        })).filter((item) => !(item.senderType === 'bot' && item.content === BACKFILL_DELAY_LINE));
+        if (topicContext.length > 0) {
+          log.info('topic', 'context-fetched', {
+            scope,
+            threadId,
+            count: topicContext.length,
+          });
+        }
+        if (deps.isClosing?.()) {
+          await fallbackFromSkippedRerun('auto-rerun-closing');
+          return;
+        }
+        if (!deps.canRecordSession()) {
+          await fallbackFromSkippedRerun('auto-rerun-superseded');
+          return;
+        }
+        if (deps.pendingRerun.stopRequest()) {
+          await fallbackFromSkippedRerun('auto-rerun-stopped');
+          return;
+        }
+      }
+      const rerunPromptBatch =
+        taken.kind === 'continue' && taken.userInput
+          ? [{ ...lastMsg, content: taken.userInput }]
+          : promptBatch;
+      const rerunInstructions = [
+        ...(taken.kind === 'abandoned' || (taken.kind === 'continue' && !taken.userInput)
+          ? takenInstructions
+          : []),
+        continueExtraInstruction(firstResult.autoRerunOutcome, effectiveUserInputText),
+        ...sharedExtraInstructions,
+      ];
+      const rerunPrompt = buildPrompt(
+        rerunPromptBatch,
+        attachments,
+        quotes,
+        topicContext,
+        channel.botIdentity,
+        rerunInstructions,
+      );
+      log.info('turn', 'auto-rerun', {
+        scope,
+        outcome: formatRunOutcome(firstResult.autoRerunOutcome),
+        promptChars: rerunPrompt.length,
+      });
+      let rerunAccepted = false;
+      try {
+        const secondResult = await runChatAttempt({
+          prompt: rerunPrompt,
+          forceResumeHandle: null,
+          isAutoRerun: true,
+          onFlowStarted: () => {
+            rerunAccepted = true;
+            firstResult.voidSuppressedTurn?.();
+            const lateStop = deps.pendingRerun.disarm();
+            if (lateStop) deps.interruptActiveRun(lateStop);
+          },
+        });
+        if (!secondResult.ok) {
+          deps.pendingRerun.disarm();
+          if (secondResult.rejectReason.code === 'reconnect-in-progress' && deps.isClosing?.()) {
+            await fallbackFromSkippedRerun('auto-rerun-closing');
+          } else {
+            firstResult.voidSuppressedTurn?.();
+          }
+        }
+      } catch (rerunError) {
+        deps.pendingRerun.disarm();
+        log.fail('turn', rerunError instanceof TurnStartFailed ? rerunError.cause : rerunError, {
+          scope,
+          step: rerunAccepted ? 'auto-rerun' : 'auto-rerun-start',
+        });
+        if (!rerunAccepted) {
+          await fallbackFromSkippedRerun('auto-rerun-start-failed');
+        }
+      }
+    }
   } catch (error) {
     if (error instanceof TurnStartFailed) throw error.cause;
     log.fail('stream', error);

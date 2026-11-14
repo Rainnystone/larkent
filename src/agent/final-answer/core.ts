@@ -66,6 +66,8 @@ export class FinalAnswerCore {
 
   protocolDrift(): ProtocolDriftState { return { ...this.drift }; }
   terminalEmitted(): boolean { return this.terminal; }
+  pendingLength(): number { return this.pending.length; }
+  pendingText(): string { return this.pending; }
   anomaly(): void { this.drift.anomalies++; }
   unknown(eventType: string): void {
     this.drift.unknownEvents++;

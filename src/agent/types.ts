@@ -31,6 +31,11 @@ export type AgentEvent =
       type: 'done';
       resumeHandle?: string;
       terminationReason: 'normal' | 'interrupted' | 'timeout';
+      /**
+       * Adapter-declared: this resume handle must not be resumed again even
+       * though this turn delivered a complete reply.
+       */
+      invalidateResume?: string;
     }
   | {
       type: 'error';
@@ -67,6 +72,12 @@ export interface AgentRunOptions {
    * are adapter-specific.
   */
   stopGraceMs?: number;
+}
+
+export function invalidatedResumeHandle(event: AgentEvent): string | undefined {
+  return event.type === 'done' || event.type === 'error'
+    ? event.invalidateResume
+    : undefined;
 }
 
 export function asAgentOptionsObject(value: unknown, label: string): Record<string, unknown> {

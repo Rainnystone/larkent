@@ -16,25 +16,6 @@ export type AntigravityFinishReason = 'normal' | 'failed' | 'interrupted' | 'tim
 
 const TERMINAL_RESULT_ERROR_CHARS = 200;
 
-function logTerminalResult(raw: Record<string, unknown>, result: Record<string, unknown>): void {
-  const status = stringValue(result.status);
-  const conversationId = stringValue(result.conversation_id) ?? stringValue(raw.conversation_id);
-  const numTurns = numberValue(result.num_turns);
-  const errorMessage = stringValue(result.error);
-  const errorCode = stringValue(result.error_code);
-  const errorType = stringValue(result.error_type);
-  log.info('agent', 'terminal-result', {
-    ...(status ? { status } : {}),
-    ...(errorCode ? { errorCode } : {}),
-    ...(errorType ? { errorType } : {}),
-    ...(errorMessage
-      ? { errorMessage: truncate(redactDiagnosticText(errorMessage), TERMINAL_RESULT_ERROR_CHARS) }
-      : {}),
-    ...(conversationId ? { conversationId } : {}),
-    ...(numTurns !== undefined ? { numTurns } : {}),
-  });
-}
-
 /**
  * Translates `agy -p --output-format stream-json` NDJSON into bridge
  * AgentEvents. Captured line shapes (Antigravity CLI 1.4.8 D03a):
@@ -63,6 +44,10 @@ export class AntigravityJsonlTranslator {
   private systemEmitted = false;
   private sawRecognizedToolOrCheckpoint = false;
   private sawSystemMessageStep = false;
+  private lastStepType: string | undefined;
+  private trailingAgentStepIndex: number | undefined;
+  private trailingAgentText = '';
+  private trailingAgentDone = false;
   private readonly openTools = new Set<string>();
 
   translate(raw: unknown): AgentEvent[] {
@@ -113,10 +98,22 @@ export class AntigravityJsonlTranslator {
     const step = isRecord(raw.step_update) ? raw.step_update : raw;
     this.rememberConversation(step.conversation_id);
     const stepType = stringValue(step.step_type);
+    if (stepType) this.lastStepType = stepType;
     if (stepType === 'agent_response') {
+      const stepIndex = numberValue(step.step_index);
+      const nextStep =
+        this.trailingAgentDone ||
+        (stepIndex !== undefined &&
+          this.trailingAgentStepIndex !== undefined &&
+          stepIndex !== this.trailingAgentStepIndex);
+      if (nextStep) this.trailingAgentText = '';
+      if (stepIndex !== undefined) this.trailingAgentStepIndex = stepIndex;
       const delta = stringValue(step.text_delta);
+      if (delta) this.trailingAgentText += delta;
+      this.trailingAgentDone = stringValue(step.state) === 'DONE';
       return delta ? this.core.accept({ type: 'answer', text: delta }) : [];
     }
+    this.resetTrailingAgentResponse();
     if (stepType === 'system_message') {
       this.sawSystemMessageStep = true;
       return [];
@@ -143,7 +140,7 @@ export class AntigravityJsonlTranslator {
   private translateResult(raw: Record<string, unknown>): AgentEvent[] {
     if (this.core.terminalEmitted()) return [];
     const result = isRecord(raw.result) ? raw.result : raw;
-    logTerminalResult(raw, result);
+    this.logTerminalResult(raw, result);
     this.rememberConversation(result.conversation_id ?? raw.conversation_id);
     const events: AgentEvent[] = [...this.systemEvents()];
     const usage = this.usageEvent(result);
@@ -157,7 +154,29 @@ export class AntigravityJsonlTranslator {
       // attached to a conversation do not stick (probe 2026-11-09), nor does a
       // print timeout (`print_timeout`, probe 2026-11-10 with an open background tool).
       const finishedReason = stringValue(result.finished_reason);
-      const poisoned = finishedReason === 'interrupted' || finishedReason === 'print_timeout' ? undefined : this.conversationId;
+      const keepSession = finishedReason === 'interrupted' || finishedReason === 'print_timeout';
+      const poisoned = keepSession ? undefined : this.conversationId;
+      const completedAnswer = keepSession
+        ? undefined
+        : this.completedAnswerContent(result.response);
+      if (completedAnswer !== undefined) {
+        log.warn('agent', 'error-with-answer-recovered', {
+          ...(status ? { status } : {}),
+          ...(finishedReason ? { finished_reason: finishedReason } : {}),
+          ...(this.conversationId ? { conversationId: this.conversationId } : {}),
+          errorMessage: truncate(redactDiagnosticText(message), 4096),
+        });
+        return this.core.accept({
+          type: 'complete',
+          terminal: {
+            type: 'done',
+            terminationReason: 'normal',
+            ...(poisoned ? { invalidateResume: poisoned } : {}),
+          },
+          prefix: events,
+          content: completedAnswer,
+        });
+      }
       return this.core.accept({
         type: 'complete',
         terminal: {
@@ -183,6 +202,53 @@ export class AntigravityJsonlTranslator {
   private rememberConversation(value: unknown): void {
     const id = stringValue(value);
     if (id) this.conversationId = id;
+  }
+
+  private resetTrailingAgentResponse(): void {
+    this.trailingAgentStepIndex = undefined;
+    this.trailingAgentText = '';
+    this.trailingAgentDone = false;
+  }
+
+  private completedAnswerContent(rawResponse: unknown): string | undefined {
+    if (this.lastStepType !== 'agent_response') return undefined;
+    if (!this.trailingAgentDone) return undefined;
+    if (this.openTools.size > 0) return undefined;
+    if (!hasNonEmptyScrubbedAnswer(this.trailingAgentText)) return undefined;
+    const response = stringValue(rawResponse);
+    if (response !== undefined && hasNonEmptyScrubbedAnswer(response)) {
+      return response;
+    }
+    const pending = this.core.pendingText();
+    if (hasNonEmptyScrubbedAnswer(pending)) {
+      return pending;
+    }
+    return undefined;
+  }
+
+  private logTerminalResult(raw: Record<string, unknown>, result: Record<string, unknown>): void {
+    const status = stringValue(result.status);
+    const conversationId = stringValue(result.conversation_id) ?? stringValue(raw.conversation_id);
+    const numTurns = numberValue(result.num_turns);
+    const errorMessage = stringValue(result.error);
+    const errorCode = stringValue(result.error_code);
+    const errorType = stringValue(result.error_type);
+    const finishedReason = stringValue(result.finished_reason) ?? null;
+    const responseChars = typeof result.response === 'string' ? result.response.length : 0;
+    log.info('agent', 'terminal-result', {
+      ...(status ? { status } : {}),
+      ...(errorCode ? { errorCode } : {}),
+      ...(errorType ? { errorType } : {}),
+      ...(errorMessage
+        ? { errorMessage: truncate(redactDiagnosticText(errorMessage), TERMINAL_RESULT_ERROR_CHARS) }
+        : {}),
+      ...(conversationId ? { conversationId } : {}),
+      ...(numTurns !== undefined ? { numTurns } : {}),
+      finished_reason: finishedReason,
+      responseChars,
+      heldAnswerChars: this.core.pendingLength(),
+      lastStepType: this.lastStepType ?? null,
+    });
   }
 
   private translateToolStep(step: Record<string, unknown>): AgentEvent[] {
@@ -285,6 +351,10 @@ function officialPrintTimeoutSignal(result: Record<string, unknown>): boolean {
 
 function isTimeoutSignal(value: string | undefined): boolean {
   return value !== undefined && /timeout/i.test(value);
+}
+
+function hasNonEmptyScrubbedAnswer(content: string): boolean {
+  return scrubSystemMessageEnvelopes(content).text.trim().length > 0;
 }
 
 function scrubFinalText(

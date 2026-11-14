@@ -80,4 +80,35 @@ describe('ActiveRuns lifecycle', () => {
     expect(active.get('a')?.run).toBe(a);
     expect(active.get('b')).toBeUndefined();
   });
+
+  it('trackPendingRerun captures interrupt and stopAll only while armed without an active handle', async () => {
+    const active = new ActiveRuns();
+    const pending = active.trackPendingRerun('a');
+    expect(active.hasPendingRerun('a')).toBe(false);
+    expect(active.interrupt('a', { type: 'user-stop' })).toBe(false);
+
+    pending.arm();
+    expect(active.hasPendingRerun('a')).toBe(true);
+
+    // While a live handle is registered, interrupt targets the live handle only.
+    const run: AgentRun = { runId: 'a', events: (async function* () {})(), stop: async () => {}, waitForExit: async () => true };
+    const handle = active.register('a', run);
+    expect(active.interrupt('a', { type: 'user-stop' })).toBe(true);
+    expect(handle.stopRequest).toEqual({ type: 'user-stop' });
+    expect(pending.stopRequest()).toBeUndefined();
+    active.unregister('a', run);
+
+    // Once the live handle has unregistered, interrupt cancels the armed pending rerun.
+    expect(active.interrupt('a', { type: 'user-stop' })).toBe(true);
+    expect(pending.stopRequest()).toEqual({ type: 'user-stop' });
+    expect(pending.disarm()).toEqual({ type: 'user-stop' });
+    expect(active.hasPendingRerun('a')).toBe(false);
+    expect(pending.stopRequest()).toBeUndefined();
+
+    pending.arm();
+    await active.stopAll({ type: 'shutdown-signal' });
+    expect(pending.stopRequest()).toEqual({ type: 'shutdown-signal' });
+    pending.release();
+    expect(active.hasPendingRerun('a')).toBe(false);
+  });
 });

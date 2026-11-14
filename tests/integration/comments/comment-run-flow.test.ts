@@ -150,6 +150,31 @@ describe('comment run flow', () => {
     expect(h.inThreadReplies).toEqual([expect.stringMatching(/Bad Gateway\n下一条消息将开始新会话$/), 'fresh answer']);
   });
 
+  it('delivers a clean comment reply without error notice and discards session when done carries invalidateResume', async () => {
+    const h = await createHarness({
+      agentKind: 'antigravity',
+      agentEventRuns: [
+        [
+          { type: 'system', resumeHandle: 'agy-poisoned' },
+          { type: 'final_text', content: 'delivered answer' },
+          { type: 'done', terminationReason: 'normal', invalidateResume: 'agy-poisoned' },
+        ],
+        [
+          { type: 'system', resumeHandle: 'agy-fresh' },
+          { type: 'final_text', content: 'fresh answer' },
+          { type: 'done', resumeHandle: 'agy-fresh', terminationReason: 'normal' },
+        ],
+      ],
+    });
+    h.sessions.set('doc:doc-token', 'agy-poisoned', await realpath(h.tmp.workspace), 'antigravity');
+
+    await handleCommentMention(h.deps(event({ commentId: 'comment-1', replyId: 'reply-1' })));
+    await handleCommentMention(h.deps(event({ commentId: 'comment-2', replyId: 'reply-2' })));
+
+    expect(h.agent.runOptions.map((opts) => opts.resumeHandle)).toEqual(['agy-poisoned', undefined]);
+    expect(h.inThreadReplies).toEqual(['delivered answer', 'fresh answer']);
+  });
+
   it('keeps the new-session notice when a long agy ERROR fills the comment reply', async () => {
     const longError = `Bad Gateway ${'x'.repeat(2500)}`;
     const h = await createHarness({
