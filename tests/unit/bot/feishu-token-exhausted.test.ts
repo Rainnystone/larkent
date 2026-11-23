@@ -51,6 +51,7 @@ interface FakeHttp {
   apiCalls: RecordedCall[];
   replaySucceeds: boolean;
   hangApi: boolean;
+  onAuth?: () => Promise<void> | void;
   api: { type: 'http'; status: number; code: number } | { type: 'status'; status: number };
   request: (opts: Record<string, unknown>) => Promise<unknown>;
   get: (...args: unknown[]) => Promise<unknown>;
@@ -159,6 +160,35 @@ describe('exhausted tenant token is a link failure (ticket 02)', () => {
     expect(h.http.apiCalls[0]?.timeout).toBe(COT_REQUEST_TIMEOUT_MS);
   });
 
+  it('a slow self-heal past 15s never sends the create replay late', async () => {
+    const h = harness(APP_A);
+    await seedDead(h.cache, APP_A);
+    const hung = deferred();
+    const released = deferred();
+    h.http.onAuth = () => {
+      hung.resolve();
+      return released.promise;
+    };
+    const cot = cotOn(h);
+    vi.useFakeTimers();
+    const pending = expect(cot.create('oc_chat', 'om_origin')).rejects.toMatchObject({
+      name: 'TimeoutError',
+    });
+    await hung.promise;
+    expect(h.http.apiCalls).toHaveLength(1);
+    expect(h.http.apiCalls.every((c) => c.url.includes('/im/v1/message_cot'))).toBe(true);
+    expect(h.http.authPosts).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(COT_REQUEST_TIMEOUT_MS);
+    await pending;
+    expect(h.http.apiCalls).toHaveLength(1);
+
+    released.resolve();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(h.http.apiCalls).toHaveLength(1);
+    expect(apiAuths(h.http)).toEqual([DEAD_TOKEN]);
+  });
+
   it('startChannel constructs CotClient on channel.rawClient.request after token retry is installed', () => {
     const src = readFileSync(join(process.cwd(), 'src/bot/channel.ts'), 'utf8');
     const create = src.indexOf('const channel = createLarkChannel(opts)');
@@ -235,6 +265,7 @@ function createFakeHttp(): FakeHttp {
         throw new Error(`unexpected post ${url}`);
       }
       http.authPosts += 1;
+      await http.onAuth?.();
       return { code: 0, tenant_access_token: FRESH_TOKEN, expire: 7200 };
     },
     get: unsupported('get'),
@@ -292,6 +323,14 @@ function unsupported(name: string): (...args: unknown[]) => Promise<unknown> {
   return async () => {
     throw new Error(`fake http ${name} not implemented`);
   };
+}
+
+function deferred(): { promise: Promise<void>; resolve: () => void } {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
 }
 
 function memoryWatermark(initial?: number): { get(): number | undefined; set(at: number): void } {

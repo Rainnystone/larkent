@@ -88,11 +88,13 @@ function wrapClient(client: FeishuSdkClient, now: () => number): void {
 
   async function wrappedRequest(opts: Record<string, unknown>): Promise<unknown> {
     const sendGen = generation;
+    const signal = requestSignal(opts);
     noteCachedToken();
     const first = await send(innerRequest, opts);
     if (first.ok) return first.value;
     if (!shouldSelfHeal(opts, first, knownTenantTokens)) return failOut(first);
     if (now() < cooldownUntil) return failOut(first);
+    if (isAborted(signal)) return failOut(first);
     try {
       await refreshFrom(sendGen);
     } catch {
@@ -103,7 +105,9 @@ function wrapClient(client: FeishuSdkClient, now: () => number): void {
       });
       return failOut(first);
     }
+    if (isAborted(signal)) return failOut(first);
     const token = await replayToken();
+    if (isAborted(signal)) return failOut(first);
     const replay = await send(innerRequest, withAuthorization(opts, token));
     if (replay.ok) {
       log.info('auth', 'token-refreshed', {
@@ -234,6 +238,14 @@ function feishuCode(value: unknown): number | undefined {
   if (typeof nested === 'number') return nested;
   const wrapped = rec.data?.code;
   return typeof wrapped === 'number' ? wrapped : undefined;
+}
+
+function requestSignal(opts: Record<string, unknown>): AbortSignal | undefined {
+  return opts.signal instanceof AbortSignal ? opts.signal : undefined;
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
 }
 
 function isOpenApiUrl(url: string | undefined): boolean {

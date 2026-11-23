@@ -26,6 +26,7 @@ export interface CotSdkRequest {
     data?: unknown;
     params?: Record<string, unknown>;
     timeout?: number;
+    signal?: AbortSignal;
   }): Promise<unknown>;
 }
 
@@ -81,14 +82,17 @@ export class CotClient {
     const body = typeof init.body === 'string' && init.body.length > 0
       ? JSON.parse(init.body) as unknown
       : undefined;
+    const ctrl = new AbortController();
     const envelope = await rejectAfter(
       sdkRequest({
         method,
         url: path,
         ...(body !== undefined ? { data: body } : {}),
         timeout: COT_REQUEST_TIMEOUT_MS,
+        signal: ctrl.signal,
       }),
       COT_REQUEST_TIMEOUT_MS,
+      () => ctrl.abort(),
     );
     return unwrapCotEnvelope(envelope);
   }
@@ -565,9 +569,10 @@ function unwrapCotEnvelope(value: unknown): Record<string, unknown> {
   return rec as Record<string, unknown>;
 }
 
-function rejectAfter<T>(work: Promise<T>, ms: number): Promise<T> {
+function rejectAfter<T>(work: Promise<T>, ms: number, onTimeout?: () => void): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(() => {
+      onTimeout?.();
       const err = new Error(`COT timeout ${ms}ms`);
       err.name = 'TimeoutError';
       reject(err);
