@@ -113,5 +113,6 @@ If no usable page or group is available for verification, ask the user for the m
 ## Next steps as needed
 
 - Always-on services, supervisor, stopping, and logs: [operations](operations.md).
+- A host that idle-sleeps while the bot must stay reachable: turn on `keepAwake.enabled` (Windows only, advisory) — see [operations](operations.md#configuration-and-identity).
 - Using automations and bridge plugins: [README](../README.md#automations).
 - Connection problems that need code changes: leave the regression test and fix on the user-specified branch/worktree and run the repo's `pnpm ci:local`. Record the actual commands, exit codes, and real-scenario re-verification results.
