@@ -6,7 +6,7 @@ Spec: `README.md` D1–D7, D10, Testing.
 ## What
 Add `src/bot/feishu-token-retry.ts` and install it per channel in `startChannel`. On `99991663`/`99991661` from a call using the bridge's tenant token: evict that app's cached token (real delete, never `set(...,0)`), refresh once via singleflight + generation, replay the request once.
 
-Start by reading the installed `@larksuiteoapi/node-sdk` source to confirm the hook point (D3) and the cache key/API (D4). Write both findings in `delivery-notes/01.md` on the docs branch is **not** your job — put them in your `done 01` comment on the docs PR.
+Start by reading the installed `@larksuiteoapi/node-sdk` source to confirm the hook point (D3) and the cache key/API (D4). Put both findings in your `done 01` comment on the docs PR (you do not push to the docs branch).
 
 ## Acceptance (each is a test)
 1. Cached token rejected with HTTP 400 `{code: 99991663}` → exactly one auth POST, one replay, call succeeds. Covers at least `rawClient.request`, one `im.v1.message` call, and the path `getAppInfo` uses.
