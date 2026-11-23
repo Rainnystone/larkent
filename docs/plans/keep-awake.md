@@ -51,10 +51,13 @@ Rollback is two-way. Set `keepAwake.enabled` to `false`, or revert the commits. 
 
 ## Local verification on the owner's host
 
-- Typecheck and build pass.
-- The focused suites pass: holder logic against a fake child, the real script on Windows PowerShell, the supervisor lifecycle, the setting, and the docs contract.
-- The full suite on that host: 4111 passed, 2 failed, 38 skipped. The 2 are the symlink cases below.
-- `pnpm ci:local` cannot pass there: two symlink cases in the plugin catalog suite fail with `EPERM` because the host cannot create symlinks. They do not touch this change. They were not skipped or worked around; a host that can create symlinks still needs them red when they break.
+Hosted CI could not run: the Actions quota is exhausted. The Windows jobs of `ci.yml` were run on this host instead, with what could be kept the same: Node v20.20.2, a detached checkout, a from-scratch install, the same commands in the same order, three workers and the weighted scheduler. What could not: four vCPUs and the hosted image.
+
+- Static checks pass: install, web build, typecheck, CLI build.
+- Shard 1/3: 1099 passed, 17 skipped, 2 failed. Shard 2/3: 1437 passed, 10 skipped. Shard 3/3: 1575 passed, 13 skipped. No test timed out.
+- The opt-in real-script smoke passes on the same checkout.
+- The 2 failures are two symlink cases in the plugin catalog suite. They fail with `EPERM` because the host cannot create symlinks. They do not touch this change. They were not skipped or worked around; a host that can create symlinks still needs them red when they break. `pnpm ci:local` cannot pass here for that reason.
+- Linux and macOS were not run. The host has no WSL or Docker.
 - A full-suite run rewrites the line endings of two snapshot files without changing their content. Restore them with `git checkout` before committing.
 
 ## Known limits and next steps

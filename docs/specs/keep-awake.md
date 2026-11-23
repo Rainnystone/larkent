@@ -46,8 +46,8 @@ Outcome: a profile can ask the operating system not to idle-sleep while it is on
 - **The real host**: on the owner's Windows 11 Modern Standby laptop, each production profile logged `keep-awake` `held` about one second after `profile-online`. Stopping the bridge with `kill`, a hard termination on Windows, left no holder process after 5 s; starting it again bound a new holder to the new bridge process.
 - **Hosted Windows**: shards 1 and 3 passed. Shard 2 failed. The real-script test never reached `held` there, and five unrelated tests timed out while sharing that runner with it. Every test that ran beside it took 5 to 58 times its usual time; the ones before it were normal.
 - **Not verified**: that the request on its own prevents standby after lock on a Modern Standby host. The hidden timeout was changed at the same time, so a lock-screen test cannot attribute the result to either measure alone.
-- **Not verified on other systems**: hosted CI ran out of Actions quota after the Ubuntu shards passed and before the macOS shards finished. The review fixes that came later ran only on Windows.
-- **Local `pnpm ci:local` cannot pass on the owner's machine**: two symlink cases in the plugin catalog suite fail with `EPERM` there, for reasons unrelated to this change. Typecheck, build and the full suite were run separately. Hosted CI on all three systems is the authority.
+- **Windows CI, run on the owner's host**: hosted CI could not run, the Actions quota being exhausted. The Windows jobs were run there on the same Node as CI, in a fresh checkout, three shards and the static checks. Everything passed except two symlink cases the host cannot run. Details are in the plan.
+- **Linux and macOS were not run** for the review fixes. Before the quota ran out, both Ubuntu shards had passed on the first four commits.
 
 ## Out of scope
 
