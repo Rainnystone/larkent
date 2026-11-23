@@ -56,6 +56,8 @@ Hosted CI could not run: the Actions quota is exhausted. The Windows jobs of `ci
 - Static checks pass: install, web build, typecheck, CLI build.
 - Shard 1/3: 1099 passed, 17 skipped, 2 failed. Shard 2/3: 1437 passed, 10 skipped. Shard 3/3: 1575 passed, 13 skipped. No test timed out.
 - The opt-in real-script smoke passes on the same checkout.
+- The commit after that run only makes the smoke more patient on a loaded host. It was run again on its own and typechecked. The three shards were not repeated for it.
+- Run the shards two at a time. All three at once, nine workers, overloaded this host: 68 timing failures in process-heavy tests that do not touch this change, and 19 minutes instead of 10.
 - The 2 failures are two symlink cases in the plugin catalog suite. They fail with `EPERM` because the host cannot create symlinks. They do not touch this change. They were not skipped or worked around; a host that can create symlinks still needs them red when they break. `pnpm ci:local` cannot pass here for that reason.
 - Linux and macOS were not run. The host has no WSL or Docker.
 - A full-suite run rewrites the line endings of two snapshot files without changing their content. Restore them with `git checkout` before committing.
