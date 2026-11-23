@@ -8,7 +8,7 @@ import {
   type HostSleepEvidence,
   type HostSleepProbe,
 } from '../platform/host-sleep';
-import { classify } from './feishu-error';
+import { classify, feishuTokenInvalidCode } from './feishu-error';
 import { OutboundMessageIds, wrapChannelOutbound } from './self-message';
 
 export const FEISHU_LINK_TICK_MS = 15_000;
@@ -19,6 +19,8 @@ export const FEISHU_LINK_SILENT_PROBE_MS = 60_000;
 export const FEISHU_LINK_PROBE_TIMEOUT_MS = 20_000;
 const TIMER_STORM_GUARD_MS = 5_000;
 const WS_DOWN_LOG_EVERY = 20;
+/** Monotonic gap between `link.auth-unhealthy` warnings (D10). */
+const AUTH_UNHEALTHY_THROTTLE_MS = 60_000;
 
 export interface Outage {
   since: number;
@@ -70,6 +72,7 @@ export function createFeishuProbe(
   // Capture before wrapChannelOutbound so a late REST success after probe
   // abort cannot take the link up through the outbound onResult classifier.
   const getAppInfo = channel.getAppInfo.bind(channel);
+  let lastAuthUnhealthyAt = Number.NEGATIVE_INFINITY;
   return async (signal) => {
     if (signal?.aborted) return false;
     try {
@@ -77,9 +80,27 @@ export function createFeishuProbe(
       return !signal?.aborted;
     } catch (err) {
       if (signal?.aborted || isAbortError(err)) return false;
+      const code = feishuTokenInvalidCode(err);
+      if (code !== undefined) {
+        const at = performance.now();
+        if (at - lastAuthUnhealthyAt >= AUTH_UNHEALTHY_THROTTLE_MS) {
+          lastAuthUnhealthyAt = at;
+          const appId = sdkAppId(channel);
+          log.warn('link', 'auth-unhealthy', {
+            ...(appId ? { appId } : {}),
+            code,
+            outcome: 'probe-down',
+          });
+        }
+      }
       return probeResultFromError(err);
     }
   };
+}
+
+function sdkAppId(channel: LarkChannel): string | undefined {
+  const raw = (channel as { rawClient?: { appId?: unknown } }).rawClient;
+  return typeof raw?.appId === 'string' ? raw.appId : undefined;
 }
 
 function settleOrAbort<T>(work: Promise<T>, signal: AbortSignal | undefined): Promise<T> {

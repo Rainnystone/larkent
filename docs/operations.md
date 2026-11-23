@@ -308,6 +308,8 @@ Profiles use schema v3; sessions, workspaces, and the catalog use v2. Rolling ba
 | Missing permission reading docs/chat history | Check the current profile, `--as user`, app scope, user scope, and target resource visibility |
 | User authorization link expired | Restart the device flow with the full scope in the same profile |
 | Restart says the profile is in use | Check the actual process and run mode, then stop the original owner cleanly |
+| `auth.token-refresh-failed` | Tenant-token self-heal could not refresh or the one replay still failed (`99991663` / `99991661`). Forced refreshes pause for 10 s. Check the profile's app id/secret; a process restart is not required once credentials are valid |
+| `link.auth-unhealthy` | Self-heal is exhausted; the probe reports the link down and does not advance `lastLiveAt`. Throttled. Same two codes; Outbox stays staged and backfill stays incomplete until a later probe succeeds |
 
 ## Development checks
 

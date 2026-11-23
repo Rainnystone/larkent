@@ -21,6 +21,12 @@ export const FEISHU_TRANSIENT_API_CODES = new Set([
   99991400,
 ]);
 
+/** Tenant-token invalid/missing. Exhausted self-heal is a link failure (D2/D8). */
+export const FEISHU_TOKEN_INVALID_CODES = new Set([
+  99991663,
+  99991661,
+]);
+
 const NETWORK_ERRNO = new Set([
   'ECONNRESET',
   'ETIMEDOUT',
@@ -45,6 +51,7 @@ export function classify(err: unknown): FeishuErrorClass {
   const chain = [...causeChain(err)];
   if (chain.some((node) => node instanceof OutboundTimeoutError)) return 'link';
   if (chain.some((node) => isTransientFeishuCode(node))) return 'link';
+  if (chain.some((node) => isTokenInvalidCode(node))) return 'link';
   for (const node of chain) {
     if (node instanceof LarkChannelError && node.code === 'rate_limited') return 'link';
   }
@@ -109,6 +116,20 @@ export function rateLimitResetDelayMs(err: unknown, now = Date.now()): number | 
 function isTransientFeishuCode(error: unknown): boolean {
   const code = feishuCode(error);
   return code !== undefined && FEISHU_TRANSIENT_API_CODES.has(code);
+}
+
+function isTokenInvalidCode(error: unknown): boolean {
+  const code = feishuCode(error);
+  return code !== undefined && FEISHU_TOKEN_INVALID_CODES.has(code);
+}
+
+/** Structured numeric code when this error is an exhausted tenant-token failure. */
+export function feishuTokenInvalidCode(error: unknown): number | undefined {
+  for (const node of causeChain(error)) {
+    const code = feishuCode(node);
+    if (code !== undefined && FEISHU_TOKEN_INVALID_CODES.has(code)) return code;
+  }
+  return undefined;
 }
 
 function headerValue(error: unknown, name: string): string | undefined {

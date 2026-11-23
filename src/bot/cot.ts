@@ -16,19 +16,37 @@ const COT_TEXT_MAX = 1200;
 // Bounds every CoT HTTP call. Without it a hung message_cot endpoint pins
 // start() — which runs before any agent event is drained and before the
 // plain-reply fallback — to undici's ~300s default.
-const COT_REQUEST_TIMEOUT_MS = 15_000;
+export const COT_REQUEST_TIMEOUT_MS = 15_000;
+
+/** Slice of node-sdk `Client.request` used so CoT shares the channel token path (D9). */
+export interface CotSdkRequest {
+  (payload: {
+    method: string;
+    url: string;
+    data?: unknown;
+    params?: Record<string, unknown>;
+    timeout?: number;
+  }): Promise<unknown>;
+}
 
 export class CotClient {
   private readonly baseUrl: string;
   private readonly appId: string;
   private readonly appSecret: string;
+  private readonly sdkRequest: CotSdkRequest | undefined;
   private token: string | undefined;
   private tokenExpiresAt = 0;
 
-  constructor(opts: { tenant: TenantBrand; appId: string; appSecret: string }) {
+  constructor(opts: {
+    tenant: TenantBrand;
+    appId: string;
+    appSecret: string;
+    request?: CotSdkRequest;
+  }) {
     this.baseUrl = ENDPOINTS[opts.tenant];
     this.appId = opts.appId;
     this.appSecret = opts.appSecret;
+    this.sdkRequest = opts.request;
   }
 
   async tenantToken(): Promise<string> {
@@ -52,6 +70,30 @@ export class CotClient {
   }
 
   async request(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
+    if (this.sdkRequest) return this.requestViaSdk(path, init);
+    return this.requestViaFetch(path, init);
+  }
+
+  private async requestViaSdk(path: string, init: RequestInit): Promise<Record<string, unknown>> {
+    const sdkRequest = this.sdkRequest;
+    if (!sdkRequest) throw new Error('CoT SDK request is missing');
+    const method = String(init.method ?? 'GET');
+    const body = typeof init.body === 'string' && init.body.length > 0
+      ? JSON.parse(init.body) as unknown
+      : undefined;
+    const envelope = await rejectAfter(
+      sdkRequest({
+        method,
+        url: path,
+        ...(body !== undefined ? { data: body } : {}),
+        timeout: COT_REQUEST_TIMEOUT_MS,
+      }),
+      COT_REQUEST_TIMEOUT_MS,
+    );
+    return unwrapCotEnvelope(envelope);
+  }
+
+  private async requestViaFetch(path: string, init: RequestInit): Promise<Record<string, unknown>> {
     const token = await this.tenantToken();
     const resp = await fetch(`${this.baseUrl}${path}`, {
       signal: AbortSignal.timeout(COT_REQUEST_TIMEOUT_MS),
@@ -65,11 +107,7 @@ export class CotClient {
     if (!resp.ok) throw new Error(`COT HTTP ${resp.status}`);
     const text = await resp.text();
     if (!text) return {};
-    const data = JSON.parse(text) as { code?: number; msg?: string; data?: Record<string, unknown> } & Record<string, unknown>;
-    if (data.code !== undefined && data.code !== 0) {
-      throw new Error(`COT API failed: code=${data.code} msg=${data.msg ?? '<no msg>'}`);
-    }
-    return data.data ?? data;
+    return unwrapCotEnvelope(JSON.parse(text));
   }
 
   async create(chatId: string, originMessageId?: string): Promise<Record<string, unknown>> {
@@ -512,4 +550,38 @@ function truncateCot(value: unknown, max: number): string {
 
 function stringValue(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
+}
+
+function unwrapCotEnvelope(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const rec = value as { code?: unknown; msg?: unknown; data?: unknown };
+  if (typeof rec.code === 'number' && rec.code !== 0) {
+    const msg = typeof rec.msg === 'string' && rec.msg ? rec.msg : '<no msg>';
+    throw new Error(`COT API failed: code=${rec.code} msg=${msg}`);
+  }
+  if (rec.data && typeof rec.data === 'object' && !Array.isArray(rec.data)) {
+    return rec.data as Record<string, unknown>;
+  }
+  return rec as Record<string, unknown>;
+}
+
+function rejectAfter<T>(work: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error(`COT timeout ${ms}ms`);
+      err.name = 'TimeoutError';
+      reject(err);
+    }, ms);
+    timer.unref?.();
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }

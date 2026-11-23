@@ -917,7 +917,7 @@ describe('runBackfill', () => {
     expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
   });
 
-  it('completes an open incomplete scan when session p2p mode lookup returns HTTP 400, then still scans a short gap', async () => {
+  it('completes an open incomplete scan when session p2p mode lookup returns business HTTP 400/230002, then still scans a short gap', async () => {
     const incompleteFrom = NOW - 6 * HOUR;
     const lastLiveAt = NOW - 11_000;
     let now = NOW;
@@ -1099,7 +1099,7 @@ describe('runBackfill', () => {
     expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
-  it('completes the window when one chat history fetch returns HTTP 400', async () => {
+  it('completes the window when one chat history fetch returns business HTTP 400/230002', async () => {
     const lastLiveAt = NOW - 5 * 60_000;
     const h = await harness({
       lastLiveAt,
@@ -1133,6 +1133,65 @@ describe('runBackfill', () => {
     expect(h.ledger.getIncompleteFrom()).toBeUndefined();
     expect(h.ledger.getLastBackfillEnd()).toBe(NOW);
     expect(h.ledger.getLiveAt()).toBe(lastLiveAt);
+  });
+
+  it('keeps the window incomplete when one chat history fetch returns exhausted 99991663', async () => {
+    const lastLiveAt = NOW - 5 * 60_000;
+    const h = await harness({
+      lastLiveAt,
+      chats: [
+        { id: CHAT_A, name: 'A' },
+        { id: CHAT_B, name: 'B' },
+      ],
+      messages: {
+        [CHAT_A]: [mentionItem('om_a', CHAT_A, 'from a', NOW - 20_000)],
+        [CHAT_B]: [mentionItem('om_b', CHAT_B, 'from b', NOW - 15_000)],
+      },
+      listErrors: { [CHAT_B]: httpStatusError(400, 'token invalid', 99991663) },
+    });
+    const info = spyInfo();
+    const warn = spyWarn();
+    await runBackfill(await deps(h));
+
+    expect(h.intake.map((msg) => msg.messageId)).toEqual(['om_a']);
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        fetchFailures: 1,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(events(info, 'backfill').filter((row) => row.event === 'done')).toEqual([]);
+    expect(events(warn, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'chat-fetch-failed',
+        chatId: CHAT_B,
+        status: 400,
+      }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(lastLiveAt);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
+  });
+
+  it('keeps the incomplete scan when session p2p mode lookup returns exhausted 99991663', async () => {
+    const incompleteFrom = NOW - 6 * HOUR;
+    const { h } = await openIncompleteScan(NOW - 11_000, incompleteFrom);
+    const info = spyInfo();
+    await runBackfill(await deps({
+      ...h,
+      sessionChatIds: [CHAT_P2P],
+      chatModeErrors: { [CHAT_P2P]: httpStatusError(400, 'token invalid', 99991663) },
+    }));
+    expect(events(info, 'backfill')).toContainEqual(
+      expect.objectContaining({
+        event: 'incomplete',
+        modeLookupFailures: 1,
+        fetchFailures: 0,
+        enqueuedTotal: 1,
+      }),
+    );
+    expect(h.ledger.getIncompleteFrom()).toBe(incompleteFrom);
+    expect(h.ledger.getLastBackfillEnd()).toBeUndefined();
   });
 
   it('keeps the scan incomplete when one chat history fetch returns HTTP 500', async () => {
@@ -1768,10 +1827,14 @@ describe('formatBackfillLatenessHint', () => {
   });
 });
 
-function httpStatusError(status: number, message = `status ${status}`): Error {
+function httpStatusError(
+  status: number,
+  message = `status ${status}`,
+  feishuCode = 230002,
+): Error {
   return Object.assign(new Error(message), {
     code: 'ERR_BAD_REQUEST',
-    response: { status, data: { code: 99991663 } },
+    response: { status, data: { code: feishuCode } },
   });
 }
 

@@ -8,6 +8,7 @@ import type { BackfillLedger } from './backfill-ledger';
 import type { ChatMode } from './chat-mode-cache';
 import type { KnownChat } from './lark-info';
 import { createMergeForwardFetch } from './quote';
+import { feishuTokenInvalidCode } from './feishu-error';
 import { isSelfSender } from './self-message';
 
 export const WATERMARK_MARGIN_MS = 120_000;
@@ -311,7 +312,7 @@ async function scanChat(input: {
       ...(errorCode(error) !== undefined ? { code: errorCode(error) } : {}),
       ...(status !== undefined ? { status } : {}),
     });
-    if (isNonRetryableChatStatus(status)) return { enqueued: 0 };
+    if (isNonRetryableChatError(error)) return { enqueued: 0 };
     return 'fetch-failed';
   }
 
@@ -601,7 +602,7 @@ async function classifySessionP2pIds(
         if (await resolveMode(chatId) === 'p2p') ids.add(chatId);
       } catch (error) {
         const status = httpStatus(error);
-        if (!isNonRetryableChatStatus(status)) unresolved += 1;
+        if (!isNonRetryableChatError(error)) unresolved += 1;
         log.warn('backfill', 'mode-resolve-failed', {
           chatId,
           err: errorMessage(error),
@@ -787,7 +788,9 @@ function httpStatus(error: unknown): number | undefined {
   return typeof status === 'number' ? status : undefined;
 }
 
-function isNonRetryableChatStatus(status: number | undefined): boolean {
+function isNonRetryableChatError(error: unknown): boolean {
+  if (feishuTokenInvalidCode(error) !== undefined) return false;
+  const status = httpStatus(error);
   return status !== undefined
     && status >= 400
     && status < 500
