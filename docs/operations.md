@@ -326,11 +326,14 @@ KIMI_REAL_SMOKE=1 pnpm exec vitest run tests/process/kimi-real.smoke.test.ts
 CURSOR_REAL_SMOKE=1 pnpm exec vitest run tests/process/cursor-real.smoke.test.ts
 ANTIGRAVITY_REAL_SMOKE=1 pnpm exec vitest run tests/process/antigravity-real.smoke.test.ts
 DEVIN_REAL_SMOKE=1 pnpm exec vitest run tests/process/devin-real.smoke.test.ts
+KEEP_AWAKE_REAL_SMOKE=1 pnpm exec vitest run tests/integration/platform/keep-awake-holder.smoke.test.ts
 ```
 
 Test file paths are relative to the repo root. Real smoke tests call the logged-in CLI; they verify the adapter and do not replace acceptance of the main Feishu flow. The Antigravity real smoke test uses `claude-sonnet-4-6` to avoid Gemini returning `User location is not supported` on some networks; the profile default still follows `agy`'s settings and does not force that model.
 
 The DEVIN opt-in smoke uses `swe-2-high` (`DEVIN_SMOKE_MODEL` may select another installed model) and requires the logged-in native CLI, local `lark-cli`, and this checkout's built bridge client. It checks new/resumed sessions, exact file formatting, synthetic loopback tool calls with same-turn correction, native sandbox denial and cancellation. It sends no real Feishu messages and changes no login state. The sandbox case creates and removes a disposable `.larkent-devin-sandbox-*` directory in the user's home to avoid the system-temp write exception.
+
+The keep-awake smoke runs the real Windows PowerShell holder, so it needs Windows and nothing else. It is opt-in for a reason of its own: on a hosted Windows runner the holder's just-compiled binding did not report `held` within 60 s, and every test sharing that runner slowed down for the minute. Run it before changing the holder script.
 
 
 
