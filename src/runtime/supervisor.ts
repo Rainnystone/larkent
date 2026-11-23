@@ -82,6 +82,8 @@ class ManagedProfile {
   private readonly automations: AutomationsStore;
   /** The pending or held keep-awake request, present while the switch is on. */
   private keepAwakeHeld: Promise<KeepAwakeHandle | undefined> | undefined;
+  /** Releases already asked for and not finished. A stop waits for them. */
+  private keepAwakeReleasing: Promise<void> = Promise.resolve();
 
   constructor(
     readonly profile: string,
@@ -234,8 +236,9 @@ class ManagedProfile {
   /**
    * Match the held request to `profileConfig.keepAwake.enabled`. Bring-up and
    * reconnect do not wait for it: the holder takes about a second to come up
-   * and is optional anyway. A request that is still starting stays owned here,
-   * so a stop issued meanwhile still finds and releases it.
+   * and is optional anyway. A request that is still starting, and a release
+   * that is still running, each stay owned here, so a stop issued meanwhile
+   * still finds and waits for it.
    */
   private syncKeepAwake(): void {
     if (this.profileConfig.keepAwake.enabled) this.holdKeepAwake();
@@ -261,7 +264,12 @@ class ManagedProfile {
   private async releaseKeepAwake(): Promise<void> {
     const held = this.keepAwakeHeld;
     this.keepAwakeHeld = undefined;
-    if (!held) return;
+    if (held) this.keepAwakeReleasing = this.keepAwakeReleasing.then(() => this.settleKeepAwake(held));
+    await this.keepAwakeReleasing;
+  }
+
+  /** Never rejects: a source that breaks the contract is logged, not raised. */
+  private async settleKeepAwake(held: Promise<KeepAwakeHandle | undefined>): Promise<void> {
     try {
       await (await held)?.release();
     } catch (err) {

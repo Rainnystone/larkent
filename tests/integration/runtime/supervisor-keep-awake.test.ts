@@ -170,6 +170,34 @@ it('applies a keep-awake switch change on reconnect', async () => {
   expect(counts).toEqual({ acquires: 2, releases: 2 });
 });
 
+// A reconnect that turns the switch off starts a release it does not wait for.
+// That release still owns the request, so a stop issued meanwhile waits for it.
+it('waits, on stop, for a release that a reconnect already started', async () => {
+  const started = deferred<KeepAwakeHandle>();
+  const released = deferred<void>();
+  const { counts, keepAwake } = fakeKeepAwake();
+  keepAwake.acquire = async () => { counts.acquires++; return started.promise; };
+  const { supervisor, setEnabled } = await harness({ keepAwake, enabled: true });
+
+  await supervisor.startProfile('test');
+  await setEnabled(false);
+  await supervisor.restartProfile('test');
+  started.resolve({ release: async () => { counts.releases++; await released.promise; } });
+  // The reconnect's own release is now in flight and blocked.
+  await vi.waitFor(() => expect(counts.releases).toBe(1));
+
+  let stopped = false;
+  const stopping = supervisor.stopProfile('test').then(() => { stopped = true; });
+  // Nothing but the blocked release can hold the stop: the bridge, the registry
+  // entry and the locks release in a few milliseconds.
+  await new Promise<void>(resolve => setTimeout(resolve, 150));
+  expect(stopped).toBe(false);
+
+  released.resolve();
+  await stopping;
+  expect(counts).toEqual({ acquires: 1, releases: 1 });
+});
+
 // `acquire` and `release` promise never to throw. A source that breaks that
 // promise must not fail the profile's own start, stop or later restart.
 it('keeps the profile lifecycle intact when the keep-awake source throws', async () => {
