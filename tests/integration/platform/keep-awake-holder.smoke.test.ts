@@ -1,4 +1,5 @@
 import type { ChildProcess } from 'node:child_process';
+import { once } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import { createKeepAwake, type KeepAwakeOptions } from '../../../src/platform/keep-awake';
 import { spawnProcess } from '../../../src/platform/spawn';
@@ -24,25 +25,33 @@ describe.skipIf(!RUN)('keep-awake holder on real Windows PowerShell', () => {
       return child;
     };
     const warn = vi.fn();
-    const keepAwake = createKeepAwake({ spawn, warn, acquireTimeoutMs: 60_000, ...opts });
+    // A loaded host is slow to start and to exit the holder, so this smoke is
+    // more patient than production, which gives up after 15 s and 5 s.
+    const keepAwake = createKeepAwake({ spawn, warn, acquireTimeoutMs: 60_000, releaseTimeoutMs: 30_000, ...opts });
     return { children, warn, keepAwake };
   }
 
   it('holds a real request and exits once released', async () => {
     const { children, warn, keepAwake } = realHolderSource();
+    const startedAt = Date.now();
     const handle = await keepAwake.acquire();
+    const holder = children[0]!;
+    // Timings go into every failure message, so a slow host can be told from a broken script.
+    const why = (what: string) => `${what} after ${Date.now() - startedAt}ms, warn ${JSON.stringify(warn.mock.calls)}`;
 
     try {
-      // The warn payload carries the holder's exit and stderr, so it says why on failure.
-      expect(handle, `holder not started: ${JSON.stringify(warn.mock.calls)}`).toBeDefined();
+      expect(handle, why('holder not started')).toBeDefined();
       expect(warn).not.toHaveBeenCalled();
-      expect(children[0]!.exitCode).toBeNull();
+      expect(holder.exitCode, why('holder exited while held')).toBeNull();
     } finally {
       // A failed assertion must not leave a real holder parked on stdin.
       await handle?.release();
     }
 
-    expect(children[0]!.exitCode, `after release: ${JSON.stringify(warn.mock.calls)}`).toBe(0);
+    // release() kills a holder that ignores EOF, and its exit event follows asynchronously.
+    if (holder.exitCode === null && holder.signalCode === null) await once(holder, 'exit');
+    expect(holder.signalCode, why('holder had to be killed')).toBeNull();
+    expect(holder.exitCode, why('after release')).toBe(0);
     expect(warn).not.toHaveBeenCalled();
   }, TIMEOUT_MS);
 
