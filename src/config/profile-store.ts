@@ -97,6 +97,7 @@ type StoredProfileConfig = Pick<
   | 'meeting'
   | 'larkCli'
   | 'automations'
+  | 'keepAwake'
 >;
 
 type StoredRootConfig = Omit<RootConfig, 'preferences' | 'profiles'> & {
@@ -139,6 +140,7 @@ function serializeProfileConfig(profile: ProfileConfig): StoredProfileConfig {
     meeting: profile.meeting,
     larkCli: profile.larkCli,
     automations: profile.automations,
+    keepAwake: profile.keepAwake,
   };
 }
 

@@ -26,6 +26,7 @@ import {
   type AcquiredRuntimeLock,
 } from './locks';
 import { assertLiveRootAllowed } from './live-root';
+import { createKeepAwake, type KeepAwake, type KeepAwakeHandle } from '../platform/keep-awake';
 import { resolveProfileRuntime } from './profile-runtime';
 import {
   register,
@@ -46,6 +47,8 @@ export interface SupervisorOptions {
   startChannelFn?: StartChannelFn;
   /** Run lark-cli preflight per profile (default true; tests pass false). */
   runPreflight?: boolean;
+  /** Injectable for tests. Defaults to the platform keep-awake holder. */
+  keepAwake?: KeepAwake;
 }
 
 export interface ManagedStatus {
@@ -412,11 +415,42 @@ export class Supervisor {
   private readonly starting = new Map<string, Promise<void>>();
   private closing = false;
   private shutdownOperation: Promise<void> | undefined;
+  /** One pending or held keep-awake request per online profile that opted in. */
+  private readonly heldAwake = new Map<string, Promise<KeepAwakeHandle | undefined>>();
+  private keepAwakeSource: KeepAwake | undefined;
 
   constructor(private opts: SupervisorOptions) {}
 
   private get startChannelFn(): StartChannelFn {
     return this.opts.startChannelFn ?? realStartChannel;
+  }
+
+  private get keepAwake(): KeepAwake {
+    this.keepAwakeSource ??= this.opts.keepAwake ?? createKeepAwake({
+      warn: (event, fields) => log.warn('keep-awake', event, fields),
+    });
+    return this.keepAwakeSource;
+  }
+
+  /**
+   * Start holding without holding up `profile-online`: the holder takes about
+   * a second to come up and is optional anyway. The request stays in
+   * `heldAwake` until stop releases it, so a stop issued meanwhile, even while
+   * it is still starting, still finds and releases it.
+   */
+  private holdKeepAwake(profile: string): void {
+    const held = this.keepAwake.acquire();
+    this.heldAwake.set(profile, held);
+    void held.then((handle) => {
+      if (handle) log.info('keep-awake', 'held', { profile });
+    });
+  }
+
+  private async releaseKeepAwake(profile: string): Promise<void> {
+    const held = this.heldAwake.get(profile);
+    if (!held) return;
+    this.heldAwake.delete(profile);
+    await (await held)?.release();
   }
 
   isOnline(profile: string): boolean {
@@ -522,6 +556,7 @@ export class Supervisor {
       }
       throw error;
     }
+    if (profileConfig.keepAwake.enabled) this.holdKeepAwake(appPaths.profile);
     if (!this.closing) {
       log.info('supervisor', 'profile-online', { profile: appPaths.profile, appId: cfg.accounts.app.id });
     }
@@ -535,6 +570,7 @@ export class Supervisor {
     const managed = this.managed.get(profile);
     if (!managed) return;
     await managed.stop();
+    await this.releaseKeepAwake(profile);
     if (this.managed.get(profile) === managed) this.managed.delete(profile);
     log.info('supervisor', 'profile-offline', { profile });
   }

@@ -70,6 +70,7 @@ Configuration lives under `profiles.<name>` in `$HOME/.lark-channel/config.json`
 | `larkCli.identityPreset` | `user-default` allows using the authorized user identity |
 | `automations.enabled` / `automations.agentTasks` | Enable group automations / allow agent tasks (both off by default) |
 | `automations.timezone` | Time zone for automations (IANA name such as `Europe/London`); defaults to the host machine's local zone, or UTC if it cannot be detected |
+| `keepAwake.enabled` | Keep the host awake while the profile is online (Windows only, off by default). Advisory: an explicit sleep, the power button, or a lid-close action still sleeps the host |
 
 Canonical permissions (legacy `sandbox` config is read and migrated; new config uses the canonical fields):
 
@@ -225,6 +226,8 @@ Watch the profile log for this sequence:
 Kill switch: set `preferences.backfill.enabled` to `false`. Scans stop; the live watermark still advances so a later re-enable has a fresh window. Dry-run: set `preferences.backfill.dryRun` to `true`. The scan runs and logs `backfill.would-enqueue` per survivor, then posts nothing.
 
 Staged rollout is an operations choice, not product behavior: enable on one profile, watch one recovery cycle, then the others. Every profile runs the same code.
+
+To stop a Windows host from idle-sleeping while a profile is online in the first place, set `keepAwake.enabled` (see [Configuration and identity](#configuration-and-identity)).
 
 ## Automations monitor hook
 

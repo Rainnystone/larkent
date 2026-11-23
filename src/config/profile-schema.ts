@@ -149,6 +149,15 @@ export interface AutomationsConfig {
   statusSecret?: string;
 }
 
+/** Profile-level keep-awake switch. Off by default. */
+export interface KeepAwakeConfig {
+  /**
+   * While the profile is online, ask the OS not to idle-sleep the host
+   * (Windows only). Advisory: an explicit sleep still wins.
+   */
+  enabled: boolean;
+}
+
 /** IANA zone of this process, or `UTC` when Intl cannot provide a usable one. */
 export function resolveLocalTimeZone(): string {
   try {
@@ -239,6 +248,8 @@ export interface ProfileConfig {
   larkCli: LarkCliConfig;
   /** In-group automations. Own normalizer; not nested under reliability. */
   automations: AutomationsConfig;
+  /** Keep the host awake while this profile is online. See {@link KeepAwakeConfig}. */
+  keepAwake: KeepAwakeConfig;
   /** Legacy key. Loaders strip it; interruption notices are always on. */
   reliability?: ReliabilityConfig;
 }
@@ -283,6 +294,7 @@ export interface CreateDefaultProfileConfigInput {
   codex?: CodexConfig;
   secrets?: SecretsConfig;
   larkCli?: LarkCliConfig;
+  keepAwake?: KeepAwakeConfig;
   options?: unknown;
   reliability?: ReliabilityConfig;
 }
@@ -337,6 +349,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     larkCli?: unknown;
     instance?: unknown;
     automations?: unknown;
+    keepAwake?: unknown;
     reliability?: unknown;
   };
 
@@ -371,6 +384,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
   const meeting = normalizeMeeting(raw.meeting);
   const larkCli = normalizeLarkCli(raw.larkCli);
   const automations = normalizeAutomations(raw.automations);
+  const keepAwake = normalizeKeepAwake(raw.keepAwake);
   const reliability = normalizeReliability(raw.reliability);
 
   const binaryPath =
@@ -424,6 +438,7 @@ export function normalizeProfileConfig(input: unknown): ProfileConfig {
     meeting,
     larkCli,
     automations,
+    keepAwake,
     ...(reliability ? { reliability } : {}),
   };
 }
@@ -605,6 +620,13 @@ function clampNumber(value: unknown, min: number, max: number, fallback: number)
   const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.min(max, Math.max(min, Math.floor(n)));
+}
+
+function normalizeKeepAwake(input: unknown): KeepAwakeConfig {
+  const raw = (input && typeof input === 'object' && !Array.isArray(input) ? input : {}) as {
+    enabled?: unknown;
+  };
+  return { enabled: raw.enabled === true };
 }
 
 function normalizeAutomations(input: unknown): AutomationsConfig {
