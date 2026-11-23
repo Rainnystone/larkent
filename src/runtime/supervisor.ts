@@ -26,6 +26,7 @@ import {
   type AcquiredRuntimeLock,
 } from './locks';
 import { assertLiveRootAllowed } from './live-root';
+import { createKeepAwake, type KeepAwake, type KeepAwakeHandle } from '../platform/keep-awake';
 import { resolveProfileRuntime } from './profile-runtime';
 import {
   register,
@@ -46,6 +47,8 @@ export interface SupervisorOptions {
   startChannelFn?: StartChannelFn;
   /** Run lark-cli preflight per profile (default true; tests pass false). */
   runPreflight?: boolean;
+  /** Injectable for tests. Defaults to the platform keep-awake holder. */
+  keepAwake?: KeepAwake;
 }
 
 export interface ManagedStatus {
@@ -77,6 +80,10 @@ class ManagedProfile {
   private readonly ledger: BackfillLedger;
   private readonly journal: TurnJournal;
   private readonly automations: AutomationsStore;
+  /** The pending or held keep-awake request, present while the switch is on. */
+  private keepAwakeHeld: Promise<KeepAwakeHandle | undefined> | undefined;
+  /** Releases already asked for and not finished. A stop waits for them. */
+  private keepAwakeReleasing: Promise<void> = Promise.resolve();
 
   constructor(
     readonly profile: string,
@@ -91,6 +98,7 @@ class ManagedProfile {
     private startChannelFn: StartChannelFn,
     private onExitCommand: (profile: string) => Promise<void>,
     private readonly runPreflight: boolean,
+    private readonly keepAwake: KeepAwake,
   ) {
     this.ledger = new BackfillLedger(appPaths.backfillStateFile, {
       pruneHorizonMs: () => getBackfillPruneHorizonMs(this.cfg),
@@ -160,6 +168,7 @@ class ManagedProfile {
         log.warn('registry', 'update-failed', { step: 'botName', err: String(err) }),
       );
     }
+    this.syncKeepAwake();
   }
 
   stop(): Promise<void> {
@@ -213,6 +222,8 @@ class ManagedProfile {
       this.shutdownFailure = { error };
       throw error;
     }
+    // Last, like the locks: a stop that failed above keeps the request for the retry.
+    await this.releaseKeepAwake();
     this.shutdownFailure = undefined;
     this.stopped = true;
   }
@@ -220,6 +231,50 @@ class ManagedProfile {
   /** Best-effort sync unregister for the process 'exit' hook. */
   unregisterSelfSync(): void {
     if (this.entry) unregisterSync(this.entry.id, this.appPaths.userRegistryFile);
+  }
+
+  /**
+   * Match the held request to `profileConfig.keepAwake.enabled`. Bring-up and
+   * reconnect do not wait for it: the holder takes about a second to come up
+   * and is optional anyway. A request that is still starting, and a release
+   * that is still running, each stay owned here, so a stop issued meanwhile
+   * still finds and waits for it.
+   */
+  private syncKeepAwake(): void {
+    if (this.profileConfig.keepAwake.enabled) this.holdKeepAwake();
+    else void this.releaseKeepAwake();
+  }
+
+  private holdKeepAwake(): void {
+    if (this.keepAwakeHeld) return;
+    // `acquire` and `release` promise never to throw. A source that breaks
+    // that promise must not fail the profile's own start, stop or reconnect.
+    const held = Promise.resolve()
+      .then(() => this.keepAwake.acquire())
+      .catch((err: unknown) => {
+        log.warn('keep-awake', 'acquire-failed', { profile: this.profile, err: String(err) });
+        return undefined;
+      });
+    this.keepAwakeHeld = held;
+    void held.then((handle) => {
+      if (handle) log.info('keep-awake', 'held', { profile: this.profile });
+    });
+  }
+
+  private async releaseKeepAwake(): Promise<void> {
+    const held = this.keepAwakeHeld;
+    this.keepAwakeHeld = undefined;
+    if (held) this.keepAwakeReleasing = this.keepAwakeReleasing.then(() => this.settleKeepAwake(held));
+    await this.keepAwakeReleasing;
+  }
+
+  /** Never rejects: a source that breaks the contract is logged, not raised. */
+  private async settleKeepAwake(held: Promise<KeepAwakeHandle | undefined>): Promise<void> {
+    try {
+      await (await held)?.release();
+    } catch (err) {
+      log.warn('keep-awake', 'release-failed', { profile: this.profile, err: String(err) });
+    }
   }
 
   status(pid: number): ManagedStatus {
@@ -371,6 +426,8 @@ class ManagedProfile {
         this.ledger.flush().catch(() => {}),
         this.automations.flush().catch(() => {}),
       ]);
+      // The switch follows the configuration the reconnect just published.
+      void this.syncKeepAwake();
       // Recovery runs after the swap is published. A reject here must not
       // unwind the live bridge or drop the app lock it now needs.
       await (this.bridge.recover ?? this.bridge.recoverMissed)?.();
@@ -412,11 +469,19 @@ export class Supervisor {
   private readonly starting = new Map<string, Promise<void>>();
   private closing = false;
   private shutdownOperation: Promise<void> | undefined;
+  private keepAwakeSource: KeepAwake | undefined;
 
   constructor(private opts: SupervisorOptions) {}
 
   private get startChannelFn(): StartChannelFn {
     return this.opts.startChannelFn ?? realStartChannel;
+  }
+
+  private get keepAwake(): KeepAwake {
+    this.keepAwakeSource ??= this.opts.keepAwake ?? createKeepAwake({
+      warn: (event, fields) => log.warn('keep-awake', event, fields),
+    });
+    return this.keepAwakeSource;
   }
 
   isOnline(profile: string): boolean {
@@ -508,6 +573,7 @@ export class Supervisor {
       this.startChannelFn,
       (p) => this.stopProfile(p),
       this.opts.runPreflight !== false,
+      this.keepAwake,
     );
     this.managed.set(appPaths.profile, managed);
     try {

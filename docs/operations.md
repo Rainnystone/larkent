@@ -70,6 +70,7 @@ Configuration lives under `profiles.<name>` in `$HOME/.lark-channel/config.json`
 | `larkCli.identityPreset` | `user-default` allows using the authorized user identity |
 | `automations.enabled` / `automations.agentTasks` | Enable group automations / allow agent tasks (both off by default) |
 | `automations.timezone` | Time zone for automations (IANA name such as `Europe/London`); defaults to the host machine's local zone, or UTC if it cannot be detected |
+| `keepAwake.enabled` | Ask the OS not to idle-sleep while the profile is online (Windows only, off by default; takes effect when the profile next starts or reconnects). Advisory: an explicit sleep, the power button, or a lid-close action still sleeps the host |
 
 Canonical permissions (legacy `sandbox` config is read and migrated; new config uses the canonical fields):
 
@@ -226,6 +227,8 @@ Kill switch: set `preferences.backfill.enabled` to `false`. Scans stop; the live
 
 Staged rollout is an operations choice, not product behavior: enable on one profile, watch one recovery cycle, then the others. Every profile runs the same code.
 
+To stop a Windows host from idle-sleeping while a profile is online in the first place, set `keepAwake.enabled` (see [Configuration and identity](#configuration-and-identity)). It makes sleep less frequent; it does not replace this recovery.
+
 ## Automations monitor hook
 
 This section is the contract larkent-monitor follows. The monitor is a private Cloudflare Worker (`POST /v1/status` → scan → wake webhook → this always-on box). It is not in this repo. No GitHub Action. Other PCs are out of scope. At most one wake per fire key, and only after a miss (no pre-wake). The pinned board card is human-only.
@@ -323,11 +326,14 @@ KIMI_REAL_SMOKE=1 pnpm exec vitest run tests/process/kimi-real.smoke.test.ts
 CURSOR_REAL_SMOKE=1 pnpm exec vitest run tests/process/cursor-real.smoke.test.ts
 ANTIGRAVITY_REAL_SMOKE=1 pnpm exec vitest run tests/process/antigravity-real.smoke.test.ts
 DEVIN_REAL_SMOKE=1 pnpm exec vitest run tests/process/devin-real.smoke.test.ts
+KEEP_AWAKE_REAL_SMOKE=1 pnpm exec vitest run tests/integration/platform/keep-awake-holder.smoke.test.ts
 ```
 
 Test file paths are relative to the repo root. Real smoke tests call the logged-in CLI; they verify the adapter and do not replace acceptance of the main Feishu flow. The Antigravity real smoke test uses `claude-sonnet-4-6` to avoid Gemini returning `User location is not supported` on some networks; the profile default still follows `agy`'s settings and does not force that model.
 
 The DEVIN opt-in smoke uses `swe-2-high` (`DEVIN_SMOKE_MODEL` may select another installed model) and requires the logged-in native CLI, local `lark-cli`, and this checkout's built bridge client. It checks new/resumed sessions, exact file formatting, synthetic loopback tool calls with same-turn correction, native sandbox denial and cancellation. It sends no real Feishu messages and changes no login state. The sandbox case creates and removes a disposable `.larkent-devin-sandbox-*` directory in the user's home to avoid the system-temp write exception.
+
+The keep-awake smoke runs the real Windows PowerShell holder, so it needs Windows and nothing else. It is opt-in for a reason of its own: on a hosted Windows runner the holder's just-compiled binding did not report `held` within 60 s, and every test sharing that runner slowed down for the minute. Run it before changing the holder script.
 
 
 

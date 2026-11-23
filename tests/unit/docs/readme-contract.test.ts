@@ -196,6 +196,20 @@ describe('README runtime contract', () => {
     expect(plugin).toMatch(/patrol|值守|巡视/i);
     expect(plugin).not.toMatch(/https:\/\/(?!example\.invalid)/);
   });
+
+  // CONTEXT.md asks for every new word in the same change; this keeps that ask honest for keep-awake.
+  it('documents keep-awake as opt-in and advisory, and defines its words once', async () => {
+    const [operations, context] = await Promise.all([
+      readFile(new URL('../../../docs/operations.md', import.meta.url), 'utf8'),
+      readFile(new URL('../../../CONTEXT.md', import.meta.url), 'utf8'),
+    ]);
+
+    expect(operations).toContain('`keepAwake.enabled`');
+    expect(operations).toContain('Windows only, off by default');
+    expect(operations).toContain('still sleeps the host');
+    expect(context).toContain('**keep-awake**');
+    expect(context).toContain('**holder**');
+  });
 });
 
 async function readDocs(): Promise<string> {
