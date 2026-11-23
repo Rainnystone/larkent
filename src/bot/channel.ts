@@ -87,6 +87,7 @@ import {
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { classify } from './feishu-error';
+import { installFeishuTokenRetry } from './feishu-token-retry';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
@@ -423,11 +424,6 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   // switch can inject a one-time "model changed" note into the next (resumed)
   // prompt. In-memory only: on restart the first run re-seeds silently.
   const lastRunModelByScope = new Map<string, string>();
-  const cotClient = new CotClient({
-    tenant: cfg.accounts.app.tenant,
-    appId: cfg.accounts.app.id,
-    appSecret,
-  });
   const threadModeOverrideWarnedChats = new Set<string>();
   const logThreadModeOverride: LogThreadModeOverride = ({ chatId, resolvedMode, threadId }) => {
     const fields = { chatId, cachedMode: resolvedMode, threadId };
@@ -498,6 +494,13 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const channel = createLarkChannel(opts);
+  installFeishuTokenRetry(channel);
+  const cotClient = new CotClient({
+    tenant: cfg.accounts.app.tenant,
+    appId: cfg.accounts.app.id,
+    appSecret,
+    request: (payload) => channel.rawClient.request(payload),
+  });
   channelForCards = channel;
   const outboundIds = new OutboundMessageIds();
   const cliSelfSent = new CliSelfSendTracker();

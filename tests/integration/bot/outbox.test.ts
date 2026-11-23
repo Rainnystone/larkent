@@ -110,6 +110,24 @@ describe('Outbox', () => {
       messageId: 'om_fake_1',
     });
   });
+  it('keeps an exhausted 99991663 send staged instead of permanently rejected', async () => {
+    const h = await fixture();
+    const exhausted = Object.assign(new Error('Request failed with status code 400'), {
+      response: { status: 400, data: { code: 99991663 } },
+    });
+    h.channel.send = async () => {
+      throw exhausted;
+    };
+    await h.outbox.deliverFinalReply(finalReply());
+    expect(h.channel.sent).toHaveLength(0);
+    expect(h.journal.get('turn-1')?.reply?.state).toBe('staged');
+    await expect(h.outbox.redeliver()).rejects.toMatchObject({
+      response: { data: { code: 99991663 } },
+    });
+    expect(h.journal.get('turn-1')?.reply?.state).toBe('staged');
+    expect(h.channel.sent).toHaveLength(0);
+  });
+
   it('surfaces not-in-chat and rejects the item without retrying it', async () => {
     const h = await fixture();
     h.channel.sendErrors.send = Object.assign(new Error('not in chat'), {

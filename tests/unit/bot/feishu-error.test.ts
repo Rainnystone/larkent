@@ -94,6 +94,29 @@ describe('classify Feishu errors from the real SDK', () => {
     expect(classify(new Error('getaddrinfo EAI_AGAIN open.feishu.cn'))).toBe('local');
   });
 
+  it('maps exhausted tenant-token codes 99991663 and 99991661 as link, including resolved bodies', async () => {
+    for (const code of [99991663, 99991661]) {
+      const rejected = await captureSdkSendError(axiosLike(`Request failed with status code 400`, {
+        response: { status: 400, data: { code } },
+      }));
+      expect(classify(rejected)).toBe('link');
+      expect(classify({ code })).toBe('link');
+      expect(classify(Object.assign(new Error(`Feishu API code ${code}`), {
+        response: { data: { code } },
+      }))).toBe('link');
+    }
+  });
+
+  it('keeps business 4xx codes 230002, 230025, 200610, and 99991672 as rejected', async () => {
+    for (const code of [230002, 230025, 200610, 99991672]) {
+      const rejected = await captureSdkSendError(axiosLike(`Request failed with status code 400`, {
+        response: { status: 400, data: { code } },
+      }));
+      expect(classify(rejected)).toBe('rejected');
+      expect(classify({ code, response: { status: 400, data: { code } } })).toBe('rejected');
+    }
+  });
+
   it('maps 400+230020 and 400+99991400 as link before the 4xx rejected rule', async () => {
     const frequency = await captureSdkSendError(axiosLike('Request failed with status code 400', {
       response: { status: 400, data: { code: 230020 } },
