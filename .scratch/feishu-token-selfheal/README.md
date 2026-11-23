@@ -41,9 +41,13 @@ D9. **`CotClient`.** Same behaviour as D1/D2/D6. Preferred: make `CotClient` cal
 
 D10. **Logs.** `auth.token-refreshed` (info: appId, code, outcome) when a replay succeeds; `auth.token-refresh-failed` (warn) when it does not; throttled `link.auth-unhealthy` (warn) from the probe in ticket 02. Never log a token. Avoid field names matching `/token|secret|authorization/i` so `src/core/logger.ts` redaction does not eat them.
 
+D11. **Review amendments (2026-11-24, from PR #77 review).**
+- Streamed responses (`responseType: 'stream'`, e.g. `messageResource.get`): on an HTTP 4xx rejection, read at most 64 KB of the error stream, parse it as JSON, and apply D2 to its `code`. If the body is larger, not JSON, or the read fails, treat it as not a token code and rethrow the original error with the body still readable as text. Never read the body of a successful (2xx) stream. (Reverses the earlier non-goal: a dropped attachment is user-visible.)
+- Auth-unhealthy link: once a REST call has surfaced an exhausted token code, inbound WebSocket frames must not take the link up. Only a successful REST call (the probe's `getAppInfo` or any outbound call) clears auth-unhealthy and allows `goUp`. This is what "no endless recovery loop" in D8 means under live traffic.
+- `CotClient` deadline: the 15 s bound cancels work, not just the caller's wait. Pass an `AbortSignal` that fires at the deadline into the SDK request; the token-retry wrapper must not replay (and must not start a forced refresh on that request's behalf) once the signal has aborted. A create that times out must never be sent late.
+
 ## Non-goals
 - Dual-clock / monotonic token cache, clock correction, Linux keep-awake.
-- Parsing error bodies out of streamed responses (file downloads); a failed download is fixed by the next refresh.
 - Upstream SDK PR, `lark-cli` user-identity calls, WS endpoint auth, `validateAppCredentials`, `registerApp`, `StatusPusher`.
 - Patrol changes (Coder / Keeper already check for `99991663`).
 
