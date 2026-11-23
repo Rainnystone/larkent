@@ -6,7 +6,7 @@ Status: implementation authorized (user, 2026-11-24 00:53 CST). Tickets: `issues
 
 On 2026-11-23 from 17:00 CST, all three production bridges on the Linux box (profiles `grok`, `cursor`, `devin`; three different Feishu apps) got HTTP 400 with Feishu code `99991663` (tenant access token invalid) on every OpenAPI call, for hours, until each process was restarted. A restart fixed it immediately, so the app credentials were fine; the processes were holding a token Feishu no longer accepted and never asked for a new one.
 
-Proven (see the incident report attached to the docs PR description):
+Proven (details: docs PR #76 description):
 - `@larksuiteoapi/node-sdk` 1.73.3 caches the tenant token in `DefaultCache` and decides expiry with the wall clock (`expire*1000 − 180000`). Nothing evicts it when Feishu rejects it. No singleflight.
 - The bridge classifies HTTP 400 as `rejected` (`src/bot/feishu-error.ts`), the link probe treats `rejected` as "reachable", and recovery retries with the same `Client`, so the dead token stays forever.
 - `src/bot/cot.ts` `CotClient` keeps a second, hand-written token cache (`fetch` + `Date.now()`) with the same gap: a rejected token is never dropped.
