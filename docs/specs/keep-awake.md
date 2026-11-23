@@ -26,7 +26,7 @@ Outcome: a profile can ask the operating system not to idle-sleep while it is on
 ## Contract
 
 1. `keepAwake.enabled` is a profile setting, off by default, stored with the profile. Any value other than boolean `true` reads as off.
-2. While the switch is on and the profile is online, the profile owns one pending or held keep-awake request. It is released when the profile's own stop completes, after its bridge and its locks, and by a reconnect that finds the switch off.
+2. While the switch is on and the profile is online, the profile owns one pending or held keep-awake request. It is released when the profile's own stop completes, after its bridge and its locks, and by a reconnect that finds the switch off. A stop also waits for a release that a reconnect already started.
 3. Starting or reconnecting a profile never waits for the request. The bridge comes online first.
 4. A failing request is never fatal to the profile. `acquire` and `release` resolve without throwing, and a source that throws anyway is logged and the profile's start, reconnect or stop still completes.
 5. The holder reports `held` only after the operating system has taken the request.
@@ -38,12 +38,15 @@ Outcome: a profile can ask the operating system not to idle-sleep while it is on
 ## Evidence and validation
 
 - **Holder logic**, against a fake child through the injectable spawn: the confirmation gate, spawn failure, early exit, acquire timeout, death while held, release through stdin EOF, kill after the release timeout, idempotent release, and the guarded shape of the script.
-- **The real script**, on Windows PowerShell, skipped elsewhere: it holds and exits with code 0 once released, and a binding that cannot compile reports `holder-not-started` with the compiler output instead of `held`.
-- **Lifecycle**, through the injectable `KeepAwake` and the supervisor's public entry points: off by default, hold and release across stop and shutdown, no delay to `profile-online`, a stop that waits for a pending request, a rolled-back start that never asks, a reconnect that keeps, releases or acquires, and a throwing source that leaves the lifecycle intact.
+- **The real script**, on Windows PowerShell, behind `KEEP_AWAKE_REAL_SMOKE=1` like the real CLI smoke tests: it holds and exits with code 0 once released, and a binding that cannot compile reports `holder-not-started` with the compiler output instead of `held`. It is opt-in because on a hosted Windows runner it never reached `held` within 60 s and slowed every test sharing that runner. See "Known limits" in the plan.
+- **Lifecycle**, through the injectable `KeepAwake` and the supervisor's public entry points: off by default, hold and release across stop and shutdown, no delay to `profile-online`, a stop that waits for a pending request and for a release a reconnect already started, a rolled-back start that never asks, a reconnect that keeps, releases or acquires, and a throwing source that leaves the lifecycle intact.
+- **Automated reviews on the pull request** (Codex, Cursor Bugbot, Devin) found two more failures after the first review round. Each is pinned by a test now: the stop that did not wait for a reconnect's release, and a stdin write to a holder that had just died.
 - **The setting**: default, explicit opt-in and a save-and-load round trip.
 - **The words**: a docs contract test keeps the operations guide and `CONTEXT.md` from silently dropping them.
 - **The real host**: on the owner's Windows 11 Modern Standby laptop, each production profile logged `keep-awake` `held` about one second after `profile-online`. Stopping the bridge with `kill`, a hard termination on Windows, left no holder process after 5 s; starting it again bound a new holder to the new bridge process.
+- **Hosted Windows**: shards 1 and 3 passed. Shard 2 failed. The real-script test never reached `held` there, and five unrelated tests timed out while sharing that runner with it. Every test that ran beside it took 5 to 58 times its usual time; the ones before it were normal.
 - **Not verified**: that the request on its own prevents standby after lock on a Modern Standby host. The hidden timeout was changed at the same time, so a lock-screen test cannot attribute the result to either measure alone.
+- **Not verified on other systems**: hosted CI ran out of Actions quota after the Ubuntu shards passed and before the macOS shards finished. The review fixes that came later ran only on Windows.
 - **Local `pnpm ci:local` cannot pass on the owner's machine**: two symlink cases in the plugin catalog suite fail with `EPERM` there, for reasons unrelated to this change. Typecheck, build and the full suite were run separately. Hosted CI on all three systems is the authority.
 
 ## Out of scope
@@ -72,6 +75,9 @@ The code was built test-first. The spec, plan and tickets were written afterward
 - **The real-script test injects the C# binding** (`typeDefinition`), so a failing compile can be produced on purpose. That option exists for this test only.
 - **The .NET calls in the script are assigned, not piped.** Piping one marks the statement as failed, which made a clean release exit with code 1.
 - **Release comes last in the profile's stop, like the locks.** A stop that fails earlier keeps the request for the retry. Nothing in the stop depends on the holder's cooperation.
+- **A stop waits for a release a reconnect already started.** The first version dropped the request from the profile's books as soon as a release began, so a stop issued during that release could finish first and leave a holder still starting. The Codex and Devin reviews found it.
+- **Stream errors from the holder are absorbed.** A holder that dies an instant before release fails the next stdin write. That arrives as an `error` on the stream, which throws when nobody listens. The Cursor review found it.
+- **The real-script test is opt-in**, behind the repo's `*_REAL_SMOKE=1` switch. It passed on the owner's machine and degraded a hosted Windows runner for a minute. Any failure prints the warn payload it collected.
 - **A reconnect re-evaluates the switch**, because a reconnect already re-reads and applies the rest of the profile.
 - **`withTimeout` moved out of the host-sleep probe** into a shared helper, so the probe and the holder do not each keep a copy. The Standards review flagged the duplication.
 - **Default off, Windows only.** This is a new dependency on the host's power behaviour; nobody should inherit it by upgrading.

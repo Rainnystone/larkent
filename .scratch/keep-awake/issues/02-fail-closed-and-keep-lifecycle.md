@@ -7,8 +7,10 @@
 **Status:** complete
 
 - [x] The holder prints `held` only after the OS took its request; a binding that cannot compile reports `holder-not-started` with the compiler output.
-- [x] A test runs the real holder script on Windows PowerShell and is skipped elsewhere.
+- [x] A test runs the real holder script on Windows PowerShell. It is opt-in (`KEEP_AWAKE_REAL_SMOKE=1`), because it degraded a hosted Windows runner, and it prints why it failed.
 - [x] A released holder exits with code 0.
 - [x] An `acquire` or `release` that throws is logged (`acquire-failed`, `release-failed`) and the profile still starts, stops and restarts.
+- [x] A stop waits for a release that a reconnect already started, not only for the request it still owns.
+- [x] A stream error from a holder that died an instant before release is absorbed, never thrown.
 - [x] A reconnect keeps the request while the switch stays on, releases it when the switch turns off, and acquires it when the switch turns on.
 - [x] The holder and the host-sleep probe share one timeout helper instead of a copy each.

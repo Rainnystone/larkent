@@ -15,7 +15,7 @@ The code was written first, test-first. The spec, this plan and the tickets were
 Each behaviour is tested at the widest seam that can observe it, and no wider.
 
 - **Holder behaviour**: `createKeepAwake` takes the spawn function, the platform, the warn sink and the C# binding. A fake child covers every path without a real process.
-- **The script itself**: one integration test spawns the real Windows PowerShell. It is the only seam that can tell whether the script still compiles and still asks for the right thing.
+- **The script itself**: one opt-in smoke test spawns the real Windows PowerShell. It is the only seam that can tell whether the script still compiles and still asks for the right thing. It is not part of the default matrix; see Known limits.
 - **Lifecycle**: `SupervisorOptions.keepAwake`, driven through `startProfile`, `restartProfile`, `stopProfile` and `shutdown`.
 - **The setting**: `normalizeProfileConfig` and a save-and-load round trip.
 
@@ -26,7 +26,7 @@ Each behaviour is tested at the widest seam that can observe it, and no wider.
 - `src/platform/host-sleep.ts`: uses the shared helper. No behaviour change.
 - `src/runtime/supervisor.ts`: the profile owns its request. Start and reconnect match it to the switch; stop releases it last. `SupervisorOptions.keepAwake` is the test seam.
 - `src/config/profile-schema.ts`, `src/config/profile-store.ts`: `keepAwake.enabled`, off by default, normalized and persisted.
-- Tests: `tests/unit/platform/keep-awake.test.ts`, `tests/integration/platform/keep-awake-holder.test.ts` (real script, Windows only), `tests/integration/runtime/supervisor-keep-awake.test.ts`, `tests/unit/config/keep-awake-settings.test.ts`, and one case in `tests/unit/docs/readme-contract.test.ts`.
+- Tests: `tests/unit/platform/keep-awake.test.ts`, `tests/integration/platform/keep-awake-holder.smoke.test.ts` (the real script, Windows only, behind `KEEP_AWAKE_REAL_SMOKE=1`), `tests/integration/runtime/supervisor-keep-awake.test.ts`, `tests/unit/config/keep-awake-settings.test.ts`, and one case in `tests/unit/docs/readme-contract.test.ts`.
 - Docs: `CONTEXT.md` (keep-awake, holder), `docs/operations.md`, `docs/agent-setup.md`, `AGENTS.md` (commit and PR language).
 
 ## Execution checklist
@@ -35,10 +35,13 @@ Each behaviour is tested at the widest seam that can observe it, and no wider.
 - [x] Write the failing tests for the holder, the setting and the supervisor wiring, then implement.
 - [x] Run it on the real host with the two production profiles: hold, release, and no holder left after a hard kill.
 - [x] Run Standards and Spec reviews on separate agents. Fix what they found.
+- [x] Read the first hosted Windows run against the master baseline, file by file, before changing anything.
+- [x] Answer the automated reviews on the pull request (Codex, Cursor Bugbot, Devin). Fix what they found, each behind a failing test first.
 - [x] Add a test that runs the real holder script, so a script that cannot compile its binding cannot pass.
+- [x] Make that test opt-in after it degraded a hosted Windows runner, and make it print why it failed.
 - [x] Register the words in `CONTEXT.md`; state when the switch takes effect.
-- [x] Run typecheck, build and the test suite locally, and record what this host cannot run.
-- [ ] The complete CI matrix on the PR head is the authority. Its result belongs in the PR, not in this file.
+- [x] Run typecheck, build and the test suite locally, and record what the host cannot run.
+- [ ] Hosted CI cannot run now: the Actions quota is exhausted. Its result belongs in the PR, not in this file.
 
 ## Acceptance and rollback
 
@@ -56,6 +59,10 @@ Rollback is two-way. Set `keepAwake.enabled` to `false`, or revert the commits. 
 
 ## Known limits and next steps
 
+- **The holder did not start on a hosted Windows runner.** In the one hosted run it never reached `held` within 60 s, and every test beside it slowed down for that minute. The cause is not determined. Compiling a binding on those runners is known to be slow, which is consistent with what happened. Consequences:
+  - The real-script smoke test is opt-in. Run it locally before changing the holder script.
+  - On a host whose protection delays freshly compiled assemblies the same way, production gives up after 15 s, logs `holder-not-started`, and the profile stays online without a request until it next starts.
+  - A holder that avoids the compiler, for example one built with `System.Reflection.Emit`, is the candidate fix if that turns out to matter. Not tried.
 - **Not verified on a locked screen.** Whether the request alone stops a Modern Standby host from entering standby is unknown, because the hidden unattended-sleep timeout was also set to never. To settle it, restore that timeout (`powercfg /setacvalueindex SCHEME_CURRENT SUB_SLEEP UNATTENDSLEEP 120`), lock for five minutes with a profile opted in, then read `Microsoft-Windows-Kernel-Power` events 506 and 566 in the System log. No 506 means the request held.
 - **A holder that dies is not replaced.** Logging it was judged safer than silently retrying. A retry belongs in the profile, not in the holder, if it is wanted.
 - **Battery is not considered.** The request is held on AC and on battery alike.
@@ -65,7 +72,11 @@ Rollback is two-way. Set `keepAwake.enabled` to `false`, or revert the commits. 
 
 What would have caught each miss before review, as a change to the environment rather than to this code:
 
-- **A fake-only suite let a broken script pass.** The holder printed `held` after a failed compile and exited 1 on a clean release, and no test noticed. The real-script test now makes that a deterministic check.
+- **A fake-only suite let a broken script pass.** The holder printed `held` after a failed compile and exited 1 on a clean release, and no test noticed. The real-script smoke test now covers both, locally.
+- **The real-script test passed here and degraded a hosted runner.** A test that depends on the host's runtime environment belongs behind the repo's opt-in switch from the start, not after the first red hosted run.
+- **The failing test could not explain itself.** It replaced its log sink with a mock and then printed only `expected undefined to be defined`. A failure must show the diagnostics it collected.
+- **Fire-and-forget cleanup needs an owner.** A release that a reconnect starts has to stay on the profile's books until it finishes, or the stop cannot wait for it. The automated reviews found this; the first review round, which read the code against the spec, did not.
+- **Two review rounds found different defects.** The first read the code against the spec on separate agents. The second was three automated reviewers reading the diff for failure paths. One does not replace the other.
 - **The commit language was written nowhere a clone shows.** The first commit was in Chinese; the repo's history is in English. `AGENTS.md` now says so.
 - **"Bots offline" was first blamed on the bridge's own reconnect logic.** One query of the kernel power log settled it. A pointer from the troubleshooting docs or `/doctor` to the host's power events would spare the next person that detour. Not changed here.
 - **Two symlink cases cannot pass on a Windows host without symlink privilege.** `pnpm ci:local` therefore fails there for reasons unrelated to any change. An explicit "expected to fail without symlink privilege" note in that suite would make the failure self-explanatory. Left to the owner of that suite.
