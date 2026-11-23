@@ -1,10 +1,13 @@
 import type { LarkChannel } from '@larksuite/channel';
+import { Readable } from 'node:stream';
 import { log } from '../core/logger';
 
 /** Forced refresh cooldown after a failed self-heal (D6). Monotonic clock. */
 export const FEISHU_TOKEN_RETRY_COOLDOWN_MS = 10_000;
 
 const TOKEN_INVALID_CODES = new Set([99991663, 99991661]);
+/** D11: read at most 64 KB of a streamed HTTP 4xx error body. */
+const STREAM_ERROR_BODY_MAX_BYTES = 64 * 1024;
 /** DefaultCache `getCacheKey(CTenantAccessToken, appId)` — `Symbol('tenant-access-token').toString()`. */
 const TENANT_TOKEN_CACHE_LEAF = 'Symbol(tenant-access-token)';
 
@@ -185,9 +188,118 @@ async function send(
     }
     return { ok: true, value };
   } catch (error) {
+    if (opts.responseType === 'stream' && isHttp4xx(error)) {
+      await hydrateStreamTokenError(error);
+    }
     if (!isTokenInvalid(error)) throw error;
     return { ok: false, error };
   }
+}
+
+function isHttp4xx(error: unknown): boolean {
+  const status = httpStatus(error);
+  return status !== undefined && status >= 400 && status < 500;
+}
+
+function httpStatus(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const rec = error as { response?: { status?: unknown }; status?: unknown };
+  const nested = rec.response?.status;
+  if (typeof nested === 'number') return nested;
+  return typeof rec.status === 'number' ? rec.status : undefined;
+}
+
+function errorResponse(error: unknown): { data?: unknown } | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const response = (error as { response?: unknown }).response;
+  if (!response || typeof response !== 'object') return undefined;
+  return response as { data?: unknown };
+}
+
+/**
+ * On a streamed HTTP 4xx, read a bounded JSON error body and apply D2.
+ * Oversize, non-JSON, or a read failure rethrow the original error with
+ * the body still readable. Never called for 2xx streams.
+ */
+async function hydrateStreamTokenError(error: unknown): Promise<void> {
+  if (isTokenInvalid(error)) return;
+  const response = errorResponse(error);
+  if (!response) return;
+  const data = response.data;
+  if (
+    data !== null
+    && typeof data === 'object'
+    && !Buffer.isBuffer(data)
+    && !(data instanceof Uint8Array)
+    && !(data instanceof Readable)
+  ) {
+    return;
+  }
+  const raw = await readErrorBody(data);
+  if (raw === undefined) return;
+  if (raw.overflow) {
+    if (data instanceof Readable) response.data = readableFrom(raw.buf);
+    return;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw.buf.toString('utf8'));
+    if (isTokenInvalid(parsed) || isTokenInvalid({ response: { data: parsed } })) {
+      response.data = parsed;
+      return;
+    }
+  } catch {
+    /* non-JSON */
+  }
+  if (data instanceof Readable) response.data = readableFrom(raw.buf);
+}
+
+function readableFrom(buf: Buffer): Readable {
+  return Readable.from([buf]);
+}
+
+async function readErrorBody(
+  data: unknown,
+): Promise<{ buf: Buffer; overflow: boolean } | undefined> {
+  if (typeof data === 'string') {
+    const buf = Buffer.from(data);
+    return { buf, overflow: buf.length > STREAM_ERROR_BODY_MAX_BYTES };
+  }
+  if (Buffer.isBuffer(data)) {
+    return { buf: data, overflow: data.length > STREAM_ERROR_BODY_MAX_BYTES };
+  }
+  if (data instanceof Uint8Array) {
+    const buf = Buffer.from(data);
+    return { buf, overflow: buf.length > STREAM_ERROR_BODY_MAX_BYTES };
+  }
+  if (!(data instanceof Readable)) return undefined;
+  return readReadableBounded(data, STREAM_ERROR_BODY_MAX_BYTES);
+}
+
+async function readReadableBounded(
+  stream: Readable,
+  max: number,
+): Promise<{ buf: Buffer; overflow: boolean } | undefined> {
+  const chunks: Buffer[] = [];
+  let n = 0;
+  try {
+    for await (const chunk of stream) {
+      const buf = toBuffer(chunk);
+      chunks.push(buf);
+      n += buf.length;
+      if (n > max) return { buf: Buffer.concat(chunks), overflow: true };
+    }
+    return { buf: Buffer.concat(chunks), overflow: false };
+  } catch {
+    if (n > 0) return { buf: Buffer.concat(chunks), overflow: n > max };
+    return undefined;
+  }
+}
+
+function toBuffer(chunk: unknown): Buffer {
+  if (Buffer.isBuffer(chunk)) return chunk;
+  if (typeof chunk === 'string') return Buffer.from(chunk);
+  if (chunk instanceof Uint8Array) return Buffer.from(chunk);
+  return Buffer.from(String(chunk));
 }
 
 function shouldSelfHeal(

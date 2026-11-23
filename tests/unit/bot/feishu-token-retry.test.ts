@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLarkChannel, type LarkChannel } from '@larksuite/channel';
 import { log } from '../../../src/core/logger';
@@ -68,6 +69,8 @@ interface FakeHttp {
   authOk: boolean;
   /** When false, even a fresh tenant token is rejected (exhausted self-heal). */
   replaySucceeds: boolean;
+  /** Override the HTTP 4xx stream body; default is JSON 99991663. */
+  streamErrorBody?: Buffer | string;
   api: ApiScript;
   onAuth?: () => Promise<void> | void;
   beforeApi?: (call: RecordedCall, index: number) => Promise<void> | void;
@@ -291,6 +294,44 @@ describe('Feishu tenant token self-heal (ticket 01)', () => {
     }
   });
 
+  it('messageResource.get with a 400/99991663 stream body self-heals and returns attachment bytes', async () => {
+    const h = harness(APP_A);
+    await seedDead(h.cache, APP_A);
+    const got = await h.channel.rawClient.im.v1.messageResource.get({
+      path: { message_id: 'om_1', file_key: 'file_1' },
+      params: { type: 'file' },
+    });
+    const chunks: Buffer[] = [];
+    for await (const chunk of got.getReadableStream()) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+    expect(Buffer.concat(chunks).toString()).toBe('attachment-bytes');
+    expect(h.http.authPosts).toBe(1);
+    expect(apiAuths(h.http)).toEqual([DEAD_TOKEN, FRESH_TOKEN]);
+  });
+
+  it('rethrows a streamed 4xx with the body still readable when it is not JSON', async () => {
+    const h = harness(APP_A);
+    await seedDead(h.cache, APP_A);
+    h.http.streamErrorBody = 'not-json-error-body';
+    const err = await h.channel.rawClient.im.v1.messageResource.get({
+      path: { message_id: 'om_1', file_key: 'file_1' },
+      params: { type: 'file' },
+    }).then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    expect(err).toBeTruthy();
+    const data = (err as { response?: { data?: unknown } }).response?.data;
+    expect(data).toBeInstanceOf(Readable);
+    const chunks: Buffer[] = [];
+    for await (const chunk of data as Readable) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+    expect(Buffer.concat(chunks).toString()).toBe('not-json-error-body');
+    expect(h.http.authPosts).toBe(0);
+  });
+
   it('startChannel installs token retry after createLarkChannel and before connect', () => {
     const src = readFileSync(join(process.cwd(), 'src/bot/channel.ts'), 'utf8');
     const create = src.indexOf('const channel = createLarkChannel(opts)');
@@ -342,6 +383,19 @@ function createFakeHttp(): FakeHttp {
       http.apiCalls.push(call);
       await http.beforeApi?.(call, http.apiCalls.length);
       const token = bearer(authorization);
+      if (opts.responseType === 'stream') {
+        if (token === FRESH_TOKEN && http.replaySucceeds) {
+          return {
+            data: Readable.from([Buffer.from('attachment-bytes')]),
+            headers: { 'content-type': 'application/octet-stream' },
+          };
+        }
+        const body = http.streamErrorBody
+          ?? JSON.stringify({ code: 99991663, msg: 'token invalid' });
+        throw axiosHttp(400, Readable.from([
+          typeof body === 'string' ? Buffer.from(body) : body,
+        ]));
+      }
       if (http.api.type === 'ok') return successBody(url);
       if (token === FRESH_TOKEN && http.replaySucceeds) return successBody(url);
       return failApi(http.api);
