@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createLarkChannel, type LarkChannel } from '@larksuite/channel';
 import { log } from '../../../src/core/logger';
 import {
+  FEISHU_STREAM_ERROR_BODY_TIMEOUT_MS,
   FEISHU_TOKEN_RETRY_COOLDOWN_MS,
   installFeishuTokenRetry,
   tenantAccessTokenCacheKey,
@@ -70,7 +71,7 @@ interface FakeHttp {
   /** When false, even a fresh tenant token is rejected (exhausted self-heal). */
   replaySucceeds: boolean;
   /** Override the HTTP 4xx stream body; default is JSON 99991663. */
-  streamErrorBody?: Buffer | string;
+  streamErrorBody?: Buffer | string | Readable;
   api: ApiScript;
   onAuth?: () => Promise<void> | void;
   beforeApi?: (call: RecordedCall, index: number) => Promise<void> | void;
@@ -86,6 +87,7 @@ interface FakeHttp {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
 
 describe('Feishu tenant token self-heal (ticket 01)', () => {
@@ -332,6 +334,56 @@ describe('Feishu tenant token self-heal (ticket 01)', () => {
     expect(h.http.authPosts).toBe(0);
   });
 
+  it('a streamed 4xx whose body never ends rejects the original error within 2s with no auth POST or replay', async () => {
+    const h = harness(APP_A);
+    await seedDead(h.cache, APP_A);
+    const prefix = JSON.stringify({ code: 99991663, msg: 'token invalid' });
+    const hang = new Readable({ read() {} });
+    hang.push(Buffer.from(prefix));
+    h.http.streamErrorBody = hang;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+
+    let settled: { ok: true; value: unknown } | { ok: false; error: unknown } | undefined;
+    const pending = h.channel.rawClient.im.v1.messageResource.get({
+      path: { message_id: 'om_1', file_key: 'file_1' },
+      params: { type: 'file' },
+    }).then(
+      (value) => {
+        settled = { ok: true, value };
+        return settled;
+      },
+      (error: unknown) => {
+        settled = { ok: false, error };
+        return settled;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(FEISHU_STREAM_ERROR_BODY_TIMEOUT_MS - 1);
+    expect(settled).toBeUndefined();
+    expect(h.http.authPosts).toBe(0);
+    expect(h.http.apiCalls).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const out = await pending;
+    expect(out.ok).toBe(false);
+    expect(h.http.authPosts).toBe(0);
+    expect(h.http.apiCalls).toHaveLength(1);
+    expect(apiAuths(h.http)).toEqual([DEAD_TOKEN]);
+    const err = (out as { ok: false; error: unknown }).error as {
+      response?: { status?: number; data?: unknown };
+    };
+    expect(err.response?.status).toBe(400);
+    expect(err.response?.data).toBeInstanceOf(Readable);
+
+    hang.push(Buffer.from('-tail'));
+    hang.push(null);
+    const chunks: Buffer[] = [];
+    for await (const chunk of err.response!.data as Readable) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+    }
+    expect(Buffer.concat(chunks).toString()).toBe(`${prefix}-tail`);
+  });
+
   it('startChannel installs token retry after createLarkChannel and before connect', () => {
     const src = readFileSync(join(process.cwd(), 'src/bot/channel.ts'), 'utf8');
     const create = src.indexOf('const channel = createLarkChannel(opts)');
@@ -389,6 +441,9 @@ function createFakeHttp(): FakeHttp {
             data: Readable.from([Buffer.from('attachment-bytes')]),
             headers: { 'content-type': 'application/octet-stream' },
           };
+        }
+        if (http.streamErrorBody instanceof Readable) {
+          throw axiosHttp(400, http.streamErrorBody);
         }
         const body = http.streamErrorBody
           ?? JSON.stringify({ code: 99991663, msg: 'token invalid' });

@@ -4,6 +4,8 @@ import { log } from '../core/logger';
 
 /** Forced refresh cooldown after a failed self-heal (D6). Monotonic clock. */
 export const FEISHU_TOKEN_RETRY_COOLDOWN_MS = 10_000;
+/** D11: streamed HTTP 4xx error-body read is bounded to 2s. */
+export const FEISHU_STREAM_ERROR_BODY_TIMEOUT_MS = 2_000;
 
 const TOKEN_INVALID_CODES = new Set([99991663, 99991661]);
 /** D11: read at most 64 KB of a streamed HTTP 4xx error body. */
@@ -216,10 +218,15 @@ function errorResponse(error: unknown): { data?: unknown } | undefined {
   return response as { data?: unknown };
 }
 
+type StreamErrorBodyRead =
+  | { status: 'complete'; buf: Buffer }
+  | { status: 'overflow'; buf: Buffer }
+  | { status: 'timeout'; buf: Buffer; restored: boolean };
+
 /**
  * On a streamed HTTP 4xx, read a bounded JSON error body and apply D2.
- * Oversize, non-JSON, or a read failure rethrow the original error with
- * the body still readable. Never called for 2xx streams.
+ * Oversize, non-JSON, a read failure, or a 2s stall rethrow the original
+ * error with the body still readable. Never called for 2xx streams.
  */
 async function hydrateStreamTokenError(error: unknown): Promise<void> {
   if (isTokenInvalid(error)) return;
@@ -237,61 +244,130 @@ async function hydrateStreamTokenError(error: unknown): Promise<void> {
   }
   const raw = await readErrorBody(data);
   if (raw === undefined) return;
-  if (raw.overflow) {
-    if (data instanceof Readable) response.data = readableFrom(raw.buf);
-    return;
-  }
-  try {
-    const parsed: unknown = JSON.parse(raw.buf.toString('utf8'));
-    if (isTokenInvalid(parsed) || isTokenInvalid({ response: { data: parsed } })) {
-      response.data = parsed;
+  switch (raw.status) {
+    case 'timeout':
+      if (!raw.restored) response.data = readablePrefixThenRest(raw.buf, data);
       return;
+    case 'overflow':
+      if (data instanceof Readable) {
+        response.data = readableFrom(raw.buf);
+        data.destroy();
+      }
+      return;
+    case 'complete':
+      try {
+        const parsed: unknown = JSON.parse(raw.buf.toString('utf8'));
+        if (isTokenInvalid(parsed) || isTokenInvalid({ response: { data: parsed } })) {
+          response.data = parsed;
+          return;
+        }
+      } catch {
+        /* non-JSON */
+      }
+      if (data instanceof Readable) response.data = readableFrom(raw.buf);
+      return;
+    default: {
+      const _never: never = raw;
+      return _never;
     }
-  } catch {
-    /* non-JSON */
   }
-  if (data instanceof Readable) response.data = readableFrom(raw.buf);
 }
 
 function readableFrom(buf: Buffer): Readable {
   return Readable.from([buf]);
 }
 
-async function readErrorBody(
-  data: unknown,
-): Promise<{ buf: Buffer; overflow: boolean } | undefined> {
-  if (typeof data === 'string') {
-    const buf = Buffer.from(data);
-    return { buf, overflow: buf.length > STREAM_ERROR_BODY_MAX_BYTES };
+function readablePrefixThenRest(prefix: Buffer, data: unknown): unknown {
+  if (!(data instanceof Readable)) return prefix.length > 0 ? readableFrom(prefix) : data;
+  if (prefix.length === 0) return data;
+  if (!data.readable) return readableFrom(prefix);
+  return Readable.from(yieldPrefixThenRest(prefix, data));
+}
+
+async function* yieldPrefixThenRest(prefix: Buffer, rest: Readable): AsyncGenerator<Buffer> {
+  yield prefix;
+  for await (const chunk of rest) {
+    yield toBuffer(chunk);
   }
-  if (Buffer.isBuffer(data)) {
-    return { buf: data, overflow: data.length > STREAM_ERROR_BODY_MAX_BYTES };
-  }
-  if (data instanceof Uint8Array) {
-    const buf = Buffer.from(data);
-    return { buf, overflow: buf.length > STREAM_ERROR_BODY_MAX_BYTES };
-  }
+}
+
+async function readErrorBody(data: unknown): Promise<StreamErrorBodyRead | undefined> {
+  if (typeof data === 'string') return boundedBuffer(Buffer.from(data));
+  if (Buffer.isBuffer(data)) return boundedBuffer(data);
+  if (data instanceof Uint8Array) return boundedBuffer(Buffer.from(data));
   if (!(data instanceof Readable)) return undefined;
-  return readReadableBounded(data, STREAM_ERROR_BODY_MAX_BYTES);
+  return readReadableBounded(data, STREAM_ERROR_BODY_MAX_BYTES, FEISHU_STREAM_ERROR_BODY_TIMEOUT_MS);
+}
+
+function boundedBuffer(buf: Buffer): StreamErrorBodyRead {
+  return buf.length > STREAM_ERROR_BODY_MAX_BYTES
+    ? { status: 'overflow', buf }
+    : { status: 'complete', buf };
 }
 
 async function readReadableBounded(
   stream: Readable,
   max: number,
-): Promise<{ buf: Buffer; overflow: boolean } | undefined> {
-  const chunks: Buffer[] = [];
-  let n = 0;
-  try {
-    for await (const chunk of stream) {
+  timeoutMs: number,
+): Promise<StreamErrorBodyRead | undefined> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let n = 0;
+    let settled = false;
+
+    const stopListening = (): void => {
+      stream.removeListener('data', onData);
+      stream.removeListener('end', onEnd);
+      stream.removeListener('error', onError);
+      if (stream.readable) stream.pause();
+    };
+
+    const finish = (result: StreamErrorBodyRead | undefined): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      stopListening();
+      resolve(result);
+    };
+
+    const onData = (chunk: unknown): void => {
+      if (settled) return;
       const buf = toBuffer(chunk);
       chunks.push(buf);
       n += buf.length;
-      if (n > max) return { buf: Buffer.concat(chunks), overflow: true };
-    }
-    return { buf: Buffer.concat(chunks), overflow: false };
+      if (n > max) finish({ status: 'overflow', buf: Buffer.concat(chunks) });
+    };
+    const onEnd = (): void => {
+      if (settled) return;
+      finish({ status: 'complete', buf: Buffer.concat(chunks) });
+    };
+    const onError = (): void => {
+      if (settled) return;
+      if (n > 0) finish({ status: 'complete', buf: Buffer.concat(chunks) });
+      else finish(undefined);
+    };
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      stopListening();
+      const buf = Buffer.concat(chunks);
+      finish({ status: 'timeout', buf, restored: restoreUnread(stream, buf) });
+    }, timeoutMs);
+
+    stream.on('error', onError);
+    stream.on('end', onEnd);
+    stream.on('data', onData);
+  });
+}
+
+function restoreUnread(stream: Readable, prefix: Buffer): boolean {
+  if (prefix.length === 0) return stream.readable;
+  if (!stream.readable) return false;
+  try {
+    stream.unshift(prefix);
+    return true;
   } catch {
-    if (n > 0) return { buf: Buffer.concat(chunks), overflow: n > max };
-    return undefined;
+    return false;
   }
 }
 
