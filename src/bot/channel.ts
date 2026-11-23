@@ -87,6 +87,7 @@ import {
 } from './backfill';
 import { BackfillLedger, type IntakeSource } from './backfill-ledger';
 import { classify } from './feishu-error';
+import { installFeishuTokenRetry } from './feishu-token-retry';
 import { createFeishuProbe, startFeishuLink } from './feishu-link';
 import type { HostSleepProbe } from '../platform/host-sleep';
 import { createRecovery, reviewActiveRuns, RECOVERY_RETRY_MAX_MS, type Outage } from './recovery';
@@ -498,6 +499,7 @@ export async function startChannel(deps: StartChannelDeps): Promise<BridgeChanne
   };
 
   const channel = createLarkChannel(opts);
+  installFeishuTokenRetry(channel);
   channelForCards = channel;
   const outboundIds = new OutboundMessageIds();
   const cliSelfSent = new CliSelfSendTracker();
