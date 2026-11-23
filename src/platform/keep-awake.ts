@@ -111,6 +111,9 @@ export function createKeepAwake(opts: KeepAwakeOptions = {}): KeepAwake {
         warn('holder-not-started', { reason: 'spawn-error', err: String(err) });
         return undefined;
       }
+      // A holder that died an instant ago fails the next stdin write. That
+      // surfaces as an 'error' on the stream, which throws when nobody listens.
+      for (const stream of [child.stdin, child.stdout, child.stderr]) stream?.on('error', () => {});
       let stderr = '';
       child.stderr?.on('data', (chunk: Buffer | string) => {
         stderr = `${stderr}${chunk}`.slice(-2_000);

@@ -185,6 +185,18 @@ describe('keep-awake holder', () => {
     expect(child.kill).toHaveBeenCalledTimes(1);
   });
 
+  it('takes a stream error from a holder that died an instant ago in stride', async () => {
+    const { child, warn, keepAwake } = harness();
+    const pending = keepAwake.acquire();
+    child.stdout!.emit('data', 'held\n');
+    const handle = (await pending)!;
+
+    // The holder is gone but its exit is not reported yet: the stdin write hits a closed pipe.
+    expect(() => child.stdin!.emit('error', new Error('write EPIPE'))).not.toThrow();
+    await expect(handle.release()).resolves.toBeUndefined();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
   it('treats release as idempotent', async () => {
     const { child, keepAwake } = harness();
     const pending = keepAwake.acquire();
