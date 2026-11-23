@@ -45,8 +45,8 @@ export interface FeishuLink {
   stop(): void;
 }
 
-/** true = reachable; false = link down; `unknown` = local, neither evidence nor outage. */
-export type FeishuProbeResult = boolean | 'unknown';
+/** true = reachable; false = link down; `unknown` = local; `auth-unhealthy` = exhausted tenant token. */
+export type FeishuProbeResult = boolean | 'unknown' | 'auth-unhealthy';
 
 export interface FeishuLinkDeps {
   channel: LarkChannel;
@@ -144,6 +144,7 @@ function isThenable(value: void | Promise<void>): value is Promise<void> {
 }
 
 function probeResultFromError(err: unknown): FeishuProbeResult {
+  if (feishuTokenInvalidCode(err) !== undefined) return 'auth-unhealthy';
   const kind = classify(err);
   switch (kind) {
     case 'rejected':
@@ -215,6 +216,8 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
   let lastRecovered: Outage | undefined;
   /** `epoch` of `lastRecovered`. A sleep probe may apply only to that generation. */
   let lastRecoveredEpoch = -1;
+  /** Exhausted tenant token on REST. Inbound WS frames must not `goUp` until REST succeeds (D11). */
+  let authUnhealthy = false;
 
   const touchHeartbeat = (): void => {
     if (!deps.heartbeatPath) return;
@@ -254,6 +257,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
 
   const goUp = (until: number): void => {
     if (!down) return;
+    if (authUnhealthy) return;
     down = false;
     lastEvidenceAt = until;
     deps.watermark.holdOutage?.(downSince);
@@ -484,6 +488,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     if (seq !== probeSeq || stopped) return;
     switch (ok) {
       case true:
+        authUnhealthy = false;
         noteEvidence(nowFn(), wsConnected());
         maybeFinishWake(nowFn());
         lastTickAt = nowFn();
@@ -493,6 +498,11 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
         lastTickAt = nowFn();
         return;
       case 'unknown':
+        lastTickAt = nowFn();
+        return;
+      case 'auth-unhealthy':
+        authUnhealthy = true;
+        goDown(lastEvidenceAt ?? downSince);
         lastTickAt = nowFn();
         return;
       default: {
@@ -510,7 +520,13 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
     onResult: (result) => {
       if (stopped) return;
       if (result.ok) {
+        authUnhealthy = false;
         noteEvidence(nowFn(), wsConnected());
+        return;
+      }
+      if (feishuTokenInvalidCode(result.error) !== undefined) {
+        authUnhealthy = true;
+        goDown(lastEvidenceAt ?? downSince);
         return;
       }
       const kind = classify(result.error);
@@ -519,6 +535,7 @@ export function startFeishuLink(deps: FeishuLinkDeps): FeishuLink & { tick(): Pr
           goDown(lastEvidenceAt ?? downSince);
           return;
         case 'rejected':
+          authUnhealthy = false;
           noteEvidence(nowFn(), wsConnected());
           return;
         case 'local':

@@ -127,6 +127,52 @@ describe('exhausted tenant token is a link failure (ticket 02)', () => {
     link.stop();
   });
 
+  it('inbound frames after exhausted token do not recover or resend; a successful probe brings the link up', async () => {
+    const lastLiveAt = 1_700_000_000_000;
+    let now = lastLiveAt + 60_000;
+    const h = harness(APP_A);
+    await seedDead(h.cache, APP_A);
+    h.http.replaySucceeds = false;
+    h.channel.getConnectionStatus = () => ({ state: 'connected', reconnectAttempts: 0 });
+
+    const recovered: Outage[] = [];
+    const link = startFeishuLink({
+      channel: h.channel,
+      probe: createFeishuProbe(h.channel),
+      watermark: memoryWatermark(lastLiveAt),
+      now: () => now,
+    });
+    link.onRecovered((outage) => {
+      recovered.push(outage);
+      void h.channel.send('oc_chat', { text: 'outbox-replay' }).catch(() => {});
+    });
+
+    await link.tick();
+    expect(link.isDown()).toBe(true);
+    expect(recovered).toEqual([]);
+    const messages = () => h.http.apiCalls.filter((c) =>
+      c.url.includes('/im/v1/messages') && !c.url.includes('/resources/')
+    );
+    expect(messages()).toHaveLength(0);
+
+    link.noteInbound(now);
+    link.noteInbound(now + 1);
+    link.noteSocketFrame(now + 2);
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(link.isDown()).toBe(true);
+    expect(recovered).toEqual([]);
+    expect(messages()).toHaveLength(0);
+
+    h.http.replaySucceeds = true;
+    now += 15_000;
+    await link.tick();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+    expect(link.isDown()).toBe(false);
+    expect(recovered).toHaveLength(1);
+    expect(messages()).toHaveLength(1);
+    link.stop();
+  });
+
   it('CotClient create self-heals a stale 99991663 through rawClient.request with one auth POST and one replay', async () => {
     const h = harness(APP_A);
     await seedDead(h.cache, APP_A);
