@@ -1,6 +1,7 @@
 import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 import { spawnProcess } from './spawn';
+import { withTimeout } from './timeout';
 
 /** The holder has this long to confirm it owns the request. */
 export const KEEP_AWAKE_ACQUIRE_TIMEOUT_MS = 15_000;
@@ -28,6 +29,11 @@ export interface KeepAwakeOptions {
   spawn?: typeof spawnProcess;
   /** Injectable for tests. Defaults to Windows PowerShell under `%SystemRoot%`. */
   powershellPath?: string;
+  /**
+   * Injectable for tests. The C# binding the holder compiles; it must declare
+   * `LarkentKeepAwake` with the `SetThreadExecutionState` entry point.
+   */
+  typeDefinition?: string;
   acquireTimeoutMs?: number;
   releaseTimeoutMs?: number;
   /** Diagnostic sink; defaults to `console.warn`. */
@@ -35,10 +41,18 @@ export interface KeepAwakeOptions {
 }
 
 type HolderExit = { code: number | null; signal: NodeJS.Signals | null };
-type Outcome = { kind: 'held' } | ({ kind: 'exited' } & HolderExit) | { kind: 'timeout' };
+type Outcome = { kind: 'held' | 'timeout' } | ({ kind: 'exited' } & HolderExit);
+const TIMED_OUT: Outcome = { kind: 'timeout' };
 
 /** Printed by the holder once its request is on record. */
 const HELD = 'held';
+
+const DEFAULT_TYPE_DEFINITION = [
+  'using System; using System.Runtime.InteropServices;',
+  'public static class LarkentKeepAwake {',
+  '[DllImport("kernel32.dll", SetLastError = true)]',
+  'public static extern uint SetThreadExecutionState(uint esFlags); }',
+].join(' ');
 
 // `SetThreadExecutionState` is a Win32 call with no PowerShell wrapper, so the
 // holder compiles a one-line binding with Add-Type. The script travels inline
@@ -50,20 +64,27 @@ const HELD = 'held';
 // exits. The holder parks on stdin and leaves on EOF, which is how release
 // reaches it; a bridge that dies without releasing closes the pipe just the
 // same.
-const HOLDER_SCRIPT = [
-  "$sig = 'using System; using System.Runtime.InteropServices;",
-  'public static class LarkentKeepAwake {',
-  '[DllImport("kernel32.dll", SetLastError = true)]',
-  "public static extern uint SetThreadExecutionState(uint esFlags); }'",
-  'Add-Type -TypeDefinition $sig',
-  '$held = [uint32]2147483649',
-  'if ([LarkentKeepAwake]::SetThreadExecutionState($held) -eq 0) { exit 1 }',
-  `[Console]::Out.WriteLine('${HELD}')`,
-  '[Console]::In.ReadToEnd() | Out-Null',
-  '[LarkentKeepAwake]::SetThreadExecutionState([uint32]2147483648) | Out-Null',
-].join('; ');
-
-const HOLDER_ARGS = ['-NoProfile', '-NonInteractive', '-Command', HOLDER_SCRIPT] as const;
+//
+// PowerShell runs on past a failed statement inside a `-Command` string, so
+// the binding, the request and the confirmation share one guarded block:
+// `held` is unreachable unless the request was really made. The .NET calls are
+// assigned rather than piped, because piping one marks the statement as failed
+// and would turn a clean exit into exit code 1.
+function holderScript(typeDefinition: string): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    'try {',
+    `$sig = '${typeDefinition.replace(/'/g, "''")}'`,
+    'Add-Type -TypeDefinition $sig',
+    '$held = [uint32]2147483649',
+    'if ([LarkentKeepAwake]::SetThreadExecutionState($held) -eq 0) { exit 1 }',
+    '} catch { [Console]::Error.WriteLine($_); exit 1 }',
+    `[Console]::Out.WriteLine('${HELD}')`,
+    '$null = [Console]::In.ReadToEnd()',
+    '$null = [LarkentKeepAwake]::SetThreadExecutionState([uint32]2147483648)',
+    'exit 0',
+  ].join('; ');
+}
 
 export function createKeepAwake(opts: KeepAwakeOptions = {}): KeepAwake {
   const platform = opts.platform ?? process.platform;
@@ -78,13 +99,14 @@ export function createKeepAwake(opts: KeepAwakeOptions = {}): KeepAwake {
   }
   const spawnFn = opts.spawn ?? spawnProcess;
   const powershellPath = opts.powershellPath ?? defaultPowerShellPath();
+  const holderArgs = ['-NoProfile', '-NonInteractive', '-Command', holderScript(opts.typeDefinition ?? DEFAULT_TYPE_DEFINITION)] as const;
   const acquireTimeoutMs = opts.acquireTimeoutMs ?? KEEP_AWAKE_ACQUIRE_TIMEOUT_MS;
   const releaseTimeoutMs = opts.releaseTimeoutMs ?? KEEP_AWAKE_RELEASE_TIMEOUT_MS;
   return {
     async acquire() {
       let child: ChildProcess;
       try {
-        child = spawnFn(powershellPath, HOLDER_ARGS, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
+        child = spawnFn(powershellPath, holderArgs, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
       } catch (err) {
         warn('holder-not-started', { reason: 'spawn-error', err: String(err) });
         return undefined;
@@ -100,7 +122,11 @@ export function createKeepAwake(opts: KeepAwakeOptions = {}): KeepAwake {
         child.once('exit', (code, signal) => resolve({ code, signal }));
         child.once('error', () => resolve({ code: null, signal: null }));
       });
-      const outcome = await confirmHeld(child, exited, acquireTimeoutMs);
+      const outcome = await withTimeout(
+        Promise.race([heldOutcome(child), exited.then((exit): Outcome => ({ kind: 'exited', ...exit }))]),
+        acquireTimeoutMs,
+        TIMED_OUT,
+      );
       if (outcome.kind !== 'held') {
         // stderr usually lands a tick after the exit event.
         await new Promise<void>((resolve) => setImmediate(resolve));
@@ -121,7 +147,7 @@ export function createKeepAwake(opts: KeepAwakeOptions = {}): KeepAwake {
           if (released) return;
           released = true;
           if (!gone && !child.stdin?.destroyed) child.stdin?.end();
-          if (await settlesWithin(exited, releaseTimeoutMs)) return;
+          if (await withTimeout(exited.then(() => true), releaseTimeoutMs, false)) return;
           child.kill();
         },
       };
@@ -129,44 +155,15 @@ export function createKeepAwake(opts: KeepAwakeOptions = {}): KeepAwake {
   };
 }
 
-async function confirmHeld(
-  child: ChildProcess,
-  exited: Promise<HolderExit>,
-  timeoutMs: number,
-): Promise<Outcome> {
-  const held = new Promise<Outcome>((resolve) => {
+/** The holder's first `held` on stdout. Settles only on that. */
+function heldOutcome(child: ChildProcess): Promise<Outcome> {
+  return new Promise<Outcome>((resolve) => {
     let seen = '';
     child.stdout?.on('data', (chunk: Buffer | string) => {
       seen += chunk;
       if (seen.includes(HELD)) resolve({ kind: 'held' });
     });
   });
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      held,
-      exited.then((exit): Outcome => ({ kind: 'exited', ...exit })),
-      new Promise<Outcome>((resolve) => {
-        timer = setTimeout(() => resolve({ kind: 'timeout' }), timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-async function settlesWithin(work: Promise<unknown>, timeoutMs: number): Promise<boolean> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      work.then(() => true),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
-      }),
-    ]);
-  } finally {
-    clearTimeout(timer);
-  }
 }
 
 function defaultPowerShellPath(): string {

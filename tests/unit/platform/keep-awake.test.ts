@@ -86,6 +86,36 @@ describe('keep-awake holder', () => {
     expect(options!.stdio).toEqual(['pipe', 'pipe', 'pipe']);
   });
 
+  it('reports held only after a guarded request: a failed binding stops the holder', async () => {
+    const { child, spawn, keepAwake } = harness();
+    const pending = keepAwake.acquire();
+    child.stdout!.emit('data', 'held\n');
+    (await pending)!.release();
+    await tick();
+
+    const script = String(spawn.mock.calls[0]![1]![3]);
+    // PowerShell keeps going past a failed statement in a `-Command` string, so
+    // without the guard a holder that never got its request would still say held.
+    expect(script).toContain("$ErrorActionPreference = 'Stop'");
+    const guarded = script.indexOf('try {');
+    const caught = script.indexOf('catch {');
+    const confirmed = script.indexOf("WriteLine('held')");
+    expect(guarded).toBeGreaterThan(0);
+    expect(caught).toBeGreaterThan(guarded);
+    expect(confirmed).toBeGreaterThan(caught);
+  });
+
+  it('passes the injected type definition inline with single quotes escaped', async () => {
+    const { child, spawn, keepAwake } = harness({ typeDefinition: "public static class Q { } // it's injected" });
+    const pending = keepAwake.acquire();
+    child.stdout!.emit('data', 'held\n');
+    (await pending)!.release();
+    await tick();
+
+    const script = String(spawn.mock.calls[0]![1]![3]);
+    expect(script).toContain("$sig = 'public static class Q { } // it''s injected'");
+  });
+
   it('resolves only once the holder confirms, then releases it through stdin EOF', async () => {
     const { child, keepAwake } = harness();
     const pending = keepAwake.acquire();

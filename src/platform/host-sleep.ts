@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { promisify } from 'node:util';
+import { withTimeout } from './timeout';
 
 const execFileAsync = promisify(execFile);
 
@@ -251,28 +252,4 @@ async function defaultQueryKernelPower(gap: HostSleepGap): Promise<string> {
     { timeout: HOST_SLEEP_PROBE_TIMEOUT_MS, encoding: 'utf8' },
   );
   return stdout;
-}
-
-async function withTimeout<T>(
-  work: Promise<T>,
-  timeoutMs: number,
-  fallback: T,
-): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const settled = work.then(
-    (value) => ({ ok: true as const, value }),
-    () => ({ ok: false as const }),
-  );
-  try {
-    const winner = await Promise.race([
-      settled,
-      new Promise<{ ok: false }>((resolve) => {
-        timer = setTimeout(() => resolve({ ok: false }), timeoutMs);
-        timer.unref?.();
-      }),
-    ]);
-    return winner.ok ? winner.value : fallback;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
 }
