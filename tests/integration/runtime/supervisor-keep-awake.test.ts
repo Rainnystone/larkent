@@ -34,11 +34,14 @@ async function harness(opts: {
   const root = await realpath(await mkdtemp(join(tmpdir(), 'supervisor-keep-awake-')));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const configPath = join(root, 'config.json');
-  const profile = createDefaultProfileConfig({
-    agentKind: 'claude', accounts: { app: { id: 'fake-keep-awake-app', secret: 'fake-secret', tenant: 'feishu' } },
-  });
-  profile.keepAwake = { enabled: opts.enabled === true };
-  await saveRootConfig(createRootConfig('test', profile), configPath);
+  const setEnabled = async (enabled: boolean) => {
+    const profile = createDefaultProfileConfig({
+      agentKind: 'claude', accounts: { app: { id: 'fake-keep-awake-app', secret: 'fake-secret', tenant: 'feishu' } },
+    });
+    profile.keepAwake = { enabled };
+    await saveRootConfig(createRootConfig('test', profile), configPath);
+  };
+  await setEnabled(opts.enabled === true);
   const supervisor = new Supervisor({
     configPath,
     rootDir: root,
@@ -47,7 +50,7 @@ async function harness(opts: {
     ...(opts.keepAwake ? { keepAwake: opts.keepAwake } : {}),
   });
   cleanups.push(() => supervisor.shutdown());
-  return { supervisor };
+  return { supervisor, setEnabled };
 }
 
 const tick = () => new Promise<void>(resolve => setImmediate(resolve));
@@ -130,4 +133,74 @@ it('does not ask for a profile whose startup rolls back', async () => {
   await expect(supervisor.startProfile('test')).rejects.toBe(failure);
 
   expect(counts).toEqual({ acquires: 0, releases: 0 });
+});
+
+it('keeps the held request across a reconnect that leaves the switch on', async () => {
+  const { counts, keepAwake } = fakeKeepAwake();
+  const { supervisor } = await harness({ keepAwake, enabled: true });
+
+  await supervisor.startProfile('test');
+  await supervisor.restartProfile('test');
+  expect(supervisor.isOnline('test')).toBe(true);
+  expect(counts).toEqual({ acquires: 1, releases: 0 });
+
+  await supervisor.stopProfile('test');
+  expect(counts).toEqual({ acquires: 1, releases: 1 });
+});
+
+// A reconnect re-reads the profile from disk and applies it, so the keep-awake
+// switch has to follow the rest of the configuration instead of waiting for a
+// full process restart.
+it('applies a keep-awake switch change on reconnect', async () => {
+  const { counts, keepAwake } = fakeKeepAwake();
+  const { supervisor, setEnabled } = await harness({ keepAwake, enabled: true });
+
+  await supervisor.startProfile('test');
+  await setEnabled(false);
+  await supervisor.restartProfile('test');
+  expect(supervisor.isOnline('test')).toBe(true);
+  await vi.waitFor(() => expect(counts).toEqual({ acquires: 1, releases: 1 }));
+
+  await setEnabled(true);
+  await supervisor.restartProfile('test');
+  await vi.waitFor(() => expect(counts.acquires).toBe(2));
+  expect(counts.releases).toBe(1);
+
+  await supervisor.stopProfile('test');
+  expect(counts).toEqual({ acquires: 2, releases: 2 });
+});
+
+// `acquire` and `release` promise never to throw. A source that breaks that
+// promise must not fail the profile's own start, stop or later restart.
+it('keeps the profile lifecycle intact when the keep-awake source throws', async () => {
+  const warnings = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const failure = new Error('keep-awake source failed');
+  const { counts, keepAwake } = fakeKeepAwake();
+  keepAwake.acquire = async () => { counts.acquires++; throw failure; };
+  const { supervisor } = await harness({ keepAwake, enabled: true });
+
+  await supervisor.startProfile('test');
+  expect(supervisor.isOnline('test')).toBe(true);
+  await supervisor.stopProfile('test');
+  expect(supervisor.list()).toEqual([]);
+
+  keepAwake.acquire = async () => {
+    counts.acquires++;
+    return { release: async () => { counts.releases++; throw failure; } };
+  };
+  await supervisor.startProfile('test');
+  await supervisor.stopProfile('test');
+  expect(supervisor.list()).toEqual([]);
+  await supervisor.startProfile('test');
+  expect(supervisor.isOnline('test')).toBe(true);
+  await supervisor.shutdown();
+
+  const keepAwakeWarnings = () => warnings.mock.calls
+    .map(args => args.join(' '))
+    .filter(line => line.includes('keep-awake.'));
+  expect(keepAwakeWarnings()).toEqual([
+    expect.stringMatching(/keep-awake\.acquire-failed/),
+    expect.stringMatching(/keep-awake\.release-failed/),
+    expect.stringMatching(/keep-awake\.release-failed/),
+  ]);
 });
